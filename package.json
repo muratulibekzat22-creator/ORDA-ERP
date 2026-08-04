@@ -6,10 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "vercel-build": "npm run prisma:generate && npm run build",
     "lint": "eslint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "seed:director": "tsx scripts/seed-director.ts",
     "test:idempotency": "tsx scripts/test-idempotency.ts",
     "test:e2e:business": "tsx scripts/test-e2e-business-flow.ts",
     "test:api:security": "tsx scripts/test-api-security.ts"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",

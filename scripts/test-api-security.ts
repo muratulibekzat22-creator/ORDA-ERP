@@ -202,6 +202,9 @@ async function main() {
 
     server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "--port", String(port)], { cwd: process.cwd(), stdio: "ignore" });
     await waitForServer();
+    const health = await fetch(`${baseUrl}/api/health`);
+    const healthPayload = await health.json() as { status?: string; database?: string };
+    assert(health.status === 200 && healthPayload.status === "ok" && healthPayload.database === "ok", "health endpoint is unavailable");
 
     const firstCookie = await session(firstUser.email);
     const secondCookie = await session(secondUser.email);
