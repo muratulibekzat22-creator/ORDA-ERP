@@ -1,0 +1,10 @@
+export type Client = {
+  id: number;
+  name: string;
+  phone: string;
+  city: string;
+  manager: string;
+  amount: string;
+  status: string;
+  createdAt?: string;
+};

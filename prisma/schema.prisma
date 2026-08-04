@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  DIRECTOR
+  MANAGER
+  ACCOUNTANT
+  PARTNER
+  PRODUCTION
+}
+
+model User {
+  id       Int    @id @default(autoincrement())
+  name     String
+  email    String @unique
+  password String
+  role     Role   @default(MANAGER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Client {
+  id      Int    @id @default(autoincrement())
+  name    String
+  phone   String
+  city    String
+  manager String
+  amount  String
+  status  String
+
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Partner {
+  id Int @id @default(autoincrement())
+
+  name  String
+  phone String?
+  city  String?
+  email String?
+
+  active Boolean @default(true)
+
+  orders Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Order {
+  id     Int    @id @default(autoincrement())
+  number String @unique
+
+  clientId Int
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  partnerId Int?
+  partner   Partner? @relation(fields: [partnerId], references: [id])
+
+  address   String
+  staircase String
+  material  String
+
+amount Decimal @db.Decimal(12,2)
+
+prepayment Decimal @default(0) @db.Decimal(12,2)
+balance Decimal @default(0) @db.Decimal(12,2)
+
+partnerPrice Decimal @default(0) @db.Decimal(12,2)
+companyProfit Decimal @default(0) @db.Decimal(12,2)
+partnerPaid Decimal @default(0) @db.Decimal(12,2)
+partnerBalance Decimal @default(0) @db.Decimal(12,2)
+
+  manager String
+  status  String @default("Новая заявка")
+
+  measurements Measurement[]
+  payments     Payment[]
+  productions  Production[]
+  events       OrderEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Measurement {
+  id Int @id @default(autoincrement())
+
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  measurer  String
+  visitDate DateTime
+
+  floorHeight    Float?
+  staircaseWidth Float?
+  stepsCount     Int?
+
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Payment {
+  id Int @id @default(autoincrement())
+
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  amount Float
+
+  type   String
+  method String
+
+  comment String?
+
+  createdAt DateTime @default(now())
+}
+
+model Production {
+  id Int @id @default(autoincrement())
+
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  stage   String
+  percent Int    @default(0)
+
+  master String
+
+  startDate  DateTime?
+  finishDate DateTime?
+
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Settings {
+  id Int @id @default(1)
+
+  pinePrice Int @default(65000)
+  elmPrice  Int @default(85000)
+  oakPrice  Int @default(110000)
+
+  woodRailing  Int @default(650000)
+  glassRailing Int @default(900000)
+  brassRailing Int @default(1800000)
+
+  ledPrice          Int @default(250000)
+  paintingPrice     Int @default(300000)
+  installationPrice Int @default(350000)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model OrderEvent {
+  id Int @id @default(autoincrement())
+
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+
+  user String?
+
+  createdAt DateTime @default(now())
+}
