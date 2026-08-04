@@ -18,6 +18,8 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
+        throw new Error("AUTHORIZE EXECUTED");
+
         let userFound = false;
         let active: boolean | null = null;
         let passwordMatches: boolean | null = null;
