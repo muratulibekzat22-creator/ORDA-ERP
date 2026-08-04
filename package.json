@@ -11,6 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
     "seed:director": "tsx scripts/seed-director.ts",
+    "check:director-login": "tsx scripts/check-director-login.ts",
     "test:idempotency": "tsx scripts/test-idempotency.ts",
     "test:e2e:business": "tsx scripts/test-e2e-business-flow.ts",
     "test:api:security": "tsx scripts/test-api-security.ts"
