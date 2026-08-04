@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+type SettingsValues = {
+  pinePrice: number; elmPrice: number; oakPrice: number; woodRailing: number;
+  glassRailing: number; brassRailing: number; ledPrice: number; paintingPrice: number; installationPrice: number;
+};
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState({
+  const [settings, setSettings] = useState<SettingsValues>({
     pinePrice: 65000,
     elmPrice: 85000,
     oakPrice: 110000,
@@ -17,19 +22,20 @@ export default function SettingsPage() {
     installationPrice: 350000,
   });
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  async function loadSettings() {
+  const loadSettings = useCallback(async () => {
     const response = await fetch("/api/settings");
 
     if (!response.ok) return;
 
-    const data = await response.json();
+    const data = await response.json() as SettingsValues;
 
     setSettings(data);
-  }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadSettings(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSettings]);
 
   async function saveSettings() {
     const response = await fetch("/api/settings", {
@@ -45,7 +51,7 @@ export default function SettingsPage() {
     }
   }
 
-  function update(name: string, value: number) {
+  function update(name: keyof SettingsValues, value: number) {
     setSettings((prev) => ({
       ...prev,
       [name]: value,

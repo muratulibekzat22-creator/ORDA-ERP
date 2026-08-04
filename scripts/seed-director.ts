@@ -1,0 +1,2 @@
+import "dotenv/config";import bcrypt from "bcrypt";import { Role } from "@prisma/client";import { prisma } from "@/lib/prisma";
+async function main(){const email=process.env.FIRST_DIRECTOR_EMAIL;const password=process.env.FIRST_DIRECTOR_PASSWORD;const name=process.env.FIRST_DIRECTOR_NAME??"Директор";if(!email||!password)throw new Error("Set FIRST_DIRECTOR_EMAIL and FIRST_DIRECTOR_PASSWORD");await prisma.user.upsert({where:{email},update:{},create:{name,email,password:await bcrypt.hash(password,12),role:Role.DIRECTOR,active:true}})}main().finally(()=>prisma.$disconnect());

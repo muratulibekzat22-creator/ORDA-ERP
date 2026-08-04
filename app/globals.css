@@ -143,8 +143,6 @@
 
   nav,
   aside,
-  header,
-  footer,
   button,
   .print\:hidden {
     display: none !important;
@@ -154,6 +152,16 @@
     background: white !important;
     padding: 0 !important;
     margin: 0 !important;
+  }
+
+  .document-page {
+    min-height: auto !important;
+  }
+
+  .document-page article {
+    max-width: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
   }
 
   * {

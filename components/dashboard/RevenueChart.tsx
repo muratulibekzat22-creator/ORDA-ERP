@@ -98,7 +98,9 @@ export default function RevenueChart() {
             />
 
             <Tooltip
-              formatter={(value: number) => `${value} млн ₸`}
+              formatter={(value) =>
+                value === undefined ? "" : `${value} млн ₸`
+              }
               contentStyle={{
                 background: "#0f172a",
                 border: "1px solid #334155",

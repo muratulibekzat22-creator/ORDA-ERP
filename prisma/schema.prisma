@@ -10,8 +10,11 @@ enum Role {
   DIRECTOR
   MANAGER
   ACCOUNTANT
+  MEASURER
+  DESIGNER
   PARTNER
   PRODUCTION
+  INSTALLER
 }
 
 model User {
@@ -20,6 +23,13 @@ model User {
   email    String @unique
   password String
   role     Role   @default(MANAGER)
+  phone    String?
+  active   Boolean @default(true)
+  lastLogin DateTime?
+
+  partnerProfile Partner?
+  assignedMeasurements Measurement[]
+  assignedProductions Production[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -49,6 +59,9 @@ model Partner {
   email String?
 
   active Boolean @default(true)
+
+  userId Int? @unique
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   orders Order[]
 
@@ -87,9 +100,46 @@ partnerBalance Decimal @default(0) @db.Decimal(12,2)
   payments     Payment[]
   productions  Production[]
   events       OrderEvent[]
+  materialMovements MaterialMovement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Material {
+  id           Int    @id @default(autoincrement())
+  name         String
+  category     String
+  unit         String
+  minimumStock Float  @default(0)
+  stock        Float  @default(0)
+  purchasePrice Decimal @default(0) @db.Decimal(12,2)
+  supplier     String?
+
+  movements MaterialMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MaterialMovement {
+  id Int @id @default(autoincrement())
+
+  materialId Int
+  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  orderId Int?
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  type String
+  quantity Float
+  price Decimal @default(0) @db.Decimal(12,2)
+  supplier String?
+  comment String?
+  idempotencyKey String? @unique
+  requestHash String?
+
+  createdAt DateTime @default(now())
 }
 
 model Measurement {
@@ -99,6 +149,8 @@ model Measurement {
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   measurer  String
+  measurerUserId Int?
+  measurerUser User? @relation(fields: [measurerUserId], references: [id], onDelete: SetNull)
   visitDate DateTime
 
   floorHeight    Float?
@@ -106,6 +158,8 @@ model Measurement {
   stepsCount     Int?
 
   comment String?
+  idempotencyKey String? @unique
+  requestHash String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -123,6 +177,8 @@ model Payment {
   method String
 
   comment String?
+  idempotencyKey String? @unique
+  requestHash String?
 
   createdAt DateTime @default(now())
 }
@@ -137,11 +193,15 @@ model Production {
   percent Int    @default(0)
 
   master String
+  masterUserId Int?
+  masterUser User? @relation(fields: [masterUserId], references: [id], onDelete: SetNull)
 
   startDate  DateTime?
   finishDate DateTime?
 
   comment String?
+  idempotencyKey String? @unique
+  requestHash String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -176,6 +236,8 @@ model OrderEvent {
   description String?
 
   user String?
+  idempotencyKey String? @unique
+  requestHash String?
 
   createdAt DateTime @default(now())
 }

@@ -1,6 +1,8 @@
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import OrdersTable from "@/components/dashboard/OrdersTable";
 import RevenueChart from "@/components/dashboard/RevenueChart";
+import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
+import WarehouseStats from "@/components/dashboard/WarehouseStats";
 
 export default function Dashboard() {
   const totalClients = 148;
@@ -114,6 +116,10 @@ export default function Dashboard() {
       />
 
       <RevenueChart />
+
+      <CalendarAgenda />
+
+      <WarehouseStats />
 
       <OrdersTable />
 

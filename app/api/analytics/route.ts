@@ -1,0 +1,4 @@
+import { NextResponse } from "next/server";
+import { getAnalytics } from "@/lib/services/analytics.service";
+import { requirePermission } from "@/lib/server-auth";
+export async function GET(request:Request){const auth=await requirePermission("reports");if(auth.response)return auth.response;const p=new URL(request.url).searchParams;const value=p.get("partnerId"),partnerId=Number(value);if(value!==null&&(!Number.isInteger(partnerId)||partnerId<=0))return NextResponse.json({error:"Некорректный partnerId"},{status:400});try{return NextResponse.json(await getAnalytics({period:p.get("period")??"all",manager:p.get("manager")||undefined,partnerId:value===null?undefined:partnerId,city:p.get("city")||undefined,status:p.get("status")||undefined}));}catch(error){console.error(error);return NextResponse.json({error:"Ошибка аналитики"},{status:500});}}

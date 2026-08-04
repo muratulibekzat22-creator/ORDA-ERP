@@ -1,75 +1,19 @@
-import { NextRequest, NextResponse } from "next/server";
+import { Prisma, Role } from "@prisma/client";
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { assignPartnerToOrder } from "@/lib/services/partner.service";
+import { requirePermission } from "@/lib/server-auth";
 
-function generateNumber() {
-  const year = new Date().getFullYear();
-  const random = Math.floor(1000 + Math.random() * 9000);
+type Context={params:Promise<{id:string}>};
+const include={client:true,partner:true,measurements:true,payments:true,productions:true,events:{orderBy:{createdAt:"desc"}}} satisfies Prisma.OrderInclude;
+const idOf=(value:string)=>{const id=Number(value);return Number.isInteger(id)&&id>0?id:null};
+async function partnerScope(userId:string){return prisma.partner.findUnique({where:{userId:Number(userId)},select:{id:true}})}
+async function canAccess(id:number,role:Role,userId:string){if(role!==Role.PARTNER)return true;const partner=await partnerScope(userId);return !!partner&&!!await prisma.order.findFirst({where:{id,partnerId:partner.id},select:{id:true}})}
 
-  return `ORDA-${year}-${random}`;
-}
+export async function GET(_:Request,{params}:Context){const auth=await requirePermission("orders");if(auth.response)return auth.response;const id=idOf((await params).id);if(!id)return NextResponse.json({error:"Некорректный id"},{status:400});if(!await canAccess(id,auth.session!.user.role as Role,auth.session!.user.id))return NextResponse.json({error:"Заказ не найден"},{status:404});const order=await prisma.order.findUnique({where:{id},include});return order?NextResponse.json(order):NextResponse.json({error:"Заказ не найден"},{status:404});}
 
-export async function GET() {
-  const orders = await prisma.order.findMany({
-    include: {
-      client: true,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+export async function PATCH(request:Request,{params}:Context){const auth=await requirePermission("orders");if(auth.response)return auth.response;const id=idOf((await params).id);if(!id)return NextResponse.json({error:"Некорректный id"},{status:400});const role=auth.session!.user.role as Role;if(!await canAccess(id,role,auth.session!.user.id))return NextResponse.json({error:"Заказ не найден"},{status:404});try{const body=await request.json() as Record<string,unknown>;if(!body||typeof body!=="object")return NextResponse.json({error:"Некорректные данные"},{status:400});const forbidden=["prepayment","balance","partnerPaid","partnerBalance","companyProfit"];if(forbidden.some(key=>key in body))return NextResponse.json({error:"Вычисляемые финансовые поля изменяются только через операции"},{status:400});if(role===Role.PARTNER&&(["partnerId","partnerPrice","amount","action"] as const).some(key=>key in body))return NextResponse.json({error:"Недостаточно прав"},{status:403});if(body.action==="assignPartner"){if(role===Role.PARTNER)return NextResponse.json({error:"Недостаточно прав"},{status:403});const partnerId=Number(body.partnerId),partnerPrice=Number(body.partnerPrice);if(!Number.isInteger(partnerId)||partnerId<=0||!Number.isFinite(partnerPrice)||partnerPrice<0)return NextResponse.json({error:"Некорректные данные партнёра"},{status:400});const updated=await assignPartnerToOrder({orderId:id,partnerId,partnerPrice,manager:auth.session!.user.name??undefined});return updated?NextResponse.json(updated):NextResponse.json({error:"Заказ или партнёр не найден"},{status:404});}
+const data:Prisma.OrderUncheckedUpdateInput={};for(const key of ["status","address","material","staircase","manager"] as const)if(typeof body[key]==="string")data[key]=body[key];if("amount" in body){const amount=Number(body.amount);if(!Number.isFinite(amount)||amount<0)return NextResponse.json({error:"Некорректная стоимость"},{status:400});data.amount=String(amount)}
+const nextStatus=typeof data.status==="string"?data.status:undefined;const updated=await prisma.$transaction(async tx=>{const current=await tx.order.findUnique({where:{id},select:{status:true}});if(!current)return null;await tx.order.update({where:{id},data});if(nextStatus&&nextStatus!==current.status){await tx.orderEvent.create({data:{orderId:id,title:"Статус заказа изменён",description:`Новый статус: ${nextStatus}`,user:auth.session!.user.name??"Система"}});const production=await tx.production.findFirst({where:{orderId:id},orderBy:{createdAt:"desc"}});if(production)await tx.production.update({where:{id:production.id},data:{stage:nextStatus}})}return tx.order.findUnique({where:{id},include})});return updated?NextResponse.json(updated):NextResponse.json({error:"Заказ не найден"},{status:404});}catch(error){console.error(error);return NextResponse.json({error:"Не удалось обновить заказ"},{status:500});}}
 
-  return NextResponse.json(orders);
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-
-    const order = await prisma.order.create({
-      data: {
-        number: generateNumber(),
-
-        clientId: body.clientId,
-
-        address: body.address,
-        staircase: body.staircase,
-        material: body.material,
-
-        amount: body.amount,
-
-        prepayment: "0",
-        balance: body.amount,
-
-        manager: "Bekzat",
-
-        status: "Новая заявка",
-      },
-
-      include: {
-        client: true,
-      },
-    });
-
-    await prisma.production.create({
-      data: {
-        orderId: order.id,
-        stage: "Ожидание",
-        percent: 0,
-        master: "",
-      },
-    });
-
-    return NextResponse.json(order);
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        message: "Ошибка создания заказа",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
-}
+export async function DELETE(_:Request,{params}:Context){const auth=await requirePermission("orders");if(auth.response)return auth.response;if((auth.session!.user.role as Role)!==Role.DIRECTOR)return NextResponse.json({error:"Недостаточно прав"},{status:403});const id=idOf((await params).id);if(!id)return NextResponse.json({error:"Некорректный id"},{status:400});const deleted=await prisma.$transaction(async tx=>{const order=await tx.order.findUnique({where:{id},select:{id:true}});if(!order)return null;await tx.orderEvent.deleteMany({where:{orderId:id}});await tx.measurement.deleteMany({where:{orderId:id}});await tx.payment.deleteMany({where:{orderId:id}});await tx.production.deleteMany({where:{orderId:id}});return tx.order.delete({where:{id}})});return deleted?NextResponse.json(deleted):NextResponse.json({error:"Заказ не найден"},{status:404});}

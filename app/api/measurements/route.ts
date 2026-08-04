@@ -1,55 +1,7 @@
+import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requirePermission } from "@/lib/server-auth";
 
-// Получить все замеры
-export async function GET() {
-  try {
-    const measurements = await prisma.measurement.findMany({
-      include: {
-        order: {
-          include: {
-            client: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
-
-    return NextResponse.json(measurements);
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Ошибка получения замеров" },
-      { status: 500 }
-    );
-  }
-}
-
-// Создать новый замер
-export async function POST(req: Request) {
-  try {
-    const body = await req.json();
-
-    const measurement = await prisma.measurement.create({
-      data: {
-        orderId: body.orderId,
-        measurer: body.measurer,
-        visitDate: new Date(body.visitDate),
-
-        floorHeight: body.floorHeight,
-        staircaseWidth: body.staircaseWidth,
-        stepsCount: body.stepsCount,
-
-        comment: body.comment,
-      },
-    });
-
-    return NextResponse.json(measurement);
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Ошибка создания замера" },
-      { status: 500 }
-    );
-  }
-}
+export async function GET(){const auth=await requirePermission("measurements");if(auth.response)return auth.response;const role=auth.session!.user.role;const userId=Number(auth.session!.user.id);const measurements=await prisma.measurement.findMany({where:role===Role.MEASURER?{measurerUserId:userId}:undefined,include:{measurerUser:{select:{id:true,name:true}},order:{include:{client:true}}},orderBy:{createdAt:"desc"}});return NextResponse.json(measurements);}
+export async function POST(request:Request){const auth=await requirePermission("measurements");if(auth.response)return auth.response;try{const b=await request.json() as Record<string,unknown>;const orderId=Number(b.orderId),measurerUserId=Number(b.measurerUserId),visitDate=new Date(String(b.visitDate));if(!Number.isInteger(orderId)||orderId<=0||!Number.isInteger(measurerUserId)||measurerUserId<=0||Number.isNaN(visitDate.getTime()))return NextResponse.json({error:"Некорректные данные замера"},{status:400});const user=await prisma.user.findUnique({where:{id:measurerUserId}});if(!user)return NextResponse.json({error:"Замерщик не найден"},{status:404});const allowed:Role[]=[Role.MEASURER,Role.DIRECTOR];if(!user.active||!allowed.includes(user.role))return NextResponse.json({error:"Пользователь не может быть замерщиком"},{status:409});if(auth.session!.user.role===Role.MEASURER&&Number(auth.session!.user.id)!==user.id)return NextResponse.json({error:"Нельзя назначать другого замерщика"},{status:403});const order=await prisma.order.findUnique({where:{id:orderId},select:{id:true}});if(!order)return NextResponse.json({error:"Заказ не найден"},{status:404});const measurement=await prisma.measurement.create({data:{orderId,measurerUserId:user.id,measurer:user.name,visitDate,floorHeight:typeof b.floorHeight==="number"?b.floorHeight:undefined,staircaseWidth:typeof b.staircaseWidth==="number"?b.staircaseWidth:undefined,stepsCount:typeof b.stepsCount==="number"?b.stepsCount:undefined,comment:typeof b.comment==="string"?b.comment:undefined},include:{measurerUser:{select:{id:true,name:true}},order:{include:{client:true}}}});await prisma.orderEvent.create({data:{orderId,title:"Назначен замер",description:`${user.name} • ${visitDate.toLocaleDateString("ru-RU")}`,user:auth.session!.user.name}});return NextResponse.json(measurement,{status:201});}catch(error){console.error(error);return NextResponse.json({error:"Не удалось создать замер"},{status:500});}}

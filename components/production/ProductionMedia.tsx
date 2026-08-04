@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 
 interface MediaFile {
   id: number;
@@ -71,10 +72,13 @@ export default function ProductionMedia() {
           >
 
             {file.type === "image" ? (
-              <img
+              <Image
                 src={file.url}
                 alt={file.name}
                 className="h-52 w-full object-cover"
+                width={640}
+                height={208}
+                unoptimized
               />
             ) : (
               <video

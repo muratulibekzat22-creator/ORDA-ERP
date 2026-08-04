@@ -4,8 +4,10 @@ import {
   getSettings,
   updateSettings,
 } from "@/lib/services/settings.service";
+import { requirePermission } from "@/lib/server-auth";
 
 export async function GET() {
+  const auth=await requirePermission("settings");if(auth.response)return auth.response;
   try {
     const settings = await getSettings();
 
@@ -27,6 +29,7 @@ export async function GET() {
 export async function PUT(
   request: NextRequest
 ) {
+  const auth=await requirePermission("settings");if(auth.response)return auth.response;
   try {
     const body = await request.json();
 

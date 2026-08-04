@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import ClientSearch from "@/components/clients/ClientSearch";
 import ClientTable from "@/components/clients/ClientTable";
@@ -16,7 +16,7 @@ export default function ClientsPage() {
   const [pages, setPages] = useState(1);
   const [open, setOpen] = useState(false);
 
-  async function loadClients() {
+  const loadClients = useCallback(async () => {
     try {
       const params = new URLSearchParams();
 
@@ -44,11 +44,12 @@ export default function ClientsPage() {
     } catch (error) {
       console.error(error);
     }
-  }
+  }, [page, search, status]);
 
   useEffect(() => {
-    loadClients();
-  }, [search, status, page]);
+    const timer = window.setTimeout(() => void loadClients(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadClients]);
 
   async function addClient(client: {
     name: string;

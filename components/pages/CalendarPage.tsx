@@ -1,213 +1,165 @@
 "use client";
 
-import {
-  CalendarDays,
-  Plus,
-  Clock3,
-  Ruler,
-  Hammer,
-  Factory,
-  Users,
-} from "lucide-react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
-const events = [
-  {
-    id: 1,
-    date: "05.08.2026",
-    time: "10:00",
-    title: "Замер",
-    client: "ТОО Астана Дом",
-    manager: "Бекзат",
-    color: "bg-blue-600",
-    icon: Ruler,
-  },
-  {
-    id: 2,
-    date: "05.08.2026",
-    time: "14:00",
-    title: "Производство",
-    client: "Villa House",
-    manager: "Ержан",
-    color: "bg-purple-600",
-    icon: Factory,
-  },
-  {
-    id: 3,
-    date: "06.08.2026",
-    time: "09:00",
-    title: "Монтаж",
-    client: "Restaurant Talgar",
-    manager: "Нурлан",
-    color: "bg-green-600",
-    icon: Hammer,
-  },
-  {
-    id: 4,
-    date: "06.08.2026",
-    time: "16:30",
-    title: "Встреча",
-    client: "Premium House",
-    manager: "Бекзат",
-    color: "bg-orange-600",
-    icon: Users,
-  },
-];
+type User = { id: number; name: string; role: string; active: boolean };
+type CalendarEvent = {
+  id: string;
+  sourceType: "measurement" | "production";
+  orderId: number;
+  title: string;
+  stage: string;
+  startDate: string;
+  assignedUserId: number | null;
+  assignedUserName: string | null;
+  legacyAssignedName: string;
+  client: string;
+};
+type Data = {
+  events: CalendarEvent[];
+  orders: { id: number; number: string; client: string }[];
+  filters: { assignees: { id: number; name: string }[] };
+};
+
+const empty: Data = { events: [], orders: [], filters: { assignees: [] } };
 
 export default function CalendarPage() {
+  const { getKey, reset } = useIdempotencyKey();
+  const [data, setData] = useState<Data>(empty);
+  const [users, setUsers] = useState<User[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [assignee, setAssignee] = useState("");
+  const [form, setForm] = useState({
+    sourceType: "measurement" as "measurement" | "production",
+    orderId: "",
+    startDate: "",
+    assignedUserId: "",
+    stage: "Проектирование",
+    comment: "",
+  });
+
+  const load = useCallback(async () => {
+    const [calendarResponse, employeesResponse] = await Promise.all([
+      fetch(`/api/calendar${assignee ? `?assignedUserId=${assignee}` : ""}`),
+      fetch("/api/employees"),
+    ]);
+    if (!calendarResponse.ok || !employeesResponse.ok) {
+      throw new Error("Не удалось загрузить календарь");
+    }
+
+    const [nextData, nextUsers] = await Promise.all([
+      calendarResponse.json() as Promise<Data>,
+      employeesResponse.json() as Promise<User[]>,
+    ]);
+    setData(nextData);
+    setUsers(nextUsers.filter((user) => user.active));
+  }, [assignee]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load()
+        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Ошибка"))
+        .finally(() => setLoading(false));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const candidates = users.filter((user) => {
+    if (form.sourceType === "measurement") {
+      return ["MEASURER", "DIRECTOR"].includes(user.role);
+    }
+    return form.stage === "Монтаж"
+      ? ["INSTALLER", "DIRECTOR"].includes(user.role)
+      : ["PRODUCTION", "DIRECTOR"].includes(user.role);
+  });
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setCreating(true);
+    setError("");
+    try {
+      const response = await fetch("/api/calendar", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": getKey(),
+        },
+        body: JSON.stringify({
+          ...form,
+          orderId: Number(form.orderId),
+          assignedUserId: Number(form.assignedUserId),
+        }),
+      });
+      if (!response.ok) {
+        setError((await response.json() as { error?: string }).error ?? "Ошибка");
+        return;
+      }
+
+      reset();
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Ошибка");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function drop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const item = JSON.parse(event.dataTransfer.getData("event")) as Pick<CalendarEvent, "id" | "sourceType">;
+    const response = await fetch("/api/calendar", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...item, id: Number(item.id), startDate: new Date().toISOString() }),
+    });
+    if (!response.ok) {
+      setError("Не удалось перенести событие");
+      return;
+    }
+    await load();
+  }
+
   return (
-    <section className="flex-1 overflow-auto p-8">
-
-      <div className="mb-8 flex items-center justify-between">
-
-        <div>
-
-          <h1 className="text-3xl font-bold text-white">
-            Календарь
-          </h1>
-
-          <p className="mt-2 text-slate-400">
-            Замеры, производство, монтажи и встречи
-          </p>
-
+    <section className="p-8">
+      <h1 className="text-3xl font-bold text-white">Календарь</h1>
+      {error && <p className="text-red-400">{error}</p>}
+      <select value={assignee} onChange={(event) => { setLoading(true); setAssignee(event.target.value); }}>
+        <option value="">Все исполнители</option>
+        {data.filters.assignees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <form onSubmit={create} className="mt-4 grid gap-2">
+        <select value={form.sourceType} onChange={(event) => setForm({ ...form, sourceType: event.target.value as "measurement" | "production", assignedUserId: "" })}>
+          <option value="measurement">Замер</option>
+          <option value="production">Производство</option>
+        </select>
+        <select required value={form.orderId} onChange={(event) => setForm({ ...form, orderId: event.target.value })}>
+          <option value="">Заказ</option>
+          {data.orders.map((item) => <option key={item.id} value={item.id}>{item.number}</option>)}
+        </select>
+        <input required type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} />
+        {form.sourceType === "production" && (
+          <select value={form.stage} onChange={(event) => setForm({ ...form, stage: event.target.value, assignedUserId: "" })}>
+            {["Проектирование", "Заготовка", "Покраска", "Монтаж", "Сдано"].map((stage) => <option key={stage}>{stage}</option>)}
+          </select>
+        )}
+        <select required value={form.assignedUserId} onChange={(event) => setForm({ ...form, assignedUserId: event.target.value })}>
+          <option value="">Исполнитель</option>
+          {candidates.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+        </select>
+        <button disabled={creating}>{creating ? "Создание..." : "Создать"}</button>
+      </form>
+      {loading ? "Загрузка..." : (
+        <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => void drop(event)} className="mt-6 space-y-2">
+          {data.events.map((item) => (
+            <div draggable onDragStart={(event) => event.dataTransfer.setData("event", JSON.stringify({ id: item.id, sourceType: item.sourceType }))} key={`${item.sourceType}-${item.id}`}>
+              {item.title} — {item.assignedUserName ?? item.legacyAssignedName}
+            </div>
+          ))}
         </div>
-
-        <button className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-white hover:bg-blue-700">
-
-          <Plus size={18} />
-
-          Новое событие
-
-        </button>
-
-      </div>
-
-      <div className="mb-8 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-
-        <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
-
-          <CalendarDays className="mb-4 text-blue-400" />
-
-          <p className="text-slate-400">
-            Событий сегодня
-          </p>
-
-          <h2 className="mt-2 text-4xl font-bold text-white">
-            4
-          </h2>
-
-        </div>
-
-        <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
-
-          <Ruler className="mb-4 text-yellow-400" />
-
-          <p className="text-slate-400">
-            Замеры
-          </p>
-
-          <h2 className="mt-2 text-4xl font-bold text-yellow-400">
-            1
-          </h2>
-
-        </div>
-
-        <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
-
-          <Factory className="mb-4 text-purple-400" />
-
-          <p className="text-slate-400">
-            Производство
-          </p>
-
-          <h2 className="mt-2 text-4xl font-bold text-purple-400">
-            1
-          </h2>
-
-        </div>
-
-        <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
-
-          <Hammer className="mb-4 text-green-400" />
-
-          <p className="text-slate-400">
-            Монтаж
-          </p>
-
-          <h2 className="mt-2 text-4xl font-bold text-green-400">
-            1
-          </h2>
-
-        </div>
-
-      </div>
-
-      <div className="rounded-2xl border border-slate-700 bg-[#101827]">
-
-        <div className="border-b border-slate-700 p-6">
-
-          <h2 className="text-2xl font-bold text-white">
-            Расписание
-          </h2>
-
-        </div>
-
-        <div className="divide-y divide-slate-800">
-
-          {events.map((event) => {
-            const Icon = event.icon;
-
-            return (
-              <div
-                key={event.id}
-                className="flex items-center justify-between p-6 hover:bg-slate-900"
-              >
-
-                <div className="flex items-center gap-5">
-
-                  <div
-                    className={`flex h-14 w-14 items-center justify-center rounded-2xl ${event.color}`}
-                  >
-                    <Icon size={24} />
-                  </div>
-
-                  <div>
-
-                    <h3 className="text-lg font-semibold text-white">
-                      {event.title}
-                    </h3>
-
-                    <p className="text-slate-400">
-                      {event.client}
-                    </p>
-
-                  </div>
-
-                </div>
-
-                <div className="text-right">
-
-                  <div className="flex items-center justify-end gap-2 text-slate-300">
-
-                    <Clock3 size={16} />
-
-                    {event.date} • {event.time}
-
-                  </div>
-
-                  <p className="mt-2 text-sm text-cyan-400">
-                    Ответственный: {event.manager}
-                  </p>
-
-                </div>
-
-              </div>
-            );
-          })}
-
-        </div>
-
-      </div>
-
+      )}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import OrderForm from "@/components/orders/OrderForm";
 import OrderTable from "@/components/orders/OrderTable";
@@ -9,7 +9,7 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     setLoading(true);
 
     try {
@@ -23,11 +23,12 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    loadOrders();
-  }, []);
+    const timer = window.setTimeout(() => void loadOrders(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadOrders]);
 
   return (
     <section className="space-y-8 p-8">

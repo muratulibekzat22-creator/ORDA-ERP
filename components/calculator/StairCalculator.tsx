@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export default function StairCalculator() {
   const [steps, setSteps] = useState(20);
@@ -20,20 +20,7 @@ export default function StairCalculator() {
   const [profit, setProfit] = useState(0);
   const [margin, setMargin] = useState(0);
 
-  useEffect(() => {
-    calculate();
-  }, [
-    steps,
-    platforms,
-    material,
-    railing,
-    led,
-    painting,
-    installation,
-    delivery,
-  ]);
-
-  function calculate() {
+  const calculate = useCallback(() => {
     let stepPrice = 85000;
     let costStep = 50000;
 
@@ -104,7 +91,12 @@ export default function StairCalculator() {
         ? Number(((p / sale) * 100).toFixed(1))
         : 0
     );
-  }
+  }, [steps, platforms, material, railing, led, painting, installation, delivery]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(calculate, 0);
+    return () => window.clearTimeout(timer);
+  }, [calculate]);
 
   return (
     <div className="space-y-6">

@@ -1,20 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import DashboardStats from "@/components/dashboard/DashboardStats";
 import OrderTable from "@/components/orders/OrderTable";
 
+type DashboardClient = { id: number; name: string; phone: string };
+type DashboardOrder = { id: number; number: string; amount: string; client: { name: string; phone: string }; material: string; staircase: string; prepayment: string; balance: string; manager: string; status: string };
+type DashboardProduction = { id: number; stage: string; percent: number; order: { number: string } };
+
 export default function DashboardPage() {
-  const [clients, setClients] = useState<any[]>([]);
-  const [orders, setOrders] = useState<any[]>([]);
-  const [productions, setProductions] = useState<any[]>([]);
+  const [clients, setClients] = useState<DashboardClient[]>([]);
+  const [orders, setOrders] = useState<DashboardOrder[]>([]);
+  const [productions, setProductions] = useState<DashboardProduction[]>([]);
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  async function loadDashboard() {
+  const loadDashboard = useCallback(async () => {
     const [clientsRes, ordersRes, productionRes] =
       await Promise.all([
         fetch("/api/clients"),
@@ -29,13 +29,18 @@ export default function DashboardPage() {
     )
       return;
 
-    setClients(await clientsRes.json());
-    setOrders(await ordersRes.json());
-    setProductions(await productionRes.json());
-  }
+    setClients(await clientsRes.json() as DashboardClient[]);
+    setOrders(await ordersRes.json() as DashboardOrder[]);
+    setProductions(await productionRes.json() as DashboardProduction[]);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadDashboard(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadDashboard]);
 
   const totalRevenue = orders.reduce(
-    (sum: number, order: any) =>
+    (sum: number, order) =>
       sum + Number(order.amount),
     0
   );
@@ -72,7 +77,7 @@ export default function DashboardPage() {
 
           <div className="space-y-4">
 
-            {clients.slice(0, 5).map((client: any) => (
+            {clients.slice(0, 5).map((client) => (
 
               <div
                 key={client.id}
@@ -103,7 +108,7 @@ export default function DashboardPage() {
 
           <div className="space-y-4">
 
-            {productions.slice(0, 5).map((item: any) => (
+            {productions.slice(0, 5).map((item) => (
 
               <div
                 key={item.id}

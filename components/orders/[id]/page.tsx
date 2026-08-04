@@ -42,9 +42,20 @@ export default async function OrderPage({ params }: Props) {
 
       <ProjectTabs />
 
-      <ProjectInfo order={order} />
+      <ProjectInfo
+        client={order.client}
+        address={order.address}
+        material={order.material}
+        staircase={order.staircase}
+        manager={order.manager}
+        created={order.createdAt.toLocaleDateString("ru-RU")}
+      />
 
-      <ProjectFinance order={order} />
+      <ProjectFinance
+        amount={String(order.amount)}
+        prepayment={String(order.prepayment)}
+        balance={String(order.balance)}
+      />
 
       <ProjectMeasurement orderId={order.id} />
 

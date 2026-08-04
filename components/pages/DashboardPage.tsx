@@ -1,5 +1,5 @@
 import StatCard from "@/components/dashboard/StatCard";
-import OrdersTable from "@/components/OrdersTable";
+import OrdersTable from "@/components/dashboard/OrdersTable";
 
 export default function DashboardPage() {
   const stats = [

@@ -1,6 +1,6 @@
 "use client";
 
-import { Factory, Plus } from "lucide-react";
+import { Factory } from "lucide-react";
 
 const jobs = [
   {
@@ -67,6 +67,10 @@ const jobs = [
     deadline: "03.08.2026",
   },
 ];
+
+export default function ProductionPage() {
+  return (
+    <>
 <div className="mb-8 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
 
 <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
@@ -239,3 +243,7 @@ const jobs = [
   </div>
 
 </div>
+
+    </>
+  );
+}

@@ -1,0 +1,10 @@
+ALTER TABLE "Payment" ADD COLUMN "idempotencyKey" TEXT;
+ALTER TABLE "MaterialMovement" ADD COLUMN "idempotencyKey" TEXT;
+ALTER TABLE "Measurement" ADD COLUMN "idempotencyKey" TEXT;
+ALTER TABLE "Production" ADD COLUMN "idempotencyKey" TEXT;
+ALTER TABLE "OrderEvent" ADD COLUMN "idempotencyKey" TEXT;
+CREATE UNIQUE INDEX "Payment_idempotencyKey_key" ON "Payment"("idempotencyKey");
+CREATE UNIQUE INDEX "MaterialMovement_idempotencyKey_key" ON "MaterialMovement"("idempotencyKey");
+CREATE UNIQUE INDEX "Measurement_idempotencyKey_key" ON "Measurement"("idempotencyKey");
+CREATE UNIQUE INDEX "Production_idempotencyKey_key" ON "Production"("idempotencyKey");
+CREATE UNIQUE INDEX "OrderEvent_idempotencyKey_key" ON "OrderEvent"("idempotencyKey");

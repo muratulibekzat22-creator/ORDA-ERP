@@ -6,10 +6,15 @@ import {
 } from "@/lib/services/order.service";
 
 import { calculateOrder } from "@/lib/services/calculator.service";
+import { requirePermission } from "@/lib/server-auth";
+import { Role } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 
 export async function GET() {
+  const auth=await requirePermission("orders"); if(auth.response)return auth.response;
   try {
-    const orders = await getOrders();
+    const partner=auth.session!.user.role===Role.PARTNER?await prisma.partner.findUnique({where:{userId:Number(auth.session!.user.id)},select:{id:true}}):null;
+    const orders = partner ? await prisma.order.findMany({where:{partnerId:partner.id},include:{client:true,partner:true,payments:true},orderBy:{createdAt:"desc"}}) : await getOrders();
 
     return NextResponse.json(orders);
   } catch {
@@ -21,6 +26,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth=await requirePermission("orders"); if(auth.response)return auth.response;
+  if(auth.session!.user.role===Role.PARTNER)return NextResponse.json({error:"Недостаточно прав"},{status:403});
   try {
     const body = await req.json();
 

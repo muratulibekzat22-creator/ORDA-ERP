@@ -15,6 +15,7 @@ import FinancePage from "@/components/pages/FinancePage";
 import ReportsPage from "@/components/pages/ReportsPage";
 import DocumentsPage from "@/components/pages/DocumentsPage";
 import CalendarPage from "@/components/pages/CalendarPage";
+import EmployeesPage from "@/components/pages/EmployeesPage";
 
 function StubPage({
   title,
@@ -79,7 +80,9 @@ export default function Home() {
 
           {page === "calendar" && <CalendarPage />}
 
-          {page === "employees" && (
+          {page === "employees" && <EmployeesPage />}
+
+          {false && page === "employees" && (
             <StubPage
               title="Сотрудники"
               description="Менеджеры, мастера, партнеры, роли пользователей, KPI и заработная плата."

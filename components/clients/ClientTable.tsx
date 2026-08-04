@@ -31,17 +31,12 @@ export default function ClientTable({ clients }: Props) {
   const [asc, setAsc] = useState(true);
 
   const sortedClients = useMemo(() => {
-    return [...clients].sort((a: any, b: any) => {
+    return [...clients].sort((a, b) => {
       const av = a[sortBy];
       const bv = b[sortBy];
 
-      if (typeof av === "string") {
-        return asc
-          ? av.localeCompare(bv)
-          : bv.localeCompare(av);
-      }
-
-      return asc ? av - bv : bv - av;
+      const comparison = String(av).localeCompare(String(bv));
+      return asc ? comparison : -comparison;
     });
   }, [clients, sortBy, asc]);
 

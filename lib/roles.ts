@@ -1,7 +1,2 @@
-export enum Role {
-    DIRECTOR = "DIRECTOR",
-    MANAGER = "MANAGER",
-    ACCOUNTANT = "ACCOUNTANT",
-    PARTNER = "PARTNER",
-    PRODUCTION = "PRODUCTION",
-  }
+export enum Role { DIRECTOR="DIRECTOR", MANAGER="MANAGER", ACCOUNTANT="ACCOUNTANT", MEASURER="MEASURER", DESIGNER="DESIGNER", PRODUCTION="PRODUCTION", INSTALLER="INSTALLER", PARTNER="PARTNER" }
+export const roleNames:Record<Role,string>={DIRECTOR:"Директор",MANAGER:"Менеджер",ACCOUNTANT:"Бухгалтер",MEASURER:"Замерщик",DESIGNER:"Конструктор",PRODUCTION:"Производство",INSTALLER:"Монтажник",PARTNER:"Партнёр"};

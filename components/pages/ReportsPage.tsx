@@ -1,15 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { DirectorReport } from "@/lib/types";
 
 export default function ReportsPage() {
-  const [report, setReport] = useState<any>(null);
-
-  useEffect(() => {
-    loadReport();
-  }, []);
-
-  async function loadReport() {
+  const [report, setReport] = useState<DirectorReport | null>(null);
+  const loadReport = useCallback(async () => {
     try {
       const response = await fetch("/api/reports");
 
@@ -17,13 +13,18 @@ export default function ReportsPage() {
         throw new Error("Ошибка загрузки отчета");
       }
 
-      const data = await response.json();
+      const data = await response.json() as DirectorReport;
 
       setReport(data);
     } catch (error) {
       console.error(error);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadReport(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadReport]);
 
   if (!report) {
     return (

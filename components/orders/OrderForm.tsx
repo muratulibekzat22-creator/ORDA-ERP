@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 interface Client {
   id: number;
@@ -52,19 +52,7 @@ export default function OrderForm({ onSave }: Props) {
     loadClients();
   }, []);
 
-  useEffect(() => {
-    calculate();
-  }, [
-    steps,
-    platforms,
-    material,
-    railing,
-    led,
-    painting,
-    installation,
-  ]);
-
-  function calculate() {
+  const calculate = useCallback(() => {
     let stepPrice = 85000;
 
     if (material === "Сосна") stepPrice = 65000;
@@ -84,7 +72,12 @@ export default function OrderForm({ onSave }: Props) {
     if (installation) total += 350000;
 
     setAmount(total);
-  }
+  }, [steps, platforms, material, railing, led, painting, installation]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(calculate, 0);
+    return () => window.clearTimeout(timer);
+  }, [calculate]);
 
   async function save() {
     const response = await fetch("/api/orders", {

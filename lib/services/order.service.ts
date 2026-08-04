@@ -75,6 +75,15 @@ export async function createOrder(data: {
     },
   });
 
+  await prisma.production.create({
+    data: {
+      orderId: order.id,
+      stage: data.status,
+      percent: 0,
+      master: "",
+    },
+  });
+
   return order;
 }
 

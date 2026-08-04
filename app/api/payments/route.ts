@@ -1,20 +1,19 @@
 import { NextResponse } from "next/server";
+import {
+  createPayment,
+  getPayments,
+} from "@/lib/services/payment.service";
+import { requirePermission } from "@/lib/server-auth";
+import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { compareRequestHash, createRequestHash, idempotencyConflict, isPrismaUniqueConflict, readIdempotencyKey } from "@/lib/idempotency";
 
 export async function GET() {
+  const auth = await requirePermission("finance");
+  if (auth.response) return auth.response;
   try {
-    const payments = await prisma.payment.findMany({
-      include: {
-        order: {
-          include: {
-            client: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const partner = auth.session!.user.role === Role.PARTNER ? await prisma.partner.findUnique({ where: { userId: Number(auth.session!.user.id) }, select: { id: true } }) : null;
+    const payments = partner ? await prisma.payment.findMany({ where: { order: { partnerId: partner.id } }, include: { order: { include: { client: true } } }, orderBy: { createdAt: "desc" } }) : await getPayments();
 
     return NextResponse.json(payments);
   } catch (error) {
@@ -32,64 +31,80 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requirePermission("finance");
+  if (auth.response) return auth.response;
+  const idempotency=readIdempotencyKey(req);if("response" in idempotency)return idempotency.response;
+  let hash = "";
   try {
-    const body = await req.json();
+    const body: unknown = await req.json();
 
-    const payment = await prisma.payment.create({
-      data: {
-        orderId: Number(body.orderId),
-        amount: Number(body.amount),
-        type: body.type,
-        method: body.method,
-        comment: body.comment,
-      },
-    });
-
-    const order = await prisma.order.findUnique({
-      where: {
-        id: Number(body.orderId),
-      },
-    });
-
-    if (!order) {
+    if (!body || typeof body !== "object") {
       return NextResponse.json(
         {
-          error: "Заказ не найден",
+          error: "Некорректные данные оплаты",
         },
         {
-          status: 404,
+          status: 400,
         }
       );
     }
 
-    const prepayment =
-      Number(order.prepayment) + Number(body.amount);
+    const values = body as Record<string, unknown>;
+    const orderId = Number(values.orderId);
+    const amount = Number(values.amount);
+    hash=createRequestHash({orderId,amount,type:values.type,method:values.method,comment:values.comment??null});
 
-    const balance =
-      Number(order.amount) - prepayment;
+    if (!Number.isInteger(orderId) || orderId <= 0 || !Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json(
+        {
+          error: "Укажите корректные сумму и заказ",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
 
-    await prisma.order.update({
-      where: {
-        id: order.id,
-      },
-      data: {
-        prepayment: String(prepayment),
-        balance: String(Math.max(balance, 0)),
-      },
+    if (auth.session!.user.role === Role.PARTNER) {
+      const partner = await prisma.partner.findUnique({ where: { userId: Number(auth.session!.user.id) }, select: { id: true } });
+      if (!partner || !await prisma.order.findFirst({ where: { id: orderId, partnerId: partner.id }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+    }
+
+    if (values.type !== "Предоплата" && values.type !== "Доплата") {
+      return NextResponse.json({ error: "Некорректный тип оплаты" }, { status: 400 });
+    }
+
+    if (
+      values.method !== "Наличные" &&
+      values.method !== "Kaspi" &&
+      values.method !== "Банковский перевод"
+    ) {
+      return NextResponse.json({ error: "Некорректный способ оплаты" }, { status: 400 });
+    }
+
+    const payment = await createPayment({
+      orderId,
+      amount,
+      type: values.type,
+      method: values.method,
+      comment: typeof values.comment === "string" ? values.comment.trim() || undefined : undefined,
+      idempotencyKey:idempotency.key,
+      requestHash:hash,
     });
 
-    await prisma.orderEvent.create({
-      data: {
-        orderId: order.id,
-        title: "Получена оплата",
-        description: `${Number(body.amount).toLocaleString("ru-RU")} ₸ • ${body.method}`,
-        user: body.user ?? "Система",
-      },
-    });
+    if (!payment) {
+      return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+    }
 
     return NextResponse.json(payment);
   } catch (error) {
     console.error(error);
+
+    if (error instanceof Error && error.message === "PAYMENT_EXCEEDS_BALANCE") {
+      return NextResponse.json({ error: "Оплата превышает остаток заказа" }, { status: 409 });
+    }
+    if(error instanceof Error&&error.message==="IDEMPOTENCY_CONFLICT")return idempotencyConflict();
+    if(isPrismaUniqueConflict(error)){const existing=await prisma.payment.findUnique({where:{idempotencyKey:idempotency.key}});if(existing&&compareRequestHash(existing.requestHash,hash))return NextResponse.json({payment:existing,order:await prisma.order.findUniqueOrThrow({where:{id:existing.orderId}})});return idempotencyConflict();}
 
     return NextResponse.json(
       {

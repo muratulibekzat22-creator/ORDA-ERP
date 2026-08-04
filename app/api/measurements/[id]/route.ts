@@ -1,0 +1,14 @@
+import { Role } from "@prisma/client";
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requirePermission } from "@/lib/server-auth";
+
+export async function PATCH(request:Request,{params}:{params:Promise<{id:string}>}) {
+ const auth=await requirePermission("measurements");if(auth.response)return auth.response;
+ const id=Number((await params).id);if(!Number.isInteger(id)||id<=0)return NextResponse.json({error:"Некорректный id"},{status:400});
+ try {const body=await request.json() as Record<string,unknown>;const current=await prisma.measurement.findUnique({where:{id}});if(!current)return NextResponse.json({error:"Замер не найден"},{status:404});if(auth.session!.user.role===Role.MEASURER&&current.measurerUserId!==Number(auth.session!.user.id))return NextResponse.json({error:"Недостаточно прав"},{status:403});
+ const data:{visitDate?:Date;floorHeight?:number;staircaseWidth?:number;stepsCount?:number;comment?:string;measurerUserId?:number;measurer?:string}={};if(body.visitDate!==undefined){const date=new Date(String(body.visitDate));if(Number.isNaN(date.getTime()))return NextResponse.json({error:"Некорректная дата"},{status:400});data.visitDate=date;}for(const key of ["floorHeight","staircaseWidth"] as const)if(body[key]!==undefined){const value=Number(body[key]);if(!Number.isFinite(value))return NextResponse.json({error:"Некорректные данные"},{status:400});data[key]=value;}if(body.stepsCount!==undefined){const value=Number(body.stepsCount);if(!Number.isInteger(value)||value<0)return NextResponse.json({error:"Некорректные данные"},{status:400});data.stepsCount=value;}if(typeof body.comment==="string")data.comment=body.comment;
+ if(body.measurerUserId!==undefined){const userId=Number(body.measurerUserId);if(!Number.isInteger(userId)||userId<=0)return NextResponse.json({error:"Некорректный замерщик"},{status:400});if(auth.session!.user.role===Role.MEASURER&&userId!==Number(auth.session!.user.id))return NextResponse.json({error:"Недостаточно прав"},{status:403});const user=await prisma.user.findUnique({where:{id:userId}});const allowed:Role[]=[Role.MEASURER,Role.DIRECTOR];if(!user)return NextResponse.json({error:"Замерщик не найден"},{status:404});if(!user.active||!allowed.includes(user.role))return NextResponse.json({error:"Пользователь не может быть замерщиком"},{status:409});data.measurerUserId=user.id;data.measurer=user.name;}
+ const result=await prisma.$transaction(async tx=>{const measurement=await tx.measurement.update({where:{id},data,include:{measurerUser:{select:{id:true,name:true}},order:{include:{client:true}}}});await tx.orderEvent.create({data:{orderId:measurement.orderId,title:"Замер изменён",user:auth.session!.user.name??"Система"}});return measurement;});return NextResponse.json(result);
+ }catch(error){console.error(error);return NextResponse.json({error:"Не удалось обновить замер"},{status:500});}
+}

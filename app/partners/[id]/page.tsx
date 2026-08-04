@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import PartnerPaymentForm from "@/components/partners/PartnerPaymentForm";
 import { getPartner } from "@/lib/services/partner.service";
 
 interface Props {
@@ -17,6 +18,12 @@ export default async function PartnerPage({
   if (!partner) {
     notFound();
   }
+
+  const partnerPayments = partner.orders.flatMap((order) =>
+    order.payments
+      .filter((payment) => payment.type === "Выплата партнёру")
+      .map((payment) => ({ ...payment, orderNumber: order.number }))
+  );
 
   return (
     <main className="space-y-8 p-8">
@@ -152,6 +159,48 @@ export default async function PartnerPage({
               ))
             )}
 
+          </div>
+
+        </div>
+
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+
+        <PartnerPaymentForm
+          orders={partner.orders.map((order) => ({
+            id: order.id,
+            number: order.number,
+            partnerBalance: Number(order.partnerBalance),
+          }))}
+        />
+
+        <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
+
+          <h2 className="mb-6 text-xl font-bold text-white">
+            История выплат
+          </h2>
+
+          <div className="space-y-3">
+            {partnerPayments.length === 0 ? (
+              <p className="text-slate-400">Выплат пока нет</p>
+            ) : (
+              partnerPayments.map((payment) => (
+                <div key={payment.id} className="rounded-xl bg-slate-900 p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-medium text-white">{payment.orderNumber}</p>
+                      <p className="text-sm text-slate-400">
+                        {payment.method}{payment.comment ? ` • ${payment.comment}` : ""}
+                      </p>
+                    </div>
+                    <p className="font-bold text-green-400">
+                      {Number(payment.amount).toLocaleString()} ₸
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
         </div>

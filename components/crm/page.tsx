@@ -1,18 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import KanbanBoard from "@/components/crm/KanbanBoard";
 
+type CrmOrder = { id: number; number: string; status: string; amount: string; client: { name: string; phone: string; city: string } };
+
 export default function CRMPage() {
-  const [orders, setOrders] = useState<any[]>([]);
+  const [orders, setOrders] = useState<CrmOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadOrders();
-  }, []);
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     try {
       const response = await fetch("/api/orders");
 
@@ -20,7 +18,7 @@ export default function CRMPage() {
         throw new Error("Ошибка загрузки");
       }
 
-      const data = await response.json();
+      const data = await response.json() as CrmOrder[];
 
       setOrders(data);
     } catch (error) {
@@ -28,7 +26,12 @@ export default function CRMPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadOrders(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadOrders]);
 
   return (
     <section className="space-y-8 p-8">
