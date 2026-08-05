@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from "child_process";
 import path from "path";
 import bcrypt from "bcrypt";
 import { Role } from "@prisma/client";
+import { del } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
 import { createPayment } from "@/lib/services/payment.service";
 
@@ -455,19 +456,19 @@ async function main() {
     const documentBody = { orderId: firstOrder.id, type: "OFFER", number: `${tag}-offer`, documentDate: "2026-08-05" };
     const createdDocument = await (await expectStatus("/api/documents", 201, managerCookie, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-document` },
       body: JSON.stringify(documentBody),
     })).json() as DocumentPayload;
     assert(createdDocument.order.id === firstOrder.id && createdDocument.type === "OFFER", "manager document creation returned an invalid payload");
     const repeatedDocument = await (await expectStatus("/api/documents", 200, managerCookie, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-document` },
       body: JSON.stringify(documentBody),
     })).json() as DocumentPayload;
     assert(repeatedDocument.id === createdDocument.id, "repeat document creation created a duplicate");
     await expectStatus("/api/documents", 409, managerCookie, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-document` },
       body: JSON.stringify({ ...documentBody, number: `${tag}-offer-changed` }),
     });
     const firstPartnerDocuments = await (await expectStatus("/api/documents", 200, firstCookie)).json() as DocumentPayload[];
@@ -481,7 +482,27 @@ async function main() {
     });
     await expectStatus(`/orders/${firstOrder.id}/offer`, 200, firstCookie);
     await expectStatus(`/orders/${secondOrder.id}/offer`, 404, firstCookie);
-    console.log("document API security checks passed");
+    const attachmentBody = new FormData();
+    attachmentBody.set("orderId", String(firstOrder.id));
+    attachmentBody.set("documentId", String(createdDocument.id));
+    attachmentBody.set("file", new File(["%PDF-1.7\nprivate attachment"], `${tag}.pdf`, { type: "application/pdf" }));
+    const attachmentKey = `${tag}-attachment`;
+    const createdAttachment = await (await expectStatus("/api/attachments", 201, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: attachmentBody })).json() as { id: number; fileName: string };
+    const repeatedAttachment = await (await expectStatus("/api/attachments", 200, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: attachmentBody })).json() as { id: number };
+    assert(repeatedAttachment.id === createdAttachment.id, "attachment repeat created a duplicate");
+    const conflictBody = new FormData(); conflictBody.set("orderId", String(firstOrder.id)); conflictBody.set("file", new File(["%PDF-1.7\nchanged"], `${tag}.pdf`, { type: "application/pdf" }));
+    await expectStatus("/api/attachments", 409, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: conflictBody });
+    const invalidBody = new FormData(); invalidBody.set("orderId", String(firstOrder.id)); invalidBody.set("file", new File(["unsafe"], `${tag}.html`, { type: "text/html" }));
+    await expectStatus("/api/attachments", 400, managerCookie, { method: "POST", headers: { "Idempotency-Key": `${tag}-unsafe` }, body: invalidBody });
+    const ownAttachments = await (await expectStatus(`/api/attachments?orderId=${firstOrder.id}`, 200, firstCookie)).json() as Array<{ id: number }>;
+    assert(ownAttachments.some((item) => item.id === createdAttachment.id), "partner cannot list own attachment");
+    await expectStatus(`/api/attachments?orderId=${firstOrder.id}`, 404, secondCookie);
+    const attachmentDownload = await expectStatus(`/api/attachments/${createdAttachment.id}`, 200, firstCookie);
+    assert(await attachmentDownload.text() === "%PDF-1.7\nprivate attachment", "private attachment content is invalid");
+    await expectStatus(`/api/attachments/${createdAttachment.id}`, 404, secondCookie);
+    await expectStatus(`/api/attachments?id=${createdAttachment.id}`, 403, firstCookie, { method: "DELETE" });
+    await expectStatus(`/api/attachments?id=${createdAttachment.id}`, 200, managerCookie, { method: "DELETE" });
+    console.log("document and private attachment API security checks passed");
     const managerClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, managerCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(managerClients.data) && managerClients.pagination.total > 0 && managerClients.data.some((item) => item.id === client.id), "manager clients payload is invalid");
     const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<{ id: number }>;
@@ -524,6 +545,9 @@ async function main() {
     await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+    const attachmentPaths = (await prisma.attachment.findMany({ where: { order: { number: { startsWith: tag } } }, select: { pathname: true } })).map((item) => item.pathname);
+    if (attachmentPaths.length) await del(attachmentPaths).catch(() => undefined);
+    await prisma.attachment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.document.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.measurement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });

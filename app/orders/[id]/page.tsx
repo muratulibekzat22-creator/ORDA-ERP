@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import OrderTabs from "@/components/orders/OrderTabs";
-import { getOrder } from "@/lib/services/order.service";
+import { getAuthorizedOrder } from "@/lib/order-page-auth";
 
 interface Props {
   params: Promise<{
@@ -11,7 +11,7 @@ interface Props {
 
 export default async function OrderDetailsPage({ params }: Props) {
   const { id } = await params;
-  const order = await getOrder(Number(id));
+  const order = await getAuthorizedOrder(Number(id));
 
   if (!order) {
     notFound();

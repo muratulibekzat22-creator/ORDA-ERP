@@ -53,6 +53,7 @@ model User {
   partnerProfile Partner?
   assignedMeasurements Measurement[]
   assignedProductions Production[]
+  uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -131,6 +132,7 @@ partnerBalance Decimal @default(0) @db.Decimal(12,2)
   events       OrderEvent[]
   materialMovements MaterialMovement[]
   documents    Document[]
+  attachments  Attachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -143,12 +145,35 @@ model Document {
   type         DocumentType
   number       String
   documentDate DateTime
+  idempotencyKey String?     @unique
+  requestHash    String?
+  attachments    Attachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([orderId, type])
   @@unique([type, number])
+}
+
+model Attachment {
+  id             Int       @id @default(autoincrement())
+  orderId        Int
+  order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  documentId     Int?
+  document       Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedById   Int?
+  uploadedBy     User?     @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  fileName       String
+  pathname       String    @unique
+  contentType    String
+  size           Int
+  idempotencyKey String?   @unique
+  requestHash    String?
+  createdAt      DateTime  @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([documentId, createdAt])
 }
 
 model Material {
@@ -161,6 +186,8 @@ model Material {
   purchasePrice Decimal @default(0) @db.Decimal(12,2)
   supplier     String?
   active       Boolean @default(true)
+  idempotencyKey String? @unique
+  requestHash    String?
 
   movements MaterialMovement[]
 

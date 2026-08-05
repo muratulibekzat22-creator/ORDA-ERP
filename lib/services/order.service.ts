@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
+import { del } from "@vercel/blob";
 
 export async function getOrders() {
   return prisma.order.findMany({
@@ -223,6 +224,8 @@ export async function updateOrder(
 }
 
 export async function deleteOrder(id: number) {
+  const attachments = await prisma.attachment.findMany({ where: { orderId: id }, select: { pathname: true } });
+  if (attachments.length) await del(attachments.map((attachment) => attachment.pathname));
   await prisma.orderEvent.deleteMany({
     where: {
       orderId: id,

@@ -14,7 +14,30 @@ export async function getWarehouse() {
   return { materials, movements, orders, stats: { materials: materials.length, lowStock: materials.filter((material) => material.stock <= material.minimumStock).length, stockValue, suppliers: [...new Set(materials.map((material) => material.supplier).filter(Boolean))] } };
 }
 
-export async function createMaterial(data: { name: string; category: string; unit: string; minimumStock: number; purchasePrice: number; supplier?: string }) { return prisma.material.create({ data: { ...data, purchasePrice: String(data.purchasePrice) } }); }
+export async function createMaterial(data: { name: string; category: string; unit: string; minimumStock: number; purchasePrice: number; supplier?: string; initialStock?: number; idempotencyKey?: string; requestHash?: string }) {
+  if (data.idempotencyKey) {
+    const repeated = await prisma.material.findUnique({ where: { idempotencyKey: data.idempotencyKey } });
+    if (repeated) {
+      if (!data.requestHash || !compareRequestHash(repeated.requestHash, data.requestHash)) throw new Error("IDEMPOTENCY_CONFLICT");
+      return repeated;
+    }
+  }
+  if (await prisma.material.findFirst({ where: { name: { equals: data.name, mode: "insensitive" } }, select: { id: true } })) throw new Error("MATERIAL_DUPLICATE");
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const material = await tx.material.create({ data: { name: data.name, category: data.category, unit: data.unit, minimumStock: data.minimumStock, stock: data.initialStock ?? 0, purchasePrice: String(data.purchasePrice), supplier: data.supplier, idempotencyKey: data.idempotencyKey, requestHash: data.requestHash } });
+      if ((data.initialStock ?? 0) > 0) await tx.materialMovement.create({ data: { materialId: material.id, type: "incoming", quantity: data.initialStock!, price: String(data.purchasePrice), supplier: data.supplier, comment: "Начальный остаток", idempotencyKey: data.idempotencyKey ? `initial:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
+      return material;
+    });
+  } catch (error) {
+    if (isPrismaUniqueConflict(error) && data.idempotencyKey && data.requestHash) {
+      const repeated = await prisma.material.findUnique({ where: { idempotencyKey: data.idempotencyKey } });
+      if (repeated && compareRequestHash(repeated.requestHash, data.requestHash)) return repeated;
+      throw new Error("IDEMPOTENCY_CONFLICT");
+    }
+    throw error;
+  }
+}
 
 export async function createMaterialMovement(data: { materialId: number; type: "incoming" | "outgoing"; quantity: number; price?: number; supplier?: string; orderId?: number; comment?: string; date?: Date; idempotencyKey?:string; requestHash?:string }) {
   try { return await prisma.$transaction(async (tx) => {
