@@ -61,7 +61,6 @@ export default function ProjectProduction({ orderId, production }: Props) {
   }
 
   async function saveProduction() {
-    const isNewProduction = !currentProduction;
     const percent = Number(form.percent);
 
     if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
@@ -77,7 +76,7 @@ export default function ProjectProduction({ orderId, production }: Props) {
         method: currentProduction ? "PATCH" : "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(isNewProduction ? { "Idempotency-Key": getKey() } : {}),
+          "Idempotency-Key": getKey(),
         },
         body: JSON.stringify({
           ...(currentProduction ? { id: currentProduction.id } : { orderId }),
@@ -102,9 +101,7 @@ export default function ProjectProduction({ orderId, production }: Props) {
       }
 
       setCurrentProduction(result as Production);
-      if (isNewProduction) {
-        reset();
-      }
+      reset();
       router.refresh();
     } catch (error) {
       console.error(error);

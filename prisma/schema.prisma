@@ -321,6 +321,7 @@ model ProductionStageHistory {
   changedByUserId Int?
   comment         String?
   idempotencyKey  String?    @unique
+  requestHash     String?
   createdAt       DateTime   @default(now())
 
   @@index([productionId, createdAt])

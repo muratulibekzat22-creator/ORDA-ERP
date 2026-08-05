@@ -15,7 +15,8 @@
     "test:idempotency": "tsx scripts/test-idempotency.ts",
     "test:e2e:business": "tsx scripts/test-e2e-business-flow.ts",
     "test:api:security": "tsx scripts/test-api-security.ts",
-    "test:production:domain": "tsx scripts/test-production-domain.ts"
+    "test:production:domain": "tsx scripts/test-production-domain.ts",
+    "test:production:api": "tsx scripts/test-production-api.ts"
   },
   "engines": {
     "node": ">=20.9.0"
