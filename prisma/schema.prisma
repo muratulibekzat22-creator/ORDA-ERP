@@ -66,6 +66,11 @@ model Client {
   manager String
   amount  String
   status  String
+  estimatedAmount Decimal @default(0) @db.Decimal(12,2)
+  estimateNotes String @default("")
+  source String @default("")
+  comment String @default("")
+  active Boolean @default(true)
 
   orders Order[]
 

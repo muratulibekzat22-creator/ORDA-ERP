@@ -1,128 +1,20 @@
+import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
 import { requirePermission } from "@/lib/server-auth";
 
+const amount = (value: unknown) => { if (typeof value === "string" && !value.trim()) return null; const result = Number(value); return Number.isFinite(result) && result >= 0 ? result : null; };
+const text = (value: unknown, required = false) => typeof value === "string" && (!required || value.trim()) ? value.trim() : null;
+
 export async function GET(request: Request) {
-  const auth=await requirePermission("clients");if(auth.response)return auth.response;
-  try {
-    const { searchParams } = new URL(request.url);
-
-    const search = searchParams.get("search")?.trim() ?? "";
-    const status = searchParams.get("status")?.trim() ?? "";
-    const page = Number(searchParams.get("page") ?? "1");
-    const limit = Number(searchParams.get("limit") ?? "20");
-
-    const where: Prisma.ClientWhereInput = {};
-
-    if (search) {
-      where.OR = [
-        {
-          name: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-        {
-          phone: {
-            contains: search,
-          },
-        },
-        {
-          city: {
-            contains: search,
-            mode: "insensitive",
-          },
-        },
-      ];
-    }
-
-    if (status) {
-      where.status = status;
-    }
-
-    const total = await prisma.client.count({
-      where,
-    });
-
-    const clients = await prisma.client.findMany({
-      where,
-      orderBy: {
-        createdAt: "desc",
-      },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
-
-    return NextResponse.json({
-      data: clients,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
-    });
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        error: "Ошибка получения клиентов",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
+  const auth = await requirePermission("clients"); if (auth.response) return auth.response;
+  const params = new URL(request.url).searchParams, search = params.get("search")?.trim(), city = params.get("city")?.trim(), manager = params.get("manager")?.trim();
+  const where: Prisma.ClientWhereInput = { ...(params.get("active") === "false" ? { active: false } : { active: true }), ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }] } : {}), ...(city ? { city } : {}), ...(manager ? { manager } : {}) };
+  const [data, total, cities, managers] = await Promise.all([prisma.client.findMany({ where, include: { _count: { select: { orders: true } } }, orderBy: { createdAt: "desc" } }), prisma.client.count({ where }), prisma.client.findMany({ distinct: ["city"], select: { city: true }, orderBy: { city: "asc" } }), prisma.client.findMany({ distinct: ["manager"], select: { manager: true }, orderBy: { manager: "asc" } })]);
+  return NextResponse.json({ data, pagination: { total }, filters: { cities: cities.map((item) => item.city), managers: managers.map((item) => item.manager) } });
 }
 
 export async function POST(request: Request) {
-  const auth=await requirePermission("clients");if(auth.response)return auth.response;
-  try {
-    const body = await request.json();
-
-    const phone = String(body.phone ?? "").trim();
-
-    const exists = await prisma.client.findFirst({
-      where: {
-        phone,
-      },
-    });
-
-    if (exists) {
-      return NextResponse.json(
-        {
-          error: "Клиент с таким телефоном уже существует",
-        },
-        {
-          status: 400,
-        }
-      );
-    }
-
-    const client = await prisma.client.create({
-      data: {
-        name: String(body.name).trim(),
-        phone,
-        city: String(body.city ?? "").trim(),
-        manager: body.manager ?? "Менеджер",
-        amount: String(body.amount ?? "0"),
-        status: body.status ?? "Новый",
-      },
-    });
-
-    return NextResponse.json(client);
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        error: "Ошибка создания клиента",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
+  const auth = await requirePermission("clients"); if (auth.response) return auth.response; if (auth.session!.user.role === Role.PARTNER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  try { const body = await request.json() as Record<string, unknown>; const name = text(body.name, true), phone = text(body.phone, true), city = text(body.city, true), manager = text(body.manager, true), estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0); if (!name || !phone || !city || !manager || estimatedAmount === null) return NextResponse.json({ error: "Некорректные данные клиента" }, { status: 400 }); const client = await prisma.client.create({ data: { name, phone, city, manager, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? "", source: text(body.source) ?? "", comment: text(body.comment) ?? "", status: "Новый" } }); return NextResponse.json(client, { status: 201 }); } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); return NextResponse.json({ error: "Ошибка создания клиента" }, { status: 500 }); }
 }
