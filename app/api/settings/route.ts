@@ -1,63 +1,26 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-import {
-  getSettings,
-  updateSettings,
-} from "@/lib/services/settings.service";
-import { requirePermission } from "@/lib/server-auth";
+import { requireSettingsDirector } from "@/lib/settings-access";
+import { getSettingsManagement, patchSettingsManagement } from "@/lib/services/settings-management.service";
 
 export async function GET() {
-  const auth=await requirePermission("settings");if(auth.response)return auth.response;
-  try {
-    const settings = await getSettings();
+  const auth = await requireSettingsDirector();
+  if (auth.response) return auth.response;
+  try { return NextResponse.json(await getSettingsManagement()); }
+  catch { return NextResponse.json({ error: "Не удалось получить настройки" }, { status: 500 }); }
+}
 
-    return NextResponse.json(settings);
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        message: "Ошибка получения настроек",
-      },
-      {
-        status: 500,
-      }
-    );
+export async function PATCH(request: Request) {
+  const auth = await requireSettingsDirector();
+  if (auth.response) return auth.response;
+  try { return NextResponse.json(await patchSettingsManagement(await request.json())); }
+  catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    if (code === "DIRECTOR_CRITICAL_PERMISSION") return NextResponse.json({ error: "У директора должны остаться права настроек и сотрудников" }, { status: 409 });
+    if (code === "INVALID_PERMISSIONS") return NextResponse.json({ error: "Некорректная матрица прав" }, { status: 400 });
+    if (code === "INVALID_SETTINGS") return NextResponse.json({ error: "Некорректные настройки" }, { status: 400 });
+    return NextResponse.json({ error: "Не удалось сохранить настройки" }, { status: 500 });
   }
 }
 
-export async function PUT(
-  request: NextRequest
-) {
-  const auth=await requirePermission("settings");if(auth.response)return auth.response;
-  try {
-    const body = await request.json();
-
-    const settings = await updateSettings({
-      pinePrice: Number(body.pinePrice),
-      elmPrice: Number(body.elmPrice),
-      oakPrice: Number(body.oakPrice),
-
-      woodRailing: Number(body.woodRailing),
-      glassRailing: Number(body.glassRailing),
-      brassRailing: Number(body.brassRailing),
-
-      ledPrice: Number(body.ledPrice),
-      paintingPrice: Number(body.paintingPrice),
-      installationPrice: Number(body.installationPrice),
-    });
-
-    return NextResponse.json(settings);
-  } catch (error) {
-    console.error(error);
-
-    return NextResponse.json(
-      {
-        message: "Ошибка сохранения настроек",
-      },
-      {
-        status: 500,
-      }
-    );
-  }
-}
+export const PUT = PATCH;

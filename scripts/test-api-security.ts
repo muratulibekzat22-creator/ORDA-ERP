@@ -83,6 +83,8 @@ async function expectStatuses(pathname: string, statuses: number[], cookie: stri
 
 type MeasurementPayload = { id: number; measurerUserId: number | null; order: { id: number } };
 type ProductionPayload = { id: number; masterUserId: number | null; stage: string; order: { id: number } };
+type CalendarPayload = { events: Array<{ id: string; sourceType: "measurement" | "production"; orderId: number; assignedUserId: number | null; stage: string }>; orders: Array<{ id: number }> };
+type DocumentPayload = { id: number; type: "OFFER" | "CONTRACT" | "ACT" | "INVOICE"; number: string; order: { id: number; client: { name: string } } };
 
 function assertMeasurementPayload(
   payload: MeasurementPayload[],
@@ -114,6 +116,16 @@ function assertProductionPayload(
   assert(payload.every((production) => production.masterUserId === userId), "production payload contains another user's assignment");
   assert(payload.every((production) => stages.includes(production.stage)), "production payload contains an unexpected stage");
   assert(payload.every((production) => ownOrderIds.includes(production.order.id)), "production payload leaks a foreign order");
+}
+
+function assertCalendarPayload(payload: CalendarPayload, ownEventIds: string[], foreignEventIds: string[], ownOrderIds: number[], userId: number, sourceType: "measurement" | "production", stages?: string[]) {
+  assert(payload.events.length === ownEventIds.length, "calendar payload has an unexpected number of events");
+  assert(ownEventIds.every((id) => payload.events.some((event) => event.id === id)), "calendar payload is missing an own event");
+  assert(!foreignEventIds.some((id) => payload.events.some((event) => event.id === id)), "calendar payload contains a foreign event");
+  assert(payload.events.every((event) => event.sourceType === sourceType && event.assignedUserId === userId), "calendar payload contains an unauthorized assignment");
+  assert(payload.events.every((event) => ownOrderIds.includes(event.orderId)), "calendar payload leaks a foreign order");
+  assert(payload.orders.every((order) => ownOrderIds.includes(order.id)), "calendar order list leaks a foreign order");
+  if (stages) assert(payload.events.every((event) => stages.includes(event.stage)), "calendar payload contains an unauthorized stage");
 }
 
 async function main() {
@@ -186,11 +198,11 @@ async function main() {
     })));
     const [firstInstallerOrder, secondInstallerOrder, otherStageOrder, firstProductionOrder, secondProductionOrder] = workflowOrders;
     const [firstInstallerProduction, secondInstallerProduction, otherStageProduction, firstProduction, secondProduction] = await Promise.all([
-      prisma.production.create({ data: { orderId: firstInstallerOrder.id, stage: installationStage, percent: 20, masterUserId: firstInstaller.id, master: firstInstaller.name } }),
-      prisma.production.create({ data: { orderId: secondInstallerOrder.id, stage: installationStage, percent: 30, masterUserId: secondInstaller.id, master: secondInstaller.name } }),
-      prisma.production.create({ data: { orderId: otherStageOrder.id, stage: productionStage, percent: 40, masterUserId: firstInstaller.id, master: firstInstaller.name } }),
-      prisma.production.create({ data: { orderId: firstProductionOrder.id, stage: productionStage, percent: 50, masterUserId: firstProductionUser.id, master: firstProductionUser.name } }),
-      prisma.production.create({ data: { orderId: secondProductionOrder.id, stage: productionStage, percent: 60, masterUserId: secondProductionUser.id, master: secondProductionUser.name } }),
+      prisma.production.create({ data: { orderId: firstInstallerOrder.id, stage: installationStage, percent: 20, masterUserId: firstInstaller.id, master: firstInstaller.name, startDate: new Date() } }),
+      prisma.production.create({ data: { orderId: secondInstallerOrder.id, stage: installationStage, percent: 30, masterUserId: secondInstaller.id, master: secondInstaller.name, startDate: new Date() } }),
+      prisma.production.create({ data: { orderId: otherStageOrder.id, stage: productionStage, percent: 40, masterUserId: firstInstaller.id, master: firstInstaller.name, startDate: new Date() } }),
+      prisma.production.create({ data: { orderId: firstProductionOrder.id, stage: productionStage, percent: 50, masterUserId: firstProductionUser.id, master: firstProductionUser.name, startDate: new Date() } }),
+      prisma.production.create({ data: { orderId: secondProductionOrder.id, stage: productionStage, percent: 60, masterUserId: secondProductionUser.id, master: secondProductionUser.name, startDate: new Date() } }),
     ]);
 
     const manager = await prisma.user.create({
@@ -216,6 +228,24 @@ async function main() {
     await expectStatus(`/api/partners/${secondPartner.id}`, 404, firstCookie);
     await expectStatus(`/api/proposal/${firstOrder.id}`, 200, firstCookie);
     await expectStatus(`/api/proposal/${secondOrder.id}`, 404, firstCookie);
+    for (const pathname of [
+      `/orders/${firstOrder.id}`,
+      `/orders/${firstOrder.id}/offer`,
+      `/orders/${firstOrder.id}/contract`,
+      `/orders/${firstOrder.id}/act`,
+      `/orders/${firstOrder.id}/invoice`,
+      `/orders/${firstOrder.id}/print`,
+      `/proposal/${firstOrder.id}`,
+    ]) await expectStatus(pathname, 200, firstCookie);
+    for (const pathname of [
+      `/orders/${secondOrder.id}`,
+      `/orders/${secondOrder.id}/offer`,
+      `/orders/${secondOrder.id}/contract`,
+      `/orders/${secondOrder.id}/act`,
+      `/orders/${secondOrder.id}/invoice`,
+      `/orders/${secondOrder.id}/print`,
+      `/proposal/${secondOrder.id}`,
+    ]) await expectStatus(pathname, 404, firstCookie);
     await expectStatus(`/api/orders/${firstOrder.id}`, 400, firstCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -265,6 +295,24 @@ async function main() {
     });
     const firstAfterSecondForeignPatch = await prisma.measurement.findUniqueOrThrow({ where: { id: firstMeasurement.id } });
     assert(firstAfterSecondForeignPatch.comment === firstComment, "second measurer changed a foreign measurement");
+
+    const firstMeasurerCalendar = await (await expectStatus(`/api/calendar?assignedUserId=${secondMeasurer.id}`, 200, firstMeasurerCookie)).json() as CalendarPayload;
+    assertCalendarPayload(firstMeasurerCalendar, [String(firstMeasurement.id)], [String(secondMeasurement.id)], [firstMeasurerOrder.id], firstMeasurer.id, "measurement");
+    await expectStatus("/api/calendar", 200, firstMeasurerCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceType: "measurement", id: firstMeasurement.id, startDate: "2026-09-01T10:00:00.000Z" }),
+    });
+    await expectStatuses("/api/calendar", [403, 404], firstMeasurerCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceType: "measurement", id: secondMeasurement.id, startDate: "2026-09-02T10:00:00.000Z" }),
+    });
+    const secondAfterCalendarPatch = await prisma.measurement.findUniqueOrThrow({ where: { id: secondMeasurement.id } });
+    assert(secondAfterCalendarPatch.visitDate.getTime() === secondMeasurement.visitDate.getTime(), "first measurer moved a foreign calendar event");
+
+    const secondMeasurerCalendar = await (await expectStatus("/api/calendar", 200, secondMeasurerCookie)).json() as CalendarPayload;
+    assertCalendarPayload(secondMeasurerCalendar, [String(secondMeasurement.id)], [String(firstMeasurement.id)], [secondMeasurerOrder.id], secondMeasurer.id, "measurement");
     console.log("measurer API security checks passed");
 
     const firstInstallerCookie = await session(firstInstaller.email);
@@ -272,6 +320,8 @@ async function main() {
     const firstProductionCookie = await session(firstProductionUser.email);
     const secondProductionCookie = await session(secondProductionUser.email);
     const directorCookie = await session(director.email);
+    await expectStatus(`/orders/${firstOrder.id}`, 200, directorCookie);
+    await expectStatus(`/orders/${secondOrder.id}`, 200, directorCookie);
     const workflowProductionIds = [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, firstProduction.id, secondProduction.id];
 
     const firstInstallerProductions = await (await expectStatus("/api/production", 200, firstInstallerCookie)).json() as ProductionPayload[];
@@ -284,12 +334,105 @@ async function main() {
     const secondProductionProductions = await (await expectStatus("/api/production", 200, secondProductionCookie)).json() as ProductionPayload[];
     assertProductionPayload(secondProductionProductions, [secondProduction.id], [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, firstProduction.id], [secondProductionOrder.id], secondProductionUser.id, [productionStage]);
 
+    const firstInstallerCalendar = await (await expectStatus("/api/calendar", 200, firstInstallerCookie)).json() as CalendarPayload;
+    assertCalendarPayload(firstInstallerCalendar, [String(firstInstallerProduction.id)], [String(secondInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id), String(secondProduction.id)], [firstInstallerOrder.id], firstInstaller.id, "production", [installationStage]);
+    const secondInstallerCalendar = await (await expectStatus("/api/calendar", 200, secondInstallerCookie)).json() as CalendarPayload;
+    assertCalendarPayload(secondInstallerCalendar, [String(secondInstallerProduction.id)], [String(firstInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id), String(secondProduction.id)], [secondInstallerOrder.id], secondInstaller.id, "production", [installationStage]);
+    const firstProductionCalendar = await (await expectStatus("/api/calendar", 200, firstProductionCookie)).json() as CalendarPayload;
+    assertCalendarPayload(firstProductionCalendar, [String(firstProduction.id)], [String(firstInstallerProduction.id), String(secondInstallerProduction.id), String(otherStageProduction.id), String(secondProduction.id)], [firstProductionOrder.id], firstProductionUser.id, "production", [productionStage]);
+    const secondProductionCalendar = await (await expectStatus("/api/calendar", 200, secondProductionCookie)).json() as CalendarPayload;
+    assertCalendarPayload(secondProductionCalendar, [String(secondProduction.id)], [String(firstInstallerProduction.id), String(secondInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id)], [secondProductionOrder.id], secondProductionUser.id, "production", [productionStage]);
+
+    await expectStatus("/api/calendar", 200, firstInstallerCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceType: "production", id: firstInstallerProduction.id, startDate: "2026-09-03T10:00:00.000Z" }),
+    });
+    for (const id of [secondInstallerProduction.id, otherStageProduction.id]) await expectStatuses("/api/calendar", [403, 404], firstInstallerCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceType: "production", id, startDate: "2026-09-04T10:00:00.000Z" }),
+    });
+    await expectStatus("/api/production", 200, firstProductionCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: firstProduction.id, comment: "own production update" }),
+    });
+    await expectStatuses("/api/production", [403, 404], firstProductionCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: secondProduction.id, comment: "foreign production update" }),
+    });
+    await expectStatus("/api/production", 200, firstInstallerCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: firstInstallerProduction.id, comment: "own installer update" }),
+    });
+    for (const body of [
+      { id: otherStageProduction.id, comment: "non-installation update" },
+      { id: firstInstallerProduction.id, stage: productionStage },
+      { id: firstInstallerProduction.id, masterUserId: secondInstaller.id },
+    ]) await expectStatuses("/api/production", [403, 404], firstInstallerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
     const directorProductions = await (await expectStatus("/api/production", 200, directorCookie)).json() as ProductionPayload[];
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
     assert(directorProductions.some((production) => production.id === otherStageProduction.id && production.stage === productionStage), "director cannot see the installer non-installation record");
+    const directorCalendar = await (await expectStatus("/api/calendar", 200, directorCookie)).json() as CalendarPayload;
+    assert([firstMeasurement.id, secondMeasurement.id, ...workflowProductionIds].every((id) => directorCalendar.events.some((event) => event.id === String(id))), "director cannot see all calendar events");
+    await expectStatus("/api/calendar", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceType: "production", id: secondProduction.id, startDate: "2026-09-05T10:00:00.000Z" }) });
+    await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
     console.log("installer and production API security checks passed");
 
     const managerCookie = await session(manager.email);
+    for (const cookie of [managerCookie, firstMeasurerCookie, firstCookie]) await expectStatus("/api/settings", 403, cookie);
+    const settingsBefore = await (await expectStatus("/api/settings", 200, directorCookie)).json() as { company: { name: string }; rolePermissions: Record<Role, string[]> };
+    await expectStatus("/api/settings", 200, directorCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company: { name: settingsBefore.company.name } }),
+    });
+    await expectStatus("/api/settings", 409, directorCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rolePermissions: { ...settingsBefore.rolePermissions, DIRECTOR: settingsBefore.rolePermissions.DIRECTOR.filter((permission) => permission !== "settings") } }),
+    });
+    await expectStatus("/api/employees", 400, directorCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: `${tag}-partner-without-link`, email: `${tag}-partner-without-link@test.local`, password, role: Role.PARTNER }),
+    });
+    await expectStatus(`/api/employees/${director.id}`, 409, directorCookie, { method: "DELETE" });
+    console.log("settings and employee security checks passed");
+    const documentBody = { orderId: firstOrder.id, type: "OFFER", number: `${tag}-offer`, documentDate: "2026-08-05" };
+    const createdDocument = await (await expectStatus("/api/documents", 201, managerCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(documentBody),
+    })).json() as DocumentPayload;
+    assert(createdDocument.order.id === firstOrder.id && createdDocument.type === "OFFER", "manager document creation returned an invalid payload");
+    const repeatedDocument = await (await expectStatus("/api/documents", 200, managerCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(documentBody),
+    })).json() as DocumentPayload;
+    assert(repeatedDocument.id === createdDocument.id, "repeat document creation created a duplicate");
+    await expectStatus("/api/documents", 409, managerCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...documentBody, number: `${tag}-offer-changed` }),
+    });
+    const firstPartnerDocuments = await (await expectStatus("/api/documents", 200, firstCookie)).json() as DocumentPayload[];
+    assert(firstPartnerDocuments.length === 1 && firstPartnerDocuments[0].id === createdDocument.id && firstPartnerDocuments[0].order.id === firstOrder.id, "partner document list contains an invalid order");
+    const secondPartnerDocuments = await (await expectStatus("/api/documents", 200, secondCookie)).json() as DocumentPayload[];
+    assert(secondPartnerDocuments.length === 0, "partner document list leaks a foreign document");
+    await expectStatus("/api/documents", 403, firstCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId: firstOrder.id, type: "CONTRACT", number: `${tag}-partner-contract`, documentDate: "2026-08-05" }),
+    });
+    await expectStatus(`/orders/${firstOrder.id}/offer`, 200, firstCookie);
+    await expectStatus(`/orders/${secondOrder.id}/offer`, 404, firstCookie);
+    console.log("document API security checks passed");
     const managerClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, managerCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(managerClients.data) && managerClients.pagination.total > 0 && managerClients.data.some((item) => item.id === client.id), "manager clients payload is invalid");
     const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<{ id: number }>;
@@ -319,12 +462,15 @@ async function main() {
     assert(typeof directorSettings === "object" && directorSettings !== null, "director settings payload is invalid");
     const directorEmployees = await (await expectStatus("/api/employees", 200, directorCookie)).json() as Array<{ id: number; role: Role }>;
     assert(Array.isArray(directorEmployees) && directorEmployees.some((employee) => employee.id === director.id && employee.role === Role.DIRECTOR) && directorEmployees.some((employee) => employee.id === manager.id && employee.role === Role.MANAGER), "director employees payload is invalid");
+    const directorDocuments = await (await expectStatus("/api/documents", 200, directorCookie)).json() as DocumentPayload[];
+    assert(directorDocuments.some((document) => document.id === createdDocument.id && document.order.id === firstOrder.id), "director cannot see the temporary document");
     console.log("manager and director API security matrix passed");
   } finally {
     await stopServer();
     await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+    await prisma.document.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.measurement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });

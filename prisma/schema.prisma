@@ -17,6 +17,29 @@ enum Role {
   INSTALLER
 }
 
+enum DocumentType {
+  OFFER
+  CONTRACT
+  ACT
+  INVOICE
+}
+
+enum Permission {
+  employees
+  clients
+  orders
+  measurements
+  calendar
+  documents
+  finance
+  partners
+  reports
+  settings
+  design
+  production
+  installation
+}
+
 model User {
   id       Int    @id @default(autoincrement())
   name     String
@@ -101,9 +124,25 @@ partnerBalance Decimal @default(0) @db.Decimal(12,2)
   productions  Production[]
   events       OrderEvent[]
   materialMovements MaterialMovement[]
+  documents    Document[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Document {
+  id           Int          @id @default(autoincrement())
+  orderId      Int
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  type         DocumentType
+  number       String
+  documentDate DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orderId, type])
+  @@unique([type, number])
 }
 
 model Material {
@@ -115,11 +154,60 @@ model Material {
   stock        Float  @default(0)
   purchasePrice Decimal @default(0) @db.Decimal(12,2)
   supplier     String?
+  active       Boolean @default(true)
 
   movements MaterialMovement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model CompanySettings {
+  id              Int    @id @default(1)
+  name            String @default("ALTYN SAPA COMPANY")
+  bin             String @default("")
+  legalAddress    String @default("")
+  actualAddress   String @default("")
+  phone           String @default("")
+  whatsapp        String @default("")
+  email           String @default("")
+  bankDetails     String @default("")
+  directorName    String @default("")
+  logoUrl         String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SystemSettings {
+  id                  Int    @id @default(1)
+  currency            String @default("KZT")
+  timezone            String @default("Asia/Almaty")
+  dateFormat          String @default("dd.MM.yyyy")
+  minimumPrepayment   Int    @default(0)
+  measurementLeadDays Int    @default(3)
+  productionLeadDays  Int    @default(40)
+  installationLeadDays Int   @default(7)
+  nextDocumentNumber  Int    @default(1)
+  offerPrefix         String @default("КП")
+  contractPrefix      String @default("ДОГ")
+  actPrefix           String @default("АКТ")
+  invoicePrefix       String @default("СЧ")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model RolePermission {
+  id         Int        @id @default(autoincrement())
+  role       Role
+  permission Permission
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([role, permission])
+  @@index([role])
 }
 
 model MaterialMovement {

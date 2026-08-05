@@ -4,11 +4,6 @@ import CredentialsProvider from "next-auth/providers/credentials";
 
 import { prisma } from "@/lib/prisma";
 
-function databaseHost() {
-  try { return process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).hostname : null; }
-  catch { return null; }
-}
-
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -18,34 +13,18 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        let userFound = false;
-        let active: boolean | null = null;
-        let passwordMatches: boolean | null = null;
-        const logAuthorize = () => console.info("===== ORDA AUTHORIZE =====", {
-          userFound,
-          active,
-          passwordMatches,
-          databaseHost: databaseHost(),
-          VERCEL_ENV: process.env.VERCEL_ENV ?? "unknown",
-        });
-
         if (!credentials?.email?.trim() || !credentials.password) {
-          logAuthorize();
           return null;
         }
 
         const email = credentials.email.trim().toLowerCase();
         const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
-        userFound = Boolean(user);
-        active = user?.active ?? null;
-        passwordMatches = user ? await bcrypt.compare(credentials.password, user.password) : false;
+        const passwordMatches = user ? await bcrypt.compare(credentials.password, user.password) : false;
         if (!user || !user.active || !passwordMatches) {
-          logAuthorize();
           return null;
         }
 
         await prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
-        logAuthorize();
         return { id: String(user.id), name: user.name, email: user.email, role: user.role };
       },
     }),

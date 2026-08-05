@@ -1,8 +1,42 @@
 import bcrypt from "bcrypt";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
+
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
-const select={id:true,name:true,email:true,phone:true,role:true,active:true,createdAt:true,lastLogin:true,partnerProfile:{select:{id:true,name:true}}} as const;
-export async function GET(){const auth=await requirePermission("employees");if(auth.response)return auth.response;return NextResponse.json(await prisma.user.findMany({select,orderBy:{createdAt:"desc"}}));}
-export async function POST(request:Request){const auth=await requirePermission("employees");if(auth.response)return auth.response;try{const b=await request.json() as Record<string,unknown>;const role=b.role as Role;const partnerId=Number(b.partnerId);if(typeof b.name!=="string"||typeof b.email!=="string"||typeof b.password!=="string"||!Object.values(Role).includes(role)|| (role===Role.PARTNER&&(!Number.isInteger(partnerId)||partnerId<=0)))return NextResponse.json({error:"Некорректные данные"},{status:400});const name=b.name;const email=b.email;const password=b.password;const result=await prisma.$transaction(async tx=>{if(role===Role.PARTNER){const partner=await tx.partner.findUnique({where:{id:partnerId}});if(!partner)return null;if(partner.userId)throw new Error("PARTNER_ALREADY_LINKED");}return tx.user.create({data:{name:name.trim(),email:email.trim(),password:await bcrypt.hash(password,12),phone:typeof b.phone==="string"?b.phone:null,role,partnerProfile:role===Role.PARTNER?{connect:{id:partnerId}}:undefined},select});});return result?NextResponse.json(result,{status:201}):NextResponse.json({error:"Партнёр не найден"},{status:404});}catch(error){return NextResponse.json({error:error instanceof Error&&error.message==="PARTNER_ALREADY_LINKED"?"Партнёр уже связан с пользователем":"Не удалось создать сотрудника"},{status:409});}}
+
+const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, partnerProfile: { select: { id: true, name: true } } } as const;
+
+export async function GET() {
+  const auth = await requirePermission("employees");
+  if (auth.response) return auth.response;
+  return NextResponse.json(await prisma.user.findMany({ select, orderBy: { createdAt: "desc" } }));
+}
+
+export async function POST(request: Request) {
+  const auth = await requirePermission("employees");
+  if (auth.response) return auth.response;
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    const role = body.role as Role;
+    const partnerId = Number(body.partnerId);
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!name || !email || !email.includes("@") || !password || !Object.values(Role).includes(role) || (role === Role.PARTNER && (!Number.isInteger(partnerId) || partnerId <= 0))) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
+    const user = await prisma.$transaction(async (tx) => {
+      if (role === Role.PARTNER) {
+        const partner = await tx.partner.findUnique({ where: { id: partnerId }, select: { userId: true } });
+        if (!partner) throw new Error("PARTNER_NOT_FOUND");
+        if (partner.userId) throw new Error("PARTNER_ALREADY_LINKED");
+      }
+      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
+    });
+    return NextResponse.json(user, { status: 201 });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    if (code === "PARTNER_NOT_FOUND") return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 });
+    if (code === "PARTNER_ALREADY_LINKED" || error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ error: "Пользователь или партнёр уже существует" }, { status: 409 });
+    return NextResponse.json({ error: "Не удалось создать сотрудника" }, { status: 500 });
+  }
+}
