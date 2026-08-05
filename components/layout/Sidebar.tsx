@@ -14,11 +14,13 @@ import {
   Warehouse,
   UserCog,
   ChevronRight,
+  X,
 } from "lucide-react";
 
 type SidebarProps = {
   page: string;
   setPage: (page: string) => void;
+  onClose?: () => void;
 };
 
 const menu = [
@@ -107,9 +109,10 @@ const menu = [
 export default function Sidebar({
   page,
   setPage,
+  onClose,
 }: SidebarProps) {
   return (
-    <aside className="flex h-screen w-72 flex-col border-r border-slate-800 bg-[#0f172a]">
+    <aside aria-label="Основная навигация" className="flex h-dvh w-[min(18rem,88vw)] flex-col border-r border-slate-800 bg-[#0f172a] lg:h-full lg:w-72">
 
       <div className="border-b border-slate-800 p-6">
 
@@ -119,7 +122,7 @@ export default function Sidebar({
             O
           </div>
 
-          <div>
+          <div className="min-w-0 flex-1">
 
             <h1 className="text-2xl font-bold text-yellow-400">
               ORDA ERP
@@ -130,6 +133,7 @@ export default function Sidebar({
             </p>
 
           </div>
+          <button type="button" aria-label="Закрыть меню" onClick={onClose} className="grid size-11 place-items-center rounded-xl text-slate-300 hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 lg:hidden"><X /></button>
 
         </div>
 
@@ -159,7 +163,8 @@ export default function Sidebar({
                   <button
                     key={item.id}
                     onClick={() => setPage(item.id)}
-                    className={`group flex w-full items-center justify-between rounded-xl px-4 py-3 transition-all ${
+                    aria-current={active ? "page" : undefined}
+                    className={`group flex min-h-12 w-full items-center justify-between rounded-xl px-4 py-3 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 ${
                       active
                         ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
                         : "text-slate-300 hover:bg-slate-800 hover:text-white"

@@ -101,11 +101,11 @@ export default function ProductionPage() {
     }
   }
 
-  if (loading) return <section className="p-8 text-slate-300">Загрузка Production Kanban…</section>;
+  if (loading) return <section role="status" aria-live="polite" className="space-y-4 p-4 md:p-8"><span className="sr-only">Загрузка производства</span><div className="h-20 animate-pulse rounded-2xl bg-slate-800"/><div className="h-72 animate-pulse rounded-2xl bg-slate-800"/></section>;
 
   return (
     <section className="space-y-6 p-4 md:p-8">
-      <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">Production Kanban</h1><p className="text-slate-400">Ежедневная очередь производства ALTYN SAPA</p></div>{canManage && <button type="button" onClick={() => setEditor("new")} className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">Добавить производство</button>}</header>
+      <header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-bold text-white sm:text-3xl">Производство</h1><p className="text-slate-400">Ежедневная очередь производства ALTYN SAPA</p></div>{canManage && <button type="button" onClick={() => setEditor("new")} className="min-h-11 w-full rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white sm:w-auto">Добавить производство</button>}</header>
       <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 md:grid-cols-3 xl:grid-cols-6">
         <input aria-label="Поиск" placeholder="Заказ или клиент" value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} className="rounded-lg bg-slate-900 p-3 text-white" />
         <select aria-label="Фильтр по стадии" value={filters.stage} onChange={(event) => setFilters({ ...filters, stage: event.target.value as "" | ProductionStage })} className="rounded-lg bg-slate-900 p-3"><option value="">Все стадии</option>{PRODUCTION_STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select>

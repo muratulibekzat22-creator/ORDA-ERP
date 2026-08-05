@@ -92,13 +92,13 @@ export default function EmployeesPage() {
     await load();
   };
   return (
-    <section className="flex-1 overflow-auto p-8">
+    <section className="flex-1 overflow-auto p-4 md:p-8">
       <h1 className="text-3xl font-bold text-white">Сотрудники</h1>
       <p className="mt-2 text-slate-400">
         Доступы, роли и контактные данные команды ALTYN SAPA
       </p>
       {error && (
-        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
+        <p role="alert" className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
           {error}
         </p>
       )}
@@ -110,12 +110,14 @@ export default function EmployeesPage() {
           {edit ? `Редактирование: ${edit.name}` : "Добавить сотрудника"}
         </h2>
         <input
+          aria-label="Имя сотрудника"
           required
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
           placeholder="Имя"
         />
         <input
+          aria-label="Email сотрудника"
           required={!edit}
           type="email"
           value={form.email}
@@ -124,6 +126,7 @@ export default function EmployeesPage() {
           placeholder="Email"
         />
         <input
+          aria-label={edit ? "Новый пароль (необязательно)" : "Пароль"}
           required={!edit}
           type="password"
           value={form.password}
@@ -131,11 +134,15 @@ export default function EmployeesPage() {
           placeholder="Пароль"
         />
         <input
+          aria-label="Телефон сотрудника"
+          type="tel"
+          inputMode="tel"
           value={form.phone}
           onChange={(e) => setForm({ ...form, phone: e.target.value })}
           placeholder="Телефон"
         />
         <select
+          aria-label="Роль сотрудника"
           value={form.role}
           onChange={(e) =>
             setForm({
@@ -153,6 +160,7 @@ export default function EmployeesPage() {
         </select>
         {form.role === Role.PARTNER && (
           <select
+            aria-label="Цех сотрудника"
             required
             value={form.partnerId}
             onChange={(e) => setForm({ ...form, partnerId: e.target.value })}
@@ -181,7 +189,8 @@ export default function EmployeesPage() {
           </button>
         )}
       </form>
-      <div className="mt-5 overflow-auto rounded-2xl bg-[#101827]">
+      <div className="mt-5 space-y-3 md:hidden">{!users.length ? <p className="rounded-2xl bg-[#101827] p-8 text-center text-slate-400">Сотрудники пока не добавлены.</p> : users.map((user) => <article key={user.id} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-white">{user.name}</h2><p className="truncate text-sm text-slate-400">{user.email}</p></div><span className={`rounded-full px-3 py-1 text-xs ${user.active ? "bg-green-700 text-white" : "bg-slate-700 text-slate-300"}`}>{user.active ? "Активен" : "Неактивен"}</span></div><p className="mt-3 text-sm text-slate-300">{roleNames[user.role]}{user.partnerProfile ? ` · ${user.partnerProfile.name}` : ""}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" className="min-h-11 rounded-lg bg-slate-700 px-3 text-white" onClick={() => { setEdit(user); setForm({ name: user.name, email: user.email, password: "", phone: user.phone ?? "", role: user.role, partnerId: user.partnerProfile ? String(user.partnerProfile.id) : "" }); }}>Изменить</button><button type="button" className="min-h-11 rounded-lg bg-amber-700 px-3 text-white" onClick={() => void patch(user, { active: !user.active })}>{user.active ? "Отключить" : "Включить"}</button></div></article>)}</div>
+      <div className="mt-5 hidden overflow-auto rounded-2xl bg-[#101827] md:block">
         <table className="w-full min-w-[760px] text-left text-slate-300 [&_td]:border-t [&_td]:border-slate-800 [&_td]:p-4">
           <thead>
             <tr className="text-slate-400">
