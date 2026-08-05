@@ -14,6 +14,7 @@ interface Props {
 export default function OrderForm({ onSave }: Props) {
   const [clients, setClients] = useState<Client[]>([]);
 
+  const [number, setNumber] = useState("");
   const [clientId, setClientId] = useState("");
   const [address, setAddress] = useState("");
 
@@ -86,6 +87,7 @@ export default function OrderForm({ onSave }: Props) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        number,
         clientId: Number(clientId),
         address,
         staircase,
@@ -102,6 +104,7 @@ export default function OrderForm({ onSave }: Props) {
     if (response.ok) {
       onSave();
 
+      setNumber("");
       setClientId("");
       setAddress("");
 
@@ -128,6 +131,13 @@ export default function OrderForm({ onSave }: Props) {
       </h2>
 
       <div className="grid grid-cols-2 gap-4">
+        <input
+          placeholder="Номер заказа"
+          value={number}
+          onChange={(e) => setNumber(e.target.value)}
+          className="rounded-xl bg-slate-900 p-3 text-white"
+        />
+
         <select
           value={clientId}
           onChange={(e) => setClientId(e.target.value)}

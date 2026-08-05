@@ -320,6 +320,35 @@ async function main() {
     const firstProductionCookie = await session(firstProductionUser.email);
     const secondProductionCookie = await session(secondProductionUser.email);
     const directorCookie = await session(director.email);
+    const orderCreationPayload = {
+      number: `${tag}-api-order`,
+      clientId: client.id,
+      address: "E2E order creation",
+      staircase: "Straight",
+      material: "Oak",
+      steps: 12,
+      platforms: 1,
+      railing: "None",
+      led: false,
+      painting: false,
+      installation: false,
+    };
+    const createdApiOrder = await (await expectStatus("/api/orders", 201, directorCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(orderCreationPayload),
+    })).json() as { id: number; number: string; partnerPrice: string; partnerBalance: string; companyProfit: string };
+    assert(createdApiOrder.number === orderCreationPayload.number, "order creation did not return the requested number");
+    assert([createdApiOrder.partnerPrice, createdApiOrder.partnerBalance, createdApiOrder.companyProfit].every((value) => Number.isFinite(Number(value))), "order creation returned a non-finite financial value");
+    for (const invalidPayload of [
+      { ...orderCreationPayload, number: "" },
+      { ...orderCreationPayload, clientId: 0 },
+      { ...orderCreationPayload, partnerStepPrice: "NaN" },
+    ]) await expectStatus("/api/orders", 400, directorCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(invalidPayload),
+    });
     await expectStatus(`/orders/${firstOrder.id}`, 200, directorCookie);
     await expectStatus(`/orders/${secondOrder.id}`, 200, directorCookie);
     const workflowProductionIds = [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, firstProduction.id, secondProduction.id];
