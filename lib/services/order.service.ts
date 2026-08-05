@@ -4,20 +4,25 @@ import { del } from "@vercel/blob";
 
 export async function getOrders() {
   return prisma.order.findMany({
-    include: {
-      client: true,
-      partner: true,
-      measurements: true,
-      payments: true,
-      productions: true,
-      documents: true,
-      calculations: { orderBy: { createdAt: "desc" } },
-      statusHistory: { orderBy: { createdAt: "desc" } },
-      events: {
-        orderBy: {
-          createdAt: "desc",
-        },
-      },
+    select: {
+      id: true,
+      number: true,
+      address: true,
+      staircase: true,
+      material: true,
+      amount: true,
+      prepayment: true,
+      balance: true,
+      partnerPrice: true,
+      companyProfit: true,
+      partnerPaid: true,
+      partnerBalance: true,
+      manager: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+      client: { select: { id: true, name: true, phone: true, city: true } },
+      partner: { select: { id: true, name: true } },
     },
     orderBy: {
       createdAt: "desc",

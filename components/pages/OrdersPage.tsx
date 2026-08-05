@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 
-import OrderForm from "@/components/orders/OrderForm";
 import OrderTable from "@/components/orders/OrderTable";
+import { ORDER_STATUSES } from "@/lib/orders/lifecycle";
+
+const OrderForm = dynamic(() => import("@/components/orders/OrderForm"), { loading: () => <div role="status" className="h-48 animate-pulse rounded-2xl bg-slate-800">Загрузка формы…</div> });
 
 type Order = {
   id: number;
@@ -20,15 +23,8 @@ type Order = {
   partnerBalance?: string;
   manager: string;
 };
-const statuses = [
-  "Все заказы",
-  "Новая заявка",
-  "Замер",
-  "Передано партнеру",
-  "Монтаж",
-  "Завершено",
-];
-const statusLabel = (value: string) => value === "Передано партнеру" ? "Передано в цех" : value;
+const statuses = ["Все заказы", ...ORDER_STATUSES];
+const statusLabel = (value: string) => value;
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -36,6 +32,9 @@ export default function OrdersPage() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("Все заказы");
+  const [showForm, setShowForm] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(30);
+  const deferredQuery = useDeferredValue(query);
 
   const loadOrders = useCallback(async () => {
     setLoading(true);
@@ -68,16 +67,17 @@ export default function OrdersPage() {
       orders.filter((order) => {
         const matchesQuery = `${order.number} ${order.client.name}`
           .toLowerCase()
-          .includes(query.trim().toLowerCase());
+          .includes(deferredQuery.trim().toLowerCase());
         return (
           matchesQuery && (status === "Все заказы" || order.status === status)
         );
       }),
-    [orders, query, status],
+    [orders, deferredQuery, status],
   );
+  const pagedOrders = visibleOrders.slice(0, visibleCount);
 
   return (
-    <section className="space-y-8 p-8">
+    <section className="space-y-8 p-4 md:p-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-white">Заказы</h1>
@@ -91,12 +91,13 @@ export default function OrdersPage() {
         >
           {loading ? "Обновление..." : "Обновить"}
         </button>
+        <button type="button" onClick={() => setShowForm((value) => !value)} className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">{showForm ? "Закрыть форму" : "Новый заказ"}</button>
       </div>
       <div className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
         <div className="flex flex-wrap gap-3">
           <input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => { setQuery(event.target.value); setVisibleCount(30); }}
             placeholder="Поиск по номеру или клиенту"
             className="w-80 rounded-xl bg-slate-900 p-3 text-white outline-none"
           />
@@ -104,7 +105,7 @@ export default function OrdersPage() {
             <button
               key={item}
               type="button"
-              onClick={() => setStatus(item)}
+              onClick={() => { setStatus(item); setVisibleCount(30); }}
               className={`rounded-xl px-5 py-3 text-white ${status === item ? "bg-blue-600" : "bg-slate-800"}`}
             >
             {statusLabel(item)}
@@ -112,7 +113,7 @@ export default function OrdersPage() {
           ))}
         </div>
       </div>
-      <OrderForm onSave={loadOrders} />
+      {showForm && <OrderForm onSave={async () => { await loadOrders(); setShowForm(false); }} />}
       {error ? (
         <p className="text-red-400">{error}</p>
       ) : loading ? (
@@ -120,7 +121,7 @@ export default function OrdersPage() {
       ) : visibleOrders.length === 0 ? (
         <p className="text-slate-400">Заказы не найдены.</p>
       ) : (
-        <OrderTable orders={visibleOrders} />
+        <><OrderTable orders={pagedOrders} />{visibleCount < visibleOrders.length && <button type="button" onClick={() => setVisibleCount((value) => value + 30)} className="mx-auto block min-h-11 rounded-xl bg-slate-800 px-6 text-white">Показать ещё ({visibleOrders.length - visibleCount})</button>}</>
       )}
     </section>
   );

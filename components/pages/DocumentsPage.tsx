@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 
 type DocumentItem = {
   id: number;
@@ -70,6 +70,7 @@ export default function DocumentsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [type, setType] = useState<"" | DocumentType>("");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(initialForm);
@@ -171,7 +172,7 @@ export default function DocumentsPage() {
   const visible = useMemo(
     () =>
       documents.filter((document) => {
-        const search = query.trim().toLocaleLowerCase("ru");
+        const search = deferredQuery.trim().toLocaleLowerCase("ru");
         return (
           (!type || document.type === type) &&
           (!search ||
@@ -182,7 +183,7 @@ export default function DocumentsPage() {
             ].some((value) => value.toLocaleLowerCase("ru").includes(search)))
         );
       }),
-    [documents, query, type],
+    [documents, deferredQuery, type],
   );
 
   return (

@@ -19,7 +19,8 @@
     "test:production:api": "tsx scripts/test-production-api.ts",
     "test:production:kanban": "tsx scripts/test-production-kanban.tsx",
     "test:warehouse": "tsx scripts/test-warehouse-final.ts",
-    "test:order-ux": "tsx scripts/test-order-ux.ts"
+    "test:order-ux": "tsx scripts/test-order-ux.ts",
+    "test:performance": "tsx scripts/test-performance-ux.ts"
   },
   "engines": {
     "node": ">=20.9.0"

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
 interface Partner {
   id: number;
@@ -26,7 +26,7 @@ export default function PartnersPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadPartners() {
+  const loadPartners = useCallback(async () => {
     setLoading(true);
     try {
       const response = await fetch("/api/partners");
@@ -37,18 +37,12 @@ export default function PartnersPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    void fetch("/api/partners")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Не удалось загрузить данные цеха.");
-        return response.json() as Promise<Partner[]>;
-      })
-      .then((data) => setPartners(data))
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить данные цеха."))
-      .finally(() => setLoading(false));
-  }, []);
+    const timer = window.setTimeout(() => void loadPartners(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadPartners]);
 
   function openCreate() { setEditingId(null); setForm(emptyForm); setError(""); setIsFormOpen(true); }
   function openEdit(partner: Partner) { setEditingId(partner.id); setForm({ name: partner.name, phone: partner.phone ?? "", city: partner.city ?? "", email: partner.email ?? "" }); setError(""); setIsFormOpen(true); }
