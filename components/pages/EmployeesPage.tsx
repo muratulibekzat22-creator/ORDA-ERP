@@ -94,11 +94,21 @@ export default function EmployeesPage() {
   return (
     <section className="flex-1 overflow-auto p-8">
       <h1 className="text-3xl font-bold text-white">Сотрудники</h1>
-      {error && <p className="mt-4 text-red-400">{error}</p>}
+      <p className="mt-2 text-slate-400">
+        Доступы, роли и контактные данные команды ALTYN SAPA
+      </p>
+      {error && (
+        <p className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
+          {error}
+        </p>
+      )}
       <form
         onSubmit={submit}
-        className="mt-5 grid gap-3 rounded-2xl bg-[#101827] p-5 md:grid-cols-3"
+        className="mt-5 grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-5 md:grid-cols-3 [&_input]:rounded-xl [&_input]:border [&_input]:border-slate-700 [&_input]:bg-slate-900 [&_input]:p-3 [&_input]:text-white [&_select]:rounded-xl [&_select]:border [&_select]:border-slate-700 [&_select]:bg-slate-900 [&_select]:p-3 [&_select]:text-white"
       >
+        <h2 className="text-xl font-semibold text-white md:col-span-3">
+          {edit ? `Редактирование: ${edit.name}` : "Добавить сотрудника"}
+        </h2>
         <input
           required
           value={form.name}
@@ -155,9 +165,12 @@ export default function EmployeesPage() {
             ))}
           </select>
         )}
-        <button>{edit ? "Сохранить" : "Создать"}</button>
+        <button className="rounded-xl bg-blue-600 p-3 font-semibold text-white hover:bg-blue-700">
+          {edit ? "Сохранить изменения" : "Добавить сотрудника"}
+        </button>
         {edit && (
           <button
+            className="rounded-xl bg-slate-700 p-3 text-white"
             type="button"
             onClick={() => {
               setEdit(null);
@@ -169,16 +182,33 @@ export default function EmployeesPage() {
         )}
       </form>
       <div className="mt-5 overflow-auto rounded-2xl bg-[#101827]">
-        <table className="w-full text-left text-slate-300">
+        <table className="w-full min-w-[760px] text-left text-slate-300 [&_td]:border-t [&_td]:border-slate-800 [&_td]:p-4">
+          <thead>
+            <tr className="text-slate-400">
+              <th className="p-4">Сотрудник</th>
+              <th>Роль</th>
+              <th>Цех</th>
+              <th>Статус</th>
+              <th>Действия</th>
+            </tr>
+          </thead>
           <tbody>
+            {!users.length && (
+              <tr>
+                <td colSpan={5} className="p-10 text-center text-slate-400">
+                  Сотрудники пока не добавлены.
+                </td>
+              </tr>
+            )}
             {users.map((user) => (
               <tr key={user.id}>
                 <td>{user.name}</td>
                 <td>{roleNames[user.role]}</td>
                 <td>{user.partnerProfile?.name ?? "—"}</td>
                 <td>{user.active ? "Активен" : "Неактивен"}</td>
-                <td>
+                <td className="space-x-2">
                   <button
+                    className="rounded-lg bg-slate-700 px-3 py-2 text-white"
                     onClick={() => {
                       setEdit(user);
                       setForm({
@@ -196,11 +226,13 @@ export default function EmployeesPage() {
                     Изменить
                   </button>
                   <button
+                    className="rounded-lg bg-amber-700 px-3 py-2 text-white"
                     onClick={() => void patch(user, { active: !user.active })}
                   >
                     {user.active ? "Отключить" : "Включить"}
                   </button>
                   <button
+                    className="rounded-lg bg-red-800 px-3 py-2 text-white"
                     onClick={async () => {
                       if (confirm(`Удалить ${user.name}?`)) {
                         const r = await fetch(`/api/employees/${user.id}`, {

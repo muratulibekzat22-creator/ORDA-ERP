@@ -1,6 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Plus,
+  RefreshCw,
+  Users,
+} from "lucide-react";
 
 import ClientSearch from "@/components/clients/ClientSearch";
 import ClientTable from "@/components/clients/ClientTable";
@@ -15,8 +22,13 @@ export default function ClientsPage() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const loadClients = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
       const params = new URLSearchParams();
 
@@ -34,7 +46,9 @@ export default function ClientsPage() {
       const response = await fetch(`/api/clients?${params.toString()}`);
 
       if (!response.ok) {
-        throw new Error("Ошибка загрузки клиентов");
+        throw new Error(
+          "Не удалось загрузить клиентов. Проверьте подключение и повторите.",
+        );
       }
 
       const result = await response.json();
@@ -42,7 +56,13 @@ export default function ClientsPage() {
       setClients(result.data);
       setPages(result.pagination.pages);
     } catch (error) {
-      console.error(error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось загрузить клиентов.",
+      );
+    } finally {
+      setLoading(false);
     }
   }, [page, search, status]);
 
@@ -68,10 +88,15 @@ export default function ClientsPage() {
 
     if (response.ok) {
       setOpen(false);
-      loadClients();
+      setSuccess(`Клиент «${client.name}» добавлен.`);
+      window.setTimeout(() => setSuccess(""), 4000);
+      await loadClients();
     } else {
-      const error = await response.json();
-      alert(error.error);
+      const payload = (await response.json()) as { error?: string };
+      setError(
+        payload.error ??
+          "Не удалось добавить клиента. Проверьте заполненные поля.",
+      );
     }
   }
 
@@ -86,37 +111,48 @@ export default function ClientsPage() {
 
   return (
     <section className="space-y-6 p-8">
-
       <div className="flex items-center justify-between">
-
         <div>
-
-          <h1 className="text-3xl font-bold text-white">
-            Клиенты
-          </h1>
+          <h1 className="text-3xl font-bold text-white">Клиенты</h1>
 
           <p className="mt-1 text-slate-400">
-            CRM клиентов ALTYN SAPA
+            Контакты клиентов и текущая работа по ним
           </p>
-
         </div>
 
         <button
           onClick={() => setOpen(true)}
           className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
         >
-          + Новый клиент
+          <Plus size={18} className="inline" /> Добавить клиента
         </button>
-
       </div>
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-4">
+      {success && (
+        <div className="flex items-center gap-2 rounded-xl border border-green-500/30 bg-green-500/10 p-4 text-green-300">
+          <CheckCircle2 size={20} />
+          {success}
+        </div>
+      )}
+      {error && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
+          <span className="flex items-center gap-2">
+            <AlertCircle size={20} />
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={() => void loadClients()}
+            className="flex items-center gap-2 rounded-lg bg-red-500/20 px-3 py-2"
+          >
+            <RefreshCw size={15} />
+            Повторить
+          </button>
+        </div>
+      )}
 
-        <Stat
-          title="Всего"
-          value={statistics.total}
-          color="text-white"
-        />
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-4">
+        <Stat title="Всего" value={statistics.total} color="text-white" />
 
         <Stat
           title="Новые"
@@ -135,11 +171,9 @@ export default function ClientsPage() {
           value={statistics.completed}
           color="text-cyan-400"
         />
-
       </div>
 
       <div className="flex gap-4">
-
         <div className="flex-1">
           <ClientSearch
             value={search}
@@ -163,15 +197,35 @@ export default function ClientsPage() {
           <option value="В работе">В работе</option>
           <option value="Завершено">Завершено</option>
         </select>
-
       </div>
 
-      <ClientTable
-        clients={clients}
-      />
+      {loading ? (
+        <div
+          className="space-y-3 rounded-2xl border border-slate-700 bg-[#101827] p-5"
+          aria-label="Загрузка клиентов"
+        >
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-16 animate-pulse rounded-xl bg-slate-900"
+            />
+          ))}
+        </div>
+      ) : clients.length ? (
+        <ClientTable clients={clients} />
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-700 bg-[#101827] p-12 text-center">
+          <Users className="mx-auto text-slate-500" size={42} />
+          <h2 className="mt-4 text-xl font-semibold text-white">
+            Клиенты не найдены
+          </h2>
+          <p className="mt-2 text-slate-400">
+            Измените поиск или добавьте нового клиента.
+          </p>
+        </div>
+      )}
 
       <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-[#101827] p-4">
-
         <button
           disabled={page === 1}
           onClick={() => setPage((p) => p - 1)}
@@ -191,7 +245,6 @@ export default function ClientsPage() {
         >
           Далее →
         </button>
-
       </div>
 
       <ClientModal
@@ -199,7 +252,6 @@ export default function ClientsPage() {
         onClose={() => setOpen(false)}
         onSave={addClient}
       />
-
     </section>
   );
 }
@@ -215,15 +267,9 @@ function Stat({
 }) {
   return (
     <div className="rounded-xl border border-slate-700 bg-[#101827] p-5">
+      <p className="text-sm text-slate-400">{title}</p>
 
-      <p className="text-sm text-slate-400">
-        {title}
-      </p>
-
-      <h2 className={`mt-2 text-3xl font-bold ${color}`}>
-        {value}
-      </h2>
-
+      <h2 className={`mt-2 text-3xl font-bold ${color}`}>{value}</h2>
     </div>
   );
 }
