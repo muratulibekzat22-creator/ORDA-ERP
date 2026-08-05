@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   calculateStair,
   type StairMaterial,
+  type CalculationLineInput,
 } from "@/lib/calculator/stair-calculation";
 import {
   createRequestHash,
@@ -13,6 +14,13 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 
 type Context = { params: Promise<{ id: string }> };
+function redactCalculation(value: Record<string, unknown>, role: Role) {
+  if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return value;
+  const result: Record<string, unknown> = { ...value };
+  for (const key of ["workshopCost", "baseWorkshopCost", "workshopRate", "workshopAdjustment", "grossDifference", "materialCost", "installationCost", "deliveryCost", "otherDirectCosts", "totalCost", "grossProfit"]) delete result[key];
+  if (Array.isArray(result.lines)) result.lines = result.lines.map((item) => { const line = item as Record<string, unknown>; return { id: line.id, calculationId: line.calculationId, kind: line.kind, name: line.name, quantity: line.quantity, unit: line.unit, unitSale: line.unitSale, totalSale: line.totalSale, comment: line.comment, enabled: line.enabled, position: line.position }; });
+  return result;
+}
 async function scopedOrder(id: number, role: Role, userId: string) {
   if (role !== Role.PARTNER)
     return prisma.order.findUnique({ where: { id }, select: { id: true } });
@@ -41,17 +49,12 @@ export async function GET(_: Request, { params }: Context) {
   const value = await prisma.orderCalculation.findFirst({
     where: { orderId: id },
     orderBy: { createdAt: "desc" },
+    include: { lines: { orderBy: { position: "asc" } } },
   });
   if (!value) return NextResponse.json(null);
-  const result = { ...value } as Record<string, unknown>;
-  if (role !== Role.DIRECTOR && role !== Role.ACCOUNTANT) {
-    delete result.workshopCost;
-    delete result.baseWorkshopCost;
-    delete result.workshopRate;
-    delete result.workshopAdjustment;
-    delete result.grossDifference;
-  }
-  return NextResponse.json(result);
+  if (role === Role.PARTNER)
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  return NextResponse.json(redactCalculation({ ...value } as Record<string, unknown>, role));
 }
 
 export async function POST(request: Request, { params }: Context) {
@@ -82,6 +85,11 @@ export async function POST(request: Request, { params }: Context) {
       ...(body.workshopCost === undefined
         ? {}
         : { workshopCost: Number(body.workshopCost) }),
+      installationRequired: body.installationRequired !== false,
+      deliveryRequired: body.deliveryRequired !== false,
+      otherCity: body.otherCity === true,
+      pickup: body.pickup === true,
+      lines: Array.isArray(body.lines) ? body.lines as CalculationLineInput[] : [],
     });
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
@@ -90,22 +98,47 @@ export async function POST(request: Request, { params }: Context) {
     if (key) {
       const existing = await prisma.orderCalculation.findUnique({
         where: { idempotencyKey: key },
+        include: { lines: { orderBy: { position: "asc" } } },
       });
       if (existing) {
         if (existing.requestHash !== requestHash) return idempotencyConflict();
-        return NextResponse.json(existing);
+        return NextResponse.json(redactCalculation({ ...existing } as Record<string, unknown>, role));
       }
     }
     const saved = await prisma.$transaction(async (tx) => {
       const created = await tx.orderCalculation.create({
         data: {
           orderId: id,
-          ...calculation,
+          material: calculation.material,
+          regularSteps: calculation.regularSteps,
+          platformEquivalents: calculation.platformEquivalents,
+          equivalentSteps: calculation.equivalentSteps,
+          workshopRate: calculation.workshopRate,
+          saleRate: calculation.saleRate,
+          baseWorkshopCost: calculation.baseWorkshopCost,
+          workshopCost: calculation.workshopCost,
+          baseClientPrice: calculation.baseClientPrice,
+          clientPrice: calculation.clientPrice,
+          grossDifference: calculation.grossDifference,
+          workshopAdjustment: calculation.workshopAdjustment,
+          clientAdjustment: calculation.clientAdjustment,
+          installationRequired: calculation.installationRequired,
+          deliveryRequired: calculation.deliveryRequired,
+          otherCity: calculation.otherCity,
+          pickup: calculation.pickup,
+          materialCost: calculation.materialCost,
+          installationCost: calculation.installationCost,
+          deliveryCost: calculation.deliveryCost,
+          otherDirectCosts: calculation.otherDirectCosts,
+          totalCost: calculation.totalCost,
+          grossProfit: calculation.grossProfit,
+          lines: { create: calculation.lines.map((line, position) => ({ ...line, position })) },
           createdByUserId: Number(auth.session!.user.id) || null,
           createdByName: auth.session!.user.name ?? "Система",
           idempotencyKey: key,
           requestHash,
         },
+        include: { lines: { orderBy: { position: "asc" } } },
       });
       await tx.order.update({
         where: { id },
@@ -113,7 +146,7 @@ export async function POST(request: Request, { params }: Context) {
           material: calculation.material,
           amount: calculation.clientPrice,
           partnerPrice: calculation.workshopCost,
-          companyProfit: calculation.grossDifference,
+          companyProfit: calculation.grossProfit,
           balance: {
             set:
               calculation.clientPrice -
@@ -150,7 +183,7 @@ export async function POST(request: Request, { params }: Context) {
       });
       return created;
     });
-    return NextResponse.json(saved, { status: 201 });
+    return NextResponse.json(redactCalculation({ ...saved } as Record<string, unknown>, role), { status: 201 });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Некорректный расчёт" },

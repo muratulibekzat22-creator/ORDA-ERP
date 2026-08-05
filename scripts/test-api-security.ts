@@ -323,6 +323,8 @@ async function main() {
     const firstProductionCookie = await session(firstProductionUser.email);
     const secondProductionCookie = await session(secondProductionUser.email);
     const directorCookie = await session(director.email);
+    await expectStatus("/api/company-finance", 403, firstProductionCookie);
+    await expectStatus("/api/personal-finance", 403, firstProductionCookie);
     await expectStatus("/", 200, directorCookie);
     const orderCreationPayload = {
       clientId: client.id,
@@ -440,6 +442,13 @@ async function main() {
     console.log("installer and production API security checks passed");
 
     const managerCookie = await session(manager.email);
+    await expectStatus("/api/company-finance", 403, managerCookie);
+    await expectStatus("/api/personal-finance", 403, managerCookie);
+    const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
+    const managerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
+    assert(!("grossProfit" in managerCalculation) && !("totalCost" in managerCalculation) && Array.isArray(managerCalculation.lines) && !("unitCost" in (managerCalculation.lines as Array<Record<string, unknown>>)[0]), "manager calculation leaks internal costs");
+    const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
+    assert(!("grossProfit" in repeatedManagerCalculation), "idempotent calculation replay leaks internal costs");
     for (const cookie of [managerCookie, firstMeasurerCookie, firstCookie]) await expectStatus("/api/settings", 403, cookie);
     const settingsBefore = await (await expectStatus("/api/settings", 200, directorCookie)).json() as { company: { name: string }; rolePermissions: Record<Role, string[]> };
     await expectStatus("/api/settings", 200, directorCookie, {
@@ -532,6 +541,18 @@ async function main() {
     assert(Array.isArray(directorWarehouse.materials) && Array.isArray(directorWarehouse.movements) && directorWarehouse.orders.some((order) => order.id === firstOrder.id) && typeof directorWarehouse.stats === "object", "director warehouse payload is invalid");
     const directorFinance = await (await expectStatus("/api/finance", 200, directorCookie)).json() as { rows: Array<{ id: number; prepayment: number }>; totals: Record<string, number>; managers: string[]; partners: Array<{ id: number }> };
     assert(Array.isArray(directorFinance.rows) && directorFinance.rows.some((row) => row.id === firstOrder.id && row.prepayment === 20) && typeof directorFinance.totals.turnover === "number" && Array.isArray(directorFinance.managers) && directorFinance.partners.some((partner) => partner.id === firstPartner.id), "director finance payload is invalid");
+    const directorCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, directorCookie)).json() as Record<string, unknown>;
+    assert("grossProfit" in directorCalculation && "totalCost" in directorCalculation, "director calculation is missing management totals");
+    const companyKey = `${tag}-company-ledger`;
+    const ledgerBody = JSON.stringify({ direction: "EXPENSE", category: "RENT", amount: 100, operationDate: new Date().toISOString(), comment: tag });
+    const companyEntry = await (await expectStatus("/api/company-finance", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": companyKey }, body: ledgerBody })).json() as { id: number };
+    const repeatedCompanyEntry = await (await expectStatus("/api/company-finance", 200, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": companyKey }, body: ledgerBody })).json() as { id: number };
+    assert(companyEntry.id === repeatedCompanyEntry.id, "company ledger idempotency failed");
+    await expectStatus("/api/company-finance", 409, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": companyKey }, body: JSON.stringify({ direction: "EXPENSE", category: "RENT", amount: 101, comment: tag }) });
+    const personalEntry = await (await expectStatus("/api/personal-finance", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-personal-ledger` }, body: JSON.stringify({ direction: "EXPENSE", category: "FOOD", amount: 50, comment: tag }) })).json() as { id: number };
+    assert(companyEntry.id > 0 && personalEntry.id > 0, "management ledger creation failed");
+    const personalDashboard = await (await expectStatus("/api/personal-finance", 200, directorCookie)).json() as { entries: Array<{ id: number }>; totals: { balance: number } };
+    assert(personalDashboard.entries.some((entry) => entry.id === personalEntry.id) && typeof personalDashboard.totals.balance === "number", "personal finance payload is invalid");
     const directorAnalytics = await (await expectStatus("/api/analytics", 200, directorCookie)).json() as { kpi: Record<string, number>; funnel: unknown[]; byManager: Array<{ manager: string }>; byPartner: Array<{ partner: string }>; months: unknown[]; filters: { partners: Array<{ id: number }> } };
     assert(typeof directorAnalytics.kpi.leads === "number" && Array.isArray(directorAnalytics.funnel) && Array.isArray(directorAnalytics.months) && directorAnalytics.byManager.some((item) => item.manager === tag) && directorAnalytics.filters.partners.some((partner) => partner.id === firstPartner.id), "director analytics payload is invalid");
     const directorSettings = await (await expectStatus("/api/settings", 200, directorCookie)).json() as Record<string, unknown>;
@@ -543,6 +564,8 @@ async function main() {
     console.log("manager and director API security matrix passed");
   } finally {
     await stopServer();
+    await prisma.companyLedgerEntry.deleteMany({ where: { comment: tag } });
+    await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
     if (generatedOrderIds.length) {
       await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
       await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });

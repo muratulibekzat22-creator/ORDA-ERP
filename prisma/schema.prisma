@@ -58,6 +58,8 @@ model User {
   warehouseMovements    MaterialMovement[]    @relation("WarehouseMovementEmployee")
   warehouseReservations MaterialReservation[] @relation("WarehouseReservationCreator")
   warehouseMutations    WarehouseMutation[]   @relation("WarehouseMutationActor")
+  companyLedgerEntries  CompanyLedgerEntry[]  @relation("CompanyLedgerAuthor")
+  personalLedgerEntries PersonalLedgerEntry[] @relation("PersonalLedgerAuthor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -140,6 +142,7 @@ model Order {
   materialReservations MaterialReservation[]
   statusHistory        OrderStatusHistory[]
   calculations         OrderCalculation[]
+  companyLedgerEntries CompanyLedgerEntry[]
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -168,29 +171,96 @@ model OrderStatusHistory {
 }
 
 model OrderCalculation {
-  id                  Int      @id @default(autoincrement())
-  orderId             Int
-  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  material            String
-  regularSteps        Int
-  platformEquivalents Int[]
-  equivalentSteps     Int
-  workshopRate        Decimal  @db.Decimal(12, 2)
-  saleRate            Decimal  @db.Decimal(12, 2)
-  baseWorkshopCost    Decimal  @db.Decimal(12, 2)
-  workshopCost        Decimal  @db.Decimal(12, 2)
-  baseClientPrice     Decimal  @db.Decimal(12, 2)
-  clientPrice         Decimal  @db.Decimal(12, 2)
-  grossDifference     Decimal  @db.Decimal(12, 2)
-  workshopAdjustment  Decimal  @db.Decimal(12, 2)
-  clientAdjustment    Decimal  @db.Decimal(12, 2)
-  createdByUserId     Int?
-  createdByName       String
-  idempotencyKey      String?  @unique
-  requestHash         String?
-  createdAt           DateTime @default(now())
+  id                   Int                    @id @default(autoincrement())
+  orderId              Int
+  order                Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  material             String
+  regularSteps         Int
+  platformEquivalents  Int[]
+  equivalentSteps      Int
+  workshopRate         Decimal                @db.Decimal(12, 2)
+  saleRate             Decimal                @db.Decimal(12, 2)
+  baseWorkshopCost     Decimal                @db.Decimal(12, 2)
+  workshopCost         Decimal                @db.Decimal(12, 2)
+  baseClientPrice      Decimal                @db.Decimal(12, 2)
+  clientPrice          Decimal                @db.Decimal(12, 2)
+  grossDifference      Decimal                @db.Decimal(12, 2)
+  workshopAdjustment   Decimal                @db.Decimal(12, 2)
+  clientAdjustment     Decimal                @db.Decimal(12, 2)
+  installationRequired Boolean                @default(true)
+  deliveryRequired     Boolean                @default(true)
+  otherCity            Boolean                @default(false)
+  pickup               Boolean                @default(false)
+  materialCost         Decimal                @default(0) @db.Decimal(12, 2)
+  installationCost     Decimal                @default(0) @db.Decimal(12, 2)
+  deliveryCost         Decimal                @default(0) @db.Decimal(12, 2)
+  otherDirectCosts     Decimal                @default(0) @db.Decimal(12, 2)
+  totalCost            Decimal                @default(0) @db.Decimal(12, 2)
+  grossProfit          Decimal                @default(0) @db.Decimal(12, 2)
+  lines                OrderCalculationLine[]
+  createdByUserId      Int?
+  createdByName        String
+  idempotencyKey       String?                @unique
+  requestHash          String?
+  createdAt            DateTime               @default(now())
 
   @@index([orderId, createdAt])
+}
+
+model OrderCalculationLine {
+  id            Int              @id @default(autoincrement())
+  calculationId Int
+  calculation   OrderCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  kind          String
+  name          String
+  quantity      Decimal          @db.Decimal(12, 3)
+  unit          String
+  unitCost      Decimal          @db.Decimal(12, 2)
+  unitSale      Decimal          @db.Decimal(12, 2)
+  totalCost     Decimal          @db.Decimal(12, 2)
+  totalSale     Decimal          @db.Decimal(12, 2)
+  comment       String?
+  enabled       Boolean          @default(true)
+  position      Int              @default(0)
+
+  @@index([calculationId, position])
+}
+
+model CompanyLedgerEntry {
+  id             Int      @id @default(autoincrement())
+  type           String
+  category       String
+  direction      String
+  amount         Decimal  @db.Decimal(14, 2)
+  operationDate  DateTime @default(now())
+  orderId        Int?
+  order          Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  comment        String?
+  authorId       Int?
+  author         User?    @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  idempotencyKey String?  @unique
+  requestHash    String?
+  createdAt      DateTime @default(now())
+
+  @@index([operationDate])
+  @@index([orderId])
+}
+
+model PersonalLedgerEntry {
+  id             Int      @id @default(autoincrement())
+  type           String
+  category       String
+  direction      String
+  amount         Decimal  @db.Decimal(14, 2)
+  operationDate  DateTime @default(now())
+  comment        String?
+  authorId       Int?
+  author         User?    @relation("PersonalLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  idempotencyKey String?  @unique
+  requestHash    String?
+  createdAt      DateTime @default(now())
+
+  @@index([operationDate])
 }
 
 model Document {

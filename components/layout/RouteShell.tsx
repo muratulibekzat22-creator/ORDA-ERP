@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import {
   CalendarDays,
   ClipboardList,
@@ -14,6 +15,8 @@ import {
   UserCog,
   Users,
   Wallet,
+  Landmark,
+  LockKeyhole,
   Warehouse,
   X,
 } from "lucide-react";
@@ -38,6 +41,7 @@ export default function RouteShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { data: session } = useSession();
   const [open, setOpen] = useState(false);
   const standalone =
     pathname === "/" || pathname === "/login" || pathname === "/partner";
@@ -94,6 +98,8 @@ export default function RouteShell({
                 {title}
               </Link>
             ))}
+            {(session?.user.role === "DIRECTOR" || session?.user.role === "ACCOUNTANT") && <Link href="/company-finance" onClick={() => setOpen(false)} aria-current={active("/company-finance") ? "page" : undefined} className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/company-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}><Landmark size={20} />Финансы компании</Link>}
+            {session?.user.role === "DIRECTOR" && <Link href="/personal-finance" onClick={() => setOpen(false)} aria-current={active("/personal-finance") ? "page" : undefined} className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/personal-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}><LockKeyhole size={20} />Личные финансы</Link>}
             <Link
               href="/calculator"
               onClick={() => setOpen(false)}
