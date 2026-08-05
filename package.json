@@ -17,7 +17,8 @@
     "test:api:security": "tsx scripts/test-api-security.ts",
     "test:production:domain": "tsx scripts/test-production-domain.ts",
     "test:production:api": "tsx scripts/test-production-api.ts",
-    "test:production:kanban": "tsx scripts/test-production-kanban.tsx"
+    "test:production:kanban": "tsx scripts/test-production-kanban.tsx",
+    "test:warehouse": "tsx scripts/test-warehouse-final.ts"
   },
   "engines": {
     "node": ">=20.9.0"

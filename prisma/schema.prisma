@@ -38,6 +38,7 @@ enum Permission {
   design
   production
   installation
+  warehouse
 }
 
 model User {
@@ -54,6 +55,9 @@ model User {
   assignedMeasurements Measurement[]
   assignedProductions Production[]
   uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
+  warehouseMovements MaterialMovement[] @relation("WarehouseMovementEmployee")
+  warehouseReservations MaterialReservation[] @relation("WarehouseReservationCreator")
+  warehouseMutations WarehouseMutation[] @relation("WarehouseMutationActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -133,6 +137,7 @@ partnerBalance Decimal @default(0) @db.Decimal(12,2)
   materialMovements MaterialMovement[]
   documents    Document[]
   attachments  Attachment[]
+  materialReservations MaterialReservation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -186,10 +191,13 @@ model Material {
   purchasePrice Decimal @default(0) @db.Decimal(12,2)
   supplier     String?
   active       Boolean @default(true)
+  lookupKey    String  @unique
+  reserved     Float   @default(0)
   idempotencyKey String? @unique
   requestHash    String?
 
   movements MaterialMovement[]
+  reservations MaterialReservation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -259,8 +267,49 @@ model MaterialMovement {
   comment String?
   idempotencyKey String? @unique
   requestHash String?
+  amount Decimal @default(0) @db.Decimal(14,2)
+  stockAfter Float?
+  reservedAfter Float?
+  stockDelta Float @default(0)
+  reserveDelta Float @default(0)
+  employeeId Int?
+  employee User? @relation("WarehouseMovementEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
+  operationAt DateTime @default(now())
 
   createdAt DateTime @default(now())
+}
+
+model MaterialReservation {
+  id          Int      @id @default(autoincrement())
+  materialId  Int
+  material    Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  orderId     Int
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  quantity    Float    @default(0)
+  consumed    Float    @default(0)
+  status      String   @default("ACTIVE")
+  createdById Int?
+  createdBy   User?    @relation("WarehouseReservationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orderId, materialId])
+  @@index([materialId, status])
+  @@index([orderId, status])
+}
+
+model WarehouseMutation {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  requestHash String
+  action      String
+  result      Json
+  actorId     Int?
+  actor       User?    @relation("WarehouseMutationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model Measurement {

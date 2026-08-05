@@ -70,7 +70,7 @@ async function main() {
     current = await prisma.order.findUniqueOrThrow({ where: { id: order.id } }); assert(current.status === "Сдано", step);
 
     step = "warehouse movements and idempotency";
-    const material = await prisma.material.create({ data: { name: tag, category: "E2E", unit: "шт", stock: 10, minimumStock: 0, purchasePrice: "10" } }); ids.material = material.id;
+    const material = await prisma.material.create({ data: { name: tag, lookupKey: `${tag.toLocaleLowerCase("ru")}::шт`, category: "E2E", unit: "шт", stock: 10, minimumStock: 0, purchasePrice: "10" } }); ids.material = material.id;
     await createMaterialMovement({ materialId: material.id, type: "incoming", quantity: 5, idempotencyKey: `${tag}:in`, requestHash: "in" });
     const out = { materialId: material.id, orderId: order.id, type: "outgoing" as const, quantity: 3, idempotencyKey: `${tag}:out`, requestHash: "out" };
     await createMaterialMovement(out); await createMaterialMovement(out);

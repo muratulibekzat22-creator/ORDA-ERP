@@ -78,6 +78,7 @@ async function main() {
     const material = await prisma.material.create({
       data: {
         name: tag,
+        lookupKey: `${tag.toLocaleLowerCase("ru")}::pcs`,
         category: "test",
         unit: "pcs",
         stock: 10,

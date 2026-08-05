@@ -1,17 +1,17 @@
 import { Role } from "./roles";
 
-export const permissionKeys = ["employees", "clients", "orders", "measurements", "calendar", "documents", "finance", "partners", "reports", "settings", "design", "production", "installation"] as const;
+export const permissionKeys = ["employees", "clients", "orders", "measurements", "calendar", "documents", "finance", "partners", "reports", "settings", "design", "production", "installation", "warehouse"] as const;
 export type Permission = (typeof permissionKeys)[number];
 
 const all: Permission[] = [...permissionKeys];
 export const defaultPermissions: Record<Role, Permission[]> = {
   DIRECTOR: all,
-  MANAGER: ["clients", "orders", "measurements", "calendar", "documents", "production"],
-  ACCOUNTANT: ["finance", "partners", "reports"],
+  MANAGER: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse"],
+  ACCOUNTANT: ["finance", "partners", "reports", "warehouse"],
   MEASURER: ["measurements", "calendar"],
   DESIGNER: ["design", "orders"],
-  PRODUCTION: ["production", "calendar"],
-  INSTALLER: ["production", "installation", "calendar"],
+  PRODUCTION: ["production", "calendar", "warehouse"],
+  INSTALLER: ["production", "installation", "calendar", "warehouse"],
   PARTNER: ["orders", "finance", "partners", "documents"],
 };
 

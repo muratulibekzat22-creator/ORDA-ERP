@@ -10,7 +10,7 @@ function materialData(body: Record<string, unknown>) {
   const unit = typeof body.unit === "string" ? body.unit.trim() : "";
   const price = Number(body.purchasePrice);
   if (!name || !category || !unit || name.length > 200 || category.length > 100 || unit.length > 30 || !Number.isFinite(price) || price < 0) return null;
-  return { name, category, unit, purchasePrice: String(price), active: typeof body.active === "boolean" ? body.active : true };
+  return { name, category, unit, lookupKey: `${name.toLocaleLowerCase("ru")}::${unit.toLocaleLowerCase("ru")}`, purchasePrice: String(price), active: typeof body.active === "boolean" ? body.active : true };
 }
 
 export async function POST(request: Request) {

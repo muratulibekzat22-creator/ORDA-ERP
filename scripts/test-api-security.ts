@@ -260,6 +260,7 @@ async function main() {
     await expectStatus(`/api/partners/${firstPartner.id}`, 404, secondCookie);
     await expectStatus(`/api/proposal/${secondOrder.id}`, 200, secondCookie);
     await expectStatus(`/api/proposal/${firstOrder.id}`, 404, secondCookie);
+    await expectStatus("/api/warehouse", 403, firstCookie);
     console.log("partner API security checks passed");
 
     const firstMeasurerCookie = await session(firstMeasurer.email);
@@ -379,6 +380,11 @@ async function main() {
     assertProductionPayload(firstProductionProductions, [firstProduction.id], [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, secondProduction.id], [firstProductionOrder.id], firstProductionUser.id, [productionStage]);
     const secondProductionProductions = await (await expectStatus("/api/production", 200, secondProductionCookie)).json() as ProductionPayload[];
     assertProductionPayload(secondProductionProductions, [secondProduction.id], [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, firstProduction.id], [secondProductionOrder.id], secondProductionUser.id, [productionStage]);
+
+    const installerWarehouse = await (await expectStatus("/api/warehouse", 200, firstInstallerCookie)).json() as { orders: Array<{ id: number }> };
+    assert(installerWarehouse.orders.length === 1 && installerWarehouse.orders[0].id === firstInstallerOrder.id, "installer warehouse scope is invalid");
+    const productionWarehouse = await (await expectStatus("/api/warehouse", 200, firstProductionCookie)).json() as { orders: Array<{ id: number }> };
+    assert(productionWarehouse.orders.length === 1 && productionWarehouse.orders[0].id === firstProductionOrder.id, "production warehouse scope is invalid");
 
     const firstInstallerCalendar = await (await expectStatus("/api/calendar", 200, firstInstallerCookie)).json() as CalendarPayload;
     assertCalendarPayload(firstInstallerCalendar, [String(firstInstallerProduction.id)], [String(secondInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id), String(secondProduction.id)], [firstInstallerOrder.id], firstInstaller.id, "production", [installationStage]);
