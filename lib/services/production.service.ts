@@ -30,20 +30,20 @@ export type ProductionWriteData = {
 };
 
 export class ProductionServiceError extends Error {
-  constructor(public readonly code: "FORBIDDEN" | "INVALID_STAGE" | "INVALID_ASSIGNEE" | "IDEMPOTENCY_CONFLICT") {
+  constructor(public readonly code: "FORBIDDEN" | "INVALID_STAGE" | "INVALID_ASSIGNEE" | "INVALID_DATES" | "IDEMPOTENCY_CONFLICT") {
     super(code);
   }
 }
 
 const productionInclude = {
   order: { include: { client: true, partner: true } },
-  masterUser: { select: { id: true, name: true, role: true, active: true } },
+  masterUser: { select: { id: true, name: true } },
   stageHistory: { orderBy: { createdAt: "desc" as const } },
 } satisfies Prisma.ProductionInclude;
 
 function scopeWhere(actor: ProductionActor): Prisma.ProductionWhereInput {
   if (actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) return {};
-  if (actor.role === Role.PRODUCTION) return { masterUserId: actor.userId, stage: { not: "Монтаж" } };
+  if (actor.role === Role.PRODUCTION) return { masterUserId: actor.userId, stage: { notIn: ["Монтаж", "Сдано"] } };
   if (actor.role === Role.INSTALLER) return { masterUserId: actor.userId, stage: "Монтаж" };
   return { id: -1 };
 }
@@ -85,7 +85,7 @@ export async function getProductionOptions(actor: ProductionActor) {
       orderBy: { createdAt: "desc" },
     }),
     prisma.user.findMany({
-      where: { active: true, role: { in: [Role.PRODUCTION, Role.INSTALLER, Role.DIRECTOR] } },
+      where: { active: true, role: { in: [Role.PRODUCTION, Role.INSTALLER] } },
       select: { id: true, name: true, role: true },
       orderBy: { name: "asc" },
     }),
@@ -93,11 +93,19 @@ export async function getProductionOptions(actor: ProductionActor) {
   return { orders, assignees };
 }
 
-export function getProduction(id: number, actor?: ProductionActor) {
-  return prisma.production.findFirst({
+export async function getProduction(id: number, actor?: ProductionActor) {
+  const production = await prisma.production.findFirst({
     where: { id, ...(actor ? scopeWhere(actor) : {}) },
     include: productionInclude,
   });
+  if (!production) return null;
+  const userIds = production.stageHistory.map((item) => item.changedByUserId).filter((value): value is number => value !== null);
+  const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }) : [];
+  const names = new Map(users.map((user) => [user.id, user.name]));
+  return { ...production, stageHistory: production.stageHistory.map((history) => ({
+    ...history,
+    changedBy: history.changedByUserId ? { id: history.changedByUserId, name: names.get(history.changedByUserId) ?? "Удалённый пользователь" } : null,
+  })) };
 }
 
 export async function createProductionCommand(input: {
@@ -119,6 +127,8 @@ export async function createProductionCommand(input: {
     const production = await prisma.$transaction(async (tx) => {
       const order = await tx.order.findUnique({ where: { id: input.orderId }, select: { id: true } });
       if (!order) return null;
+      const existing = await tx.production.findFirst({ where: { orderId: input.orderId }, select: { id: true } });
+      if (existing) throw new ProductionServiceError("IDEMPOTENCY_CONFLICT");
       const assignee = await getAssignee(tx, input.data.masterUserId, input.data.stage);
       const now = new Date();
       const completed = isCompletedProductionStage(input.data.stage);
@@ -206,6 +216,9 @@ export async function updateProductionCommand(input: {
   if (input.data.masterUserId !== undefined && input.data.masterUserId !== current.masterUserId && !canReassignProduction(input.actor.role)) {
     throw new ProductionServiceError("FORBIDDEN");
   }
+  const plannedStartAt = input.data.plannedStartAt === undefined ? current.plannedStartAt : input.data.plannedStartAt;
+  const plannedEndAt = input.data.plannedEndAt === undefined ? current.plannedEndAt : input.data.plannedEndAt;
+  if (plannedStartAt && plannedEndAt && plannedEndAt < plannedStartAt) throw new ProductionServiceError("INVALID_DATES");
 
   try {
     return await prisma.$transaction(async (tx) => {
@@ -261,6 +274,19 @@ export async function updateProductionCommand(input: {
     }
     return getProduction(input.id, input.actor);
   }
+}
+
+export async function deleteProductionCommand(id: number, actor: ProductionActor) {
+  if (actor.role !== Role.DIRECTOR) throw new ProductionServiceError("FORBIDDEN");
+  const current = await prisma.production.findUnique({ where: { id }, select: { id: true, orderId: true } });
+  if (!current) return null;
+  return prisma.$transaction(async (tx) => {
+    await tx.production.delete({ where: { id } });
+    await tx.orderEvent.create({
+      data: { orderId: current.orderId, title: "Производство удалено", user: actor.name },
+    });
+    return { id };
+  });
 }
 
 // Compatibility helpers for existing internal scripts; API writes use the command functions above.

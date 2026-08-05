@@ -6,6 +6,8 @@ import { isProductionStage } from "@/lib/production/stage-policy";
 import { requirePermission } from "@/lib/server-auth";
 import {
   createProductionCommand,
+  deleteProductionCommand,
+  getProduction,
   getProductionOptions,
   getProductions,
   ProductionServiceError,
@@ -13,6 +15,12 @@ import {
   type ProductionWriteData,
   updateProductionCommand,
 } from "@/lib/services/production.service";
+
+const WRITE_FIELDS = new Set(["stage", "percent", "masterUserId", "priority", "comment", "startDate", "finishDate", "plannedStartAt", "plannedEndAt"]);
+
+function hasOnlyFields(values: Record<string, unknown>, fields: Set<string>) {
+  return Object.keys(values).every((field) => fields.has(field));
+}
 
 function actorFromSession(session: { user: { id: string; role: string; name?: string | null } }): ProductionActor {
   return { role: session.user.role as Role, userId: Number(session.user.id), name: session.user.name ?? null };
@@ -64,7 +72,8 @@ function serviceError(error: unknown) {
   if (!(error instanceof ProductionServiceError)) return null;
   if (error.code === "FORBIDDEN") return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   if (error.code === "INVALID_ASSIGNEE") return NextResponse.json({ error: "Пользователь не может быть назначен на этот этап" }, { status: 409 });
-  if (error.code === "INVALID_STAGE") return NextResponse.json({ error: "Недопустимый переход этапа" }, { status: 409 });
+  if (error.code === "INVALID_STAGE") return NextResponse.json({ error: "Недопустимый переход этапа" }, { status: 400 });
+  if (error.code === "INVALID_DATES") return NextResponse.json({ error: "Дата окончания не может быть раньше даты начала" }, { status: 400 });
   return NextResponse.json({ error: "Idempotency-Key уже использован с другим payload" }, { status: 409 });
 }
 
@@ -73,8 +82,16 @@ export async function GET(request: Request) {
   if (auth.response) return auth.response;
   try {
     const actor = actorFromSession(auth.session!);
-    if (new URL(request.url).searchParams.get("view") === "options") {
+    const params = new URL(request.url).searchParams;
+    if (params.get("view") === "options") {
       return NextResponse.json(await getProductionOptions(actor));
+    }
+    if (params.has("id")) {
+      const id = Number(params.get("id"));
+      if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
+      const production = await getProduction(id, actor);
+      if (!production) return NextResponse.json({ error: "Производство не найдено" }, { status: 404 });
+      return NextResponse.json(production);
     }
     return NextResponse.json(await getProductions(actor));
   } catch (error) {
@@ -92,6 +109,7 @@ export async function POST(request: Request) {
     const body: unknown = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Некорректные данные производства" }, { status: 400 });
     const values = body as Record<string, unknown>;
+    if (!hasOnlyFields(values, new Set(["orderId", ...WRITE_FIELDS]))) return NextResponse.json({ error: "Недопустимые поля запроса" }, { status: 400 });
     const orderId = Number(values.orderId);
     const data = parseWriteData(values);
     if (!Number.isInteger(orderId) || orderId <= 0 || !data?.stage || data.percent === undefined || !data.masterUserId) {
@@ -107,6 +125,7 @@ export async function POST(request: Request) {
     if (!result) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     return NextResponse.json(result.production, { status: result.created ? 201 : 200 });
   } catch (error) {
+    if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
     const response = serviceError(error);
     if (response) return response;
     console.error(error);
@@ -123,6 +142,7 @@ export async function PATCH(request: Request) {
     const body: unknown = await request.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Некорректные данные производства" }, { status: 400 });
     const values = body as Record<string, unknown>;
+    if (!hasOnlyFields(values, new Set(["id", ...WRITE_FIELDS]))) return NextResponse.json({ error: "Недопустимые поля запроса" }, { status: 400 });
     const id = Number(values.id);
     const data = parseWriteData(values);
     if (!Number.isInteger(id) || id <= 0 || !data || Object.keys(data).length === 0) {
@@ -138,9 +158,27 @@ export async function PATCH(request: Request) {
     if (!production) return NextResponse.json({ error: "Производство не найдено" }, { status: 404 });
     return NextResponse.json(production);
   } catch (error) {
+    if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
     const response = serviceError(error);
     if (response) return response;
     console.error(error);
     return NextResponse.json({ error: "Ошибка обновления производства" }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const auth = await requirePermission("production");
+  if (auth.response) return auth.response;
+  try {
+    const id = Number(new URL(request.url).searchParams.get("id"));
+    if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
+    const deleted = await deleteProductionCommand(id, actorFromSession(auth.session!));
+    if (!deleted) return NextResponse.json({ error: "Производство не найдено" }, { status: 404 });
+    return NextResponse.json(deleted);
+  } catch (error) {
+    const response = serviceError(error);
+    if (response) return response;
+    console.error(error);
+    return NextResponse.json({ error: "Ошибка удаления производства" }, { status: 500 });
   }
 }

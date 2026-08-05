@@ -28,8 +28,16 @@ export function getNextProductionStage(stage: ProductionStage): ProductionStage 
   return PRODUCTION_STAGES[getProductionStageIndex(stage) + 1] ?? null;
 }
 
+export function getPreviousProductionStage(stage: ProductionStage): ProductionStage | null {
+  return PRODUCTION_STAGES[getProductionStageIndex(stage) - 1] ?? null;
+}
+
 export function canTransitionProductionStage(from: ProductionStage, to: ProductionStage) {
   return getNextProductionStage(from) === to;
+}
+
+export function canTransitionProductionStageEitherDirection(from: ProductionStage, to: ProductionStage) {
+  return getNextProductionStage(from) === to || getPreviousProductionStage(from) === to;
 }
 
 export function isCompletedProductionStage(stage: ProductionStage) {

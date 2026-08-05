@@ -417,7 +417,11 @@ async function main() {
       { id: otherStageProduction.id, comment: "non-installation update" },
       { id: firstInstallerProduction.id, stage: productionStage },
       { id: firstInstallerProduction.id, masterUserId: secondInstaller.id },
-    ]) await expectStatuses("/api/production", [403, 404, 409], firstInstallerCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:installer-forbidden:${body.id}:${Object.keys(body).sort().join("-")}` }, body: JSON.stringify(body) });
+    ]) await expectStatuses("/api/production", [400, 403, 404], firstInstallerCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:installer-forbidden:${body.id}:${Object.keys(body).sort().join("-")}` }, body: JSON.stringify(body) });
+
+    await expectStatus("/api/production", 400, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:protected-fields` }, body: JSON.stringify({ id: firstProduction.id, completedAt: new Date().toISOString() }) });
+    await expectStatus("/api/production", 400, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:order-rebind` }, body: JSON.stringify({ id: firstProduction.id, orderId: secondProductionOrder.id }) });
+    await expectStatus(`/api/production?id=${secondProduction.id}`, 404, firstProductionCookie);
 
     const directorProductions = await (await expectStatus("/api/production", 200, directorCookie)).json() as ProductionPayload[];
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
