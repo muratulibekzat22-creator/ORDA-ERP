@@ -1,162 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
-type PaymentStatus = "all" | "debt" | "partial" | "paid";
-type Period = "all" | "month" | "quarter" | "year";
-
-type FinanceRow = {
-  id: number;
-  number: string;
-  client: string;
-  partner: string;
-  manager: string;
-  amount: number;
-  prepayment: number;
-  balance: number;
-  partnerPrice: number;
-  partnerPaid: number;
-  partnerBalance: number;
-  companyProfit: number;
-  paymentStatus: Exclude<PaymentStatus, "all">;
-};
-
-type FinanceData = {
-  rows: FinanceRow[];
-  totals: {
-    turnover: number;
-    received: number;
-    clientBalance: number;
-    partnerPaid: number;
-    partnerBalance: number;
-    profit: number;
-  };
-  managers: string[];
-  partners: Array<{ id: number; name: string }>;
-};
-
-const emptyData: FinanceData = {
-  rows: [],
-  totals: { turnover: 0, received: 0, clientBalance: 0, partnerPaid: 0, partnerBalance: 0, profit: 0 },
-  managers: [],
-  partners: [],
-};
-
-function money(value: number) {
-  return `${value.toLocaleString("ru-RU")} ₸`;
-}
-
-function paymentStatusMeta(status: FinanceRow["paymentStatus"]) {
-  if (status === "paid") return { title: "Оплачено", color: "bg-green-500/20 text-green-400" };
-  if (status === "partial") return { title: "Частично", color: "bg-yellow-500/20 text-yellow-400" };
-  return { title: "Есть долг", color: "bg-red-500/20 text-red-400" };
-}
+type Row = { id: number; number: string; client: string; partner: string; amount: number; prepayment: number; balance: number; partnerPrice: number; partnerPaid: number; partnerBalance: number; companyProfit: number };
+type Operation = { id: number; type: string; amount: number; method: string; comment: string | null; operationDate: string; order: { number: string; client: { name: string } } | null; partner: { name: string } | null };
+type Data = { rows: Row[]; partners: { id: number; name: string }[]; operations: Operation[]; operationTotals: { income: number; expense: number; net: number }; totals: { turnover: number; received: number; clientBalance: number; partnerPaid: number; partnerBalance: number; profit: number } };
+const empty: Data = { rows: [], partners: [], operations: [], operationTotals: { income: 0, expense: 0, net: 0 }, totals: { turnover: 0, received: 0, clientBalance: 0, partnerPaid: 0, partnerBalance: 0, profit: 0 } };
+const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 
 export default function FinancePage() {
-  const [data, setData] = useState<FinanceData>(emptyData);
-  const [period, setPeriod] = useState<Period>("all");
-  const [manager, setManager] = useState("");
-  const [partnerId, setPartnerId] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("all");
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const params = new URLSearchParams({ period, paymentStatus });
-    if (manager) params.set("manager", manager);
-    if (partnerId) params.set("partnerId", partnerId);
-
-    let active = true;
-
-    void fetch(`/api/finance?${params.toString()}`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Не удалось загрузить финансовые данные");
-        return response.json() as Promise<FinanceData>;
-      })
-      .then((result) => {
-        if (active) {
-          setData(result);
-          setError("");
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (active) {
-          setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить финансовые данные");
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [period, manager, partnerId, paymentStatus]);
-
-  const cards = [
-    ["Общий оборот", data.totals.turnover, "text-green-400"],
-    ["Получено от клиентов", data.totals.received, "text-blue-400"],
-    ["Остаток клиентов", data.totals.clientBalance, "text-red-400"],
-    ["Выплачено партнёрам", data.totals.partnerPaid, "text-sky-400"],
-    ["Осталось выплатить партнёрам", data.totals.partnerBalance, "text-yellow-400"],
-    ["Прибыль компании", data.totals.profit, "text-cyan-400"],
-  ] as const;
-
-  return (
-    <section className="space-y-8 p-8">
-      <div>
-        <h1 className="text-3xl font-bold text-white">Финансы</h1>
-        <p className="mt-2 text-slate-400">Финансовая аналитика ORDA ERP</p>
-      </div>
-
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-        {cards.map(([title, value, color]) => (
-          <div key={title} className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
-            <p className="text-slate-400">{title}</p>
-            <p className={`mt-3 text-3xl font-bold ${color}`}>{money(value)}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-4 rounded-2xl border border-slate-700 bg-[#101827] p-5 md:grid-cols-2 xl:grid-cols-4">
-        <Filter label="Период" value={period} onChange={(value) => setPeriod(value as Period)}>
-          <option value="all">За всё время</option><option value="month">Последний месяц</option><option value="quarter">Последний квартал</option><option value="year">Последний год</option>
-        </Filter>
-        <Filter label="Менеджер" value={manager} onChange={setManager}>
-          <option value="">Все менеджеры</option>{data.managers.map((item) => <option key={item} value={item}>{item}</option>)}
-        </Filter>
-        <Filter label="Партнёр" value={partnerId} onChange={setPartnerId}>
-          <option value="">Все партнёры</option>{data.partners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </Filter>
-        <Filter label="Статус оплаты" value={paymentStatus} onChange={(value) => setPaymentStatus(value as PaymentStatus)}>
-          <option value="all">Все статусы</option><option value="debt">Есть задолженность</option><option value="partial">Частичная оплата</option><option value="paid">Оплачено полностью</option>
-        </Filter>
-      </div>
-
-      {error && <p className="text-sm text-red-400">{error}</p>}
-
-      <div className="overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827]">
-        <table className="min-w-[1550px] w-full text-sm">
-          <thead className="bg-slate-900 text-left text-slate-400">
-            <tr>{["№ заказа", "Клиент", "Партнёр", "Стоимость клиенту", "Предоплата", "Остаток клиента", "Стоимость партнёра", "Выплачено партнёру", "Остаток партнёру", "Прибыль", "Статус оплаты"].map((title) => <th key={title} className="px-4 py-4 font-medium">{title}</th>)}</tr>
-          </thead>
-          <tbody>
-            {data.rows.map((row) => {
-              const status = paymentStatusMeta(row.paymentStatus);
-              return <tr key={row.id} className="border-t border-slate-800 hover:bg-slate-900/70">
-                <td className="px-4 py-4 font-medium text-white">{row.number}</td><td className="px-4 py-4 text-white">{row.client}</td><td className="px-4 py-4 text-slate-300">{row.partner}</td>
-                <td className="px-4 py-4 text-green-400">{money(row.amount)}</td><td className="px-4 py-4 text-blue-400">{money(row.prepayment)}</td><td className="px-4 py-4 text-red-400">{money(row.balance)}</td>
-                <td className="px-4 py-4 text-cyan-400">{money(row.partnerPrice)}</td><td className="px-4 py-4 text-sky-400">{money(row.partnerPaid)}</td><td className="px-4 py-4 text-yellow-400">{money(row.partnerBalance)}</td>
-                <td className="px-4 py-4 font-semibold text-green-400">{money(row.companyProfit)}</td><td className="px-4 py-4"><span className={`rounded-full px-3 py-1 ${status.color}`}>{status.title}</span></td>
-              </tr>;
-            })}
-            {data.rows.length === 0 && <tr><td colSpan={11} className="px-4 py-10 text-center text-slate-400">Нет заказов по выбранным фильтрам.</td></tr>}
-          </tbody>
-          <tfoot className="border-t border-slate-600 bg-slate-900 font-bold">
-            <tr><td colSpan={3} className="px-4 py-4 text-white">Итого</td><td className="px-4 py-4 text-green-400">{money(data.totals.turnover)}</td><td colSpan={1} /><td className="px-4 py-4 text-red-400">{money(data.totals.clientBalance)}</td><td colSpan={3} /><td className="px-4 py-4 text-cyan-400">{money(data.totals.profit)}</td><td /></tr>
-          </tfoot>
-        </table>
-      </div>
-    </section>
-  );
+  const [data, setData] = useState<Data>(empty);
+  const [period, setPeriod] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [error, setError] = useState(""); const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false); const [saving, setSaving] = useState(false);
+  const [operation, setOperation] = useState({ type: "CLIENT_PAYMENT", amount: "", method: "cash", orderId: "", partnerId: "", comment: "", operationDate: new Date().toISOString().slice(0, 10), adjustmentDirection: "INCOME" });
+  const { getKey, reset } = useIdempotencyKey();
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const params = new URLSearchParams({ period }); if (typeFilter) params.set("type", typeFilter); const response = await fetch(`/api/finance?${params}`); const result = await response.json() as Data & { error?: string }; if (!response.ok) throw new Error(result.error ?? "Не удалось загрузить финансы"); setData(result); setError(""); } catch (value) { setError(value instanceof Error ? value.message : "Не удалось загрузить финансы"); } finally { setLoading(false); }
+  }, [period, typeFilter]);
+  // Fetching is the effect's sole external synchronization; the state updates occur after it resolves.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setSaving(true); setError("");
+    try {
+      const response = await fetch("/api/finance", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": getKey() }, body: JSON.stringify({ ...operation, orderId: operation.orderId || undefined, partnerId: operation.partnerId || undefined }) });
+      const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error ?? "Не удалось сохранить операцию");
+      reset(); setOperation((item) => ({ ...item, amount: "", comment: "" })); setOpen(false); await load();
+    } catch (value) { setError(value instanceof Error ? value.message : "Не удалось сохранить операцию"); } finally { setSaving(false); }
+  }
+  const set = (key: keyof typeof operation, value: string) => setOperation((item) => ({ ...item, [key]: value }));
+  return <section className="space-y-6 p-5 md:p-8"><header className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">Финансы</h1><p className="mt-1 text-slate-400">Операции, расчёты и остатки по заказам</p></div><button type="button" onClick={() => setOpen((value) => !value)} className="rounded-xl bg-blue-600 px-5 py-3 font-medium text-white">{open ? "Закрыть" : "Добавить операцию"}</button></header>
+    {open && <form onSubmit={submit} className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-5 md:grid-cols-2 xl:grid-cols-4"><Field label="Тип"><Select value={operation.type} onChange={(v) => set("type", v)} options={[["CLIENT_PAYMENT", "Оплата клиента"], ["REFUND", "Возврат"], ["EXPENSE", "Расход"], ["OTHER_INCOME", "Прочий приход"], ["PARTNER_PAYOUT", "Выплата партнёру"], ["ADJUSTMENT", "Корректировка"]]} /></Field><Field label="Сумма"><input required min="0.01" step="0.01" type="number" value={operation.amount} onChange={(e) => set("amount", e.target.value)} className="input" /></Field><Field label="Способ оплаты"><Select value={operation.method} onChange={(v) => set("method", v)} options={[["cash", "Наличные"], ["kaspi", "Kaspi"], ["bank_transfer", "Банковский перевод"], ["card", "Карта"], ["other", "Другое"]]} /></Field><Field label="Дата"><input required type="date" value={operation.operationDate} onChange={(e) => set("operationDate", e.target.value)} className="input" /></Field><Field label="Заказ"><Select value={operation.orderId} onChange={(v) => set("orderId", v)} options={[["", "Без заказа"], ...data.rows.map((row) => [String(row.id), `${row.number} — ${row.client}`])]} /></Field><Field label="Партнёр"><Select value={operation.partnerId} onChange={(v) => set("partnerId", v)} options={[["", "Не выбран"], ...data.partners.map((partner) => [String(partner.id), partner.name])]} /></Field>{operation.type === "ADJUSTMENT" && <Field label="Направление"><Select value={operation.adjustmentDirection} onChange={(v) => set("adjustmentDirection", v)} options={[["INCOME", "Приход"], ["EXPENSE", "Расход"]]} /></Field>}<Field label="Комментарий"><input maxLength={2000} value={operation.comment} onChange={(e) => set("comment", e.target.value)} className="input" /></Field><div className="flex items-end"><button disabled={saving} className="w-full rounded-xl bg-green-600 p-3 font-medium text-white disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button></div></form>}
+    <div className="grid gap-3 md:grid-cols-3"><Card title="Приход" value={data.operationTotals.income} color="text-green-400"/><Card title="Расход" value={data.operationTotals.expense} color="text-red-400"/><Card title="Чистое движение" value={data.operationTotals.net} color="text-blue-400"/></div>
+    <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4"><Field label="Период"><Select value={period} onChange={setPeriod} options={[["all", "За всё время"], ["month", "Последний месяц"], ["quarter", "Последний квартал"], ["year", "Последний год"]]} /></Field><Field label="Тип операции"><Select value={typeFilter} onChange={setTypeFilter} options={[["", "Все операции"], ["CLIENT_PAYMENT", "Оплаты клиентов"], ["REFUND", "Возвраты"], ["EXPENSE", "Расходы"], ["OTHER_INCOME", "Прочий приход"], ["PARTNER_PAYOUT", "Выплаты партнёрам"], ["ADJUSTMENT", "Корректировки"]]} /></Field></div>
+    {error && <p className="text-sm text-red-400">{error}</p>}{loading && <p className="text-sm text-slate-400">Загрузка…</p>}
+    <Table title="Операции"><thead><tr><th>Дата</th><th>Тип</th><th>Заказ</th><th>Партнёр</th><th>Комментарий</th><th>Сумма</th></tr></thead><tbody>{data.operations.map((item) => <tr key={item.id}><td>{new Date(item.operationDate).toLocaleDateString("ru-RU")}</td><td>{item.type}</td><td>{item.order?.number ?? "—"}</td><td>{item.partner?.name ?? "—"}</td><td>{item.comment ?? "—"}</td><td>{money(item.amount)}</td></tr>)}{!data.operations.length && <Empty colSpan={6}/>}</tbody></Table>
+    <Table title="Заказы"><thead><tr><th>Заказ</th><th>Клиент</th><th>Сумма</th><th>Оплачено</th><th>Остаток</th><th>Партнёр</th><th>Выплачено</th><th>Прибыль</th></tr></thead><tbody>{data.rows.map((row) => <tr key={row.id}><td>{row.number}</td><td>{row.client}</td><td>{money(row.amount)}</td><td>{money(row.prepayment)}</td><td>{money(row.balance)}</td><td>{row.partner}</td><td>{money(row.partnerPaid)}</td><td>{money(row.companyProfit)}</td></tr>)}{!data.rows.length && <Empty colSpan={8}/>}</tbody></Table>
+  </section>;
 }
-
-function Filter({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
-  return <label className="space-y-2 text-sm text-slate-300"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl bg-slate-900 p-3 text-white outline-none ring-1 ring-slate-700 focus:ring-blue-500">{children}</select></label>;
-}
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="grid gap-1 text-sm text-slate-300"><span>{label}</span>{children}</label>; }
+function Select({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[][] }) { return <select value={value} onChange={(e) => onChange(e.target.value)} className="input">{options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>; }
+function Card({ title, value, color }: { title: string; value: number; color: string }) { return <div className="rounded-2xl border border-slate-700 bg-[#101827] p-5"><p className="text-slate-400">{title}</p><p className={`mt-2 text-2xl font-bold ${color}`}>{money(value)}</p></div>; }
+function Table({ title, children }: { title: string; children: React.ReactNode }) { return <div className="overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827]"><h2 className="p-5 text-lg font-semibold text-white">{title}</h2><table className="min-w-[800px] w-full text-left text-sm"><tbody>{children}</tbody></table></div>; }
+function Empty({ colSpan }: { colSpan: number }) { return <tr><td colSpan={colSpan} className="p-6 text-center text-slate-400">Нет записей.</td></tr>; }

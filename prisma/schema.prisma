@@ -92,6 +92,7 @@ model Partner {
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   orders Order[]
+  payments Payment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -261,8 +262,11 @@ model Measurement {
 model Payment {
   id Int @id @default(autoincrement())
 
-  orderId Int
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId Int?
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  partnerId Int?
+  partner   Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
   amount Float
 
@@ -270,6 +274,8 @@ model Payment {
   method String
 
   comment String?
+  operationDate DateTime @default(now())
+  author String?
   idempotencyKey String? @unique
   requestHash String?
 

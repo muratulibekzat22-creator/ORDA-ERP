@@ -163,13 +163,13 @@ export async function deletePartner(id: number) {
   });
 }
 
-export async function payPartner(data: { orderId: number; amount: number; method: string; comment?: string; idempotencyKey?:string; requestHash?:string }) {
+export async function payPartner(data: { orderId: number; amount: number; method: string; comment?: string; author?: string; idempotencyKey?:string; requestHash?:string }) {
   try { return await prisma.$transaction(async (tx) => {
     if(data.idempotencyKey&&data.requestHash){const existing=await tx.payment.findUnique({where:{idempotencyKey:data.idempotencyKey}});if(existing){if(existing.requestHash!==data.requestHash)throw new Error("IDEMPOTENCY_CONFLICT");return existing;}}
     const order = await tx.order.findUnique({ where: { id: data.orderId }, select: { id: true, partnerId: true, partnerPaid: true, partnerBalance: true } });
     if (!order || !order.partnerId) return null;
     if (data.amount > Number(order.partnerBalance)) throw new Error("PARTNER_PAYMENT_EXCEEDS_BALANCE");
-    const payment = await tx.payment.create({ data: { orderId: data.orderId, amount: data.amount, type: "Выплата партнёру", method: data.method, comment: data.comment,idempotencyKey:data.idempotencyKey,requestHash:data.requestHash } });
+    const payment = await tx.payment.create({ data: { orderId: data.orderId, partnerId: order.partnerId, amount: data.amount, type: "PARTNER_PAYOUT", method: data.method, comment: data.comment,author:data.author,idempotencyKey:data.idempotencyKey,requestHash:data.requestHash } });
     const partnerPaid = Number(order.partnerPaid) + data.amount;
     const partnerBalance = Math.max(Number(order.partnerBalance) - data.amount, 0);
     await tx.order.update({ where: { id: order.id }, data: { partnerPaid: String(partnerPaid), partnerBalance: String(partnerBalance) } });

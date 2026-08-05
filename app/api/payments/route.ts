@@ -88,6 +88,7 @@ export async function POST(req: Request) {
       type: values.type,
       method: values.method,
       comment: typeof values.comment === "string" ? values.comment.trim() || undefined : undefined,
+      author: auth.session!.user.name ?? "System",
       idempotencyKey:idempotency.key,
       requestHash:hash,
     });
@@ -104,7 +105,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Оплата превышает остаток заказа" }, { status: 409 });
     }
     if(error instanceof Error&&error.message==="IDEMPOTENCY_CONFLICT")return idempotencyConflict();
-    if(isPrismaUniqueConflict(error)){const existing=await prisma.payment.findUnique({where:{idempotencyKey:idempotency.key}});if(existing&&compareRequestHash(existing.requestHash,hash))return NextResponse.json({payment:existing,order:await prisma.order.findUniqueOrThrow({where:{id:existing.orderId}})});return idempotencyConflict();}
+    if(isPrismaUniqueConflict(error)){const existing=await prisma.payment.findUnique({where:{idempotencyKey:idempotency.key}});if(existing&&existing.orderId&&compareRequestHash(existing.requestHash,hash))return NextResponse.json({payment:existing,order:await prisma.order.findUniqueOrThrow({where:{id:existing.orderId}})});return idempotencyConflict();}
 
     return NextResponse.json(
       {

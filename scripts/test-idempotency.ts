@@ -1,9 +1,9 @@
 import "dotenv/config";
 
 import { prisma } from "@/lib/prisma";
-import { createPayment } from "@/lib/services/payment.service";
+import { createFinanceOperation, createPayment } from "@/lib/services/payment.service";
 import { payPartner } from "@/lib/services/partner.service";
-import { createMaterialMovement } from "@/lib/services/warehouse.service";
+import { createMaterial, createMaterialMovement } from "@/lib/services/warehouse.service";
 import { createOrder } from "@/lib/services/order.service";
 
 const tag = `idem-${Date.now()}`;
@@ -39,6 +39,7 @@ async function main() {
   let partnerId: number | undefined;
   let orderId: number | undefined;
   let materialId: number | undefined;
+  let initializedMaterialId: number | undefined;
 
   try {
     const client = await prisma.client.create({
@@ -80,6 +81,33 @@ async function main() {
       },
     });
     materialId = material.id;
+
+    const initialMaterial = {
+      name: `${tag}-initial`,
+      category: "test",
+      unit: "pcs",
+      minimumStock: 2,
+      price: 15,
+      initialStock: 7,
+      supplier: "test supplier",
+      idempotencyKey: key("material"),
+      requestHash: hash("material"),
+    };
+    const createdMaterial = await createMaterial(initialMaterial);
+    initializedMaterialId = createdMaterial.material.id;
+    const repeatedMaterial = await createMaterial(initialMaterial);
+    ensure(repeatedMaterial.material.id === createdMaterial.material.id, "material repeat");
+    await expectConflict(() => createMaterial({ ...initialMaterial, initialStock: 8, requestHash: hash("material-other") }));
+    try {
+      await createMaterial({ ...initialMaterial, idempotencyKey: key("material-duplicate"), requestHash: hash("material-duplicate") });
+      throw new Error("material duplicate missing");
+    } catch (error) {
+      ensure(error instanceof Error && error.message === "MATERIAL_DUPLICATE", "material duplicate");
+    }
+    const initialized = await prisma.material.findUniqueOrThrow({ where: { id: createdMaterial.material.id } });
+    const initializationMovements = await prisma.materialMovement.findMany({ where: { materialId: createdMaterial.material.id } });
+    ensure(initialized.stock === 7 && Number(initialized.purchasePrice) === 15, "initial material stock");
+    ensure(initializationMovements.length === 1 && initializationMovements[0].type === "incoming" && initializationMovements[0].quantity === 7, "initial material movement");
 
     const payment = {
       orderId: createdOrder.id,
@@ -146,6 +174,32 @@ async function main() {
         Number(currentOrder.partnerBalance) === 150,
       "partner totals"
     );
+
+    const financeOperation = {
+      type: "OTHER_INCOME" as const,
+      amount: 25,
+      method: "cash",
+      comment: "test income",
+      idempotencyKey: key("finance"),
+      requestHash: hash("finance"),
+    };
+    const createdFinanceOperation = await createFinanceOperation(financeOperation);
+    const repeatedFinanceOperation = await createFinanceOperation(financeOperation);
+    ensure(createdFinanceOperation?.payment.id === repeatedFinanceOperation?.payment.id, "finance repeat");
+    await expectConflict(() => createFinanceOperation({ ...financeOperation, amount: 26, requestHash: hash("finance-other") }));
+    const parallelFinance = await Promise.all([
+      createFinanceOperation({ ...financeOperation, idempotencyKey: key("finance-race"), requestHash: hash("finance-race") }),
+      createFinanceOperation({ ...financeOperation, idempotencyKey: key("finance-race"), requestHash: hash("finance-race") }),
+    ]);
+    ensure(parallelFinance[0]?.payment.id === parallelFinance[1]?.payment.id, "finance parallel repeat");
+    const refund = await createFinanceOperation({ type: "REFUND", orderId: createdOrder.id, amount: 50, method: "cash", idempotencyKey: key("refund"), requestHash: hash("refund") });
+    ensure(Boolean(refund?.order && Number(refund.order.prepayment) === 250 && Number(refund.order.balance) === 750), "refund totals");
+    try {
+      await createFinanceOperation({ type: "REFUND", orderId: createdOrder.id, amount: 251, method: "cash", idempotencyKey: key("refund-too-large"), requestHash: hash("refund-too-large") });
+      throw new Error("refund limit missing");
+    } catch (error) {
+      ensure(error instanceof Error && error.message === "REFUND_EXCEEDS_PAID", "refund limit");
+    }
 
     const incoming = {
       materialId: material.id,
@@ -216,15 +270,15 @@ async function main() {
     );
     console.log("all idempotency scenarios passed");
   } finally {
+    await prisma.payment.deleteMany({ where: { idempotencyKey: { startsWith: tag } } });
     if (orderId) {
       await prisma.orderEvent.deleteMany({ where: { orderId } });
       await prisma.payment.deleteMany({ where: { orderId } });
       await prisma.materialMovement.deleteMany({ where: { orderId } });
     }
 
-    if (materialId) {
-      await prisma.material.delete({ where: { id: materialId } });
-    }
+    if (initializedMaterialId) await prisma.material.delete({ where: { id: initializedMaterialId } });
+    if (materialId) await prisma.material.delete({ where: { id: materialId } });
     if (orderId) {
       await prisma.order.delete({ where: { id: orderId } });
     }
