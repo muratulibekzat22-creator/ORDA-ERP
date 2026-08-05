@@ -22,6 +22,11 @@ function ensure(value: boolean, message: string) {
   }
 }
 
+function materialRecord(result: unknown): { id: number } {
+  const candidate = result as { id?: number; material?: { id: number } };
+  return candidate.material ?? { id: candidate.id! };
+}
+
 async function expectConflict(run: () => Promise<unknown>) {
   try {
     await run();
@@ -95,9 +100,9 @@ async function main() {
       requestHash: hash("material"),
     };
     const createdMaterial = await createMaterial(initialMaterial);
-    initializedMaterialId = createdMaterial.material.id;
+    initializedMaterialId = materialRecord(createdMaterial).id;
     const repeatedMaterial = await createMaterial(initialMaterial);
-    ensure(repeatedMaterial.material.id === createdMaterial.material.id, "material repeat");
+    ensure(materialRecord(repeatedMaterial).id === materialRecord(createdMaterial).id, "material repeat");
     await expectConflict(() => createMaterial({ ...initialMaterial, initialStock: 8, requestHash: hash("material-other") }));
     try {
       await createMaterial({ ...initialMaterial, idempotencyKey: key("material-duplicate"), requestHash: hash("material-duplicate") });
@@ -105,8 +110,8 @@ async function main() {
     } catch (error) {
       ensure(error instanceof Error && error.message === "MATERIAL_DUPLICATE", "material duplicate");
     }
-    const initialized = await prisma.material.findUniqueOrThrow({ where: { id: createdMaterial.material.id } });
-    const initializationMovements = await prisma.materialMovement.findMany({ where: { materialId: createdMaterial.material.id } });
+    const initialized = await prisma.material.findUniqueOrThrow({ where: { id: materialRecord(createdMaterial).id } });
+    const initializationMovements = await prisma.materialMovement.findMany({ where: { materialId: materialRecord(createdMaterial).id } });
     ensure(initialized.stock === 7 && Number(initialized.purchasePrice) === 15, "initial material stock");
     ensure(initializationMovements.length === 1 && initializationMovements[0].type === "incoming" && initializationMovements[0].quantity === 7, "initial material movement");
 
