@@ -88,6 +88,7 @@ async function main() {
       unit: "pcs",
       minimumStock: 2,
       price: 15,
+      purchasePrice: 15,
       initialStock: 7,
       supplier: "test supplier",
       idempotencyKey: key("material"),
