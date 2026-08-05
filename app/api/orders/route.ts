@@ -33,7 +33,7 @@ export async function GET() {
       ? await prisma.partner.findUnique({ where: { userId: Number(auth.session!.user.id) }, select: { id: true } })
       : null;
     const orders = partner
-      ? await prisma.order.findMany({ where: { partnerId: partner.id }, include: { client: true, partner: true, payments: true }, orderBy: { createdAt: "desc" } })
+      ? await prisma.order.findMany({ where: { partnerId: partner.id }, select: { id: true, number: true, address: true, staircase: true, material: true, status: true, partnerPrice: true, partnerPaid: true, partnerBalance: true, createdAt: true, updatedAt: true, client: { select: { name: true, city: true } }, productions: { select: { stage: true, startDate: true, finishDate: true } }, documents: { select: { id: true, type: true, number: true, documentDate: true } } }, orderBy: { createdAt: "desc" } })
       : await getOrders();
     return NextResponse.json(orders);
   } catch {
