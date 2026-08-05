@@ -1,106 +1,113 @@
 "use client";
 
-const columns = [
-  "Новая заявка",
-  "Замер",
-  "Проектирование",
-  "Заготовка",
-  "Покраска",
-  "Заказ готов",
-  "Монтаж",
-  "Сдано",
-];
+import { CalendarDays, Clock3, MapPin, UserRound } from "lucide-react";
+
+import { isProductionOverdue } from "@/lib/production/kanban";
+import { PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
+
+export type ProductionHistoryItem = {
+  id: number;
+  fromStage: string | null;
+  toStage: string;
+  comment: string | null;
+  createdAt: string;
+  changedBy: { id: number; name: string } | null;
+};
 
 export type ProductionKanbanItem = {
   id: number;
   stage: string;
   percent: number;
   master: string;
+  masterUserId: number | null;
+  priority: number;
+  plannedStartAt: string | null;
+  plannedEndAt: string | null;
+  actualEndAt: string | null;
+  completedAt: string | null;
+  comment: string | null;
+  stageHistory: ProductionHistoryItem[];
   order: {
     id: number;
     number: string;
-    client: {
-      name: string;
-    };
+    address: string;
+    material: string;
+    client: { name: string };
   };
 };
 
-interface Props {
-  productions: ProductionKanbanItem[];
-  onStageChange: (id: number, stage: string) => void;
-  updatingId?: number | null;
-}
+type Props = {
+  columns: Record<ProductionStage, ProductionKanbanItem[]>;
+  savingIds: Set<number>;
+  onDropCard: (id: number, stage: ProductionStage) => void;
+  onEdit?: (item: ProductionKanbanItem) => void;
+};
 
-export default function ProductionKanban({
-  productions,
-  onStageChange,
-  updatingId,
-}: Props) {
+const date = (value: string | null) => value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "—";
+
+export default function ProductionKanban({ columns, savingIds, onDropCard, onEdit }: Props) {
   return (
-    <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-4">
-      {columns.map((column) => (
-        <div
-          key={column}
-          className="rounded-2xl border border-slate-700 bg-[#101827] p-4"
-        >
-          <h2 className="mb-5 text-center text-xl font-bold text-white">
-            {column}
-          </h2>
-
-          <div className="space-y-4">
-            {productions
-              .filter((item) => item.stage === column)
-              .map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-xl border border-slate-700 bg-slate-900 p-4"
-                >
-                  <h3 className="font-bold text-white">{item.order.number}</h3>
-                  <p className="mt-1 text-slate-400">{item.order.client.name}</p>
-
-                  <div className="mt-4">
-                    <div className="mb-2 flex justify-between">
-                      <span className="text-sm text-slate-400">Готовность</span>
-                      <span className="text-yellow-400">{item.percent}%</span>
-                    </div>
-
-                    <div className="h-2 rounded-full bg-slate-700">
-                      <div
-                        className="h-2 rounded-full bg-green-500"
-                        style={{ width: `${item.percent}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <p className="text-sm text-slate-400">Мастер</p>
-                    <p className="text-white">{item.master || "Не назначен"}</p>
-                  </div>
-
-                  <select
-                    aria-label={`Этап заказа ${item.order.number}`}
-                    value={item.stage}
-                    disabled={updatingId === item.id}
-                    onChange={(event) => onStageChange(item.id, event.target.value)}
-                    className="mt-4 w-full rounded-lg bg-slate-800 p-2 text-sm text-white outline-none ring-1 ring-slate-700 focus:ring-blue-500 disabled:cursor-wait disabled:opacity-70"
+    <div className="overflow-x-auto pb-4">
+      <div className="flex min-w-max gap-4 xl:grid xl:min-w-0 xl:grid-cols-4 2xl:grid-cols-8">
+        {PRODUCTION_STAGES.map((stage) => (
+          <section
+            key={stage}
+            data-stage={stage}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              const id = Number(event.dataTransfer.getData("text/production-id"));
+              if (Number.isInteger(id)) onDropCard(id, stage);
+            }}
+            className="w-[290px] rounded-2xl border border-slate-700 bg-[#101827] p-3 xl:w-auto"
+          >
+            <header className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-sm font-bold text-white">{stage}</h2>
+              <span className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">{columns[stage].length}</span>
+            </header>
+            <div className="space-y-3">
+              {columns[stage].map((item) => {
+                const overdue = isProductionOverdue(item);
+                const lastHistory = item.stageHistory[0];
+                const saving = savingIds.has(item.id);
+                return (
+                  <article
+                    key={item.id}
+                    draggable={!saving}
+                    onDragStart={(event) => event.dataTransfer.setData("text/production-id", String(item.id))}
+                    className={`rounded-xl border bg-slate-900 p-3 shadow-sm ${overdue ? "border-red-500/70" : "border-slate-700"} ${saving ? "cursor-wait opacity-60" : "cursor-grab"}`}
                   >
-                    {columns.map((stage) => (
-                      <option key={stage} value={stage}>
-                        {stage}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-
-            {productions.every((item) => item.stage !== column) && (
-              <p className="rounded-xl border border-dashed border-slate-700 py-6 text-center text-sm text-slate-500">
-                Нет заказов
-              </p>
-            )}
-          </div>
-        </div>
-      ))}
+                    <div className="flex items-start justify-between gap-2">
+                      <div><p className="font-bold text-white">{item.order.number}</p><p className="text-sm text-slate-300">{item.order.client.name}</p></div>
+                      <span className="rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300">P{item.priority}</span>
+                    </div>
+                    <p className="mt-2 flex gap-1 text-xs text-slate-400"><MapPin size={14} className="shrink-0" />{item.order.address || "Адрес не указан"}</p>
+                    <p className="mt-1 text-xs text-slate-400">Материал: {item.order.material || "—"}</p>
+                    <p className="mt-2 flex gap-1 text-xs text-slate-300"><UserRound size={14} />{item.master || "Не назначен"}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-slate-400">
+                      <span className="flex gap-1"><CalendarDays size={13} />{date(item.plannedStartAt)}</span>
+                      <span>{date(item.plannedEndAt)}</span>
+                    </div>
+                    {item.actualEndAt && <p className="mt-1 text-xs text-emerald-400">Факт: {date(item.actualEndAt)}</p>}
+                    {overdue && <p className="mt-2 flex gap-1 text-xs font-semibold text-red-400"><Clock3 size={14} />Просрочено</p>}
+                    {item.comment && <p className="mt-2 rounded-lg bg-slate-800 p-2 text-xs text-slate-300">{item.comment}</p>}
+                    <p className="mt-2 text-[11px] text-slate-500">Последний переход: {lastHistory ? `${lastHistory.fromStage ?? "Создание"} → ${lastHistory.toStage}` : "нет истории"}</p>
+                    <details className="mt-2 text-xs text-slate-300">
+                      <summary className="cursor-pointer text-blue-300">История ({item.stageHistory.length})</summary>
+                      <div className="mt-2 space-y-2">
+                        {item.stageHistory.map((history) => <div key={history.id} className="border-l border-slate-600 pl-2"><p>{history.fromStage ?? "Создание"} → {history.toStage}</p><p className="text-slate-500">{history.changedBy?.name ?? "Система"} · {date(history.createdAt)}</p>{history.comment && <p>{history.comment}</p>}</div>)}
+                        {!item.stageHistory.length && <p className="text-slate-500">История пока пуста</p>}
+                      </div>
+                    </details>
+                    {onEdit && <button type="button" disabled={saving} onClick={() => onEdit(item)} className="mt-3 w-full rounded-lg bg-slate-800 px-3 py-2 text-xs text-white hover:bg-slate-700 disabled:opacity-50">Редактировать</button>}
+                  </article>
+                );
+              })}
+              {!columns[stage].length && <p className="rounded-xl border border-dashed border-slate-700 py-7 text-center text-sm text-slate-500">Нет заказов</p>}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

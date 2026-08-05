@@ -62,9 +62,9 @@ async function main() {
     assert(Number(current.partnerPaid) === 100 && Number(current.partnerBalance) === 300, `${step}: paid=${current.partnerPaid} balance=${current.partnerBalance}`);
 
     step = "production stages";
-    const production = await createProduction({ orderId: order.id, stage: "Заготовка", percent: 10, master: `${tag}-PRODUCTION`, masterUserId: productionId, startDate: new Date() });
+    const production = await createProduction({ orderId: order.id, stage: "Дерево", percent: 10, master: `${tag}-PRODUCTION`, masterUserId: productionId, startDate: new Date() });
     assert(production?.masterUserId === productionId, step);
-    for (const stage of ["Покраска", "Заказ готов"]) await updateProduction(production!.id, { stage });
+    for (const stage of ["Покраска", "Комплектация", "Готово к монтажу"]) await updateProduction(production!.id, { stage });
     await updateProduction(production!.id, { stage: "Монтаж", master: `${tag}-INSTALLER`, masterUserId: installerId });
     await updateProduction(production!.id, { stage: "Сдано", percent: 100 });
     current = await prisma.order.findUniqueOrThrow({ where: { id: order.id } }); assert(current.status === "Сдано", step);

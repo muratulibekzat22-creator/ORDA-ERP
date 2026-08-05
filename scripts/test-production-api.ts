@@ -38,7 +38,7 @@ async function main() {
     const installerActor = { role: Role.INSTALLER, userId: installer.id, name: installer.name };
     const createInput = {
       orderId: order.id,
-      data: { stage: "Новая заявка" as const, percent: 0, masterUserId: worker.id, priority: 2 },
+      data: { stage: "Подготовка" as const, percent: 0, masterUserId: worker.id, priority: 2 },
       actor: directorActor,
       idempotencyKey: key("create"),
       requestHash: hash("create"),
@@ -60,11 +60,11 @@ async function main() {
       (error) => error instanceof ProductionServiceError && error.code === "FORBIDDEN",
     );
     await assert.rejects(
-      () => updateProductionCommand({ id: productionId, data: { stage: "Проектирование" }, actor: workerActor, idempotencyKey: key("skip"), requestHash: hash("skip") }),
+      () => updateProductionCommand({ id: productionId, data: { stage: "Дерево" }, actor: workerActor, idempotencyKey: key("skip"), requestHash: hash("skip") }),
       (error) => error instanceof ProductionServiceError && error.code === "INVALID_STAGE",
     );
 
-    let currentStage: ProductionStage = "Новая заявка";
+    let currentStage: ProductionStage = "Подготовка";
     for (const nextStage of PRODUCTION_STAGES.slice(1)) {
       const handoff = nextStage === "Монтаж" ? { masterUserId: installer.id } : {};
       const actor = nextStage === "Сдано" ? installerActor : nextStage === "Монтаж" ? directorActor : workerActor;

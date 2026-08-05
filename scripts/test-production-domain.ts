@@ -20,7 +20,7 @@ import {
   isProductionStage,
 } from "../lib/production/stage-policy";
 
-assert.equal(INITIAL_PRODUCTION_STAGE, "Новая заявка");
+assert.equal(INITIAL_PRODUCTION_STAGE, "Подготовка");
 assert.equal(COMPLETED_PRODUCTION_STAGE, "Сдано");
 assert.equal(new Set(PRODUCTION_STAGES).size, PRODUCTION_STAGES.length);
 
@@ -42,9 +42,10 @@ assert.equal(isProductionStage("Готово"), false);
 assert.equal(isProductionStage(null), false);
 assert.throws(() => assertProductionStage("Готово"), /INVALID_PRODUCTION_STAGE/);
 
-const productionCard = { masterUserId: 10, stage: "Заготовка" as const };
+const productionCard = { masterUserId: 10, stage: "Дерево" as const };
 const installationCard = { masterUserId: 20, stage: "Монтаж" as const };
 assert.equal(canCreateProduction(Role.DIRECTOR), true);
+assert.equal(canCreateProduction(Role.MANAGER), true);
 assert.equal(canCreateProduction(Role.PRODUCTION), false);
 assert.equal(canReassignProduction(Role.DIRECTOR), true);
 assert.equal(canReassignProduction(Role.INSTALLER), false);
@@ -54,10 +55,10 @@ assert.equal(canAccessProduction(Role.PRODUCTION, 11, productionCard), false);
 assert.equal(canAccessProduction(Role.PRODUCTION, 20, installationCard), false);
 assert.equal(canAccessProduction(Role.INSTALLER, 20, installationCard), true);
 assert.equal(canTransitionProduction(Role.PRODUCTION, 10, productionCard, "Покраска"), true);
-assert.equal(canTransitionProduction(Role.PRODUCTION, 10, { masterUserId: 10, stage: "Заказ готов" }, "Монтаж"), false);
+assert.equal(canTransitionProduction(Role.PRODUCTION, 10, { masterUserId: 10, stage: "Готово к монтажу" }, "Монтаж"), false);
 assert.equal(canTransitionProduction(Role.INSTALLER, 20, installationCard, "Сдано"), true);
-assert.deepEqual(allowedAssigneeRoles("Монтаж"), [Role.INSTALLER, Role.DIRECTOR]);
-assert.deepEqual(allowedAssigneeRoles("Сдано"), [Role.INSTALLER, Role.DIRECTOR]);
-assert.deepEqual(allowedAssigneeRoles("Покраска"), [Role.PRODUCTION, Role.DIRECTOR]);
+assert.deepEqual(allowedAssigneeRoles("Монтаж"), [Role.PRODUCTION, Role.INSTALLER, Role.DIRECTOR]);
+assert.deepEqual(allowedAssigneeRoles("Сдано"), [Role.PRODUCTION, Role.INSTALLER, Role.DIRECTOR]);
+assert.deepEqual(allowedAssigneeRoles("Покраска"), [Role.PRODUCTION, Role.INSTALLER, Role.DIRECTOR]);
 
 console.log("production domain checks passed");

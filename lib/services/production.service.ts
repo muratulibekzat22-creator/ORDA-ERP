@@ -42,7 +42,7 @@ const productionInclude = {
 } satisfies Prisma.ProductionInclude;
 
 function scopeWhere(actor: ProductionActor): Prisma.ProductionWhereInput {
-  if (actor.role === Role.DIRECTOR) return {};
+  if (actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) return {};
   if (actor.role === Role.PRODUCTION) return { masterUserId: actor.userId, stage: { not: "Монтаж" } };
   if (actor.role === Role.INSTALLER) return { masterUserId: actor.userId, stage: "Монтаж" };
   return { id: -1 };
@@ -56,12 +56,41 @@ async function getAssignee(tx: Prisma.TransactionClient, userId: number, stage: 
   return user;
 }
 
-export function getProductions(actor?: ProductionActor) {
-  return prisma.production.findMany({
+export async function getProductions(actor?: ProductionActor) {
+  const productions = await prisma.production.findMany({
     where: actor ? scopeWhere(actor) : undefined,
     include: productionInclude,
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
   });
+  const userIds = [...new Set(productions.flatMap((item) => item.stageHistory.map((history) => history.changedByUserId)).filter((id): id is number => id !== null))];
+  const users = userIds.length
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+    : [];
+  const userNames = new Map(users.map((user) => [user.id, user.name]));
+  return productions.map((production) => ({
+    ...production,
+    stageHistory: production.stageHistory.map((history) => ({
+      ...history,
+      changedBy: history.changedByUserId ? { id: history.changedByUserId, name: userNames.get(history.changedByUserId) ?? "Удалённый пользователь" } : null,
+    })),
+  }));
+}
+
+export async function getProductionOptions(actor: ProductionActor) {
+  if (!canCreateProduction(actor.role)) throw new ProductionServiceError("FORBIDDEN");
+  const [orders, assignees] = await Promise.all([
+    prisma.order.findMany({
+      where: { productions: { none: {} } },
+      select: { id: true, number: true, address: true, material: true, client: { select: { name: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.user.findMany({
+      where: { active: true, role: { in: [Role.PRODUCTION, Role.INSTALLER, Role.DIRECTOR] } },
+      select: { id: true, name: true, role: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+  return { orders, assignees };
 }
 
 export function getProduction(id: number, actor?: ProductionActor) {
@@ -236,11 +265,19 @@ export async function updateProductionCommand(input: {
 
 // Compatibility helpers for existing internal scripts; API writes use the command functions above.
 export async function createProduction(data: { orderId: number; stage: string; percent: number; master: string; masterUserId?: number | null; comment?: string; startDate?: Date | null; finishDate?: Date | null }) {
-  return prisma.production.create({ data: { ...data, masterUserId: data.masterUserId ?? null } });
+  return prisma.$transaction(async (tx) => {
+    const production = await tx.production.create({ data: { ...data, masterUserId: data.masterUserId ?? null } });
+    await tx.order.update({ where: { id: data.orderId }, data: { status: data.stage } });
+    return production;
+  });
 }
 
 export async function updateProduction(id: number, data: { stage?: string; percent?: number; master?: string; masterUserId?: number | null; comment?: string; startDate?: Date | null; finishDate?: Date | null }) {
-  return prisma.production.update({ where: { id }, data });
+  return prisma.$transaction(async (tx) => {
+    const production = await tx.production.update({ where: { id }, data });
+    if (data.stage) await tx.order.update({ where: { id: production.orderId }, data: { status: data.stage } });
+    return production;
+  });
 }
 
 export function assignMaster(id: number, master: string) {
@@ -255,8 +292,8 @@ export async function getProductionStats() {
   const productions = await prisma.production.findMany();
   return {
     total: productions.length,
-    waiting: productions.filter((item) => item.stage === "Новая заявка").length,
-    working: productions.filter((item) => ["Проектирование", "Заготовка"].includes(item.stage)).length,
+    waiting: productions.filter((item) => item.stage === "Подготовка").length,
+    working: productions.filter((item) => ["Каркас", "Дерево", "Комплектация"].includes(item.stage)).length,
     painting: productions.filter((item) => item.stage === "Покраска").length,
     installation: productions.filter((item) => item.stage === "Монтаж").length,
     completed: productions.filter((item) => item.stage === "Сдано").length,

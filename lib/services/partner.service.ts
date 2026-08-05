@@ -184,10 +184,10 @@ export async function assignPartnerToOrder(data: { orderId: number; partnerId: n
     const partner = await tx.partner.findUnique({ where: { id: data.partnerId } });
     if (!order || !partner) return null;
     const companyProfit = Number(order.amount) - data.partnerPrice;
-    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerBalance: String(data.partnerPrice), companyProfit: String(companyProfit), status: "Заготовка" } });
+    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerBalance: String(data.partnerPrice), companyProfit: String(companyProfit), status: "Дерево" } });
     const production = await tx.production.findFirst({ where: { orderId: order.id }, orderBy: { createdAt: "desc" } });
-    if (production) await tx.production.update({ where: { id: production.id }, data: { stage: "Заготовка" } });
-    else await tx.production.create({ data: { orderId: order.id, stage: "Заготовка", percent: 0, master: "" } });
+    if (production) await tx.production.update({ where: { id: production.id }, data: { stage: "Дерево" } });
+    else await tx.production.create({ data: { orderId: order.id, stage: "Дерево", percent: 0, master: "" } });
     await tx.orderEvent.create({ data: { orderId: order.id, title: "Передан партнёру", description: `${partner.name} • ${data.partnerPrice.toLocaleString("ru-RU")} ₸`, user: data.manager ?? order.manager } });
     return updated;
   });

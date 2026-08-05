@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation";
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
 const stages = [
-  "Новая заявка",
-  "Замер",
-  "Проектирование",
-  "Заготовка",
+  "Подготовка",
+  "Каркас",
+  "Дерево",
   "Покраска",
-  "Заказ готов",
+  "Комплектация",
+  "Готово к монтажу",
   "Монтаж",
   "Сдано",
 ];
@@ -47,7 +47,7 @@ export default function ProjectProduction({ orderId, production }: Props) {
   const [error, setError] = useState("");
   const [masters, setMasters] = useState<Array<{ id:number; name:string; role:string; active:boolean }>>([]);
   const [form, setForm] = useState({
-    stage: production?.stage ?? "Новая заявка",
+    stage: production?.stage ?? "Подготовка",
     percent: String(production?.percent ?? 0),
     masterUserId: production?.masterUserId ? String(production.masterUserId) : "",
     startDate: toDateInput(production?.startDate ?? null),
@@ -150,7 +150,7 @@ export default function ProjectProduction({ orderId, production }: Props) {
 
         <label className="space-y-2 text-sm text-slate-300">
           Мастер
-          <select value={form.masterUserId} onChange={(event) => updateForm("masterUserId", event.target.value)} className="w-full rounded-xl bg-slate-900 p-3 text-white outline-none ring-1 ring-slate-700 focus:ring-blue-500"><option value="">Выберите мастера</option>{masters.filter(user => form.stage === "Монтаж" ? ["INSTALLER", "DIRECTOR"].includes(user.role) : ["PRODUCTION", "DIRECTOR"].includes(user.role)).map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
+          <select value={form.masterUserId} onChange={(event) => updateForm("masterUserId", event.target.value)} className="w-full rounded-xl bg-slate-900 p-3 text-white outline-none ring-1 ring-slate-700 focus:ring-blue-500"><option value="">Выберите мастера</option>{masters.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
         </label>
 
         <label className="space-y-2 text-sm text-slate-300">

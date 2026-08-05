@@ -160,7 +160,6 @@ export async function createOrder(data: CreateOrderInput) {
             requestHash: data.requestHash,
           },
         });
-        await tx.production.create({ data: { orderId: order.id, stage: order.status, percent: 0, master: "" } });
         return { order, created: true };
       });
     } catch (error) {

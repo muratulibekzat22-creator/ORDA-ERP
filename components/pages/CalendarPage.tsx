@@ -154,7 +154,7 @@ export default function CalendarPage() {
         <input required type="date" value={form.startDate} onChange={(event) => setForm({ ...form, startDate: event.target.value })} />
         {form.sourceType === "production" && (
           <select value={form.stage} onChange={(event) => setForm({ ...form, stage: event.target.value, assignedUserId: "" })}>
-            {["Проектирование", "Заготовка", "Покраска", "Монтаж", "Сдано"].map((stage) => <option key={stage}>{stage}</option>)}
+            {["Подготовка", "Каркас", "Дерево", "Покраска", "Комплектация", "Готово к монтажу", "Монтаж", "Сдано"].map((stage) => <option key={stage}>{stage}</option>)}
           </select>
         )}
         <select required value={form.assignedUserId} onChange={(event) => setForm({ ...form, assignedUserId: event.target.value })}>

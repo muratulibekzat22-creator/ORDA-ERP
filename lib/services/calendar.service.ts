@@ -22,7 +22,7 @@ export type CalendarEvent = {
 
 type CalendarFilters = { role: Role; userId: number; assignedUserId?: number; viewerName?: string | null };
 
-const productionStages = ["Новая заявка", "Замер", "Проектирование", "Заготовка", "Покраска", "Заказ готов", installationStage, "Сдано"];
+const productionStages = ["Подготовка", "Каркас", "Дерево", "Покраска", "Комплектация", "Готово к монтажу", installationStage, "Сдано"];
 
 function scopedWhere(role: Role, userId: number) {
   if (role === Role.MEASURER) return { measurements: { measurerUserId: userId }, productions: { id: -1 } };

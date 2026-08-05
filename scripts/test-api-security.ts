@@ -17,7 +17,7 @@ const productionUserIds: number[] = [];
 const managerUserIds: number[] = [];
 const generatedOrderIds: number[] = [];
 const installationStage = "\u041c\u043e\u043d\u0442\u0430\u0436";
-const productionStage = "\u0417\u0430\u0433\u043e\u0442\u043e\u0432\u043a\u0430";
+const productionStage = "\u0414\u0435\u0440\u0435\u0432\u043e";
 let server: ChildProcess | undefined;
 
 function assert(value: boolean, message: string) {
@@ -400,24 +400,24 @@ async function main() {
     });
     await expectStatus("/api/production", 200, firstProductionCookie, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:production-own` },
       body: JSON.stringify({ id: firstProduction.id, comment: "own production update" }),
     });
     await expectStatuses("/api/production", [403, 404], firstProductionCookie, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:production-foreign` },
       body: JSON.stringify({ id: secondProduction.id, comment: "foreign production update" }),
     });
     await expectStatus("/api/production", 200, firstInstallerCookie, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:installer-own` },
       body: JSON.stringify({ id: firstInstallerProduction.id, comment: "own installer update" }),
     });
     for (const body of [
       { id: otherStageProduction.id, comment: "non-installation update" },
       { id: firstInstallerProduction.id, stage: productionStage },
       { id: firstInstallerProduction.id, masterUserId: secondInstaller.id },
-    ]) await expectStatuses("/api/production", [403, 404], firstInstallerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    ]) await expectStatuses("/api/production", [403, 404, 409], firstInstallerCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:installer-forbidden:${body.id}:${Object.keys(body).sort().join("-")}` }, body: JSON.stringify(body) });
 
     const directorProductions = await (await expectStatus("/api/production", 200, directorCookie)).json() as ProductionPayload[];
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
@@ -425,7 +425,7 @@ async function main() {
     const directorCalendar = await (await expectStatus("/api/calendar", 200, directorCookie)).json() as CalendarPayload;
     assert([firstMeasurement.id, secondMeasurement.id, ...workflowProductionIds].every((id) => directorCalendar.events.some((event) => event.id === String(id))), "director cannot see all calendar events");
     await expectStatus("/api/calendar", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceType: "production", id: secondProduction.id, startDate: "2026-09-05T10:00:00.000Z" }) });
-    await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
+    await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:director-production` }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
     console.log("installer and production API security checks passed");
 
     const managerCookie = await session(manager.email);

@@ -6,6 +6,7 @@ import { isProductionStage } from "@/lib/production/stage-policy";
 import { requirePermission } from "@/lib/server-auth";
 import {
   createProductionCommand,
+  getProductionOptions,
   getProductions,
   ProductionServiceError,
   type ProductionActor,
@@ -67,11 +68,15 @@ function serviceError(error: unknown) {
   return NextResponse.json({ error: "Idempotency-Key уже использован с другим payload" }, { status: 409 });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requirePermission("production");
   if (auth.response) return auth.response;
   try {
-    return NextResponse.json(await getProductions(actorFromSession(auth.session!)));
+    const actor = actorFromSession(auth.session!);
+    if (new URL(request.url).searchParams.get("view") === "options") {
+      return NextResponse.json(await getProductionOptions(actor));
+    }
+    return NextResponse.json(await getProductions(actor));
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Ошибка загрузки производства" }, { status: 500 });

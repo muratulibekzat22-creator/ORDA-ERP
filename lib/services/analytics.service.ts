@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 
-const stages = ["Новая заявка", "Замер", "Проектирование", "Заготовка", "Покраска", "Заказ готов", "Монтаж", "Сдано"];
+const stages = ["Новая заявка", "Подготовка", "Каркас", "Дерево", "Покраска", "Комплектация", "Готово к монтажу", "Монтаж", "Сдано"];
 
 export async function getAnalytics(filters: { period?: string; manager?: string; partnerId?: number; city?: string; status?: string }) {
   const now = new Date(); const start = new Date(now);
@@ -15,7 +15,7 @@ export async function getAnalytics(filters: { period?: string; manager?: string;
     ...(filters.city ? { client: { city: filters.city } } : {}),
   };
   const orders = await prisma.order.findMany({ where, include: { client: true, partner: true, payments: true } });
-  const isContract = (status: string) => ["Проектирование", "Заготовка", "Покраска", "Заказ готов", "Монтаж", "Сдано"].includes(status);
+  const isContract = (status: string) => ["Каркас", "Дерево", "Покраска", "Комплектация", "Готово к монтажу", "Монтаж", "Сдано"].includes(status);
   const amount = (items: typeof orders) => items.reduce((s, o) => s + Number(o.amount), 0);
   const received = (items: typeof orders) => items.reduce((s, o) => s + o.payments.reduce((p, x) => p + x.amount, 0), 0);
   const profit = (items: typeof orders) => items.reduce((s, o) => s + Number(o.companyProfit), 0);
