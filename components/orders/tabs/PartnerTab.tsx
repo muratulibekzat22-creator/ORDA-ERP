@@ -6,20 +6,20 @@ function money(value: NumericValue) {
 
 export default function PartnerTab({ order }: { order: OrderTabData }) {
   if (!order.partner) {
-    return <EmptyState text="Для этого заказа партнёр пока не назначен." />;
+    return <EmptyState text="Для этого заказа цех пока не назначен." />;
   }
 
   const details = [
-    ["Партнёр", order.partner.name],
+    ["Цех", order.partner.name],
     ["Телефон", order.partner.phone ?? "—"],
     ["E-mail", order.partner.email ?? "—"],
     ["Город", order.partner.city ?? "—"],
     ["Статус", order.partner.active ? "Активен" : "Неактивен"],
   ];
   const finance = [
-    ["Стоимость партнёра", order.partnerPrice, "text-cyan-400"],
-    ["Выплачено партнёру", order.partnerPaid, "text-sky-400"],
-    ["Остаток партнёру", order.partnerBalance, "text-yellow-400"],
+    ["Стоимость работ цеха", order.partnerPrice, "text-cyan-400"],
+    ["Выплачено цеху", order.partnerPaid, "text-sky-400"],
+    ["Остаток выплаты цеху", order.partnerBalance, "text-yellow-400"],
     ["Прибыль компании", order.companyProfit, "text-green-400"],
   ] as const;
 

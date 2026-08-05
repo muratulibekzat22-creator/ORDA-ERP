@@ -105,7 +105,7 @@ export default function OrdersTable() {
             </th>
 
             <th className="px-6 py-4 text-left text-slate-400">
-              Партнер
+              Цех
             </th>
 
             <th className="px-6 py-4 text-right text-slate-400">

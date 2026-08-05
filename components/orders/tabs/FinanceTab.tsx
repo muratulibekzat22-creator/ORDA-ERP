@@ -10,8 +10,8 @@ export default function FinanceTab({ order }: { order: OrderTabData }) {
     ["Стоимость клиенту", order.amount, "text-green-400"],
     ["Предоплата", order.prepayment, "text-blue-400"],
     ["Остаток клиента", order.balance, "text-orange-400"],
-    ["Стоимость партнёра", order.partnerPrice, "text-cyan-400"],
-    ["Выплачено партнёру", order.partnerPaid, "text-sky-400"],
+    ["Стоимость работ цеха", order.partnerPrice, "text-cyan-400"],
+    ["Выплачено цеху", order.partnerPaid, "text-sky-400"],
     ["Прибыль", order.companyProfit, "text-green-500"],
   ] as const;
 

@@ -30,10 +30,10 @@ export default function PartnersPage() {
     setLoading(true);
     try {
       const response = await fetch("/api/partners");
-      if (!response.ok) throw new Error("Не удалось загрузить партнёров.");
+      if (!response.ok) throw new Error("Не удалось загрузить данные цеха.");
       setPartners(await response.json() as Partner[]);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Не удалось загрузить партнёров.");
+      setError(cause instanceof Error ? cause.message : "Не удалось загрузить данные цеха.");
     } finally {
       setLoading(false);
     }
@@ -42,11 +42,11 @@ export default function PartnersPage() {
   useEffect(() => {
     void fetch("/api/partners")
       .then(async (response) => {
-        if (!response.ok) throw new Error("Не удалось загрузить партнёров.");
+        if (!response.ok) throw new Error("Не удалось загрузить данные цеха.");
         return response.json() as Promise<Partner[]>;
       })
       .then((data) => setPartners(data))
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить партнёров."))
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить данные цеха."))
       .finally(() => setLoading(false));
   }, []);
 
@@ -55,37 +55,37 @@ export default function PartnersPage() {
 
   async function savePartner(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.name.trim()) { setError("Укажите название партнёра."); return; }
+    if (!form.name.trim()) { setError("Укажите название цеха."); return; }
     setSaving(true); setError("");
     try {
       const response = await fetch(editingId ? `/api/partners/${editingId}` : "/api/partners", { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       const payload: { error?: string } = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Не удалось сохранить партнёра.");
+      if (!response.ok) throw new Error(payload.error ?? "Не удалось сохранить цех.");
       setIsFormOpen(false);
       await loadPartners();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось сохранить партнёра."); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось сохранить цех."); }
     finally { setSaving(false); }
   }
 
   async function togglePartner(partner: Partner) {
     setError("");
     const response = await fetch(`/api/partners/${partner.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: partner.name, phone: partner.phone ?? "", city: partner.city ?? "", email: partner.email ?? "", active: !partner.active }) });
-    if (!response.ok) { const payload: { error?: string } = await response.json(); setError(payload.error ?? "Не удалось изменить статус партнёра."); return; }
+    if (!response.ok) { const payload: { error?: string } = await response.json(); setError(payload.error ?? "Не удалось изменить статус цеха."); return; }
     await loadPartners();
   }
 
   async function deletePartner(partner: Partner) {
-    if (!window.confirm(`Удалить партнёра «${partner.name}»?`)) return;
+    if (!window.confirm(`Удалить цех «${partner.name}»?`)) return;
     setError("");
     const response = await fetch(`/api/partners/${partner.id}`, { method: "DELETE" });
-    if (!response.ok) { const payload: { error?: string } = await response.json(); setError(payload.error ?? "Не удалось удалить партнёра."); return; }
+    if (!response.ok) { const payload: { error?: string } = await response.json(); setError(payload.error ?? "Не удалось удалить цех."); return; }
     await loadPartners();
   }
 
-  return <main className="space-y-8 p-8"><div className="flex items-center justify-between"><div><h1 className="text-3xl font-bold text-white">Партнёры</h1><p className="mt-2 text-slate-400">Управление производственными партнёрами</p></div><button type="button" onClick={openCreate} className="rounded-xl bg-yellow-500 px-5 py-3 font-semibold text-black transition hover:bg-yellow-400">+ Новый партнёр</button></div>
+  return <main className="space-y-8 p-8"><div className="flex items-center justify-between"><div><h1 className="text-3xl font-bold text-white">Цех</h1><p className="mt-2 text-slate-400">Наши производственные цеха и расчёты по заказам</p></div><button type="button" onClick={openCreate} className="rounded-xl bg-yellow-500 px-5 py-3 font-semibold text-black transition hover:bg-yellow-400">+ Новый цех</button></div>
     {error && <p role="alert" className="rounded-xl border border-red-500/50 bg-red-500/10 p-4 text-red-300">{error}</p>}
-    {isFormOpen && <form onSubmit={savePartner} className="grid gap-4 rounded-2xl border border-slate-700 bg-[#101827] p-6 md:grid-cols-2"><h2 className="md:col-span-2 text-xl font-bold text-white">{editingId ? "Редактировать партнёра" : "Новый партнёр"}</h2>{(["name", "phone", "city", "email"] as const).map((field) => <label key={field} className="space-y-1 text-sm text-slate-400"><span>{{ name: "Название", phone: "Телефон", city: "Город", email: "E-mail" }[field]}</span><input required={field === "name"} type={field === "email" ? "email" : "text"} value={form[field]} onChange={(event) => setForm({ ...form, [field]: event.target.value })} className="w-full rounded-xl bg-slate-900 p-3 text-white"/></label>)}<div className="flex gap-3 md:col-span-2"><button disabled={saving} className="rounded-xl bg-green-600 px-5 py-3 text-white disabled:opacity-50">{saving ? "Сохранение..." : "Сохранить"}</button><button type="button" onClick={() => setIsFormOpen(false)} className="rounded-xl bg-slate-700 px-5 py-3 text-white">Отмена</button></div></form>}
-    {loading ? <div className="rounded-2xl border border-slate-700 bg-[#101827] p-10 text-center text-white">Загрузка...</div> : partners.length === 0 ? <div className="rounded-2xl border border-slate-700 bg-[#101827] p-10 text-center text-slate-400">Пока нет партнёров</div> : <div className="grid gap-6">{partners.map((partner) => <PartnerRow key={partner.id} partner={partner} onEdit={openEdit} onToggle={togglePartner} onDelete={deletePartner}/>)}</div>}
+    {isFormOpen && <form onSubmit={savePartner} className="grid gap-4 rounded-2xl border border-slate-700 bg-[#101827] p-6 md:grid-cols-2"><h2 className="md:col-span-2 text-xl font-bold text-white">{editingId ? "Редактировать цех" : "Новый цех"}</h2>{(["name", "phone", "city", "email"] as const).map((field) => <label key={field} className="space-y-1 text-sm text-slate-400"><span>{{ name: "Название", phone: "Телефон", city: "Город", email: "E-mail" }[field]}</span><input required={field === "name"} type={field === "email" ? "email" : "text"} value={form[field]} onChange={(event) => setForm({ ...form, [field]: event.target.value })} className="w-full rounded-xl bg-slate-900 p-3 text-white"/></label>)}<div className="flex gap-3 md:col-span-2"><button disabled={saving} className="rounded-xl bg-green-600 px-5 py-3 text-white disabled:opacity-50">{saving ? "Сохранение..." : "Сохранить"}</button><button type="button" onClick={() => setIsFormOpen(false)} className="rounded-xl bg-slate-700 px-5 py-3 text-white">Отмена</button></div></form>}
+    {loading ? <div className="rounded-2xl border border-slate-700 bg-[#101827] p-10 text-center text-white">Загрузка...</div> : partners.length === 0 ? <div className="rounded-2xl border border-slate-700 bg-[#101827] p-10 text-center text-slate-400">Цеха пока не добавлены</div> : <div className="grid gap-6">{partners.map((partner) => <PartnerRow key={partner.id} partner={partner} onEdit={openEdit} onToggle={togglePartner} onDelete={deletePartner}/>)}</div>}
   </main>;
 }
 

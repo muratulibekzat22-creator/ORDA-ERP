@@ -76,7 +76,7 @@ export default function OrderTable({ orders }: Props) {
             </th>
 
             <th className="px-4 py-4 text-left text-slate-300">
-              Партнер
+              Цех
             </th>
 
             <th className="px-4 py-4 text-left text-slate-300">

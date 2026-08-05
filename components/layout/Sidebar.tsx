@@ -47,7 +47,7 @@ const menu = [
       },
       {
         id: "partners",
-        title: "Партнеры",
+        title: "Цех",
         icon: Handshake,
       },
     ],

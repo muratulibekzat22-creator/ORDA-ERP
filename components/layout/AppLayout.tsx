@@ -14,7 +14,7 @@ const menu = [
   { title: "📋 Заказы", href: "/orders" },
   { title: "📏 Замеры", href: "/measurements" },
   { title: "💰 Финансы", href: "/finance" },
-  { title: "🤝 Партнеры", href: "/partners" },
+  { title: "🏭 Цех", href: "/partners" },
   { title: "📊 Аналитика", href: "/analytics" },
   { title: "⚙ Настройки", href: "/settings" },
 ];

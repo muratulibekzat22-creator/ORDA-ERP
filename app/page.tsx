@@ -85,7 +85,7 @@ export default function Home() {
           {false && page === "employees" && (
             <StubPage
               title="Сотрудники"
-              description="Менеджеры, мастера, партнеры, роли пользователей, KPI и заработная плата."
+              description="Менеджеры, мастера и сотрудники цеха, роли пользователей, KPI и заработная плата."
             />
           )}
 

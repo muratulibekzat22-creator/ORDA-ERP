@@ -37,7 +37,7 @@ export default async function PartnerPage({
           </h1>
 
           <p className="mt-2 text-slate-400">
-            Карточка партнера
+            Карточка цеха
           </p>
 
         </div>
