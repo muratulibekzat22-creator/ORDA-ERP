@@ -5,8 +5,16 @@ const globalForPrisma = globalThis as {
   prisma?: PrismaClient;
 };
 
+function verifiedConnectionString(value: string | undefined) {
+  if (!value) return "";
+  const url = new URL(value);
+  if (["prefer", "require", "verify-ca"].includes(url.searchParams.get("sslmode") ?? ""))
+    url.searchParams.set("sslmode", "verify-full");
+  return url.toString();
+}
+
 const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL!,
+  connectionString: verifiedConnectionString(process.env.DATABASE_URL!),
 });
 
 export const prisma =
