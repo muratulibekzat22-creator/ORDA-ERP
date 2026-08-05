@@ -56,8 +56,41 @@ function redactForRole<T extends Record<string, unknown>>(
   role: Role,
 ) {
   if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
-  const result = { ...order };
-  for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"] as const) delete result[field];
+  const result: Record<string, unknown> = { ...order };
+  for (const field of [
+    "companyProfit",
+    "partnerPrice",
+    "partnerPaid",
+    "partnerBalance",
+  ] as const)
+    delete result[field];
+  if (Array.isArray(result.calculations)) {
+    result.calculations = result.calculations.map((value) => {
+      const calculation = { ...(value as Record<string, unknown>) };
+      for (const field of [
+        "workshopCost",
+        "baseWorkshopCost",
+        "workshopRate",
+        "workshopAdjustment",
+        "grossDifference",
+        "materialCost",
+        "installationCost",
+        "deliveryCost",
+        "otherDirectCosts",
+        "totalCost",
+        "grossProfit",
+      ])
+        delete calculation[field];
+      if (Array.isArray(calculation.lines))
+        calculation.lines = calculation.lines.map((value) => {
+          const line = { ...(value as Record<string, unknown>) };
+          delete line.unitCost;
+          delete line.totalCost;
+          return line;
+        });
+      return calculation;
+    });
+  }
   if (role === Role.PARTNER) {
     delete result.amount;
     delete result.prepayment;
@@ -149,7 +182,9 @@ export async function PATCH(request: Request, { params }: Context) {
         manager: auth.session!.user.name ?? undefined,
       });
       return updated
-        ? NextResponse.json(redactForRole(updated as unknown as Record<string, unknown>, role))
+        ? NextResponse.json(
+            redactForRole(updated as unknown as Record<string, unknown>, role),
+          )
         : NextResponse.json(
             { error: "Заказ или цех не найден" },
             { status: 404 },

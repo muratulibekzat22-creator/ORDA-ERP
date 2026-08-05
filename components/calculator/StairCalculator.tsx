@@ -29,6 +29,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const isDirector = session?.user.role === "DIRECTOR";
+  const canSeeInternal = isDirector || session?.user.role === "ACCOUNTANT";
   const calculation = useMemo(() => {
     try {
       return calculateStair({
@@ -38,7 +39,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
         ...(clientOverride === ""
           ? {}
           : { clientPrice: Number(clientOverride) }),
-        ...(workshopOverride === ""
+        ...(!isDirector || workshopOverride === ""
           ? {}
           : { workshopCost: Number(workshopOverride) }),
         installationRequired,
@@ -50,7 +51,19 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
     } catch {
       return null;
     }
-  }, [clientOverride, deliveryRequired, installationRequired, lines, material, otherCity, pickup, platforms, regularSteps, workshopOverride]);
+  }, [
+    clientOverride,
+    deliveryRequired,
+    installationRequired,
+    isDirector,
+    lines,
+    material,
+    otherCity,
+    pickup,
+    platforms,
+    regularSteps,
+    workshopOverride,
+  ]);
 
   function updatePlatform(index: number, value: number) {
     setPlatforms((items) =>
@@ -187,29 +200,153 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
         </div>
       </section>
       <section className="space-y-4 rounded-xl border border-slate-700 p-4">
-        <div><h2 className="font-semibold text-white">Монтаж и доставка</h2><p className="text-sm text-slate-400">Отключённые услуги не включаются в итог заказа.</p></div>
+        <div>
+          <h2 className="font-semibold text-white">Монтаж и доставка</h2>
+          <p className="text-sm text-slate-400">
+            Отключённые услуги не включаются в итог заказа.
+          </p>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Check label="Требуется монтаж" checked={installationRequired} onChange={setInstallationRequired} />
-          <Check label="Требуется доставка" checked={deliveryRequired} onChange={setDeliveryRequired} />
-          <Check label="Другой город" checked={otherCity} onChange={setOtherCity} />
-          <Check label="Самовывоз" checked={pickup} onChange={(value) => { setPickup(value); if (value) setDeliveryRequired(false); }} />
+          <Check
+            label="Требуется монтаж"
+            checked={installationRequired}
+            onChange={setInstallationRequired}
+          />
+          <Check
+            label="Требуется доставка"
+            checked={deliveryRequired}
+            onChange={setDeliveryRequired}
+          />
+          <Check
+            label="Другой город"
+            checked={otherCity}
+            onChange={setOtherCity}
+          />
+          <Check
+            label="Самовывоз"
+            checked={pickup}
+            onChange={(value) => {
+              setPickup(value);
+              if (value) setDeliveryRequired(false);
+            }}
+          />
         </div>
       </section>
       <section className="space-y-4 rounded-xl border border-slate-700 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="font-semibold text-white">Дополнительные позиции</h2><p className="text-sm text-slate-400">Материалы, ограждения, стекло, работы, скидки и наценки.</p></div>
-          <button type="button" onClick={() => setLines((items) => [...items, { kind: "OTHER_WORK", name: "Новая позиция", quantity: 1, unit: "шт.", unitCost: 0, unitSale: 0, enabled: true }])} className="min-h-11 rounded-xl bg-blue-600 px-4 text-white">Добавить позицию</button>
+          <div>
+            <h2 className="font-semibold text-white">Дополнительные позиции</h2>
+            <p className="text-sm text-slate-400">
+              Материалы, ограждения, стекло, работы, скидки и наценки.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setLines((items) => [
+                ...items,
+                {
+                  kind: "OTHER_WORK",
+                  name: "Новая позиция",
+                  quantity: 1,
+                  unit: "шт.",
+                  unitCost: 0,
+                  unitSale: 0,
+                  enabled: true,
+                },
+              ])
+            }
+            className="min-h-11 rounded-xl bg-blue-600 px-4 text-white"
+          >
+            Добавить позицию
+          </button>
         </div>
         {lines.map((line, index) => (
-          <div key={index} className="grid gap-2 rounded-xl bg-slate-900/70 p-3 md:grid-cols-6">
-            <input aria-label={`Название позиции ${index + 1}`} value={line.name} onChange={(event) => setLines((items) => items.map((item, position) => position === index ? { ...item, name: event.target.value } : item))} className="input md:col-span-2" />
-            <input aria-label={`Количество позиции ${index + 1}`} type="number" min="0" step="0.001" value={line.quantity} onChange={(event) => setLines((items) => items.map((item, position) => position === index ? { ...item, quantity: Number(event.target.value) } : item))} className="input" />
-            <input aria-label={`Себестоимость позиции ${index + 1}`} type="number" min="0" value={line.unitCost} onChange={(event) => setLines((items) => items.map((item, position) => position === index ? { ...item, unitCost: Number(event.target.value) } : item))} className="input" />
-            <input aria-label={`Цена позиции ${index + 1}`} type="number" min="0" value={line.unitSale} onChange={(event) => setLines((items) => items.map((item, position) => position === index ? { ...item, unitSale: Number(event.target.value) } : item))} className="input" />
-            <button type="button" onClick={() => setLines((items) => items.filter((_, position) => position !== index))} className="min-h-11 rounded-lg bg-red-900 px-3 text-white">Удалить</button>
+          <div
+            key={index}
+            className="grid gap-2 rounded-xl bg-slate-900/70 p-3 md:grid-cols-6"
+          >
+            <input
+              aria-label={`Название позиции ${index + 1}`}
+              value={line.name}
+              onChange={(event) =>
+                setLines((items) =>
+                  items.map((item, position) =>
+                    position === index
+                      ? { ...item, name: event.target.value }
+                      : item,
+                  ),
+                )
+              }
+              className="input md:col-span-2"
+            />
+            <input
+              aria-label={`Количество позиции ${index + 1}`}
+              type="number"
+              min="0"
+              step="0.001"
+              value={line.quantity}
+              onChange={(event) =>
+                setLines((items) =>
+                  items.map((item, position) =>
+                    position === index
+                      ? { ...item, quantity: Number(event.target.value) }
+                      : item,
+                  ),
+                )
+              }
+              className="input"
+            />
+            {canSeeInternal && (
+              <input
+                aria-label={`Себестоимость позиции ${index + 1}`}
+                type="number"
+                min="0"
+                value={line.unitCost}
+                onChange={(event) =>
+                  setLines((items) =>
+                    items.map((item, position) =>
+                      position === index
+                        ? { ...item, unitCost: Number(event.target.value) }
+                        : item,
+                    ),
+                  )
+                }
+                className="input"
+              />
+            )}
+            <input
+              aria-label={`Цена позиции ${index + 1}`}
+              type="number"
+              min="0"
+              value={line.unitSale}
+              onChange={(event) =>
+                setLines((items) =>
+                  items.map((item, position) =>
+                    position === index
+                      ? { ...item, unitSale: Number(event.target.value) }
+                      : item,
+                  ),
+                )
+              }
+              className="input"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                setLines((items) =>
+                  items.filter((_, position) => position !== index),
+                )
+              }
+              className="min-h-11 rounded-lg bg-red-900 px-3 text-white"
+            >
+              Удалить
+            </button>
           </div>
         ))}
-        {!lines.length && <p className="text-sm text-slate-500">Дополнительных позиций нет.</p>}
+        {!lines.length && (
+          <p className="text-sm text-slate-500">Дополнительных позиций нет.</p>
+        )}
       </section>
       {calculation ? (
         <>
@@ -222,10 +359,12 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               title="Стоимость одной ступени"
               value={money(calculation.saleRate)}
             />
-            <Result
-              title="Стоимость работ цеха"
-              value={money(calculation.workshopCost)}
-            />
+            {canSeeInternal && (
+              <Result
+                title="Стоимость работ цеха"
+                value={money(calculation.workshopCost)}
+              />
+            )}
             <Result
               title="Продажная стоимость"
               value={money(calculation.clientPrice)}
@@ -265,12 +404,14 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               </label>
             )}
           </div>
-          <div className="rounded-2xl bg-blue-950/40 p-5">
-            <p className="text-slate-300">Валовая разница ALTYN SAPA</p>
-            <p className="mt-1 text-3xl font-bold text-blue-300">
-              {money(calculation.grossProfit)}
-            </p>
-          </div>
+          {canSeeInternal && (
+            <div className="rounded-2xl bg-blue-950/40 p-5">
+              <p className="text-slate-300">Валовая разница ALTYN SAPA</p>
+              <p className="mt-1 text-3xl font-bold text-blue-300">
+                {money(calculation.grossProfit)}
+              </p>
+            </div>
+          )}
         </>
       ) : (
         <p role="alert" className="rounded-xl bg-red-950/40 p-4 text-red-300">
@@ -321,6 +462,24 @@ function Result({ title, value }: { title: string; value: string }) {
   );
 }
 
-function Check({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
-  return <label className="flex min-h-11 items-center gap-3 rounded-xl bg-slate-900 px-3 text-sm text-slate-200"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="size-5" />{label}</label>;
+function Check({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="flex min-h-11 items-center gap-3 rounded-xl bg-slate-900 px-3 text-sm text-slate-200">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="size-5"
+      />
+      {label}
+    </label>
+  );
 }

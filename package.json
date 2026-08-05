@@ -24,7 +24,8 @@
     "test:financial-model": "tsx scripts/test-financial-model.ts",
     "seed:test-accounts": "tsx scripts/seed-test-accounts.ts",
     "test:production:logins": "tsx scripts/test-production-role-logins.ts",
-    "test:clients": "tsx scripts/test-clients-workspace.ts"
+    "test:clients": "tsx scripts/test-clients-workspace.ts",
+    "test:commercial-boundary": "tsx scripts/test-commercial-boundary.ts"
   },
   "engines": {
     "node": ">=20.9.0"

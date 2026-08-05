@@ -449,6 +449,12 @@ async function main() {
     assert(!("grossProfit" in managerCalculation) && !("totalCost" in managerCalculation) && Array.isArray(managerCalculation.lines) && !("unitCost" in (managerCalculation.lines as Array<Record<string, unknown>>)[0]), "manager calculation leaks internal costs");
     const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in repeatedManagerCalculation), "idempotent calculation replay leaks internal costs");
+    const managerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, managerCookie)).json() as Record<string, unknown>;
+    for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
+    const managerOrderCalculations = managerOrderDetail.calculations as Array<Record<string, unknown>>;
+    assert(Array.isArray(managerOrderCalculations) && managerOrderCalculations.length > 0, "manager order detail is missing client calculation");
+    for (const field of ["workshopCost", "baseWorkshopCost", "workshopRate", "workshopAdjustment", "grossDifference", "materialCost", "installationCost", "deliveryCost", "otherDirectCosts", "totalCost", "grossProfit"]) assert(!(field in managerOrderCalculations[0]), `manager nested calculation leaks ${field}`);
+    await expectStatus("/api/calculator-config", 403, managerCookie);
     for (const cookie of [managerCookie, firstMeasurerCookie, firstCookie]) await expectStatus("/api/settings", 403, cookie);
     const settingsBefore = await (await expectStatus("/api/settings", 200, directorCookie)).json() as { company: { name: string }; rolePermissions: Record<Role, string[]> };
     await expectStatus("/api/settings", 200, directorCookie, {
@@ -543,6 +549,8 @@ async function main() {
     assert(Array.isArray(directorFinance.rows) && directorFinance.rows.some((row) => row.id === firstOrder.id && row.prepayment === 20) && typeof directorFinance.totals.turnover === "number" && Array.isArray(directorFinance.managers) && directorFinance.partners.some((partner) => partner.id === firstPartner.id), "director finance payload is invalid");
     const directorCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, directorCookie)).json() as Record<string, unknown>;
     assert("grossProfit" in directorCalculation && "totalCost" in directorCalculation, "director calculation is missing management totals");
+    const directorCalculatorConfig = await (await expectStatus("/api/calculator-config", 200, directorCookie)).json() as Record<string, unknown>;
+    assert("oakPrice" in directorCalculatorConfig && "installationPrice" in directorCalculatorConfig, "director calculator configuration is incomplete");
     const companyKey = `${tag}-company-ledger`;
     const ledgerBody = JSON.stringify({ direction: "EXPENSE", category: "RENT", amount: 100, operationDate: new Date().toISOString(), comment: tag });
     const companyEntry = await (await expectStatus("/api/company-finance", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": companyKey }, body: ledgerBody })).json() as { id: number };

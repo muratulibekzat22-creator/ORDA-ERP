@@ -45,8 +45,24 @@ export default function RouteShell({
   const pathname = usePathname();
   const { data: session } = useSession();
   const role = session?.user.role as Role | undefined;
-  const permissionByHref: Partial<Record<string, Permission>> = { "/clients": "clients", "/orders": "orders", "/partners": "partners", "/production": "production", "/warehouse": "warehouse", "/finance": "finance", "/calendar": "calendar", "/employees": "employees", "/settings": "settings" };
-  const visible = (href: string) => href === "/" || Boolean(role && permissionByHref[href] && hasDefaultPermission(role, permissionByHref[href]!));
+  const permissionByHref: Partial<Record<string, Permission>> = {
+    "/clients": "clients",
+    "/orders": "orders",
+    "/partners": "partners",
+    "/production": "production",
+    "/warehouse": "warehouse",
+    "/finance": "finance",
+    "/calendar": "calendar",
+    "/employees": "employees",
+    "/settings": "settings",
+  };
+  const visible = (href: string) =>
+    href === "/" ||
+    Boolean(
+      role &&
+      permissionByHref[href] &&
+      hasDefaultPermission(role, permissionByHref[href]!),
+    );
   const [open, setOpen] = useState(false);
   const standalone =
     pathname === "/" || pathname === "/login" || pathname === "/partner";
@@ -91,29 +107,65 @@ export default function RouteShell({
             </button>
           </div>
           <nav className="flex-1 space-y-1 overflow-y-auto p-4">
-            {links.filter(([href]) => visible(href)).map(([href, title, Icon]) => (
+            {links
+              .filter(([href]) => visible(href))
+              .map(([href, title, Icon]) => (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setOpen(false)}
+                  aria-current={active(href) ? "page" : undefined}
+                  className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
+                >
+                  <Icon size={20} />
+                  {title}
+                </Link>
+              ))}
+            {(session?.user.role === "DIRECTOR" ||
+              session?.user.role === "ACCOUNTANT") && (
               <Link
-                key={href}
-                href={href}
+                href="/company-finance"
                 onClick={() => setOpen(false)}
-                aria-current={active(href) ? "page" : undefined}
-                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
+                aria-current={active("/company-finance") ? "page" : undefined}
+                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/company-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
               >
-                <Icon size={20} />
-                {title}
+                <Landmark size={20} />
+                Финансы компании
               </Link>
-            ))}
-            {(session?.user.role === "DIRECTOR" || session?.user.role === "ACCOUNTANT") && <Link href="/company-finance" onClick={() => setOpen(false)} aria-current={active("/company-finance") ? "page" : undefined} className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/company-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}><Landmark size={20} />Финансы компании</Link>}
-            {session?.user.role === "DIRECTOR" && <Link href="/personal-finance" onClick={() => setOpen(false)} aria-current={active("/personal-finance") ? "page" : undefined} className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/personal-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}><LockKeyhole size={20} />Личные финансы</Link>}
-            {role && hasDefaultPermission(role, "orders") && <Link
-              href="/calculator"
-              onClick={() => setOpen(false)}
-              aria-current={active("/calculator") ? "page" : undefined}
-              className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/calculator") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
-            >
-              <FileText size={20} />
-              Калькулятор
-            </Link>}
+            )}
+            {session?.user.role === "DIRECTOR" && (
+              <Link
+                href="/personal-finance"
+                onClick={() => setOpen(false)}
+                aria-current={active("/personal-finance") ? "page" : undefined}
+                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/personal-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
+              >
+                <LockKeyhole size={20} />
+                Личные финансы
+              </Link>
+            )}
+            {role && hasDefaultPermission(role, "orders") && (
+              <Link
+                href="/calculator"
+                onClick={() => setOpen(false)}
+                aria-current={active("/calculator") ? "page" : undefined}
+                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/calculator") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
+              >
+                <FileText size={20} />
+                Калькулятор
+              </Link>
+            )}
+            {session?.user.role === "DIRECTOR" && (
+              <Link
+                href="/calculator-config"
+                onClick={() => setOpen(false)}
+                aria-current={active("/calculator-config") ? "page" : undefined}
+                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/calculator-config") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
+              >
+                <Settings size={20} />
+                Конфигурация калькулятора
+              </Link>
+            )}
           </nav>
         </aside>
         <div className="min-w-0 flex-1 overflow-auto">{children}</div>
