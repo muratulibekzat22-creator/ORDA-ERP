@@ -299,11 +299,31 @@ model Production {
   finishDate DateTime?
 
   comment String?
+  priority Int @default(0)
+  completedAt DateTime?
+  plannedStartAt DateTime?
+  plannedEndAt DateTime?
+  actualEndAt DateTime?
+  stageHistory ProductionStageHistory[]
   idempotencyKey String? @unique
   requestHash String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ProductionStageHistory {
+  id              Int        @id @default(autoincrement())
+  productionId    Int
+  production      Production @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  fromStage       String?
+  toStage         String
+  changedByUserId Int?
+  comment         String?
+  idempotencyKey  String?    @unique
+  createdAt       DateTime   @default(now())
+
+  @@index([productionId, createdAt])
 }
 
 model Settings {
