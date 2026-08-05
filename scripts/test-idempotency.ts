@@ -103,7 +103,7 @@ async function main() {
     initializedMaterialId = materialRecord(createdMaterial).id;
     const repeatedMaterial = await createMaterial(initialMaterial);
     ensure(materialRecord(repeatedMaterial).id === materialRecord(createdMaterial).id, "material repeat");
-    await expectConflict(() => createMaterial({ ...initialMaterial, initialStock: 8, requestHash: hash("material-other") }));
+    await expectConflict(() => createMaterial({ ...initialMaterial, initialStock: 8, requestHash: hash("material-other") } as Parameters<typeof createMaterial>[0]));
     try {
       await createMaterial({ ...initialMaterial, idempotencyKey: key("material-duplicate"), requestHash: hash("material-duplicate") });
       throw new Error("material duplicate missing");
