@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
 type User = { id: number; name: string; role: string; active: boolean };
@@ -25,6 +26,7 @@ type Data = {
 const empty: Data = { events: [], orders: [], filters: { assignees: [] } };
 
 export default function CalendarPage() {
+  const { data: session } = useSession();
   const { getKey, reset } = useIdempotencyKey();
   const [data, setData] = useState<Data>(empty);
   const [users, setUsers] = useState<User[]>([]);
@@ -40,23 +42,33 @@ export default function CalendarPage() {
     stage: "Проектирование",
     comment: "",
   });
+  const role = session?.user.role;
+  const currentUserId = session?.user.id;
+  const currentUserName = session?.user.name;
+  const canAssign = role === "DIRECTOR" || role === "MANAGER";
+  const canCreate = ["DIRECTOR", "MANAGER", "MEASURER", "PRODUCTION", "INSTALLER"].includes(role ?? "");
 
   const load = useCallback(async () => {
-    const [calendarResponse, employeesResponse] = await Promise.all([
-      fetch(`/api/calendar${assignee ? `?assignedUserId=${assignee}` : ""}`),
-      fetch("/api/employees"),
-    ]);
-    if (!calendarResponse.ok || !employeesResponse.ok) {
+    const calendarResponse = await fetch(`/api/calendar${assignee ? `?assignedUserId=${assignee}` : ""}`);
+    if (!calendarResponse.ok) {
       throw new Error("Не удалось загрузить календарь");
     }
-
-    const [nextData, nextUsers] = await Promise.all([
-      calendarResponse.json() as Promise<Data>,
-      employeesResponse.json() as Promise<User[]>,
-    ]);
+    const nextData = await calendarResponse.json() as Data;
     setData(nextData);
-    setUsers(nextUsers.filter((user) => user.active));
-  }, [assignee]);
+    if (canAssign) {
+      const employeesResponse = await fetch("/api/employees");
+      if (employeesResponse.ok) {
+        const nextUsers = await employeesResponse.json() as User[];
+        setUsers(nextUsers.filter((user) => user.active));
+      } else {
+        setUsers([]);
+      }
+    } else if (currentUserId && role) {
+      setUsers([{ id: Number(currentUserId), name: currentUserName ?? "Исполнитель", role, active: true }]);
+    } else {
+      setUsers([]);
+    }
+  }, [assignee, canAssign, currentUserId, currentUserName, role]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -130,7 +142,7 @@ export default function CalendarPage() {
         <option value="">Все исполнители</option>
         {data.filters.assignees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
-      <form onSubmit={create} className="mt-4 grid gap-2">
+      {canCreate && <form onSubmit={create} className="mt-4 grid gap-2">
         <select value={form.sourceType} onChange={(event) => setForm({ ...form, sourceType: event.target.value as "measurement" | "production", assignedUserId: "" })}>
           <option value="measurement">Замер</option>
           <option value="production">Производство</option>
@@ -150,9 +162,10 @@ export default function CalendarPage() {
           {candidates.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
         </select>
         <button disabled={creating}>{creating ? "Создание..." : "Создать"}</button>
-      </form>
+      </form>}
       {loading ? "Загрузка..." : (
         <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => void drop(event)} className="mt-6 space-y-2">
+          {data.events.length === 0 && <p className="text-slate-400">Нет событий</p>}
           {data.events.map((item) => (
             <div draggable onDragStart={(event) => event.dataTransfer.setData("event", JSON.stringify({ id: item.id, sourceType: item.sourceType }))} key={`${item.sourceType}-${item.id}`}>
               {item.title} — {item.assignedUserName ?? item.legacyAssignedName}
