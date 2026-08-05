@@ -1,12 +1,24 @@
-import "dotenv/config";
-
-import { spawn, type ChildProcess } from "child_process";
+import { execFile, spawn, type ChildProcess } from "child_process";
+import { promisify } from "util";
 import path from "path";
+import fs from "fs";
+import net from "net";
+import crypto from "crypto";
+import dotenv from "dotenv";
 import bcrypt from "bcrypt";
-import { Role } from "@prisma/client";
+import { Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
-import { prisma } from "@/lib/prisma";
-import { createPayment } from "@/lib/services/payment.service";
+import { Agent } from "undici";
+
+const testEnvironmentPath = path.join(process.cwd(), ".env.test.local");
+const rawTestEnvironment = fs.readFileSync(testEnvironmentPath, "utf8").trim();
+const testEnvironment = dotenv.config({ path: testEnvironmentPath, quiet: true }).parsed;
+const testDatabaseUrl = testEnvironment?.TEST_DATABASE_URL ?? (rawTestEnvironment.startsWith("postgresql://") ? rawTestEnvironment : undefined);
+if (!testDatabaseUrl) throw new Error("TEST_DATABASE_URL is missing from .env.test.local");
+process.env.DATABASE_URL = testDatabaseUrl;
+process.env.NEXTAUTH_URL = "http://127.0.0.1:3219";
+process.env.NEXTAUTH_SECRET ||= crypto.randomBytes(32).toString("hex");
+delete process.env.VERCEL;
 
 const port = 3219;
 const baseUrl = `http://127.0.0.1:${port}`;
@@ -20,6 +32,16 @@ const generatedOrderIds: number[] = [];
 const installationStage = "\u041c\u043e\u043d\u0442\u0430\u0436";
 const productionStage = "\u0414\u0435\u0440\u0435\u0432\u043e";
 let server: ChildProcess | undefined;
+const execFileAsync = promisify(execFile);
+const httpAgent = new Agent({ keepAliveTimeout: 1, keepAliveMaxTimeout: 1 });
+let prisma!: PrismaClient;
+let readinessTimer: NodeJS.Timeout | undefined;
+let confirmedSessions = 0;
+let partnerMatrixCompleted = false;
+
+function apiFetch(input: string | URL, init: RequestInit = {}) {
+  return fetch(input, { ...init, dispatcher: httpAgent } as RequestInit);
+}
 
 function assert(value: boolean, message: string) {
   if (!value) throw new Error(message);
@@ -28,20 +50,61 @@ function assert(value: boolean, message: string) {
 async function waitForServer() {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
-      if ((await fetch(`${baseUrl}/api/auth/csrf`)).ok) return;
+      if ((await apiFetch(`${baseUrl}/api/auth/csrf`)).ok) return;
     } catch {
       // Server is starting.
     }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise<void>((resolve) => {
+      readinessTimer = setTimeout(resolve, 200);
+    });
   }
   throw new Error("Next.js server did not start");
 }
 
+function waitForExit(child: ChildProcess, timeoutMs: number) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+function isPortFree() {
+  return new Promise<boolean>((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("error", () => {
+      socket.destroy();
+      resolve(true);
+    });
+  });
+}
+
 async function stopServer() {
-  if (!server || server.killed || server.exitCode !== null) return;
-  const exited = new Promise<void>((resolve) => server?.once("exit", () => resolve()));
-  server.kill();
-  await exited;
+  if (readinessTimer) clearTimeout(readinessTimer);
+  readinessTimer = undefined;
+  if (server && server.exitCode === null && server.signalCode === null) {
+    server.kill("SIGTERM");
+    if (!(await waitForExit(server, 5_000)) && process.platform === "win32" && server.pid) {
+      await execFileAsync("taskkill", ["/PID", String(server.pid), "/T", "/F"]).catch(() => undefined);
+      assert(await waitForExit(server, 10_000), "next start did not exit after taskkill");
+    }
+    if (server.exitCode === null && server.signalCode === null) {
+      server.kill("SIGKILL");
+      assert(await waitForExit(server, 5_000), "next start did not exit");
+    }
+  }
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await isPortFree()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`port ${port} is still in use`);
 }
 
 function cookieValue(response: Response) {
@@ -50,11 +113,11 @@ function cookieValue(response: Response) {
 }
 
 async function session(email: string) {
-  const csrf = await fetch(`${baseUrl}/api/auth/csrf`);
+  const csrf = await apiFetch(`${baseUrl}/api/auth/csrf`);
   const initialCookie = cookieValue(csrf);
   const { csrfToken } = await csrf.json() as { csrfToken: string };
   const body = new URLSearchParams({ csrfToken, email, password, callbackUrl: baseUrl, json: "true" });
-  const login = await fetch(`${baseUrl}/api/auth/callback/credentials`, {
+  const login = await apiFetch(`${baseUrl}/api/auth/callback/credentials`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: initialCookie },
     body,
@@ -62,11 +125,15 @@ async function session(email: string) {
   });
   const cookie = [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
   assert(cookie.includes("next-auth"), `session cookie missing for ${email}`);
+  const sessionResponse = await apiFetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: cookie } });
+  const sessionPayload = await sessionResponse.json() as { user?: { email?: string; role?: string } };
+  assert(sessionResponse.status === 200 && sessionPayload.user?.email === email && Boolean(sessionPayload.user.role), `authenticated session missing for ${email}`);
+  confirmedSessions += 1;
   return cookie;
 }
 
 async function expectStatus(pathname: string, status: number, cookie: string, init: RequestInit = {}) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
+  const response = await apiFetch(`${baseUrl}${pathname}`, {
     ...init,
     headers: { ...init.headers, Cookie: cookie },
   });
@@ -75,7 +142,7 @@ async function expectStatus(pathname: string, status: number, cookie: string, in
 }
 
 async function expectStatuses(pathname: string, statuses: number[], cookie: string, init: RequestInit = {}) {
-  const response = await fetch(`${baseUrl}${pathname}`, {
+  const response = await apiFetch(`${baseUrl}${pathname}`, {
     ...init,
     headers: { ...init.headers, Cookie: cookie },
   });
@@ -132,6 +199,8 @@ function assertCalendarPayload(payload: CalendarPayload, ownEventIds: string[], 
 
 async function main() {
   try {
+    ({ prisma } = await import("@/lib/prisma"));
+    const { createPayment } = await import("@/lib/services/payment.service");
     const hash = await bcrypt.hash(password, 10);
     const [firstUser, secondUser] = await Promise.all(
       ["first", "second"].map(async (name) => {
@@ -214,16 +283,17 @@ async function main() {
     const financeData = await createPayment({ orderId: firstOrder.id, amount: 20, method: "cash", type: "payment", comment: tag });
     assert(financeData !== null, "failed to create temporary finance data");
 
-    server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "dev", "--port", String(port)], { cwd: process.cwd(), stdio: "ignore" });
+    server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: "ignore", detached: false });
     await waitForServer();
-    const health = await fetch(`${baseUrl}/api/health`);
+    const health = await apiFetch(`${baseUrl}/api/health`);
     const healthPayload = await health.json() as { status?: string; database?: string };
     assert(health.status === 200 && healthPayload.status === "ok" && healthPayload.database === "ok", "health endpoint is unavailable");
 
     const firstCookie = await session(firstUser.email);
     const secondCookie = await session(secondUser.email);
-    const orders = await (await expectStatus("/api/orders", 200, firstCookie)).json() as Array<{ id: number }>;
-    assert(orders.length === 1 && orders[0].id === firstOrder.id, "partner can only list own orders");
+    const orders = await (await expectStatus("/api/orders", 200, firstCookie)).json() as Array<Record<string, unknown>>;
+    assert(orders.length === 1 && orders[0].id === firstOrder.id && !orders.some((order) => order.id === secondOrder.id), "partner can only list own orders");
+    assert(orders.every((order) => !("companyProfit" in order) && !("partnerPrice" in order) && !("partnerPaid" in order) && !("partnerBalance" in order) && !("userId" in order)), "partner list exposes internal financial fields");
     await expectStatus(`/api/orders/${firstOrder.id}`, 200, firstCookie);
     await expectStatus(`/api/orders/${secondOrder.id}`, 404, firstCookie);
     await expectStatus(`/api/partners/${firstPartner.id}`, 200, firstCookie);
@@ -248,12 +318,18 @@ async function main() {
       `/orders/${secondOrder.id}/print`,
       `/proposal/${secondOrder.id}`,
     ]) await expectStatus(pathname, 404, firstCookie);
+    const beforePartnerPatch = await prisma.order.findUniqueOrThrow({ where: { id: firstOrder.id } });
     await expectStatus(`/api/orders/${firstOrder.id}`, 400, firstCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prepayment: "1", balance: "99", partnerPaid: "1", partnerBalance: "39", companyProfit: "60" }),
+      body: JSON.stringify({ partnerId: secondPartner.id, partnerPrice: "1", prepayment: "1", balance: "99", partnerPaid: "1", partnerBalance: "39", companyProfit: "60" }),
     });
+    const afterPartnerPatch = await prisma.order.findUniqueOrThrow({ where: { id: firstOrder.id } });
+    assert(["partnerId", "partnerPrice", "prepayment", "balance", "partnerPaid", "partnerBalance", "companyProfit"].every((key) => String(afterPartnerPatch[key as keyof typeof afterPartnerPatch]) === String(beforePartnerPatch[key as keyof typeof beforePartnerPatch])), "partner financial patch changed protected fields");
 
+    const secondOrders = await (await expectStatus("/api/orders", 200, secondCookie)).json() as Array<Record<string, unknown>>;
+    assert(secondOrders.length === 1 && secondOrders[0].id === secondOrder.id && !secondOrders.some((order) => order.id === firstOrder.id), "second partner can only list own orders");
+    assert(secondOrders.every((order) => !("companyProfit" in order) && !("partnerPrice" in order) && !("partnerPaid" in order) && !("partnerBalance" in order) && !("userId" in order)), "second partner list exposes internal financial fields");
     await expectStatus(`/api/orders/${secondOrder.id}`, 200, secondCookie);
     await expectStatus(`/api/orders/${firstOrder.id}`, 404, secondCookie);
     await expectStatus(`/api/partners/${secondPartner.id}`, 200, secondCookie);
@@ -261,6 +337,7 @@ async function main() {
     await expectStatus(`/api/proposal/${secondOrder.id}`, 200, secondCookie);
     await expectStatus(`/api/proposal/${firstOrder.id}`, 404, secondCookie);
     await expectStatus("/api/warehouse", 403, firstCookie);
+    partnerMatrixCompleted = true;
     console.log("partner API security checks passed");
 
     const firstMeasurerCookie = await session(firstMeasurer.email);
@@ -571,29 +648,54 @@ async function main() {
     assert(directorDocuments.some((document) => document.id === createdDocument.id && document.order.id === firstOrder.id), "director cannot see the temporary document");
     console.log("manager and director API security matrix passed");
   } finally {
-    await stopServer();
-    await prisma.companyLedgerEntry.deleteMany({ where: { comment: tag } });
-    await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
-    if (generatedOrderIds.length) {
-      await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
-      await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
-      await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
+    const cleanupErrors: unknown[] = [];
+    try {
+      await prisma.companyLedgerEntry.deleteMany({ where: { comment: tag } });
+      await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
+      if (generatedOrderIds.length) {
+        await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
+      }
+      await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      const attachmentPaths = (await prisma.attachment.findMany({ where: { order: { number: { startsWith: tag } } }, select: { pathname: true } })).map((item) => item.pathname);
+      if (attachmentPaths.length) await del(attachmentPaths).catch(() => undefined);
+      await prisma.attachment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.document.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.measurement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });
+      await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
+      await prisma.client.deleteMany({ where: { name: { startsWith: tag } } });
+      await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
+      console.log("cleanup completed");
+    } catch (error) {
+      cleanupErrors.push(error);
     }
-    await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    const attachmentPaths = (await prisma.attachment.findMany({ where: { order: { number: { startsWith: tag } } }, select: { pathname: true } })).map((item) => item.pathname);
-    if (attachmentPaths.length) await del(attachmentPaths).catch(() => undefined);
-    await prisma.attachment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    await prisma.document.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    await prisma.measurement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });
-    await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });
-    await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
-    await prisma.client.deleteMany({ where: { name: { startsWith: tag } } });
-    await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
-    await prisma.$disconnect();
+    try {
+      if (prisma) await prisma.$disconnect();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await httpAgent.close();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await stopServer();
+      console.log(`server stopped; port ${port} is free`);
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "security harness cleanup failed");
   }
+
+  assert(confirmedSessions > 0, "no authenticated session was confirmed");
+  assert(partnerMatrixCompleted, "PARTNER security matrix did not complete");
+  console.log(`SECURITY SUMMARY: session=confirmed (${confirmedSessions}); PARTNER matrix=passed; cleanup=completed; server=stopped; port ${port}=free`);
 }
 
 main().catch((error) => {
