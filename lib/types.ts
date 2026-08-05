@@ -3,12 +3,21 @@ export interface Client {
 
   name: string;
   phone: string;
+  whatsapp: string;
   city: string;
+  address: string;
 
   manager: string;
 
   amount: string;
+  estimatedAmount?: string;
+  estimateNotes?: string;
+  source?: string;
+  comment?: string;
   status: string;
+
+  _count?: { orders: number; interactions: number };
+  interactions?: Array<{ createdAt: Date }>;
 
   orders?: Order[];
 

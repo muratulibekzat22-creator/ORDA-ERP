@@ -63,7 +63,7 @@ export default function ClientTable({ clients }: Props) {
   return (
     <>
     <div className="space-y-3 md:hidden">
-      {sortedClients.map((client) => <article key={client.id} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-white">{client.name}</h2><a href={`tel:${client.phone}`} className="mt-1 inline-block text-blue-300">{client.phone}</a></div><span className={`shrink-0 rounded-full px-3 py-1 text-xs text-white ${statusClass(client.status)}`}>{client.status}</span></div><dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm"><dt className="text-slate-500">Город</dt><dd className="text-slate-200">{client.city || "—"}</dd><dt className="text-slate-500">Менеджер</dt><dd className="text-slate-200">{client.manager || "—"}</dd><dt className="text-slate-500">Сумма</dt><dd className="font-semibold text-green-400">{Number(client.amount).toLocaleString()} ₸</dd></dl><Link href={`/clients/${client.id}`} className="mt-4 flex min-h-11 items-center justify-center rounded-xl bg-blue-600 px-4 text-white">Открыть клиента</Link></article>)}
+      {sortedClients.map((client) => <article key={client.id} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-white">{client.name}</h2><a href={`tel:${client.phone}`} className="mt-1 inline-block text-blue-300">{client.phone}</a></div><span className={`shrink-0 rounded-full px-3 py-1 text-xs text-white ${statusClass(client.status)}`}>{client.status}</span></div><dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm"><dt className="text-slate-500">Город</dt><dd className="text-slate-200">{client.city || "—"}</dd><dt className="text-slate-500">Менеджер</dt><dd className="text-slate-200">{client.manager || "—"}</dd><dt className="text-slate-500">Источник</dt><dd className="text-slate-200">{client.source || "—"}</dd><dt className="text-slate-500">Заказы</dt><dd className="text-slate-200">{client._count?.orders ?? 0}</dd></dl><Link href={`/clients/${client.id}`} className="mt-4 flex min-h-11 items-center justify-center rounded-xl bg-blue-600 px-4 text-white">Открыть клиента</Link></article>)}
     </div>
     <div className="hidden overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827] md:block">
       <table className="w-full min-w-[920px]">
@@ -74,7 +74,7 @@ export default function ClientTable({ clients }: Props) {
               ["phone", "Телефон"],
               ["city", "Город"],
               ["manager", "Менеджер"],
-              ["amount", "Сумма"],
+              ["source", "Источник"],
               ["status", "Статус"],
             ].map(([field, title]) => (
               <th
@@ -119,9 +119,7 @@ export default function ClientTable({ clients }: Props) {
 
               <td className="px-6 py-5 text-slate-300">{client.manager}</td>
 
-              <td className="px-6 py-5 font-semibold text-green-400">
-                {Number(client.amount).toLocaleString()} ₸
-              </td>
+              <td className="px-6 py-5 text-slate-300">{client.source || "—"}</td>
 
               <td className="px-6 py-5">
                 <span

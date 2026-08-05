@@ -55,6 +55,8 @@ model User {
   assignedMeasurements  Measurement[]
   assignedProductions   Production[]
   uploadedAttachments   Attachment[]          @relation("AttachmentUploadedBy")
+  clientInteractions    ClientInteraction[]   @relation("ClientInteractionAuthor")
+  clientAttachments     ClientAttachment[]    @relation("ClientAttachmentUploader")
   warehouseMovements    MaterialMovement[]    @relation("WarehouseMovementEmployee")
   warehouseReservations MaterialReservation[] @relation("WarehouseReservationCreator")
   warehouseMutations    WarehouseMutation[]   @relation("WarehouseMutationActor")
@@ -69,7 +71,9 @@ model Client {
   id              Int     @id @default(autoincrement())
   name            String
   phone           String
+  whatsapp        String  @default("")
   city            String
+  address         String  @default("")
   manager         String
   amount          String
   status          String
@@ -79,10 +83,40 @@ model Client {
   comment         String  @default("")
   active          Boolean @default(true)
 
-  orders Order[]
+  orders       Order[]
+  interactions ClientInteraction[]
+  attachments  ClientAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ClientInteraction {
+  id         Int      @id @default(autoincrement())
+  clientId   Int
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  authorId   Int?
+  author     User?    @relation("ClientInteractionAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  authorName String
+  comment    String
+  createdAt  DateTime @default(now())
+
+  @@index([clientId, createdAt])
+}
+
+model ClientAttachment {
+  id           Int      @id @default(autoincrement())
+  clientId     Int
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  uploadedById Int?
+  uploadedBy   User?    @relation("ClientAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  fileName     String
+  pathname     String   @unique
+  contentType  String
+  size         Int
+  createdAt    DateTime @default(now())
+
+  @@index([clientId, createdAt])
 }
 
 model Partner {

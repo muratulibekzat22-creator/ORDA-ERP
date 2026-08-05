@@ -23,7 +23,8 @@
     "test:performance": "tsx scripts/test-performance-ux.ts",
     "test:financial-model": "tsx scripts/test-financial-model.ts",
     "seed:test-accounts": "tsx scripts/seed-test-accounts.ts",
-    "test:production:logins": "tsx scripts/test-production-role-logins.ts"
+    "test:production:logins": "tsx scripts/test-production-role-logins.ts",
+    "test:clients": "tsx scripts/test-clients-workspace.ts"
   },
   "engines": {
     "node": ">=20.9.0"
