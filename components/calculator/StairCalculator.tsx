@@ -1,218 +1,281 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
+import { useSession } from "next-auth/react";
+import {
+  calculateStair,
+  STAIR_RATES,
+  type StairMaterial,
+} from "@/lib/calculator/stair-calculation";
 
-export default function StairCalculator() {
-  const [steps, setSteps] = useState(20);
-  const [platforms, setPlatforms] = useState(1);
+const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 
-  const [material, setMaterial] = useState("Карагач");
-  const [railing, setRailing] = useState("Нет");
-
-  const [led, setLed] = useState(false);
-  const [painting, setPainting] = useState(true);
-  const [installation, setInstallation] = useState(true);
-
-  const [delivery, setDelivery] = useState(0);
-
-  const [salePrice, setSalePrice] = useState(0);
-  const [costPrice, setCostPrice] = useState(0);
-  const [profit, setProfit] = useState(0);
-  const [margin, setMargin] = useState(0);
-
-  const calculate = useCallback(() => {
-    let stepPrice = 85000;
-    let costStep = 50000;
-
-    switch (material) {
-      case "Сосна":
-        stepPrice = 65000;
-        costStep = 40000;
-        break;
-
-      case "Карагач":
-        stepPrice = 85000;
-        costStep = 55000;
-        break;
-
-      case "Дуб":
-        stepPrice = 110000;
-        costStep = 70000;
-        break;
+export default function StairCalculator({ orderId }: { orderId?: number }) {
+  const { data: session } = useSession();
+  const [targetOrderId, setTargetOrderId] = useState(
+    orderId ? String(orderId) : "",
+  );
+  const [material, setMaterial] = useState<StairMaterial>("Карагач");
+  const [regularSteps, setRegularSteps] = useState("18");
+  const [platforms, setPlatforms] = useState<number[]>([2]);
+  const [clientOverride, setClientOverride] = useState("");
+  const [workshopOverride, setWorkshopOverride] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const isDirector = session?.user.role === "DIRECTOR";
+  const calculation = useMemo(() => {
+    try {
+      return calculateStair({
+        material,
+        regularSteps: Number(regularSteps),
+        platformEquivalents: platforms,
+        ...(clientOverride === ""
+          ? {}
+          : { clientPrice: Number(clientOverride) }),
+        ...(workshopOverride === ""
+          ? {}
+          : { workshopCost: Number(workshopOverride) }),
+      });
+    } catch {
+      return null;
     }
+  }, [clientOverride, material, platforms, regularSteps, workshopOverride]);
 
-    const totalSteps = steps + platforms * 3;
-
-    let sale = totalSteps * stepPrice;
-    let cost = totalSteps * costStep;
-
-    switch (railing) {
-      case "Дерево":
-        sale += 650000;
-        cost += 420000;
-        break;
-
-      case "Стекло":
-        sale += 900000;
-        cost += 650000;
-        break;
-
-      case "Латунь":
-        sale += 1800000;
-        cost += 1450000;
-        break;
-    }
-
-    if (led) {
-      sale += 250000;
-      cost += 170000;
-    }
-
-    if (painting) {
-      sale += 300000;
-      cost += 180000;
-    }
-
-    if (installation) {
-      sale += 350000;
-      cost += 250000;
-    }
-
-    sale += delivery;
-    cost += delivery;
-
-    const p = sale - cost;
-
-    setSalePrice(sale);
-    setCostPrice(cost);
-    setProfit(p);
-    setMargin(
-      sale > 0
-        ? Number(((p / sale) * 100).toFixed(1))
-        : 0
+  function updatePlatform(index: number, value: number) {
+    setPlatforms((items) =>
+      items.map((item, position) => (position === index ? value : item)),
     );
-  }, [steps, platforms, material, railing, led, painting, installation, delivery]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(calculate, 0);
-    return () => window.clearTimeout(timer);
-  }, [calculate]);
+  }
+  async function save() {
+    if (
+      !calculation ||
+      !Number.isInteger(Number(targetOrderId)) ||
+      Number(targetOrderId) <= 0
+    )
+      return setMessage("Укажите корректный ID заказа и заполните расчёт.");
+    setSaving(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/orders/${targetOrderId}/calculation`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          material,
+          regularSteps: Number(regularSteps),
+          platformEquivalents: platforms,
+          ...(clientOverride === ""
+            ? {}
+            : { clientPrice: Number(clientOverride) }),
+          ...(isDirector && workshopOverride !== ""
+            ? { workshopCost: Number(workshopOverride) }
+            : {}),
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok)
+        throw new Error(payload.error ?? "Не удалось сохранить расчёт");
+      setMessage(
+        "Расчёт сохранён в заказе. Суммы зафиксированы снимком и не изменятся при обновлении тарифов.",
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Не удалось сохранить расчёт",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
-
-      <div className="grid grid-cols-2 gap-5">
-
-        <input
-          type="number"
-          value={steps}
-          onChange={(e) => setSteps(Number(e.target.value))}
-          placeholder="Количество ступеней"
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-        <input
-          type="number"
-          value={platforms}
-          onChange={(e) => setPlatforms(Number(e.target.value))}
-          placeholder="Количество площадок"
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-        <select
-          value={material}
-          onChange={(e) => setMaterial(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="text-sm text-slate-300">
+          Материал
+          <select
+            value={material}
+            onChange={(event) =>
+              setMaterial(event.target.value as StairMaterial)
+            }
+            className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white"
+          >
+            {Object.keys(STAIR_RATES).map((value) => (
+              <option key={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm text-slate-300">
+          Обычные ступени
+          <input
+            type="number"
+            inputMode="numeric"
+            min="0"
+            step="1"
+            value={regularSteps}
+            onChange={(event) => setRegularSteps(event.target.value)}
+            className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white"
+          />
+        </label>
+      </div>
+      <section className="rounded-xl border border-slate-700 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-white">Площадки</h2>
+            <p className="text-sm text-slate-400">
+              Для каждой площадки выберите эквивалент 2 или 3 ступени.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPlatforms((items) => [...items, 2])}
+            className="min-h-11 rounded-xl bg-blue-600 px-4 text-white"
+          >
+            Добавить
+          </button>
+        </div>
+        <div className="mt-4 space-y-3">
+          {platforms.map((value, index) => (
+            <div key={index} className="flex items-center gap-3">
+              <label className="min-w-0 flex-1 text-sm text-slate-300">
+                Площадка {index + 1}
+                <select
+                  value={value}
+                  onChange={(event) =>
+                    updatePlatform(index, Number(event.target.value))
+                  }
+                  className="mt-1 min-h-11 w-full rounded-lg bg-slate-900 px-3 text-white"
+                >
+                  <option value={2}>2 ступени</option>
+                  <option value={3}>3 ступени</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                aria-label={`Удалить площадку ${index + 1}`}
+                onClick={() =>
+                  setPlatforms((items) =>
+                    items.filter((_, position) => position !== index),
+                  )
+                }
+                className="mt-6 min-h-11 rounded-lg bg-red-900 px-4 text-white"
+              >
+                Удалить
+              </button>
+            </div>
+          ))}
+          {!platforms.length && (
+            <p className="text-sm text-slate-500">Площадок нет.</p>
+          )}
+        </div>
+      </section>
+      {calculation ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Result
+              title="Эквивалентные ступени"
+              value={String(calculation.equivalentSteps)}
+            />
+            <Result
+              title="Стоимость одной ступени"
+              value={money(calculation.saleRate)}
+            />
+            <Result
+              title="Стоимость работ цеха"
+              value={money(calculation.workshopCost)}
+            />
+            <Result
+              title="Продажная стоимость"
+              value={money(calculation.clientPrice)}
+            />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="text-sm text-slate-300">
+              Итоговая цена клиенту
+              <input
+                type="number"
+                inputMode="numeric"
+                min="0"
+                value={clientOverride}
+                placeholder={String(calculation.baseClientPrice)}
+                onChange={(event) => setClientOverride(event.target.value)}
+                className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white"
+              />
+              <span className="mt-1 block text-xs text-slate-500">
+                Корректировка: {money(calculation.clientAdjustment)}
+              </span>
+            </label>
+            {isDirector && (
+              <label className="text-sm text-slate-300">
+                Итоговая стоимость цеха
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  value={workshopOverride}
+                  placeholder={String(calculation.baseWorkshopCost)}
+                  onChange={(event) => setWorkshopOverride(event.target.value)}
+                  className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white"
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  Корректировка: {money(calculation.workshopAdjustment)}
+                </span>
+              </label>
+            )}
+          </div>
+          <div className="rounded-2xl bg-blue-950/40 p-5">
+            <p className="text-slate-300">Валовая разница ALTYN SAPA</p>
+            <p className="mt-1 text-3xl font-bold text-blue-300">
+              {money(calculation.grossDifference)}
+            </p>
+          </div>
+        </>
+      ) : (
+        <p role="alert" className="rounded-xl bg-red-950/40 p-4 text-red-300">
+          Проверьте количество ступеней и суммы.
+        </p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <label className="text-sm text-slate-300">
+          ID заказа
+          <input
+            type="number"
+            inputMode="numeric"
+            min="1"
+            value={targetOrderId}
+            disabled={!!orderId}
+            onChange={(event) => setTargetOrderId(event.target.value)}
+            placeholder="Например, 125"
+            className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white disabled:opacity-60"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={saving || !calculation}
+          onClick={() => void save()}
+          className="min-h-12 self-end rounded-xl bg-green-600 px-6 font-semibold text-white disabled:opacity-50"
         >
-          <option>Сосна</option>
-          <option>Карагач</option>
-          <option>Дуб</option>
-        </select>
-
-        <select
-          value={railing}
-          onChange={(e) => setRailing(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
+          {saving ? "Сохранение…" : "Сохранить в заказ"}
+        </button>
+      </div>
+      {message && (
+        <p
+          role="status"
+          className="rounded-xl border border-slate-700 p-4 text-slate-200"
         >
-          <option>Нет</option>
-          <option>Дерево</option>
-          <option>Стекло</option>
-          <option>Латунь</option>
-        </select>
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
 
-        <input
-          type="number"
-          value={delivery}
-          onChange={(e) => setDelivery(Number(e.target.value))}
-          placeholder="Доставка"
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-      </div>
-
-      <div className="flex gap-8">
-
-        <label className="flex items-center gap-2 text-white">
-          <input
-            type="checkbox"
-            checked={led}
-            onChange={(e) => setLed(e.target.checked)}
-          />
-          LED
-        </label>
-
-        <label className="flex items-center gap-2 text-white">
-          <input
-            type="checkbox"
-            checked={painting}
-            onChange={(e) => setPainting(e.target.checked)}
-          />
-          Покраска
-        </label>
-
-        <label className="flex items-center gap-2 text-white">
-          <input
-            type="checkbox"
-            checked={installation}
-            onChange={(e) => setInstallation(e.target.checked)}
-          />
-          Монтаж
-        </label>
-
-      </div>
-
-      <div className="grid grid-cols-4 gap-6">
-
-        <div className="rounded-xl bg-[#101827] p-6">
-          <p className="text-slate-400">Продажа</p>
-          <h2 className="mt-3 text-3xl font-bold text-green-400">
-            {salePrice.toLocaleString()} ₸
-          </h2>
-        </div>
-
-        <div className="rounded-xl bg-[#101827] p-6">
-          <p className="text-slate-400">Себестоимость</p>
-          <h2 className="mt-3 text-3xl font-bold text-orange-400">
-            {costPrice.toLocaleString()} ₸
-          </h2>
-        </div>
-
-        <div className="rounded-xl bg-[#101827] p-6">
-          <p className="text-slate-400">Прибыль</p>
-          <h2 className="mt-3 text-3xl font-bold text-blue-400">
-            {profit.toLocaleString()} ₸
-          </h2>
-        </div>
-
-        <div className="rounded-xl bg-[#101827] p-6">
-          <p className="text-slate-400">Маржа</p>
-          <h2 className="mt-3 text-3xl font-bold text-yellow-400">
-            {margin}%
-          </h2>
-        </div>
-
-      </div>
-
+function Result({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-900 p-4">
+      <p className="text-sm text-slate-400">{title}</p>
+      <p className="mt-2 break-words text-xl font-bold text-white">{value}</p>
     </div>
   );
 }

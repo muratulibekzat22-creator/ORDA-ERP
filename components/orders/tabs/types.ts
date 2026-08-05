@@ -52,4 +52,21 @@ export type OrderTabData = {
     user: string | null;
     createdAt: Date | string;
   }>;
+  statusHistory: Array<{
+    id: number;
+    fromStatus: string | null;
+    toStatus: string;
+    changedByName: string;
+    changedByRole: string;
+    comment: string | null;
+    createdAt: Date | string;
+  }>;
+  calculations: Array<{
+    id: number;
+    regularSteps: number;
+    platformEquivalents: number[];
+    equivalentSteps: number;
+    clientPrice: NumericValue;
+    workshopCost: NumericValue;
+  }>;
 };

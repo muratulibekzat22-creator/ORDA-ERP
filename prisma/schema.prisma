@@ -42,40 +42,40 @@ enum Permission {
 }
 
 model User {
-  id       Int    @id @default(autoincrement())
-  name     String
-  email    String @unique
-  password String
-  role     Role   @default(MANAGER)
-  phone    String?
-  active   Boolean @default(true)
+  id        Int       @id @default(autoincrement())
+  name      String
+  email     String    @unique
+  password  String
+  role      Role      @default(MANAGER)
+  phone     String?
+  active    Boolean   @default(true)
   lastLogin DateTime?
 
-  partnerProfile Partner?
-  assignedMeasurements Measurement[]
-  assignedProductions Production[]
-  uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
-  warehouseMovements MaterialMovement[] @relation("WarehouseMovementEmployee")
+  partnerProfile        Partner?
+  assignedMeasurements  Measurement[]
+  assignedProductions   Production[]
+  uploadedAttachments   Attachment[]          @relation("AttachmentUploadedBy")
+  warehouseMovements    MaterialMovement[]    @relation("WarehouseMovementEmployee")
   warehouseReservations MaterialReservation[] @relation("WarehouseReservationCreator")
-  warehouseMutations WarehouseMutation[] @relation("WarehouseMutationActor")
+  warehouseMutations    WarehouseMutation[]   @relation("WarehouseMutationActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Client {
-  id      Int    @id @default(autoincrement())
-  name    String
-  phone   String
-  city    String
-  manager String
-  amount  String
-  status  String
-  estimatedAmount Decimal @default(0) @db.Decimal(12,2)
-  estimateNotes String @default("")
-  source String @default("")
-  comment String @default("")
-  active Boolean @default(true)
+  id              Int     @id @default(autoincrement())
+  name            String
+  phone           String
+  city            String
+  manager         String
+  amount          String
+  status          String
+  estimatedAmount Decimal @default(0) @db.Decimal(12, 2)
+  estimateNotes   String  @default("")
+  source          String  @default("")
+  comment         String  @default("")
+  active          Boolean @default(true)
 
   orders Order[]
 
@@ -93,10 +93,10 @@ model Partner {
 
   active Boolean @default(true)
 
-  userId Int? @unique
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId Int?  @unique
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  orders Order[]
+  orders   Order[]
   payments Payment[]
 
   createdAt DateTime @default(now())
@@ -117,40 +117,90 @@ model Order {
   staircase String
   material  String
 
-amount Decimal @db.Decimal(12,2)
+  amount Decimal @db.Decimal(12, 2)
 
-prepayment Decimal @default(0) @db.Decimal(12,2)
-balance Decimal @default(0) @db.Decimal(12,2)
+  prepayment Decimal @default(0) @db.Decimal(12, 2)
+  balance    Decimal @default(0) @db.Decimal(12, 2)
 
-partnerPrice Decimal @default(0) @db.Decimal(12,2)
-companyProfit Decimal @default(0) @db.Decimal(12,2)
-partnerPaid Decimal @default(0) @db.Decimal(12,2)
-partnerBalance Decimal @default(0) @db.Decimal(12,2)
+  partnerPrice   Decimal @default(0) @db.Decimal(12, 2)
+  companyProfit  Decimal @default(0) @db.Decimal(12, 2)
+  partnerPaid    Decimal @default(0) @db.Decimal(12, 2)
+  partnerBalance Decimal @default(0) @db.Decimal(12, 2)
 
   manager String
   status  String @default("Новая заявка")
 
-  measurements Measurement[]
-  payments     Payment[]
-  productions  Production[]
-  events       OrderEvent[]
-  materialMovements MaterialMovement[]
-  documents    Document[]
-  attachments  Attachment[]
+  measurements         Measurement[]
+  payments             Payment[]
+  productions          Production[]
+  events               OrderEvent[]
+  materialMovements    MaterialMovement[]
+  documents            Document[]
+  attachments          Attachment[]
   materialReservations MaterialReservation[]
+  statusHistory        OrderStatusHistory[]
+  calculations         OrderCalculation[]
+
+  partnerPlannedReadyAt DateTime?
+  partnerComment        String    @default("")
+  readyForInstallation  Boolean   @default(false)
+  installationCompleted Boolean   @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
+model OrderStatusHistory {
+  id              Int      @id @default(autoincrement())
+  orderId         Int
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus      String?
+  toStatus        String
+  changedByUserId Int?
+  changedByName   String
+  changedByRole   Role
+  comment         String?
+  idempotencyKey  String?  @unique
+  requestHash     String?
+  createdAt       DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model OrderCalculation {
+  id                  Int      @id @default(autoincrement())
+  orderId             Int
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  material            String
+  regularSteps        Int
+  platformEquivalents Int[]
+  equivalentSteps     Int
+  workshopRate        Decimal  @db.Decimal(12, 2)
+  saleRate            Decimal  @db.Decimal(12, 2)
+  baseWorkshopCost    Decimal  @db.Decimal(12, 2)
+  workshopCost        Decimal  @db.Decimal(12, 2)
+  baseClientPrice     Decimal  @db.Decimal(12, 2)
+  clientPrice         Decimal  @db.Decimal(12, 2)
+  grossDifference     Decimal  @db.Decimal(12, 2)
+  workshopAdjustment  Decimal  @db.Decimal(12, 2)
+  clientAdjustment    Decimal  @db.Decimal(12, 2)
+  createdByUserId     Int?
+  createdByName       String
+  idempotencyKey      String?  @unique
+  requestHash         String?
+  createdAt           DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
 model Document {
-  id           Int          @id @default(autoincrement())
-  orderId      Int
-  order        Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  type         DocumentType
-  number       String
-  documentDate DateTime
-  idempotencyKey String?     @unique
+  id             Int          @id @default(autoincrement())
+  orderId        Int
+  order          Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  type           DocumentType
+  number         String
+  documentDate   DateTime
+  idempotencyKey String?      @unique
   requestHash    String?
   attachments    Attachment[]
 
@@ -182,21 +232,21 @@ model Attachment {
 }
 
 model Material {
-  id           Int    @id @default(autoincrement())
-  name         String
-  category     String
-  unit         String
-  minimumStock Float  @default(0)
-  stock        Float  @default(0)
-  purchasePrice Decimal @default(0) @db.Decimal(12,2)
-  supplier     String?
-  active       Boolean @default(true)
-  lookupKey    String  @unique
-  reserved     Float   @default(0)
+  id             Int     @id @default(autoincrement())
+  name           String
+  category       String
+  unit           String
+  minimumStock   Float   @default(0)
+  stock          Float   @default(0)
+  purchasePrice  Decimal @default(0) @db.Decimal(12, 2)
+  supplier       String?
+  active         Boolean @default(true)
+  lookupKey      String  @unique
+  reserved       Float   @default(0)
   idempotencyKey String? @unique
   requestHash    String?
 
-  movements MaterialMovement[]
+  movements    MaterialMovement[]
   reservations MaterialReservation[]
 
   createdAt DateTime @default(now())
@@ -204,36 +254,36 @@ model Material {
 }
 
 model CompanySettings {
-  id              Int    @id @default(1)
-  name            String @default("ALTYN SAPA COMPANY")
-  bin             String @default("")
-  legalAddress    String @default("")
-  actualAddress   String @default("")
-  phone           String @default("")
-  whatsapp        String @default("")
-  email           String @default("")
-  bankDetails     String @default("")
-  directorName    String @default("")
-  logoUrl         String @default("")
+  id            Int    @id @default(1)
+  name          String @default("ALTYN SAPA COMPANY")
+  bin           String @default("")
+  legalAddress  String @default("")
+  actualAddress String @default("")
+  phone         String @default("")
+  whatsapp      String @default("")
+  email         String @default("")
+  bankDetails   String @default("")
+  directorName  String @default("")
+  logoUrl       String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model SystemSettings {
-  id                  Int    @id @default(1)
-  currency            String @default("KZT")
-  timezone            String @default("Asia/Almaty")
-  dateFormat          String @default("dd.MM.yyyy")
-  minimumPrepayment   Int    @default(0)
-  measurementLeadDays Int    @default(3)
-  productionLeadDays  Int    @default(40)
-  installationLeadDays Int   @default(7)
-  nextDocumentNumber  Int    @default(1)
-  offerPrefix         String @default("КП")
-  contractPrefix      String @default("ДОГ")
-  actPrefix           String @default("АКТ")
-  invoicePrefix       String @default("СЧ")
+  id                   Int    @id @default(1)
+  currency             String @default("KZT")
+  timezone             String @default("Asia/Almaty")
+  dateFormat           String @default("dd.MM.yyyy")
+  minimumPrepayment    Int    @default(0)
+  measurementLeadDays  Int    @default(3)
+  productionLeadDays   Int    @default(40)
+  installationLeadDays Int    @default(7)
+  nextDocumentNumber   Int    @default(1)
+  offerPrefix          String @default("КП")
+  contractPrefix       String @default("ДОГ")
+  actPrefix            String @default("АКТ")
+  invoicePrefix        String @default("СЧ")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -255,44 +305,44 @@ model MaterialMovement {
   id Int @id @default(autoincrement())
 
   materialId Int
-  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
 
   orderId Int?
-  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
-  type String
-  quantity Float
-  price Decimal @default(0) @db.Decimal(12,2)
-  supplier String?
-  comment String?
-  idempotencyKey String? @unique
-  requestHash String?
-  amount Decimal @default(0) @db.Decimal(14,2)
-  stockAfter Float?
-  reservedAfter Float?
-  stockDelta Float @default(0)
-  reserveDelta Float @default(0)
-  employeeId Int?
-  employee User? @relation("WarehouseMovementEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
-  operationAt DateTime @default(now())
+  type           String
+  quantity       Float
+  price          Decimal  @default(0) @db.Decimal(12, 2)
+  supplier       String?
+  comment        String?
+  idempotencyKey String?  @unique
+  requestHash    String?
+  amount         Decimal  @default(0) @db.Decimal(14, 2)
+  stockAfter     Float?
+  reservedAfter  Float?
+  stockDelta     Float    @default(0)
+  reserveDelta   Float    @default(0)
+  employeeId     Int?
+  employee       User?    @relation("WarehouseMovementEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
+  operationAt    DateTime @default(now())
 
   createdAt DateTime @default(now())
 }
 
 model MaterialReservation {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   materialId  Int
-  material    Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
+  material    Material  @relation(fields: [materialId], references: [id], onDelete: Restrict)
   orderId     Int
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  quantity    Float    @default(0)
-  consumed    Float    @default(0)
-  status      String   @default("ACTIVE")
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  quantity    Float     @default(0)
+  consumed    Float     @default(0)
+  status      String    @default("ACTIVE")
   createdById Int?
-  createdBy   User?    @relation("WarehouseReservationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy   User?     @relation("WarehouseReservationCreator", fields: [createdById], references: [id], onDelete: SetNull)
   expiresAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@unique([orderId, materialId])
   @@index([materialId, status])
@@ -318,18 +368,18 @@ model Measurement {
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  measurer  String
+  measurer       String
   measurerUserId Int?
-  measurerUser User? @relation(fields: [measurerUserId], references: [id], onDelete: SetNull)
-  visitDate DateTime
+  measurerUser   User?    @relation(fields: [measurerUserId], references: [id], onDelete: SetNull)
+  visitDate      DateTime
 
   floorHeight    Float?
   staircaseWidth Float?
   stepsCount     Int?
 
-  comment String?
+  comment        String?
   idempotencyKey String? @unique
-  requestHash String?
+  requestHash    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -349,11 +399,11 @@ model Payment {
   type   String
   method String
 
-  comment String?
-  operationDate DateTime @default(now())
-  author String?
-  idempotencyKey String? @unique
-  requestHash String?
+  comment        String?
+  operationDate  DateTime @default(now())
+  author         String?
+  idempotencyKey String?  @unique
+  requestHash    String?
 
   createdAt DateTime @default(now())
 }
@@ -367,22 +417,22 @@ model Production {
   stage   String
   percent Int    @default(0)
 
-  master String
+  master       String
   masterUserId Int?
-  masterUser User? @relation(fields: [masterUserId], references: [id], onDelete: SetNull)
+  masterUser   User?  @relation(fields: [masterUserId], references: [id], onDelete: SetNull)
 
   startDate  DateTime?
   finishDate DateTime?
 
-  comment String?
-  priority Int @default(0)
-  completedAt DateTime?
+  comment        String?
+  priority       Int                      @default(0)
+  completedAt    DateTime?
   plannedStartAt DateTime?
-  plannedEndAt DateTime?
-  actualEndAt DateTime?
-  stageHistory ProductionStageHistory[]
-  idempotencyKey String? @unique
-  requestHash String?
+  plannedEndAt   DateTime?
+  actualEndAt    DateTime?
+  stageHistory   ProductionStageHistory[]
+  idempotencyKey String?                  @unique
+  requestHash    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -431,9 +481,9 @@ model OrderEvent {
   title       String
   description String?
 
-  user String?
+  user           String?
   idempotencyKey String? @unique
-  requestHash String?
+  requestHash    String?
 
   createdAt DateTime @default(now())
 }

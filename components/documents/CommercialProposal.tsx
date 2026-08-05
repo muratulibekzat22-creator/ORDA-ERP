@@ -1,8 +1,108 @@
-import { date, money, type DocumentOrder } from "./types";
 import type { ReactNode } from "react";
+import { DocumentBrandFooter, DocumentBrandHeader } from "./DocumentBrand";
+import { date, documentNumber, money, type DocumentOrder } from "./types";
 
-export default function CommercialProposal({ order }: { order: DocumentOrder }) {
-  return <div className="space-y-8 text-sm leading-6"><header className="flex items-start justify-between border-b border-black pb-6"><div><h1 className="text-3xl font-bold tracking-wide">ALTYN SAPA</h1><p className="mt-1 text-gray-600">Коммерческое предложение</p></div><div className="text-right"><p><b>№ КП:</b> {order.number}</p><p><b>Дата:</b> {date(order.createdAt)}</p></div></header><section className="grid gap-6 md:grid-cols-2"><div><h2 className="mb-2 text-lg font-bold">Клиент</h2><p>{order.client.name}</p><p>{order.client.phone}</p><p>{order.client.city}</p><p>{order.address}</p></div><div><h2 className="mb-2 text-lg font-bold">Реквизиты ALTYN SAPA</h2><p>ТОО «ALTYN SAPA COMPANY»</p><p>Изготовление лестниц под ключ</p><p>Казахстан</p></div></section><table className="w-full border-collapse"><thead className="bg-gray-100"><tr><th className="border p-3 text-left">Наименование</th><th className="border p-3 text-left">Характеристики</th><th className="border p-3 text-right">Стоимость</th></tr></thead><tbody><tr><td className="border p-3">Изготовление лестницы</td><td className="border p-3">{order.staircase}, {order.material}<br/>Адрес: {order.address}</td><td className="border p-3 text-right">{money(order.amount)}</td></tr><tr className="font-bold"><td colSpan={2} className="border p-3">Итого</td><td className="border p-3 text-right">{money(order.amount)}</td></tr></tbody></table><section className="grid gap-6 md:grid-cols-3"><Info title="Условия оплаты">Предоплата {money(order.prepayment)}. Остаток {money(order.balance)} — после завершения монтажа.</Info><Info title="Сроки">До 40 календарных дней после подтверждения заказа.</Info><Info title="Гарантия">Гарантия предоставляется в соответствии с договором и выбранным материалом.</Info></section><footer className="border-t border-black pt-5 text-center"><p className="font-semibold">Спасибо за доверие!</p><p className="text-gray-600">ALTYN SAPA — лестницы премиального качества под ключ.</p></footer></div>;
+export default function CommercialProposal({
+  order,
+}: {
+  order: DocumentOrder;
+}) {
+  const calculation = order.calculations?.[0];
+  return (
+    <div className="text-sm leading-6">
+      <DocumentBrandHeader order={order} title="Коммерческое предложение" documentNumber={documentNumber(order, "OFFER")} />
+      <section className="mt-8 rounded-xl bg-slate-50 p-6">
+        <p className="text-lg">
+          Уважаемый(-ая) <b>{order.client.name}</b>!
+        </p>
+        <p className="mt-3">
+          Предлагаем изготовление лестницы для вашего объекта по адресу{" "}
+          <b>{order.address}</b>. Решение будет выполнено под размеры объекта с
+          учётом выбранного материала и согласованной комплектации.
+        </p>
+      </section>
+      <section className="mt-7 grid grid-cols-2 gap-5">
+        <Info title="Материал">{order.material}</Info>
+        <Info title="Тип лестницы">{order.staircase}</Info>
+        {calculation && (
+          <>
+            <Info title="Ступени">{calculation.regularSteps} обычных</Info>
+            <Info title="Площадки">
+              {calculation.platformEquivalents.length
+                ? calculation.platformEquivalents
+                    .map((value) => `${value} экв.`)
+                    .join(", ")
+                : "Нет"}
+            </Info>
+            <Info title="Итого">
+              {calculation.equivalentSteps} эквивалентных ступеней
+            </Info>
+          </>
+        )}
+      </section>
+      <table className="mt-7 w-full border-collapse">
+        <thead className="bg-slate-950 text-white">
+          <tr>
+            <th className="border border-slate-300 p-3 text-left">
+              Предлагаемое решение
+            </th>
+            <th className="border border-slate-300 p-3 text-right">
+              Стоимость
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td className="border p-3">
+              Изготовление лестницы: {order.staircase}, материал —{" "}
+              {order.material}. Комплектация уточняется и фиксируется в заказе.
+            </td>
+            <td className="border p-3 text-right font-bold">
+              {money(calculation?.clientPrice ?? order.amount)}
+            </td>
+          </tr>
+          <tr className="bg-amber-50 text-lg font-bold">
+            <td className="border p-3">Итого</td>
+            <td className="border p-3 text-right">
+              {money(calculation?.clientPrice ?? order.amount)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <section className="mt-7 grid grid-cols-3 gap-4">
+        <Info title="Оплата">
+          Предоплата {money(order.prepayment)}. Остаток {money(order.balance)} —
+          согласно условиям договора.
+        </Info>
+        <Info title="Сроки">
+          Срок уточняется менеджером после замера и фиксируется в договоре.
+        </Info>
+        <Info title="Гарантия">
+          Гарантия действует согласно условиям подписанного договора и выбранной
+          комплектации.
+        </Info>
+      </section>
+      <section className="mt-7 rounded-xl bg-amber-50 p-5 text-center">
+        <p className="text-lg font-bold">Готовы обсудить детали проекта</p>
+        <p>
+          Свяжитесь с менеджером ALTYN SAPA:{" "}
+          {order.company?.phone || "+7 708 575 0881"}
+        </p>
+        <p className="mt-1 text-sm text-slate-600">
+          Предложение подготовлено {date(order.createdAt)} для заказа{" "}
+          {order.number}.
+        </p>
+      </section>
+      <DocumentBrandFooter order={order} />
+    </div>
+  );
 }
 
-function Info({ title, children }: { title: string; children: ReactNode }) { return <div className="border border-gray-300 p-4"><h2 className="mb-2 font-bold">{title}</h2><p>{children}</p></div>; }
+function Info({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg border border-slate-300 p-4">
+      <h2 className="mb-1 font-bold text-slate-950">{title}</h2>
+      <div>{children}</div>
+    </div>
+  );
+}

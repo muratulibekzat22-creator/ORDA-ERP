@@ -131,17 +131,25 @@
     overflow-x: hidden;
   }
 
-  button, a, input, select, textarea, summary {
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  summary {
     @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400;
   }
 
-  button, a, summary, select, input[type="checkbox"] {
+  button,
+  a,
+  summary,
+  select,
+  input[type="checkbox"] {
     touch-action: manipulation;
   }
 }
 
 @media print {
-
   html,
   body {
     background: white !important;
@@ -161,6 +169,8 @@
     background: white !important;
     padding: 0 !important;
     margin: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
   }
 
   .document-page {
@@ -171,6 +181,12 @@
     max-width: none !important;
     padding: 0 !important;
     box-shadow: none !important;
+  }
+
+  .document-page table,
+  .document-page section,
+  .document-page footer {
+    break-inside: avoid;
   }
 
   * {

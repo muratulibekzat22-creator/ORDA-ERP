@@ -10,6 +10,9 @@ export async function getOrders() {
       measurements: true,
       payments: true,
       productions: true,
+      documents: true,
+      calculations: { orderBy: { createdAt: "desc" } },
+      statusHistory: { orderBy: { createdAt: "desc" } },
       events: {
         orderBy: {
           createdAt: "desc",
@@ -33,6 +36,9 @@ export async function getOrder(id: number) {
       measurements: true,
       payments: true,
       productions: true,
+      documents: true,
+      calculations: { orderBy: { createdAt: "desc" } },
+      statusHistory: { orderBy: { createdAt: "desc" } },
       events: {
         orderBy: {
           createdAt: "desc",
@@ -102,6 +108,7 @@ type CreateOrderInput = {
   partnerPrice: number;
   partnerPaid: number;
   manager: string;
+  actorRole?: import("@prisma/client").Role;
   idempotencyKey?: string;
   requestHash?: string;
 };
@@ -116,7 +123,9 @@ function money(value: number) {
 }
 
 export async function createOrder(data: CreateOrderInput) {
-  const eventKey = data.idempotencyKey ? `order:${data.idempotencyKey}` : undefined;
+  const eventKey = data.idempotencyKey
+    ? `order:${data.idempotencyKey}`
+    : undefined;
   const balance = data.amount - data.prepayment;
   const partnerBalance = data.partnerPrice - data.partnerPaid;
   const companyProfit = data.amount - data.partnerPrice;
@@ -125,10 +134,21 @@ export async function createOrder(data: CreateOrderInput) {
     try {
       return await prisma.$transaction(async (tx) => {
         if (eventKey && data.requestHash) {
-          const existingEvent = await tx.orderEvent.findUnique({ where: { idempotencyKey: eventKey }, select: { orderId: true, requestHash: true } });
+          const existingEvent = await tx.orderEvent.findUnique({
+            where: { idempotencyKey: eventKey },
+            select: { orderId: true, requestHash: true },
+          });
           if (existingEvent) {
-            if (!compareRequestHash(existingEvent.requestHash, data.requestHash)) throw new Error("IDEMPOTENCY_CONFLICT");
-            return { order: await tx.order.findUniqueOrThrow({ where: { id: existingEvent.orderId } }), created: false };
+            if (
+              !compareRequestHash(existingEvent.requestHash, data.requestHash)
+            )
+              throw new Error("IDEMPOTENCY_CONFLICT");
+            return {
+              order: await tx.order.findUniqueOrThrow({
+                where: { id: existingEvent.orderId },
+              }),
+              created: false,
+            };
           }
         }
 
@@ -161,16 +181,36 @@ export async function createOrder(data: CreateOrderInput) {
             requestHash: data.requestHash,
           },
         });
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId: order.id,
+            fromStatus: null,
+            toStatus: "Новая заявка",
+            changedByName: data.manager,
+            changedByRole: data.actorRole ?? "MANAGER",
+            comment: "Заказ создан",
+          },
+        });
         return { order, created: true };
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT") throw error;
+      if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
+        throw error;
       if (!isPrismaUniqueConflict(error)) throw error;
       if (eventKey && data.requestHash) {
-        const existingEvent = await prisma.orderEvent.findUnique({ where: { idempotencyKey: eventKey }, select: { orderId: true, requestHash: true } });
+        const existingEvent = await prisma.orderEvent.findUnique({
+          where: { idempotencyKey: eventKey },
+          select: { orderId: true, requestHash: true },
+        });
         if (existingEvent) {
-          if (!compareRequestHash(existingEvent.requestHash, data.requestHash)) throw new Error("IDEMPOTENCY_CONFLICT");
-          return { order: await prisma.order.findUniqueOrThrow({ where: { id: existingEvent.orderId } }), created: false };
+          if (!compareRequestHash(existingEvent.requestHash, data.requestHash))
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return {
+            order: await prisma.order.findUniqueOrThrow({
+              where: { id: existingEvent.orderId },
+            }),
+            created: false,
+          };
         }
       }
     }
@@ -202,7 +242,7 @@ export async function updateOrder(
 
     manager: string;
     status: string;
-  }
+  },
 ) {
   const order = await prisma.order.update({
     where: {
@@ -224,8 +264,12 @@ export async function updateOrder(
 }
 
 export async function deleteOrder(id: number) {
-  const attachments = await prisma.attachment.findMany({ where: { orderId: id }, select: { pathname: true } });
-  if (attachments.length) await del(attachments.map((attachment) => attachment.pathname));
+  const attachments = await prisma.attachment.findMany({
+    where: { orderId: id },
+    select: { pathname: true },
+  });
+  if (attachments.length)
+    await del(attachments.map((attachment) => attachment.pathname));
   await prisma.orderEvent.deleteMany({
     where: {
       orderId: id,
