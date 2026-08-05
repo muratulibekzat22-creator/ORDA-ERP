@@ -23,14 +23,14 @@ export async function POST(request: Request) {
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     const password = typeof body.password === "string" ? body.password : "";
-    if (!name || !email || !email.includes("@") || !password || !Object.values(Role).includes(role) || (role === Role.PARTNER && (!Number.isInteger(partnerId) || partnerId <= 0))) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
+    if (!name || !email || !email.includes("@") || password.length < 12 || !Object.values(Role).includes(role) || (body.active !== undefined && typeof body.active !== "boolean") || (role === Role.PARTNER && (!Number.isInteger(partnerId) || partnerId <= 0))) return NextResponse.json({ error: "Проверьте обязательные поля. Пароль должен содержать не менее 12 символов" }, { status: 400 });
     const user = await prisma.$transaction(async (tx) => {
       if (role === Role.PARTNER) {
         const partner = await tx.partner.findUnique({ where: { id: partnerId }, select: { userId: true } });
         if (!partner) throw new Error("PARTNER_NOT_FOUND");
         if (partner.userId) throw new Error("PARTNER_ALREADY_LINKED");
       }
-      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
+      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
     });
     return NextResponse.json(user, { status: 201 });
   } catch (error) {

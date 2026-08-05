@@ -177,6 +177,7 @@ export default function DashboardPage() {
         totalProfit={totals.profit}
         totalDebt={totals.debt}
         totalPartnerBalance={totals.partnerBalance}
+        showInternalFinance={role === Role.DIRECTOR || role === Role.ACCOUNTANT}
       />
       <div className="grid gap-6 lg:grid-cols-3">
         <section className="rounded-2xl border border-slate-700 bg-[#101827] p-6">

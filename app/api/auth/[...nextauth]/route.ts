@@ -19,7 +19,11 @@ export const authOptions: NextAuthOptions = {
 
         const email = credentials.email.trim().toLowerCase();
         const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
-        const passwordMatches = user ? await bcrypt.compare(credentials.password, user.password) : false;
+        const rawPassword = credentials.password;
+        const passwordMatches = user
+          ? await bcrypt.compare(rawPassword, user.password) ||
+            (rawPassword !== rawPassword.trim() && await bcrypt.compare(rawPassword.trim(), user.password))
+          : false;
         if (!user || !user.active || !passwordMatches) {
           return null;
         }
@@ -31,6 +35,8 @@ export const authOptions: NextAuthOptions = {
   ],
   session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
+  pages: { signIn: "/login" },
+  debug: false,
   useSecureCookies: process.env.VERCEL === "1" || process.env.NEXTAUTH_URL?.startsWith("https://"),
   callbacks: {
     jwt({ token, user }) {

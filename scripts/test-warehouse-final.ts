@@ -34,25 +34,27 @@ async function main() {
 
     step = "material CRUD, duplicate and idempotency";
     const materialInput = { name: `${tag} steel`, category: "Metal", unit: "кг", minimumStock: 5, purchasePrice: 10, supplier: "QA", initialStock: 20 };
-    const create = { data: materialInput, key: `${tag}:material`, requestHash: "material-v1", actor: actor(manager) };
+    const create = { data: materialInput, key: `${tag}:material`, requestHash: "material-v1", actor: actor(director) };
     const [created, replay] = await Promise.all([createMaterialCommand(create), createMaterialCommand(create)]);
     const materialId = (created.result as { id: number }).id; ids.materials.push(materialId);
     check((replay.result as { id: number }).id === materialId, "parallel idempotent material replay");
     await rejects(() => createMaterialCommand({ ...create, requestHash: "material-conflict" }), "IDEMPOTENCY_CONFLICT");
     await rejects(() => createMaterialCommand({ ...create, key: `${tag}:duplicate`, requestHash: "duplicate" }), "MATERIAL_DUPLICATE");
     const concurrentData = { ...materialInput, name: `${tag} concurrent`, initialStock: 0 };
-    const concurrent = await Promise.allSettled(["one", "two"].map((suffix) => createMaterialCommand({ data: concurrentData, key: `${tag}:concurrent:${suffix}`, requestHash: suffix, actor: actor(manager) })));
+    const concurrent = await Promise.allSettled(["one", "two"].map((suffix) => createMaterialCommand({ data: concurrentData, key: `${tag}:concurrent:${suffix}`, requestHash: suffix, actor: actor(director) })));
     check(concurrent.filter((result) => result.status === "fulfilled").length === 1 && concurrent.filter((result) => result.status === "rejected" && isWarehouseError(result.reason, "MATERIAL_DUPLICATE")).length === 1, "concurrent duplicate material is rejected");
     const concurrentMaterial = await prisma.material.findUniqueOrThrow({ where: { lookupKey: `${concurrentData.name.toLocaleLowerCase("ru")}::кг` } }); ids.materials.push(concurrentMaterial.id);
-    await updateMaterialCommand({ id: materialId, data: { minimumStock: 6, active: false }, key: `${tag}:disable`, requestHash: "disable", actor: actor(manager) });
-    await updateMaterialCommand({ id: materialId, data: { active: true }, key: `${tag}:enable`, requestHash: "enable", actor: actor(manager) });
+    await updateMaterialCommand({ id: materialId, data: { minimumStock: 6, active: false }, key: `${tag}:disable`, requestHash: "disable", actor: actor(director) });
+    await updateMaterialCommand({ id: materialId, data: { active: true }, key: `${tag}:enable`, requestHash: "enable", actor: actor(director) });
 
     step = "roles, physical stock and actual price snapshot";
     await rejects(() => getWarehouse(actor(partner)), "FORBIDDEN");
+    await rejects(() => createMaterialCommand({ ...create, key: `${tag}:manager-create`, actor: actor(manager) }), "FORBIDDEN");
+    await rejects(() => createWarehouseOperation({ data: { materialId, type: "incoming", quantity: 1 }, key: `${tag}:manager-incoming`, requestHash: "x", actor: actor(manager) }), "FORBIDDEN");
     await rejects(() => createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 1 }, key: `${tag}:accountant-out`, requestHash: "x", actor: actor(accountant) }), "FORBIDDEN");
     await createWarehouseOperation({ data: { materialId, type: "incoming", quantity: 5, price: 12 }, key: `${tag}:incoming`, requestHash: "incoming", actor: actor(accountant) });
     await createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 2, price: 12, orderId: orders[0].id }, key: `${tag}:outgoing`, requestHash: "outgoing", actor: actor(director) });
-    await rejects(() => createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 10_000 }, key: `${tag}:negative`, requestHash: "negative", actor: actor(manager) }), "INSUFFICIENT_AVAILABLE");
+    await rejects(() => createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 10_000 }, key: `${tag}:negative`, requestHash: "negative", actor: actor(director) }), "INSUFFICIENT_AVAILABLE");
 
     step = "reservations, ownership and concurrency";
     const reserve = { data: { materialId, type: "reserve" as const, quantity: 8, orderId: orders[0].id }, key: `${tag}:reserve`, requestHash: "reserve", actor: actor(manager) };

@@ -42,7 +42,10 @@ export async function getWarehouse(actor: WarehouseActor, filters: { page?: numb
     prisma.materialReservation.findMany({ where: reservationWhere, include: reservationInclude, orderBy: { updatedAt: "desc" } }),
   ]);
   const enriched = materials.map((material) => ({ ...material, available: material.stock - material.reserved, alerts: [material.stock <= material.minimumStock ? "LOW_STOCK" : null, material.stock - material.reserved <= 0 ? "NO_AVAILABLE" : null, material.reserved > material.stock ? "OVER_RESERVED" : null, Number(material.purchasePrice) <= 0 ? "NO_PRICE" : null].filter(Boolean) }));
-  return { materials: enriched, orders, movements, reservations, pagination: { page, pageSize, total: movementTotal, pages: Math.ceil(movementTotal / pageSize) }, stats: { materials: materials.length, lowStock: materials.filter((item) => item.stock <= item.minimumStock).length, stockValue: materials.reduce((sum, item) => sum + item.stock * Number(item.purchasePrice), 0), reserved: materials.reduce((sum, item) => sum + item.reserved, 0), available: materials.reduce((sum, item) => sum + item.stock - item.reserved, 0), noPrice: materials.filter((item) => Number(item.purchasePrice) <= 0).length, suppliers: [...new Set(materials.map((item) => item.supplier).filter((value): value is string => Boolean(value)))] } };
+  const canSeeCost = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const visibleMaterials = canSeeCost ? enriched : enriched.map((item) => { const material = { ...item } as Partial<typeof item>; delete material.purchasePrice; return material as typeof item; });
+  const visibleMovements = canSeeCost ? movements : movements.map((item) => { const movement = { ...item } as Partial<typeof item>; delete movement.price; delete movement.amount; return movement as typeof item; });
+  return { materials: visibleMaterials, orders, movements: visibleMovements, reservations, pagination: { page, pageSize, total: movementTotal, pages: Math.ceil(movementTotal / pageSize) }, stats: { materials: materials.length, lowStock: materials.filter((item) => item.stock <= item.minimumStock).length, ...(canSeeCost ? { stockValue: materials.reduce((sum, item) => sum + item.stock * Number(item.purchasePrice), 0), noPrice: materials.filter((item) => Number(item.purchasePrice) <= 0).length } : {}), reserved: materials.reduce((sum, item) => sum + item.reserved, 0), available: materials.reduce((sum, item) => sum + item.stock - item.reserved, 0), suppliers: [...new Set(materials.map((item) => item.supplier).filter((value): value is string => Boolean(value)))] } };
 }
 
 async function idempotentMutation<T>(input: { key: string; requestHash: string; action: string; actor: WarehouseActor }, work: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -78,7 +81,7 @@ async function idempotentMutation<T>(input: { key: string; requestHash: string; 
 }
 
 export async function createMaterialCommand(input: { data: { name: string; category: string; unit: string; minimumStock: number; purchasePrice: number; supplier?: string; initialStock: number }; key: string; requestHash: string; actor: WarehouseActor }) {
-  if (input.actor.role !== Role.DIRECTOR && input.actor.role !== Role.MANAGER) throw new WarehouseError("FORBIDDEN");
+  if (input.actor.role !== Role.DIRECTOR) throw new WarehouseError("FORBIDDEN");
   try {
     return await idempotentMutation({ key: input.key, requestHash: input.requestHash, action: "material.create", actor: input.actor }, async (tx) => {
       const key = lookupKey(input.data.name, input.data.unit);
@@ -94,7 +97,7 @@ export async function createMaterialCommand(input: { data: { name: string; categ
 }
 
 export async function updateMaterialCommand(input: { id: number; data: { name?: string; category?: string; unit?: string; minimumStock?: number; purchasePrice?: number; supplier?: string | null; active?: boolean }; key: string; requestHash: string; actor: WarehouseActor }) {
-  if (input.actor.role !== Role.DIRECTOR && input.actor.role !== Role.MANAGER && input.actor.role !== Role.ACCOUNTANT) throw new WarehouseError("FORBIDDEN");
+  if (input.actor.role !== Role.DIRECTOR && input.actor.role !== Role.ACCOUNTANT) throw new WarehouseError("FORBIDDEN");
   return idempotentMutation({ key: input.key, requestHash: input.requestHash, action: "material.update", actor: input.actor }, async (tx) => {
     const current = await tx.material.findUnique({ where: { id: input.id } }); if (!current) throw new WarehouseError("NOT_FOUND");
     const name = input.data.name ?? current.name, unit = input.data.unit ?? current.unit, key = lookupKey(name, unit);
@@ -114,7 +117,8 @@ export async function deleteMaterialCommand(input: { id: number; key: string; re
 }
 
 async function canOperateOrder(tx: Prisma.TransactionClient, actor: WarehouseActor, orderId: number, type: WarehouseOperationType) {
-  if (actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) return Boolean(await tx.order.findUnique({ where: { id: orderId }, select: { id: true } }));
+  if (actor.role === Role.DIRECTOR) return Boolean(await tx.order.findUnique({ where: { id: orderId }, select: { id: true } }));
+  if (actor.role === Role.MANAGER) return ["reserve", "release"].includes(type) && Boolean(await tx.order.findUnique({ where: { id: orderId }, select: { id: true } }));
   if (actor.role === Role.ACCOUNTANT) return ["incoming", "adjustment", "return"].includes(type) && Boolean(await tx.order.findUnique({ where: { id: orderId }, select: { id: true } }));
   if (actor.role === Role.PRODUCTION && type === "consume") return Boolean(await tx.order.findFirst({ where: { id: orderId, productions: { some: { masterUserId: actor.userId } } }, select: { id: true } }));
   if (actor.role === Role.INSTALLER && type === "consume") return Boolean(await tx.order.findFirst({ where: { id: orderId, productions: { some: { masterUserId: actor.userId, stage: "Монтаж" } } }, select: { id: true } }));
@@ -123,6 +127,7 @@ async function canOperateOrder(tx: Prisma.TransactionClient, actor: WarehouseAct
 
 export async function createWarehouseOperation(input: { data: { materialId: number; type: WarehouseOperationType; quantity: number; price?: number; orderId?: number; supplier?: string; comment?: string; operationAt?: Date; expiresAt?: Date | null }; key: string; requestHash: string; actor: WarehouseActor }) {
   if (input.actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
+  if (input.actor.role === Role.MANAGER && !["reserve", "release"].includes(input.data.type)) throw new WarehouseError("FORBIDDEN");
   return idempotentMutation({ key: input.key, requestHash: input.requestHash, action: `movement.${input.data.type}`, actor: input.actor }, async (tx) => {
     const material = await tx.material.findUnique({ where: { id: input.data.materialId } }); if (!material || !material.active) throw new WarehouseError("NOT_FOUND");
     const needsOrder = ["reserve", "release", "consume"].includes(input.data.type);

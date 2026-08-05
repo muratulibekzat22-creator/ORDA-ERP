@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 
 interface Order {
   id: number;
@@ -53,6 +54,8 @@ function statusColor(status: string) {
 }
 
 export default function OrderTable({ orders }: Props) {
+  const { data: session } = useSession();
+  const showInternal = session?.user.role === "DIRECTOR" || session?.user.role === "ACCOUNTANT";
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-700 bg-[#101827]">
 
@@ -75,13 +78,9 @@ export default function OrderTable({ orders }: Props) {
               Клиент
             </th>
 
-            <th className="px-4 py-4 text-left text-slate-300">
-              Цех
-            </th>
+            {showInternal && <th className="px-4 py-4 text-left text-slate-300">Стоимость цеха</th>}
 
-            <th className="px-4 py-4 text-left text-slate-300">
-              Прибыль
-            </th>
+            {showInternal && <th className="px-4 py-4 text-left text-slate-300">Прибыль</th>}
 
             <th className="px-4 py-4 text-left text-slate-300">
               Остаток
@@ -131,13 +130,13 @@ export default function OrderTable({ orders }: Props) {
                 {Number(order.amount).toLocaleString()} ₸
               </td>
 
-              <td className="px-4 py-5 font-bold text-blue-400">
+              {showInternal && <td className="px-4 py-5 font-bold text-blue-400">
                 {Number(order.partnerPrice ?? 0).toLocaleString()} ₸
-              </td>
+              </td>}
 
-              <td className="px-4 py-5 font-bold text-yellow-400">
+              {showInternal && <td className="px-4 py-5 font-bold text-yellow-400">
                 {Number(order.companyProfit ?? 0).toLocaleString()} ₸
-              </td>
+              </td>}
 
               <td className="px-4 py-5 font-bold text-orange-400">
                 {Number(order.balance).toLocaleString()} ₸

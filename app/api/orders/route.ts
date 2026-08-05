@@ -73,6 +73,13 @@ export async function GET() {
           orderBy: { createdAt: "desc" },
         })
       : await getOrders();
+    if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) {
+      return NextResponse.json(orders.map((order) => {
+        const result = { ...order } as Record<string, unknown>;
+        for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) delete result[field];
+        return result;
+      }));
+    }
     return NextResponse.json(orders);
   } catch {
     return NextResponse.json(
@@ -168,7 +175,10 @@ export async function POST(request: Request) {
       idempotencyKey: idempotency.key,
       requestHash: createRequestHash(payload),
     });
-    return NextResponse.json(result.order, {
+    const responseOrder = { ...result.order } as Record<string, unknown>;
+    if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT)
+      for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) delete responseOrder[field];
+    return NextResponse.json(responseOrder, {
       status: result.created ? 201 : 200,
     });
   } catch (error) {

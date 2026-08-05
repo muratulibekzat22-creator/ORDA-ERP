@@ -16,6 +16,9 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { hasDefaultPermission, type Permission } from "@/lib/permissions";
+import { type Role } from "@/lib/roles";
 
 type SidebarProps = {
   page: string;
@@ -111,6 +114,10 @@ export default function Sidebar({
   setPage,
   onClose,
 }: SidebarProps) {
+  const { data: session } = useSession();
+  const role = session?.user.role as Role | undefined;
+  const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", partners: "partners", production: "production", warehouse: "warehouse", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
+  const visible = (id: string) => id === "dashboard" || Boolean(role && permissionByPage[id] && hasDefaultPermission(role, permissionByPage[id]!));
   return (
     <aside aria-label="Основная навигация" className="flex h-dvh w-[min(18rem,88vw)] flex-col border-r border-slate-800 bg-[#0f172a] lg:h-full lg:w-72">
 
@@ -141,7 +148,7 @@ export default function Sidebar({
 
       <nav className="flex-1 overflow-y-auto px-4 py-5">
 
-        {menu.map((group) => (
+        {menu.map((group) => ({ ...group, items: group.items.filter((item) => visible(item.id)) })).filter((group) => group.items.length).map((group) => (
 
           <div
             key={group.section}

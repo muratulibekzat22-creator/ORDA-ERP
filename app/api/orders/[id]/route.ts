@@ -57,7 +57,7 @@ function redactForRole<T extends Record<string, unknown>>(
 ) {
   if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
   const result = { ...order };
-  delete result.companyProfit;
+  for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"] as const) delete result[field];
   if (role === Role.PARTNER) {
     delete result.amount;
     delete result.prepayment;
@@ -149,7 +149,7 @@ export async function PATCH(request: Request, { params }: Context) {
         manager: auth.session!.user.name ?? undefined,
       });
       return updated
-        ? NextResponse.json(updated)
+        ? NextResponse.json(redactForRole(updated as unknown as Record<string, unknown>, role))
         : NextResponse.json(
             { error: "Заказ или цех не найден" },
             { status: 404 },

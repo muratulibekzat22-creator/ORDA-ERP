@@ -21,6 +21,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
     const body = await request.json() as Record<string, unknown>;
+    if (typeof body.password === "string" && body.password && body.password.length < 12) return NextResponse.json({ error: "Новый пароль должен содержать не менее 12 символов" }, { status: 400 });
     const role = body.role === undefined ? undefined : Object.values(Role).includes(body.role as Role) ? body.role as Role : null;
     if (role === null) return NextResponse.json({ error: "Некорректная роль" }, { status: 400 });
     const user = await prisma.user.findUnique({ where: { id } });
