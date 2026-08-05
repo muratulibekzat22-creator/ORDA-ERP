@@ -2,255 +2,91 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-interface Client {
-  id: number;
-  name: string;
-}
+import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
-interface Props {
-  onSave: () => void;
-}
+interface Client { id: number; name: string; }
+interface Props { onSave: () => Promise<void> | void; }
 
 export default function OrderForm({ onSave }: Props) {
+  const { getKey, reset } = useIdempotencyKey();
   const [clients, setClients] = useState<Client[]>([]);
-
-  const [number, setNumber] = useState("");
   const [clientId, setClientId] = useState("");
   const [address, setAddress] = useState("");
-
-  const [staircase, setStaircase] = useState("П-образная");
+  const [staircase, setStaircase] = useState("Прямая");
   const [material, setMaterial] = useState("Карагач");
+  const [steps, setSteps] = useState("20");
+  const [platforms, setPlatforms] = useState("1");
+  const [amount, setAmount] = useState("0");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const [steps, setSteps] = useState(20);
-  const [platforms, setPlatforms] = useState(1);
-
-  const [railing, setRailing] = useState("Нет");
-
-  const [led, setLed] = useState(false);
-  const [painting, setPainting] = useState(true);
-  const [installation, setInstallation] = useState(true);
-
-  const [amount, setAmount] = useState(0);
-
-  useEffect(() => {
-    async function loadClients() {
-      try {
-        const response = await fetch("/api/clients");
-
-        if (!response.ok) {
-          throw new Error("Ошибка загрузки клиентов");
-        }
-
-        const result = await response.json();
-
-        setClients(Array.isArray(result.data) ? result.data : []);
-      } catch (error) {
-        console.error(error);
-        setClients([]);
-      }
-    }
-
-    loadClients();
+  const loadClients = useCallback(async () => {
+    const response = await fetch("/api/clients");
+    if (!response.ok) throw new Error("Не удалось загрузить клиентов");
+    const result = await response.json() as { data?: Client[] };
+    setClients(Array.isArray(result.data) ? result.data : []);
   }, []);
 
-  const calculate = useCallback(() => {
-    let stepPrice = 85000;
-
-    if (material === "Сосна") stepPrice = 65000;
-    if (material === "Карагач") stepPrice = 85000;
-    if (material === "Дуб") stepPrice = 110000;
-
-    const totalSteps = steps + platforms * 3;
-
-    let total = totalSteps * stepPrice;
-
-    if (railing === "Дерево") total += 650000;
-    if (railing === "Стекло") total += 900000;
-    if (railing === "Латунь") total += 1800000;
-
-    if (led) total += 250000;
-    if (painting) total += 300000;
-    if (installation) total += 350000;
-
-    setAmount(total);
-  }, [steps, platforms, material, railing, led, painting, installation]);
-
   useEffect(() => {
-    const timer = window.setTimeout(calculate, 0);
+    const timer = window.setTimeout(() => {
+      void loadClients().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить клиентов"));
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [calculate]);
+  }, [loadClients]);
 
   async function save() {
-    const response = await fetch("/api/orders", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        number,
-        clientId: Number(clientId),
-        address,
-        staircase,
-        material,
-        steps,
-        platforms,
-        railing,
-        led,
-        painting,
-        installation,
-      }),
-    });
+    const parsedClientId = Number(clientId);
+    const parsedSteps = Number(steps);
+    const parsedPlatforms = Number(platforms);
+    const parsedAmount = Number(amount);
+    if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) return setError("Выберите клиента");
+    if (!address.trim() || !Number.isInteger(parsedSteps) || parsedSteps <= 0 || !Number.isInteger(parsedPlatforms) || parsedPlatforms < 0 || !Number.isFinite(parsedAmount) || parsedAmount < 0) {
+      return setError("Проверьте обязательные и числовые поля заказа");
+    }
 
-    if (response.ok) {
-      onSave();
-
-      setNumber("");
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": getKey() },
+        body: JSON.stringify({ clientId: parsedClientId, address: address.trim(), staircase, material, amount: parsedAmount, prepayment: 0, partnerPrice: 0, partnerPaid: 0, steps: parsedSteps, platforms: parsedPlatforms }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) return setError(result.error ?? "Не удалось создать заказ");
+      reset();
+      await onSave();
       setClientId("");
       setAddress("");
-
-      setSteps(20);
-      setPlatforms(1);
-
-      setMaterial("Карагач");
-      setStaircase("П-образная");
-
-      setRailing("Нет");
-
-      setLed(false);
-      setPainting(true);
-      setInstallation(true);
-
-      setAmount(0);
+      setSteps("20");
+      setPlatforms("1");
+      setAmount("0");
+    } catch {
+      setError("Не удалось создать заказ");
+    } finally {
+      setSaving(false);
     }
   }
 
   return (
-    <div className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
-      <h2 className="mb-6 text-2xl font-bold text-white">
-        Новый заказ
-      </h2>
-
-      <div className="grid grid-cols-2 gap-4">
-        <input
-          placeholder="Номер заказа"
-          value={number}
-          onChange={(e) => setNumber(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-        <select
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        >
+    <section className="rounded-2xl border border-slate-700 bg-[#101827] p-6">
+      <h2 className="mb-6 text-2xl font-bold text-white">Новый заказ</h2>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <select required value={clientId} onChange={(event) => setClientId(event.target.value)} className="rounded-xl bg-slate-900 p-3 text-white">
           <option value="">Выберите клиента</option>
-
-          {clients.map((client) => (
-            <option key={client.id} value={client.id}>
-              {client.name}
-            </option>
-          ))}
+          {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
         </select>
-
-        <input
-          placeholder="Адрес объекта"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-        <select
-          value={staircase}
-          onChange={(e) => setStaircase(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        >
-          <option>П-образная</option>
-          <option>Г-образная</option>
-          <option>Прямая</option>
-          <option>Винтовая</option>
-        </select>
-
-        <select
-          value={material}
-          onChange={(e) => setMaterial(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        >
-          <option>Сосна</option>
-          <option>Карагач</option>
-          <option>Дуб</option>
-        </select>
-
-        <input
-          type="number"
-          placeholder="Количество ступеней"
-          value={steps}
-          onChange={(e) => setSteps(Number(e.target.value))}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-        <input
-          type="number"
-          placeholder="Количество площадок"
-          value={platforms}
-          onChange={(e) => setPlatforms(Number(e.target.value))}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        />
-
-        <select
-          value={railing}
-          onChange={(e) => setRailing(e.target.value)}
-          className="rounded-xl bg-slate-900 p-3 text-white"
-        >
-          <option>Нет</option>
-          <option>Дерево</option>
-          <option>Стекло</option>
-          <option>Латунь</option>
-        </select>
-
-        <div className="flex items-center gap-3 text-white">
-          <input
-            type="checkbox"
-            checked={led}
-            onChange={(e) => setLed(e.target.checked)}
-          />
-          LED подсветка
-        </div>
-
-        <div className="flex items-center gap-3 text-white">
-          <input
-            type="checkbox"
-            checked={painting}
-            onChange={(e) => setPainting(e.target.checked)}
-          />
-          Покраска
-        </div>
-
-        <div className="flex items-center gap-3 text-white">
-          <input
-            type="checkbox"
-            checked={installation}
-            onChange={(e) => setInstallation(e.target.checked)}
-          />
-          Монтаж
-        </div>
+        <input required value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Адрес объекта" className="rounded-xl bg-slate-900 p-3 text-white" />
+        <input value={staircase} onChange={(event) => setStaircase(event.target.value)} placeholder="Тип лестницы" className="rounded-xl bg-slate-900 p-3 text-white" />
+        <input value={material} onChange={(event) => setMaterial(event.target.value)} placeholder="Материал" className="rounded-xl bg-slate-900 p-3 text-white" />
+        <input type="number" min="1" value={steps} onChange={(event) => setSteps(event.target.value)} placeholder="Ступени" className="rounded-xl bg-slate-900 p-3 text-white" />
+        <input type="number" min="0" value={platforms} onChange={(event) => setPlatforms(event.target.value)} placeholder="Площадки" className="rounded-xl bg-slate-900 p-3 text-white" />
+        <input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Сумма заказа" className="rounded-xl bg-slate-900 p-3 text-white" />
       </div>
-
-      <div className="mt-8 rounded-xl bg-slate-900 p-5">
-        <p className="text-slate-400">
-          Предварительная стоимость
-        </p>
-
-        <h2 className="mt-2 text-4xl font-bold text-green-400">
-          {amount.toLocaleString()} ₸
-        </h2>
-      </div>
-
-      <button
-        onClick={save}
-        className="mt-6 w-full rounded-xl bg-blue-600 py-3 text-lg font-semibold text-white hover:bg-blue-700"
-      >
-        Создать заказ
+      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      <button type="button" onClick={save} disabled={saving} className="mt-6 w-full rounded-xl bg-blue-600 py-3 text-lg font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
+        {saving ? "Сохранение..." : "Создать заказ"}
       </button>
-    </div>
+    </section>
   );
 }

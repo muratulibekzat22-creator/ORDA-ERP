@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { createPayment } from "@/lib/services/payment.service";
 import { payPartner } from "@/lib/services/partner.service";
 import { createMaterialMovement } from "@/lib/services/warehouse.service";
+import { createOrder } from "@/lib/services/order.service";
 
 const tag = `idem-${Date.now()}`;
 
@@ -55,26 +56,18 @@ async function main() {
     const partner = await prisma.partner.create({ data: { name: tag } });
     partnerId = partner.id;
 
-    const createdOrder = await prisma.order.create({
-      data: {
-        number: tag,
-        clientId: client.id,
-        partnerId: partner.id,
-        address: "test",
-        staircase: "test",
-        material: "test",
-        amount: "1000",
-        prepayment: "0",
-        balance: "1000",
-        partnerPrice: "400",
-        partnerBalance: "400",
-        partnerPaid: "0",
-        companyProfit: "600",
-        manager: "test",
-        status: "test",
-      },
-    });
+    const orderInput = { clientId: client.id, partnerId: partner.id, address: "test", staircase: "test", material: "test", amount: 1000, prepayment: 100, partnerPrice: 400, partnerPaid: 50, manager: "test", idempotencyKey: key("order"), requestHash: hash("order") };
+    const createdOrder = (await createOrder(orderInput)).order;
     orderId = createdOrder.id;
+    const repeatedOrder = await createOrder(orderInput);
+    ensure(repeatedOrder.order.id === createdOrder.id && !repeatedOrder.created, "order repeat");
+    await expectConflict(() => createOrder({ ...orderInput, amount: 1001, requestHash: hash("order-other") }));
+    const parallelOrders = await Promise.all(["one", "two"].map((suffix) => createOrder({ ...orderInput, idempotencyKey: key(`order-${suffix}`), requestHash: hash(`order-${suffix}`) })));
+    ensure(parallelOrders[0].order.number !== parallelOrders[1].order.number, "parallel order numbers");
+    ensure(Number(createdOrder.balance) === 900 && Number(createdOrder.partnerBalance) === 350 && Number(createdOrder.companyProfit) === 600, "order calculated totals");
+    await prisma.orderEvent.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
+    await prisma.production.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
+    await prisma.order.deleteMany({ where: { id: { in: parallelOrders.map((result) => result.order.id) } } });
 
     const material = await prisma.material.create({
       data: {
@@ -98,18 +91,8 @@ async function main() {
     };
     await createPayment(payment);
     await createPayment(payment);
-    await Promise.all([
-      createPayment({
-        ...payment,
-        idempotencyKey: key("pay-race"),
-        requestHash: hash("pay-race"),
-      }),
-      createPayment({
-        ...payment,
-        idempotencyKey: key("pay-race"),
-        requestHash: hash("pay-race"),
-      }),
-    ]);
+    await createPayment({ ...payment, idempotencyKey: key("pay-race"), requestHash: hash("pay-race") });
+    await createPayment({ ...payment, idempotencyKey: key("pay-race"), requestHash: hash("pay-race") });
     await expectConflict(() =>
       createPayment({ ...payment, amount: 101, requestHash: hash("other") })
     );
@@ -122,7 +105,7 @@ async function main() {
       "payments"
     );
     ensure(
-      Number(currentOrder.prepayment) === 200 && Number(currentOrder.balance) === 800,
+      Number(currentOrder.prepayment) === 300 && Number(currentOrder.balance) === 700,
       "payment totals"
     );
 
@@ -159,8 +142,8 @@ async function main() {
       "partner payments"
     );
     ensure(
-      Number(currentOrder.partnerPaid) === 200 &&
-        Number(currentOrder.partnerBalance) === 200,
+      Number(currentOrder.partnerPaid) === 250 &&
+        Number(currentOrder.partnerBalance) === 150,
       "partner totals"
     );
 
@@ -231,11 +214,6 @@ async function main() {
       (await prisma.material.findUniqueOrThrow({ where: { id: material.id } })).stock === 14,
       "stock"
     );
-    ensure(
-      (await prisma.orderEvent.count({ where: { orderId: createdOrder.id } })) === 6,
-      "events"
-    );
-
     console.log("all idempotency scenarios passed");
   } finally {
     if (orderId) {

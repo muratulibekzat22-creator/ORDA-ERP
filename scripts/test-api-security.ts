@@ -15,6 +15,7 @@ const userIds: number[] = [];
 const measurerUserIds: number[] = [];
 const productionUserIds: number[] = [];
 const managerUserIds: number[] = [];
+const generatedOrderIds: number[] = [];
 const installationStage = "\u041c\u043e\u043d\u0442\u0430\u0436";
 const productionStage = "\u0417\u0430\u0433\u043e\u0442\u043e\u0432\u043a\u0430";
 let server: ChildProcess | undefined;
@@ -321,34 +322,48 @@ async function main() {
     const secondProductionCookie = await session(secondProductionUser.email);
     const directorCookie = await session(director.email);
     const orderCreationPayload = {
-      number: `${tag}-api-order`,
       clientId: client.id,
       address: "E2E order creation",
       staircase: "Straight",
       material: "Oak",
-      steps: 12,
-      platforms: 1,
-      railing: "None",
-      led: false,
-      painting: false,
-      installation: false,
+      amount: 1000,
+      prepayment: 200,
+      partnerPrice: 400,
+      partnerPaid: 100,
     };
     const createdApiOrder = await (await expectStatus("/api/orders", 201, directorCookie, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` },
       body: JSON.stringify(orderCreationPayload),
     })).json() as { id: number; number: string; partnerPrice: string; partnerBalance: string; companyProfit: string };
-    assert(createdApiOrder.number === orderCreationPayload.number, "order creation did not return the requested number");
-    assert([createdApiOrder.partnerPrice, createdApiOrder.partnerBalance, createdApiOrder.companyProfit].every((value) => Number.isFinite(Number(value))), "order creation returned a non-finite financial value");
+    generatedOrderIds.push(createdApiOrder.id);
+    assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(createdApiOrder.number), "order creation did not generate a stable number");
+    assert(Number(createdApiOrder.partnerPrice) === 400 && Number(createdApiOrder.partnerBalance) === 300 && Number(createdApiOrder.companyProfit) === 600, "order creation calculated finances incorrectly");
+    const repeatedApiOrder = await (await expectStatus("/api/orders", 200, directorCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` },
+      body: JSON.stringify(orderCreationPayload),
+    })).json() as { id: number };
+    assert(repeatedApiOrder.id === createdApiOrder.id, "order idempotency created a duplicate");
+    await expectStatus("/api/orders", 409, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` }, body: JSON.stringify({ ...orderCreationPayload, amount: 1001 }) });
     for (const invalidPayload of [
-      { ...orderCreationPayload, number: "" },
       { ...orderCreationPayload, clientId: 0 },
-      { ...orderCreationPayload, partnerStepPrice: "NaN" },
+      { ...orderCreationPayload, amount: "NaN" },
+      { ...orderCreationPayload, amount: -1 },
+      { ...orderCreationPayload, prepayment: 1001 },
+      { ...orderCreationPayload, partnerPaid: 401 },
     ]) await expectStatus("/api/orders", 400, directorCookie, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-invalid-${Math.random()}` },
       body: JSON.stringify(invalidPayload),
     });
+    await expectStatus("/api/orders", 404, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-missing-client` }, body: JSON.stringify({ ...orderCreationPayload, clientId: 999999999 }) });
+    const parallelOrders = await Promise.all(["parallel-one", "parallel-two"].map(async (suffix) => {
+      const order = await (await expectStatus("/api/orders", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-${suffix}` }, body: JSON.stringify(orderCreationPayload) })).json() as { id: number; number: string };
+      generatedOrderIds.push(order.id);
+      return order;
+    }));
+    assert(parallelOrders[0].number !== parallelOrders[1].number, "parallel order creation generated duplicate numbers");
     await expectStatus(`/orders/${firstOrder.id}`, 200, directorCookie);
     await expectStatus(`/orders/${secondOrder.id}`, 200, directorCookie);
     const workflowProductionIds = [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, firstProduction.id, secondProduction.id];
@@ -496,6 +511,11 @@ async function main() {
     console.log("manager and director API security matrix passed");
   } finally {
     await stopServer();
+    if (generatedOrderIds.length) {
+      await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+      await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+      await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
+    }
     await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
     await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });

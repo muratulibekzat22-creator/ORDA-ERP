@@ -7,6 +7,7 @@ import { assignPartnerToOrder, payPartner } from "@/lib/services/partner.service
 import { createMaterialMovement } from "@/lib/services/warehouse.service";
 import { createProduction, updateProduction } from "@/lib/services/production.service";
 import { createCalendarEvent, moveCalendarEvent } from "@/lib/services/calendar.service";
+import { createOrder } from "@/lib/services/order.service";
 
 const tag = `e2e-${Date.now()}`;
 const assert = (value: boolean, step: string) => { if (!value) throw new Error(`FAILED: ${step}`); };
@@ -28,6 +29,12 @@ async function main() {
     const partner = await prisma.partner.create({ data: { name: tag } }); ids.partner = partner.id;
     const client = await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "E2E", manager: `${tag}-MANAGER`, amount: "0", status: "Новый" } }); ids.client = client.id;
 
+    step = "create generated order";
+    const generatedOrder = (await createOrder({ clientId: client.id, partnerId: null, address: "E2E generated", staircase: "Straight", material: "Oak", amount: 100, prepayment: 10, partnerPrice: 40, partnerPaid: 5, manager: `${tag}-MANAGER`, idempotencyKey: `${tag}:generated-order`, requestHash: "generated-order" })).order;
+    assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(generatedOrder.number) && Number(generatedOrder.balance) === 90 && Number(generatedOrder.partnerBalance) === 35 && Number(generatedOrder.companyProfit) === 60, step);
+    await prisma.orderEvent.deleteMany({ where: { orderId: generatedOrder.id } });
+    await prisma.production.deleteMany({ where: { orderId: generatedOrder.id } });
+    await prisma.order.delete({ where: { id: generatedOrder.id } });
     step = "create order";
     const order = await prisma.order.create({ data: { number: tag, clientId: client.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "1000", prepayment: "0", balance: "1000", partnerPrice: "400", partnerPaid: "0", partnerBalance: "400", companyProfit: "600", manager: `${tag}-MANAGER`, status: "Новая заявка" } }); ids.order = order.id;
     await prisma.orderEvent.create({ data: { orderId: order.id, title: "Создан заказ", user: `${tag}-MANAGER` } });

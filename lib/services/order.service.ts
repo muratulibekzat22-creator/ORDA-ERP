@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 
 export async function getOrders() {
   return prisma.order.findMany({
@@ -40,7 +41,9 @@ export async function getOrder(id: number) {
   });
 }
 
-export async function createOrder(data: {
+// Retained only for backwards-compatible source history; new writes use createOrder below.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function createLegacyOrder(data: {
   number: string;
   clientId: number;
 
@@ -85,6 +88,95 @@ export async function createOrder(data: {
   });
 
   return order;
+}
+
+type CreateOrderInput = {
+  clientId: number;
+  partnerId: number | null;
+  address: string;
+  staircase: string;
+  material: string;
+  amount: number;
+  prepayment: number;
+  partnerPrice: number;
+  partnerPaid: number;
+  manager: string;
+  idempotencyKey?: string;
+  requestHash?: string;
+};
+
+function orderNumber() {
+  const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  return `ORD-${date}-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
+}
+
+function money(value: number) {
+  return value.toFixed(2);
+}
+
+export async function createOrder(data: CreateOrderInput) {
+  const eventKey = data.idempotencyKey ? `order:${data.idempotencyKey}` : undefined;
+  const balance = data.amount - data.prepayment;
+  const partnerBalance = data.partnerPrice - data.partnerPaid;
+  const companyProfit = data.amount - data.partnerPrice;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        if (eventKey && data.requestHash) {
+          const existingEvent = await tx.orderEvent.findUnique({ where: { idempotencyKey: eventKey }, select: { orderId: true, requestHash: true } });
+          if (existingEvent) {
+            if (!compareRequestHash(existingEvent.requestHash, data.requestHash)) throw new Error("IDEMPOTENCY_CONFLICT");
+            return { order: await tx.order.findUniqueOrThrow({ where: { id: existingEvent.orderId } }), created: false };
+          }
+        }
+
+        const order = await tx.order.create({
+          data: {
+            number: orderNumber(),
+            clientId: data.clientId,
+            partnerId: data.partnerId,
+            address: data.address,
+            staircase: data.staircase,
+            material: data.material,
+            amount: money(data.amount),
+            prepayment: money(data.prepayment),
+            balance: money(balance),
+            partnerPrice: money(data.partnerPrice),
+            partnerPaid: money(data.partnerPaid),
+            partnerBalance: money(partnerBalance),
+            companyProfit: money(companyProfit),
+            manager: data.manager,
+            status: "Новая заявка",
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: order.id,
+            title: "Создан заказ",
+            description: `Заказ ${order.number} успешно создан.`,
+            user: data.manager,
+            idempotencyKey: eventKey,
+            requestHash: data.requestHash,
+          },
+        });
+        await tx.production.create({ data: { orderId: order.id, stage: order.status, percent: 0, master: "" } });
+        return { order, created: true };
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT") throw error;
+      if (!isPrismaUniqueConflict(error)) throw error;
+      if (eventKey && data.requestHash) {
+        const existingEvent = await prisma.orderEvent.findUnique({ where: { idempotencyKey: eventKey }, select: { orderId: true, requestHash: true } });
+        if (existingEvent) {
+          if (!compareRequestHash(existingEvent.requestHash, data.requestHash)) throw new Error("IDEMPOTENCY_CONFLICT");
+          return { order: await prisma.order.findUniqueOrThrow({ where: { id: existingEvent.orderId } }), created: false };
+        }
+      }
+    }
+  }
+
+  throw new Error("ORDER_NUMBER_CONFLICT");
 }
 
 export async function updateOrder(

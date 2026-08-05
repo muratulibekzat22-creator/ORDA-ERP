@@ -1,24 +1,28 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
+import { createRequestHash, idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
-import { calculateOrder } from "@/lib/services/calculator.service";
 import { createOrder, getOrders } from "@/lib/services/order.service";
+
+const MAX_MONEY = 9_999_999_999.99;
 
 function requiredText(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function nonNegativeNumber(value: unknown) {
+function money(value: unknown, fallback?: number) {
+  if (value === undefined && fallback !== undefined) return fallback;
   if (typeof value === "string" && !value.trim()) return null;
-  const number = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : null;
+  const result = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(result) && result >= 0 && result <= MAX_MONEY ? result : null;
 }
 
 function positiveInteger(value: unknown) {
-  const number = nonNegativeNumber(value);
-  return number !== null && Number.isInteger(number) && number > 0 ? number : null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const result = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(result) && result > 0 ? result : null;
 }
 
 export async function GET() {
@@ -37,71 +41,45 @@ export async function GET() {
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
   if (auth.session!.user.role === Role.PARTNER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
 
   try {
-    const body = await req.json();
-    const number = requiredText(body.number);
+    const body = await request.json() as Record<string, unknown>;
     const clientId = positiveInteger(body.clientId);
+    const partnerId = body.partnerId == null || body.partnerId === "" ? null : positiveInteger(body.partnerId);
     const address = requiredText(body.address);
     const staircase = requiredText(body.staircase);
     const material = requiredText(body.material);
-    const steps = positiveInteger(body.steps);
-    const platforms = nonNegativeNumber(body.platforms);
-    const partnerStepPrice = nonNegativeNumber(body.partnerStepPrice ?? 0);
-    const partnerId = body.partnerId == null || body.partnerId === "" ? null : positiveInteger(body.partnerId);
+    const amount = money(body.amount);
+    const prepayment = money(body.prepayment, 0);
+    const partnerPrice = money(body.partnerPrice, 0);
+    const partnerPaid = money(body.partnerPaid, 0);
 
-    if (!number || !clientId || !address || !staircase || !material || !steps || platforms === null || !Number.isInteger(platforms) || partnerStepPrice === null || (body.partnerId != null && body.partnerId !== "" && !partnerId)) {
+    if (!clientId || !address || !staircase || !material || amount === null || prepayment === null || partnerPrice === null || partnerPaid === null || (body.partnerId != null && body.partnerId !== "" && !partnerId)) {
       return NextResponse.json({ error: "Некорректные данные заказа" }, { status: 400 });
     }
+    if (prepayment > amount) return NextResponse.json({ error: "Предоплата не может превышать сумму заказа" }, { status: 400 });
+    if (partnerPaid > partnerPrice) return NextResponse.json({ error: "Выплата партнеру не может превышать его стоимость" }, { status: 400 });
 
     const [client, partner] = await Promise.all([
       prisma.client.findUnique({ where: { id: clientId }, select: { id: true } }),
       partnerId ? prisma.partner.findUnique({ where: { id: partnerId }, select: { id: true } }) : null,
     ]);
-    if (!client || (partnerId && !partner)) return NextResponse.json({ error: "Клиент или партнер не найден" }, { status: 400 });
+    if (!client) return NextResponse.json({ error: "Клиент не найден" }, { status: 404 });
+    if (partnerId && !partner) return NextResponse.json({ error: "Партнер не найден" }, { status: 404 });
 
-    const calc = await calculateOrder({
-      material,
-      steps,
-      platforms,
-      railing: body.railing,
-      led: Boolean(body.led),
-      painting: Boolean(body.painting),
-      installation: Boolean(body.installation),
-      partnerStepPrice,
-    });
-    if (![calc.clientPrice, calc.balance, calc.partnerPrice, calc.companyProfit].every(Number.isFinite)) {
-      return NextResponse.json({ error: "Некорректный расчет заказа" }, { status: 400 });
-    }
-
-    const order = await createOrder({
-      number,
-      clientId,
-      partnerId,
-      address,
-      staircase,
-      material,
-      amount: String(calc.clientPrice),
-      prepayment: "0",
-      balance: String(calc.balance),
-      partnerPrice: String(calc.partnerPrice),
-      companyProfit: String(calc.companyProfit),
-      partnerPaid: "0",
-      partnerBalance: String(calc.partnerPrice),
-      manager: requiredText(body.manager) ?? "Менеджер",
-      status: "Новая заявка",
-    });
-
-    return NextResponse.json(order, { status: 201 });
+    const idempotency = readIdempotencyKey(request);
+    if ("response" in idempotency) return idempotency.response;
+    const payload = { clientId, partnerId, address, staircase, material, amount, prepayment, partnerPrice, partnerPaid, manager: requiredText(body.manager) ?? auth.session!.user.name ?? "Система" };
+    const result = await createOrder({ ...payload, idempotencyKey: idempotency.key, requestHash: createRequestHash(payload) });
+    return NextResponse.json(result.order, { status: result.created ? 201 : 200 });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "P2002") {
-      return NextResponse.json({ error: "Заказ с таким номером уже существует" }, { status: 409 });
-    }
+    if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT") return idempotencyConflict();
+    if (error instanceof Error && error.message === "ORDER_NUMBER_CONFLICT") return NextResponse.json({ error: "Не удалось сгенерировать уникальный номер заказа" }, { status: 409 });
     return NextResponse.json({ error: "Ошибка создания заказа" }, { status: 500 });
   }
 }
