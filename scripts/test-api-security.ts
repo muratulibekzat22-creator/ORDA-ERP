@@ -321,6 +321,7 @@ async function main() {
     const firstProductionCookie = await session(firstProductionUser.email);
     const secondProductionCookie = await session(secondProductionUser.email);
     const directorCookie = await session(director.email);
+    await expectStatus("/", 200, directorCookie);
     const orderCreationPayload = {
       clientId: client.id,
       address: "E2E order creation",
