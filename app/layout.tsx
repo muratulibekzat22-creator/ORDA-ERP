@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "ORDA ERP",
-  description: "ALTYN SAPA ERP System",
+  description: "Внутренняя система управления ALTYN SAPA",
 };
 
 export default function RootLayout({

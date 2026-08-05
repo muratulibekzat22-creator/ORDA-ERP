@@ -21,8 +21,7 @@ export default function CRMPage() {
       const data = await response.json() as CrmOrder[];
 
       setOrders(data);
-    } catch (error) {
-      console.error(error);
+    } catch {
     } finally {
       setLoading(false);
     }

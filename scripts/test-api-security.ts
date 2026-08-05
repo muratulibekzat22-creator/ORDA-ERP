@@ -134,6 +134,19 @@ async function session(email: string) {
   return cookie;
 }
 
+async function loginAttempt(email: string, candidatePassword: string) {
+  const csrf = await apiFetch(`${baseUrl}/api/auth/csrf`);
+  const initialCookie = cookieValue(csrf);
+  const { csrfToken } = await csrf.json() as { csrfToken: string };
+  const login = await apiFetch(`${baseUrl}/api/auth/callback/credentials`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: initialCookie },
+    body: new URLSearchParams({ csrfToken, email, password: candidatePassword, callbackUrl: baseUrl, json: "true" }),
+    redirect: "manual",
+  });
+  return [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
+}
+
 async function expectStatus(pathname: string, status: number, cookie: string, init: RequestInit = {}) {
   const response = await apiFetch(`${baseUrl}${pathname}`, {
     ...init,
@@ -286,15 +299,33 @@ async function main() {
     const manager = await prisma.user.create({
       data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: hash, role: Role.MANAGER },
     });
-    managerUserIds.push(manager.id);
+    const lockoutUser = await prisma.user.create({
+      data: { name: `${tag}-lockout`, email: `${tag}-lockout@test.local`, password: hash, role: Role.MANAGER },
+    });
+    managerUserIds.push(manager.id, lockoutUser.id);
     const financeData = await createPayment({ orderId: firstOrder.id, amount: 20, method: "cash", type: "payment", comment: tag });
     assert(financeData !== null, "failed to create temporary finance data");
 
     server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: "ignore", detached: false });
     await waitForServer();
     const health = await apiFetch(`${baseUrl}/api/health`);
-    const healthPayload = await health.json() as { status?: string; database?: string };
+    const healthPayload = await health.json() as Record<string, unknown>;
     assert(health.status === 200 && healthPayload.status === "ok" && healthPayload.database === "ok", "health endpoint is unavailable");
+    assert(!("databaseHost" in healthPayload) && !("environment" in healthPayload) && !("envPresent" in healthPayload), "health endpoint exposes infrastructure details");
+    assert(health.headers.get("x-content-type-options") === "nosniff" && health.headers.get("x-frame-options") === "DENY" && Boolean(health.headers.get("content-security-policy")), "security headers are missing");
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failedCookie = await loginAttempt(lockoutUser.email, `${password}-wrong`);
+      assert(!failedCookie.includes("next-auth.session-token") && !failedCookie.includes("__Secure-next-auth.session-token"), "invalid credentials created a session");
+    }
+    const lockedCookie = await loginAttempt(lockoutUser.email, password);
+    assert(!lockedCookie.includes("next-auth.session-token") && !lockedCookie.includes("__Secure-next-auth.session-token"), "locked account created a session");
+    const lockedUser = await prisma.user.findUniqueOrThrow({ where: { id: lockoutUser.id } });
+    const failedAudits = await prisma.authAuditEvent.count({ where: { email: lockoutUser.email, success: false } });
+    assert(Boolean(lockedUser.lockedUntil && lockedUser.lockedUntil > new Date()) && failedAudits >= 5, "login lockout or audit trail is missing");
+    await prisma.user.update({ where: { id: lockoutUser.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
+    await session(lockoutUser.email);
+    console.log("authentication lockout and audit checks passed");
 
     const firstCookie = await session(firstUser.email);
     const secondCookie = await session(secondUser.email);
@@ -691,6 +722,7 @@ async function main() {
       await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });
       await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
       await prisma.client.deleteMany({ where: { name: { startsWith: tag } } });
+      await prisma.authAuditEvent.deleteMany({ where: { email: { startsWith: tag } } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
       if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));

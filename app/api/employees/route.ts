@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 
-const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, partnerProfile: { select: { id: true, name: true } } } as const;
+const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
 
 export async function GET() {
   const auth = await requirePermission("employees");
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
         if (!partner) throw new Error("PARTNER_NOT_FOUND");
         if (partner.userId) throw new Error("PARTNER_ALREADY_LINKED");
       }
-      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
+      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), passwordChangedAt: new Date(), mustChangePassword: true, phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
     });
     return NextResponse.json(user, { status: 201 });
   } catch (error) {

@@ -13,6 +13,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  if (token.invalid) return NextResponse.redirect(new URL("/login", request.url));
+  if (token.mustChangePassword && request.nextUrl.pathname !== "/change-password")
+    return NextResponse.redirect(new URL("/change-password", request.url));
+
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
@@ -59,6 +63,7 @@ export async function proxy(request: NextRequest) {
     "calculator",
     "calculator-config",
     "partner",
+    "change-password",
   ].includes(firstSegment);
   if (
     firstSegment === "calculator-config" &&
@@ -77,6 +82,7 @@ export async function proxy(request: NextRequest) {
   const allowed = permissions[role] ?? [];
   if (
     firstSegment !== "calculator-config" &&
+    firstSegment !== "change-password" &&
     protectedSegment &&
     !allowed.includes("*") &&
     !allowed.includes(required)

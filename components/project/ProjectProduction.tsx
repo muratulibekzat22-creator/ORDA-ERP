@@ -104,7 +104,6 @@ export default function ProjectProduction({ orderId, production }: Props) {
       reset();
       router.refresh();
     } catch (error) {
-      console.error(error);
       setError(error instanceof Error ? error.message : "Не удалось сохранить производство");
     } finally {
       setLoading(false);

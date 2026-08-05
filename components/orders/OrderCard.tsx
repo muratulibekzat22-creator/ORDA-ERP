@@ -87,8 +87,7 @@ export default function OrderCard({ order }: Props) {
       setStatus(updatedOrder.status);
       setStatusComment("");
       router.refresh();
-    } catch (error) {
-      console.error(error);
+    } catch {
       setStatusError("Не удалось сохранить статус. Попробуйте ещё раз.");
     } finally {
       setIsSavingStatus(false);
@@ -130,8 +129,7 @@ export default function OrderCard({ order }: Props) {
       resetAssignPartnerKey();
       setPartnerModal(false);
       router.refresh();
-    } catch (error) {
-      console.error(error);
+    } catch {
       setStatusError("Не удалось передать заказ в цех.");
     } finally {
       setIsAssigningPartner(false);

@@ -64,7 +64,6 @@ export default function ProjectPayments({ orderId }: Props) {
 
       router.refresh();
     } catch (error) {
-      console.error(error);
       setError(error instanceof Error ? error.message : "Не удалось добавить оплату");
     } finally {
       setLoading(false);

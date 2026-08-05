@@ -16,8 +16,7 @@ export default function ReportsPage() {
       const data = await response.json() as DirectorReport;
 
       setReport(data);
-    } catch (error) {
-      console.error(error);
+    } catch {
     }
   }, []);
 
