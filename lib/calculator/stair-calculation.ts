@@ -19,9 +19,11 @@ export type StairCalculationInput = {
   lines?: CalculationLineInput[];
 };
 
+export type StairRates = Record<StairMaterial, { workshopRate: number; saleRate: number }>;
+
 export const CALCULATION_LINE_KINDS = ["INSTALLATION", "DELIVERY", "METAL_FRAME", "RISERS", "LIGHTING", "PAINTING", "GLASS", "BRASS_BALUSTERS", "BAROQUE_BALUSTERS", "WOOD_BALUSTERS", "METAL_RAILING", "HANDRAIL", "MATERIAL", "OTHER_WORK", "DISCOUNT", "MARKUP"] as const;
 export type CalculationLineKind = (typeof CALCULATION_LINE_KINDS)[number];
-export type CalculationLineInput = { kind: CalculationLineKind; name: string; quantity: number; unit: string; unitCost: number; unitSale: number; comment?: string; enabled?: boolean };
+export type CalculationLineInput = { code?: string; kind: CalculationLineKind; name: string; quantity: number; unit: string; unitCost: number; unitSale: number; comment?: string; enabled?: boolean };
 
 function normalizedLines(lines: CalculationLineInput[] = [], installationRequired = true, deliveryRequired = true) {
   if (lines.length > 100) throw new Error("В расчёте может быть не более 100 позиций");
@@ -34,8 +36,8 @@ function normalizedLines(lines: CalculationLineInput[] = [], installationRequire
   });
 }
 
-export function calculateStair(input: StairCalculationInput) {
-  if (!(input.material in STAIR_RATES)) throw new Error("Выберите материал");
+export function calculateStair(input: StairCalculationInput, configuredRates: StairRates = STAIR_RATES) {
+  if (!(input.material in configuredRates)) throw new Error("Выберите материал");
   if (!Number.isInteger(input.regularSteps) || input.regularSteps < 0)
     throw new Error(
       "Количество ступеней должно быть целым неотрицательным числом",
@@ -48,7 +50,7 @@ export function calculateStair(input: StairCalculationInput) {
   const equivalentSteps =
     input.regularSteps +
     input.platformEquivalents.reduce((sum, value) => sum + value, 0);
-  const rates = STAIR_RATES[input.material];
+  const rates = configuredRates[input.material];
   const baseWorkshopCost = equivalentSteps * rates.workshopRate;
   const baseClientPrice = equivalentSteps * rates.saleRate;
   const workshopCost = input.workshopCost ?? baseWorkshopCost;

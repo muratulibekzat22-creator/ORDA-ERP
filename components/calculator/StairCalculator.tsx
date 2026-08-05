@@ -1,13 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
-import {
-  calculateStair,
-  STAIR_RATES,
-  type CalculationLineInput,
-  type StairMaterial,
-} from "@/lib/calculator/stair-calculation";
+
+type Tariff = { code: string; uiName: string; kind: string; unit: string; salePrice: number; internalPrice?: number; defaultQuantity: number; manualPriceAllowed: boolean };
+type CalculationLineInput = { code: string; kind: string; name: string; quantity: number; unit: string; unitCost: number; unitSale: number; comment?: string; enabled?: boolean };
 
 const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 
@@ -16,7 +14,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
   const [targetOrderId, setTargetOrderId] = useState(
     orderId ? String(orderId) : "",
   );
-  const [material, setMaterial] = useState<StairMaterial>("Карагач");
+  const [material, setMaterial] = useState("Карагач");
   const [regularSteps, setRegularSteps] = useState("18");
   const [platforms, setPlatforms] = useState<number[]>([2]);
   const [clientOverride, setClientOverride] = useState("");
@@ -26,39 +24,42 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
   const [otherCity, setOtherCity] = useState(false);
   const [pickup, setPickup] = useState(false);
   const [lines, setLines] = useState<CalculationLineInput[]>([]);
+  const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [savedOrderId, setSavedOrderId] = useState<number | null>(null);
   const isDirector = session?.user.role === "DIRECTOR";
   const canSeeInternal = isDirector || session?.user.role === "ACCOUNTANT";
+  useEffect(() => {
+    void fetch("/api/calculator-pricing", { cache: "no-store" }).then(async (response) => {
+      const payload = await response.json() as { items?: Tariff[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Тарифы недоступны");
+      setTariffs(payload.items ?? []);
+    }).catch((error) => setMessage(error instanceof Error ? error.message : "Тарифы недоступны"));
+  }, []);
+  const materialTariffs = tariffs.filter((item) => item.kind === "STAIR_MATERIAL");
+  const positionTariffs = tariffs.filter((item) => item.kind !== "STAIR_MATERIAL");
   const calculation = useMemo(() => {
-    try {
-      return calculateStair({
-        material,
-        regularSteps: Number(regularSteps),
-        platformEquivalents: platforms,
-        ...(clientOverride === ""
-          ? {}
-          : { clientPrice: Number(clientOverride) }),
-        ...(!isDirector || workshopOverride === ""
-          ? {}
-          : { workshopCost: Number(workshopOverride) }),
-        installationRequired,
-        deliveryRequired,
-        otherCity,
-        pickup,
-        lines,
-      });
-    } catch {
-      return null;
-    }
+    const tariff = materialTariffs.find((item) => item.uiName === material);
+    const steps = Number(regularSteps);
+    if (!tariff || !Number.isInteger(steps) || steps < 0 || platforms.some((value) => value !== 2 && value !== 3)) return null;
+    const equivalentSteps = steps + platforms.reduce((sum, value) => sum + value, 0);
+    const enabledLines = lines.map((line) => ({ ...line, enabled: line.enabled !== false && (line.kind !== "INSTALLATION" || installationRequired) && (line.kind !== "DELIVERY" || (deliveryRequired && !pickup)) }));
+    const lineSale = enabledLines.reduce((sum, line) => sum + (line.enabled ? line.quantity * line.unitSale : 0), 0);
+    const lineCost = enabledLines.reduce((sum, line) => sum + (line.enabled ? line.quantity * line.unitCost : 0), 0);
+    const baseClientPrice = equivalentSteps * tariff.salePrice + lineSale;
+    const baseWorkshopCost = equivalentSteps * (tariff.internalPrice ?? 0) + lineCost;
+    const clientPrice = clientOverride === "" ? baseClientPrice : Number(clientOverride);
+    const workshopCost = workshopOverride === "" ? baseWorkshopCost : Number(workshopOverride);
+    if (![clientPrice, workshopCost].every((value) => Number.isFinite(value) && value >= 0)) return null;
+    return { equivalentSteps, saleRate: tariff.salePrice, clientPrice, workshopCost, baseClientPrice, baseWorkshopCost, clientAdjustment: clientPrice - baseClientPrice, workshopAdjustment: workshopCost - baseWorkshopCost, grossProfit: clientPrice - workshopCost };
   }, [
     clientOverride,
     deliveryRequired,
     installationRequired,
-    isDirector,
     lines,
     material,
-    otherCity,
+    materialTariffs,
     pickup,
     platforms,
     regularSteps,
@@ -109,6 +110,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
       setMessage(
         "Расчёт сохранён в заказе. Суммы зафиксированы снимком и не изменятся при обновлении тарифов.",
       );
+      setSavedOrderId(Number(targetOrderId));
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Не удалось сохранить расчёт",
@@ -125,13 +127,11 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
           Материал
           <select
             value={material}
-            onChange={(event) =>
-              setMaterial(event.target.value as StairMaterial)
-            }
+            onChange={(event) => setMaterial(event.target.value)}
             className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white"
           >
-            {Object.keys(STAIR_RATES).map((value) => (
-              <option key={value}>{value}</option>
+            {materialTariffs.map((value) => (
+              <option key={value.code}>{value.uiName}</option>
             ))}
           </select>
         </label>
@@ -242,20 +242,10 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
           </div>
           <button
             type="button"
-            onClick={() =>
-              setLines((items) => [
-                ...items,
-                {
-                  kind: "OTHER_WORK",
-                  name: "Новая позиция",
-                  quantity: 1,
-                  unit: "шт.",
-                  unitCost: 0,
-                  unitSale: 0,
-                  enabled: true,
-                },
-              ])
-            }
+            onClick={() => {
+              const tariff = positionTariffs[0];
+              if (tariff) setLines((items) => [...items, { code: tariff.code, kind: tariff.kind, name: tariff.uiName, quantity: tariff.defaultQuantity || 1, unit: tariff.unit, unitCost: tariff.internalPrice ?? 0, unitSale: tariff.salePrice, enabled: true }]);
+            }}
             className="min-h-11 rounded-xl bg-blue-600 px-4 text-white"
           >
             Добавить позицию
@@ -264,22 +254,12 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
         {lines.map((line, index) => (
           <div
             key={index}
-            className="grid gap-2 rounded-xl bg-slate-900/70 p-3 md:grid-cols-6"
+            className="grid gap-2 rounded-xl bg-slate-900/70 p-3 md:grid-cols-8"
           >
-            <input
-              aria-label={`Название позиции ${index + 1}`}
-              value={line.name}
-              onChange={(event) =>
-                setLines((items) =>
-                  items.map((item, position) =>
-                    position === index
-                      ? { ...item, name: event.target.value }
-                      : item,
-                  ),
-                )
-              }
-              className="input md:col-span-2"
-            />
+            <select aria-label={`Название позиции ${index + 1}`} value={line.code} onChange={(event) => {
+              const tariff = positionTariffs.find((item) => item.code === event.target.value);
+              if (tariff) setLines((items) => items.map((item, position) => position === index ? { ...item, code: tariff.code, kind: tariff.kind, name: tariff.uiName, unit: tariff.unit, unitCost: tariff.internalPrice ?? 0, unitSale: tariff.salePrice, quantity: tariff.defaultQuantity || item.quantity } : item));
+            }} className="input md:col-span-2">{positionTariffs.map((tariff) => <option key={tariff.code} value={tariff.code}>{tariff.uiName}</option>)}</select>
             <input
               aria-label={`Количество позиции ${index + 1}`}
               type="number"
@@ -297,12 +277,14 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               }
               className="input"
             />
+            <div className="flex min-h-11 items-center rounded-lg border border-slate-700 px-3 text-sm text-slate-300" aria-label={`Единица позиции ${index + 1}`}>{line.unit}</div>
             {canSeeInternal && (
               <input
                 aria-label={`Себестоимость позиции ${index + 1}`}
                 type="number"
                 min="0"
                 value={line.unitCost}
+                disabled={!isDirector || !positionTariffs.find((item) => item.code === line.code)?.manualPriceAllowed}
                 onChange={(event) =>
                   setLines((items) =>
                     items.map((item, position) =>
@@ -319,6 +301,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               aria-label={`Цена позиции ${index + 1}`}
               type="number"
               min="0"
+              disabled={!positionTariffs.find((item) => item.code === line.code)?.manualPriceAllowed}
               value={line.unitSale}
               onChange={(event) =>
                 setLines((items) =>
@@ -331,6 +314,9 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               }
               className="input"
             />
+            <input aria-label={`Комментарий позиции ${index + 1}`} value={line.comment ?? ""} onChange={(event) => setLines((items) => items.map((item, position) => position === index ? { ...item, comment: event.target.value } : item))} placeholder="Комментарий" className="input md:col-span-2" />
+            <div className="flex min-h-11 items-center text-sm font-semibold text-white">Итого: {money(line.enabled === false ? 0 : line.quantity * line.unitSale)}</div>
+            <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={line.enabled !== false} onChange={(event) => setLines((items) => items.map((item, position) => position === index ? { ...item, enabled: event.target.checked } : item))}/>Включена</label>
             <button
               type="button"
               onClick={() =>
@@ -369,6 +355,10 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               title="Продажная стоимость"
               value={money(calculation.clientPrice)}
             />
+            <Result
+              title="Скидка"
+              value={money(Math.max(0, calculation.baseClientPrice - calculation.clientPrice))}
+            />
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <label className="text-sm text-slate-300">
@@ -404,9 +394,9 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
               </label>
             )}
           </div>
-          {canSeeInternal && (
+          {isDirector && (
             <div className="rounded-2xl bg-blue-950/40 p-5">
-              <p className="text-slate-300">Валовая разница ALTYN SAPA</p>
+              <p className="text-slate-300">Разница продажи и внутренних затрат</p>
               <p className="mt-1 text-3xl font-bold text-blue-300">
                 {money(calculation.grossProfit)}
               </p>
@@ -449,6 +439,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
           {message}
         </p>
       )}
+      {savedOrderId && <Link href={`/orders/${savedOrderId}/offer`} className="inline-flex min-h-11 items-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Сформировать КП</Link>}
     </div>
   );
 }

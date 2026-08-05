@@ -32,8 +32,17 @@ export async function getAuthorizedOrder(id: number) {
       return null;
   }
   const order = await getOrder(id);
-  if (!order || role === Role.DIRECTOR || role === Role.ACCOUNTANT)
-    return order;
+  if (!order || role === Role.DIRECTOR) return order;
+  if (role === Role.ACCOUNTANT) return {
+    ...order,
+    companyProfit: undefined,
+    calculations: order.calculations.map((calculation) => {
+      const result = { ...calculation } as Partial<typeof calculation>;
+      delete result.grossDifference;
+      delete result.grossProfit;
+      return result;
+    }),
+  } as unknown as typeof order;
 
   // Server Components serialize their props into the RSC response. Remove
   // management figures here as well as in the REST API so they never reach a

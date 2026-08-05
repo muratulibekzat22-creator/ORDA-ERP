@@ -246,6 +246,7 @@ model OrderCalculationLine {
   calculationId Int
   calculation   OrderCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
   kind          String
+  code          String?
   name          String
   quantity      Decimal          @db.Decimal(12, 3)
   unit          String
@@ -574,6 +575,24 @@ model Settings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model CalculatorTariff {
+  id                 Int      @id @default(autoincrement())
+  code               String   @unique
+  uiName             String
+  kind               String
+  unit               String
+  salePrice          Decimal  @db.Decimal(12, 2)
+  internalPrice      Decimal  @db.Decimal(12, 2)
+  defaultQuantity    Decimal  @default(0) @db.Decimal(12, 3)
+  manualPriceAllowed Boolean  @default(false)
+  active             Boolean  @default(true)
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([active, sortOrder])
 }
 
 model OrderEvent {

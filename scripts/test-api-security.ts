@@ -6,7 +6,7 @@ import net from "net";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
-import { Role, type PrismaClient } from "@prisma/client";
+import { Permission, Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
 
@@ -38,6 +38,8 @@ let prisma!: PrismaClient;
 let readinessTimer: NodeJS.Timeout | undefined;
 let confirmedSessions = 0;
 let partnerMatrixCompleted = false;
+const temporaryRolePermissions: Permission[] = [];
+let calculatorTariffBackup: Array<{ code: string; salePrice: number; internalPrice: number }> = [];
 
 function apiFetch(input: string | URL, init: RequestInit = {}) {
   return fetch(input, { ...init, dispatcher: httpAgent } as RequestInit);
@@ -251,14 +253,19 @@ async function main() {
       prisma.measurement.create({ data: { orderId: secondMeasurerOrder.id, measurerUserId: secondMeasurer.id, measurer: secondMeasurer.name, visitDate: new Date(), comment: "second original" } }),
     ]);
 
-    const [firstInstaller, secondInstaller, firstProductionUser, secondProductionUser, director] = await Promise.all([
+    const [firstInstaller, secondInstaller, firstProductionUser, secondProductionUser, director, accountant] = await Promise.all([
       prisma.user.create({ data: { name: `${tag}-installer-first`, email: `${tag}-installer-first@test.local`, password: hash, role: Role.INSTALLER } }),
       prisma.user.create({ data: { name: `${tag}-installer-second`, email: `${tag}-installer-second@test.local`, password: hash, role: Role.INSTALLER } }),
       prisma.user.create({ data: { name: `${tag}-production-first`, email: `${tag}-production-first@test.local`, password: hash, role: Role.PRODUCTION } }),
       prisma.user.create({ data: { name: `${tag}-production-second`, email: `${tag}-production-second@test.local`, password: hash, role: Role.PRODUCTION } }),
       prisma.user.create({ data: { name: `${tag}-director`, email: `${tag}-director@test.local`, password: hash, role: Role.DIRECTOR } }),
+      prisma.user.create({ data: { name: `${tag}-accountant`, email: `${tag}-accountant@test.local`, password: hash, role: Role.ACCOUNTANT } }),
     ]);
-    productionUserIds.push(firstInstaller.id, secondInstaller.id, firstProductionUser.id, secondProductionUser.id, director.id);
+    productionUserIds.push(firstInstaller.id, secondInstaller.id, firstProductionUser.id, secondProductionUser.id, director.id, accountant.id);
+    for (const permission of [Permission.settings, Permission.orders]) {
+      const existing = await prisma.rolePermission.findUnique({ where: { role_permission: { role: Role.ACCOUNTANT, permission } } });
+      if (!existing) { await prisma.rolePermission.create({ data: { role: Role.ACCOUNTANT, permission } }); temporaryRolePermissions.push(permission); }
+    }
     const workflowClients = await Promise.all(
       ["installer-first", "installer-second", "installer-other-stage", "production-first", "production-second"].map((name, index) => prisma.client.create({
         data: { name: `${tag}-${name}`, phone: `+7${Date.now()}${index}`, city: "E2E", manager: tag, amount: "0", status: "New" },
@@ -532,6 +539,14 @@ async function main() {
     assert(Array.isArray(managerOrderCalculations) && managerOrderCalculations.length > 0, "manager order detail is missing client calculation");
     for (const field of ["workshopCost", "baseWorkshopCost", "workshopRate", "workshopAdjustment", "grossDifference", "materialCost", "installationCost", "deliveryCost", "otherDirectCosts", "totalCost", "grossProfit"]) assert(!(field in managerOrderCalculations[0]), `manager nested calculation leaks ${field}`);
     await expectStatus("/api/calculator-config", 403, managerCookie);
+    const managerPricing = await (await expectStatus("/api/calculator-pricing", 200, managerCookie)).json() as { items: Array<Record<string, unknown>> };
+    assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item)), "manager calculator pricing leaks internal prices");
+    const accountantCookie = await session(accountant.email);
+    const accountantConfig = await (await expectStatus("/api/calculator-config", 200, accountantCookie)).json() as { items: Array<Record<string, unknown>> };
+    assert(accountantConfig.items.length > 0 && accountantConfig.items.every((item) => "internalPrice" in item), "accountant with permission cannot view internal calculator prices");
+    await expectStatus("/api/calculator-config", 403, accountantCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(accountantConfig) });
+    const accountantCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, accountantCookie)).json() as Record<string, unknown>;
+    assert("totalCost" in accountantCalculation && !("grossProfit" in accountantCalculation) && !("grossDifference" in accountantCalculation), "accountant calculation scope is invalid");
     for (const cookie of [managerCookie, firstMeasurerCookie, firstCookie]) await expectStatus("/api/settings", 403, cookie);
     const settingsBefore = await (await expectStatus("/api/settings", 200, directorCookie)).json() as { company: { name: string }; rolePermissions: Record<Role, string[]> };
     await expectStatus("/api/settings", 200, directorCookie, {
@@ -626,8 +641,15 @@ async function main() {
     assert(Array.isArray(directorFinance.rows) && directorFinance.rows.some((row) => row.id === firstOrder.id && row.prepayment === 20) && typeof directorFinance.totals.turnover === "number" && Array.isArray(directorFinance.managers) && directorFinance.partners.some((partner) => partner.id === firstPartner.id), "director finance payload is invalid");
     const directorCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, directorCookie)).json() as Record<string, unknown>;
     assert("grossProfit" in directorCalculation && "totalCost" in directorCalculation, "director calculation is missing management totals");
-    const directorCalculatorConfig = await (await expectStatus("/api/calculator-config", 200, directorCookie)).json() as Record<string, unknown>;
-    assert("oakPrice" in directorCalculatorConfig && "installationPrice" in directorCalculatorConfig, "director calculator configuration is incomplete");
+    const directorCalculatorConfig = await (await expectStatus("/api/calculator-config", 200, directorCookie)).json() as { items: Array<Record<string, unknown>> };
+    assert(directorCalculatorConfig.items.some((item) => item.uiName === "Дуб ламель" && item.salePrice === 85000 && item.internalPrice === 60000), "director calculator configuration is incomplete");
+    calculatorTariffBackup = directorCalculatorConfig.items.map((item) => ({ code: String(item.code), salePrice: Number(item.salePrice), internalPrice: Number(item.internalPrice) }));
+    const changedConfig = { items: directorCalculatorConfig.items.map((item) => item.code === "PINE_STEP" ? { ...item, salePrice: Number(item.salePrice) + 1, internalPrice: Number(item.internalPrice) + 1 } : item) };
+    await expectStatus("/api/calculator-config", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changedConfig) });
+    const calculationAfterTariffChange = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, directorCookie)).json() as Record<string, unknown>;
+    assert(String(calculationAfterTariffChange.clientPrice) === String(managerCalculation.clientPrice), "saved calculation changed after tariff update");
+    await expectStatus("/api/calculator-config", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(directorCalculatorConfig) });
+    calculatorTariffBackup = [];
     const companyKey = `${tag}-company-ledger`;
     const ledgerBody = JSON.stringify({ direction: "EXPENSE", category: "RENT", amount: 100, operationDate: new Date().toISOString(), comment: tag });
     const companyEntry = await (await expectStatus("/api/company-finance", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": companyKey }, body: ledgerBody })).json() as { id: number };
@@ -670,6 +692,8 @@ async function main() {
       await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
       await prisma.client.deleteMany({ where: { name: { startsWith: tag } } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
+      if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
+      if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
       console.log("cleanup completed");
     } catch (error) {
       cleanupErrors.push(error);

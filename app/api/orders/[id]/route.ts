@@ -55,8 +55,18 @@ function redactForRole<T extends Record<string, unknown>>(
   order: T,
   role: Role,
 ) {
-  if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
+  if (role === Role.DIRECTOR) return order;
   const result: Record<string, unknown> = { ...order };
+  if (role === Role.ACCOUNTANT) {
+    delete result.companyProfit;
+    if (Array.isArray(result.calculations)) result.calculations = result.calculations.map((value) => {
+      const calculation = { ...(value as Record<string, unknown>) };
+      delete calculation.grossDifference;
+      delete calculation.grossProfit;
+      return calculation;
+    });
+    return result;
+  }
   for (const field of [
     "companyProfit",
     "partnerPrice",
