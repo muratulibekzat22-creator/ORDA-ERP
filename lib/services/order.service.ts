@@ -42,7 +42,10 @@ export async function getOrder(id: number) {
       payments: true,
       productions: true,
       documents: true,
-      calculations: { orderBy: { createdAt: "desc" } },
+      calculations: {
+        orderBy: { createdAt: "desc" },
+        include: { lines: { orderBy: { position: "asc" } } },
+      },
       statusHistory: { orderBy: { createdAt: "desc" } },
       events: {
         orderBy: {

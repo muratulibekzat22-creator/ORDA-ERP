@@ -208,9 +208,14 @@ export async function PATCH(request: Request, { params }: Context) {
       installationCompleted: body.installationCompleted,
     };
     const requestHash = createRequestHash(payload);
-    const historyKey = idempotency.key
-      ? `order-status:${id}:${idempotency.key}`
-      : null;
+    const historyKey =
+      status && idempotency.key
+        ? `order-status:${id}:${idempotency.key}`
+        : null;
+    const commentKey =
+      !status && comment && idempotency.key
+        ? `order-comment:${id}:${idempotency.key}`
+        : null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
@@ -218,6 +223,17 @@ export async function PATCH(request: Request, { params }: Context) {
         select: { status: true },
       });
       if (!current) return null;
+      if (commentKey) {
+        const existing = await tx.orderEvent.findUnique({
+          where: { idempotencyKey: commentKey },
+          select: { requestHash: true },
+        });
+        if (existing) {
+          if (existing.requestHash !== requestHash)
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return tx.order.findUnique({ where: { id }, include });
+        }
+      }
       if (historyKey) {
         const existing = await tx.orderStatusHistory.findUnique({
           where: { idempotencyKey: historyKey },
@@ -293,6 +309,17 @@ export async function PATCH(request: Request, { params }: Context) {
               comment ??
               "Обновлены сроки или отметки готовности",
             user: auth.session!.user.name ?? "Цех",
+          },
+        });
+      else if (comment)
+        await tx.orderEvent.create({
+          data: {
+            orderId: id,
+            title: "Добавлен комментарий",
+            description: comment,
+            user: auth.session!.user.name ?? "Система",
+            idempotencyKey: commentKey,
+            requestHash,
           },
         });
       return tx.order.findUnique({ where: { id }, include });

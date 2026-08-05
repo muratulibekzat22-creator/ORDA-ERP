@@ -72,8 +72,43 @@ assert.throws(() =>
 
 const rootLayout = readFileSync("app/layout.tsx", "utf8");
 const routeShell = readFileSync("components/layout/RouteShell.tsx", "utf8");
+const workspace = readFileSync("components/orders/OrderWorkspace.tsx", "utf8");
+const orderPageAuth = readFileSync("lib/order-page-auth.ts", "utf8");
+const orderApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /pathname\.startsWith\(href\)/);
+for (const section of [
+  "client",
+  "calculation",
+  "documents",
+  "history",
+  "calendar",
+  "production",
+  "workshop",
+  "files",
+])
+  assert.match(workspace, new RegExp(`id="${section}"`));
+for (const action of [
+  "Редактировать",
+  "Печать",
+  "Отправить КП",
+  "Отправить договор",
+  "Добавить файл",
+  "Добавить комментарий",
+  "Добавить оплату",
+])
+  assert.match(workspace, new RegExp(action));
+assert.match(workspace, /Текущий клиентский статус/);
+assert.match(workspace, /Внутренние технические этапы/);
+assert.match(orderPageAuth, /Server Components serialize their props/);
+assert.match(orderPageAuth, /partnerPrice: undefined/);
+assert.match(orderPageAuth, /unitSale: line\.unitSale/);
+assert.doesNotMatch(
+  orderPageAuth.slice(orderPageAuth.indexOf("lines: calculation.lines.map")),
+  /unitCost: line\.unitCost/,
+);
+assert.match(orderApi, /order-comment:/);
+assert.match(orderApi, /Добавлен комментарий/);
 for (const page of ["offer", "contract", "act", "invoice", "print"])
   assert.ok(
     readFileSync(`app/orders/[id]/${page}/page.tsx`, "utf8").length > 0,
@@ -85,5 +120,5 @@ assert.match(
   /DocumentBrandHeader/,
 );
 console.log(
-  "order lifecycle, calculator, layout and A4 document checks passed",
+  "order workspace, lifecycle, security boundary and document checks passed",
 );

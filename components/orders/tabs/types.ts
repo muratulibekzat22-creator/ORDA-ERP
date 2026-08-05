@@ -4,6 +4,7 @@ export type OrderTabData = {
   id: number;
   number: string;
   status: string;
+  createdAt: Date | string;
   address: string;
   staircase: string;
   material: string;
@@ -16,9 +17,12 @@ export type OrderTabData = {
   partnerPaid: NumericValue;
   partnerBalance: NumericValue;
   client: {
+    id: number;
     name: string;
     phone: string;
+    whatsapp: string;
     city: string;
+    address: string;
   };
   partner: {
     name: string;
@@ -44,6 +48,9 @@ export type OrderTabData = {
     comment: string | null;
     startDate: Date | string | null;
     finishDate: Date | string | null;
+    plannedStartAt?: Date | string | null;
+    plannedEndAt?: Date | string | null;
+    actualEndAt?: Date | string | null;
   }>;
   events: Array<{
     id: number;
@@ -63,10 +70,23 @@ export type OrderTabData = {
   }>;
   calculations: Array<{
     id: number;
+    material: string;
     regularSteps: number;
     platformEquivalents: number[];
     equivalentSteps: number;
     clientPrice: NumericValue;
-    workshopCost: NumericValue;
+    installationRequired?: boolean;
+    deliveryRequired?: boolean;
+    createdAt?: Date | string;
+    lines?: Array<{
+      id: number;
+      name: string;
+      kind: string;
+      quantity: NumericValue;
+      unit: string;
+      totalSale: NumericValue;
+      comment: string | null;
+      enabled: boolean;
+    }>;
   }>;
 };
