@@ -26,7 +26,7 @@ import { type Role } from "@/lib/roles";
 
 const links = [
   ["/", "Главная", LayoutDashboard],
-  ["/clients", "Клиенты", Users],
+  ["/clients", "Заявки", Users],
   ["/orders", "Заказы", ClipboardList],
   ["/partners", "Цех", Handshake],
   ["/production", "Производство", Factory],

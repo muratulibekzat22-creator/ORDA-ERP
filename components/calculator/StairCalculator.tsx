@@ -9,7 +9,7 @@ type CalculationLineInput = { code: string; kind: string; name: string; quantity
 
 const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 
-export default function StairCalculator({ orderId }: { orderId?: number }) {
+export default function StairCalculator({ orderId, clientId }: { orderId?: number; clientId?: number }) {
   const { data: session } = useSession();
   const [targetOrderId, setTargetOrderId] = useState(
     orderId ? String(orderId) : "",
@@ -28,6 +28,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [savedOrderId, setSavedOrderId] = useState<number | null>(null);
+  const [savedLeadCalculationId, setSavedLeadCalculationId] = useState<number | null>(null);
   const isDirector = session?.user.role === "DIRECTOR";
   const canSeeInternal = isDirector || session?.user.role === "ACCOUNTANT";
   useEffect(() => {
@@ -74,14 +75,13 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
   async function save() {
     if (
       !calculation ||
-      !Number.isInteger(Number(targetOrderId)) ||
-      Number(targetOrderId) <= 0
+      (!clientId && (!Number.isInteger(Number(targetOrderId)) || Number(targetOrderId) <= 0))
     )
       return setMessage("Укажите корректный ID заказа и заполните расчёт.");
     setSaving(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/orders/${targetOrderId}/calculation`, {
+      const response = await fetch(clientId ? `/api/clients/${clientId}/calculations` : `/api/orders/${targetOrderId}/calculation`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -94,7 +94,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
           ...(clientOverride === ""
             ? {}
             : { clientPrice: Number(clientOverride) }),
-          ...(isDirector && workshopOverride !== ""
+          ...(!clientId && isDirector && workshopOverride !== ""
             ? { workshopCost: Number(workshopOverride) }
             : {}),
           installationRequired,
@@ -104,13 +104,13 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
           lines,
         }),
       });
-      const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { id?: number; error?: string };
       if (!response.ok)
         throw new Error(payload.error ?? "Не удалось сохранить расчёт");
       setMessage(
         "Расчёт сохранён в заказе. Суммы зафиксированы снимком и не изменятся при обновлении тарифов.",
       );
-      setSavedOrderId(Number(targetOrderId));
+      if (clientId) setSavedLeadCalculationId(Number(payload.id)); else setSavedOrderId(Number(targetOrderId));
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Не удалось сохранить расчёт",
@@ -409,6 +409,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
         </p>
       )}
       <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        {!clientId && (
         <label className="text-sm text-slate-300">
           ID заказа
           <input
@@ -422,13 +423,14 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
             className="mt-1 min-h-12 w-full rounded-xl bg-slate-900 p-3 text-white disabled:opacity-60"
           />
         </label>
+        )}
         <button
           type="button"
           disabled={saving || !calculation}
           onClick={() => void save()}
           className="min-h-12 self-end rounded-xl bg-green-600 px-6 font-semibold text-white disabled:opacity-50"
         >
-          {saving ? "Сохранение…" : "Сохранить в заказ"}
+          {saving ? "Сохранение…" : clientId ? "Сохранить расчёт заявки" : "Сохранить в заказ"}
         </button>
       </div>
       {message && (
@@ -440,6 +442,7 @@ export default function StairCalculator({ orderId }: { orderId?: number }) {
         </p>
       )}
       {savedOrderId && <Link href={`/orders/${savedOrderId}/offer`} className="inline-flex min-h-11 items-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Сформировать КП</Link>}
+      {clientId && savedLeadCalculationId && <Link href={`/clients/${clientId}/proposal?calculationId=${savedLeadCalculationId}`} className="inline-flex min-h-11 items-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Сформировать КП</Link>}
     </div>
   );
 }

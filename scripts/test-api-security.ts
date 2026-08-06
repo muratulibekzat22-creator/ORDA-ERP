@@ -33,7 +33,7 @@ const installationStage = "\u041c\u043e\u043d\u0442\u0430\u0436";
 const productionStage = "\u0414\u0435\u0440\u0435\u0432\u043e";
 let server: ChildProcess | undefined;
 const execFileAsync = promisify(execFile);
-const httpAgent = new Agent({ keepAliveTimeout: 1, keepAliveMaxTimeout: 1 });
+const httpAgent = new Agent({ connections: 32, pipelining: 1, keepAliveTimeout: 1_000, keepAliveMaxTimeout: 1_000 });
 let prisma!: PrismaClient;
 let readinessTimer: NodeJS.Timeout | undefined;
 let confirmedSessions = 0;
@@ -42,7 +42,7 @@ const temporaryRolePermissions: Permission[] = [];
 let calculatorTariffBackup: Array<{ code: string; salePrice: number; internalPrice: number }> = [];
 
 function apiFetch(input: string | URL, init: RequestInit = {}) {
-  return fetch(input, { ...init, dispatcher: httpAgent } as RequestInit);
+  return fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(15_000), dispatcher: httpAgent } as RequestInit);
 }
 
 function assert(value: boolean, message: string) {
@@ -52,7 +52,10 @@ function assert(value: boolean, message: string) {
 async function waitForServer() {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
-      if ((await apiFetch(`${baseUrl}/api/auth/csrf`)).ok) return;
+      const response = await apiFetch(`${baseUrl}/api/auth/csrf`);
+      const ready = response.ok;
+      await response.arrayBuffer();
+      if (ready) return;
     } catch {
       // Server is starting.
     }
@@ -126,6 +129,7 @@ async function session(email: string) {
     redirect: "manual",
   });
   const cookie = [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
+  await login.arrayBuffer();
   assert(cookie.includes("next-auth"), `session cookie missing for ${email}`);
   const sessionResponse = await apiFetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: cookie } });
   const sessionPayload = await sessionResponse.json() as { user?: { email?: string; role?: string } };
@@ -144,7 +148,9 @@ async function loginAttempt(email: string, candidatePassword: string) {
     body: new URLSearchParams({ csrfToken, email, password: candidatePassword, callbackUrl: baseUrl, json: "true" }),
     redirect: "manual",
   });
-  return [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
+  const cookie = [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
+  await login.arrayBuffer();
+  return cookie;
 }
 
 async function expectStatus(pathname: string, status: number, cookie: string, init: RequestInit = {}) {
@@ -153,7 +159,8 @@ async function expectStatus(pathname: string, status: number, cookie: string, in
     headers: { ...init.headers, Cookie: cookie },
   });
   assert(response.status === status, `${pathname}: expected ${status}, received ${response.status}`);
-  return response;
+  const body = await response.arrayBuffer();
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 async function expectStatuses(pathname: string, statuses: number[], cookie: string, init: RequestInit = {}) {
@@ -162,7 +169,8 @@ async function expectStatuses(pathname: string, statuses: number[], cookie: stri
     headers: { ...init.headers, Cookie: cookie },
   });
   assert(statuses.includes(response.status), `${pathname}: expected ${statuses.join(" or ")}, received ${response.status}`);
-  return response;
+  const body = await response.arrayBuffer();
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 type MeasurementPayload = { id: number; measurerUserId: number | null; order: { id: number } };
@@ -231,7 +239,7 @@ async function main() {
       prisma.partner.create({ data: { name: `${tag}-second`, userId: secondUser.id } }),
     ]);
     const client = await prisma.client.create({
-      data: { name: tag, phone: `+7${Date.now()}`, city: "E2E", manager: tag, amount: "0", status: "Новый" },
+      data: { name: tag, phone: `+7${Date.now()}`, city: "E2E", manager: `${tag}-manager`, amount: "0", status: "Новый" },
     });
     const [firstOrder, secondOrder] = await Promise.all([
       prisma.order.create({
@@ -558,9 +566,37 @@ async function main() {
     console.log("installer and production API security checks passed");
 
     const managerCookie = await session(manager.email);
+    const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ code: "GLASS_RAILING", kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
+    const leadOrderCountBefore = await prisma.order.count();
+    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
+    assert(await prisma.order.count() === leadOrderCountBefore, "creating an inquiry created an order");
+    const leadCalculation = await (await expectStatus(`/api/clients/${lead.id}/calculations`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
+    assert(!("internalCost" in leadCalculation) && !JSON.stringify(leadCalculation).includes("workshopCost"), "lead calculation leaked internal prices");
+    await expectStatus(`/api/clients/${lead.id}/calculations`, 409, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...calculationPayload, clientPrice: 1 }) });
+    await expectStatus(`/api/clients/${lead.id}/follow-ups`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: leadCalculation.id, oldPrice: Number(leadCalculation.clientPrice), proposedPrice: Number(leadCalculation.clientPrice) - 1, standardPrice: Number(leadCalculation.baseClientPrice), reason: "Клиент сказал: дорого", channel: "WhatsApp", nextActionAt: new Date(Date.now() + 86400000).toISOString() }) });
+    const approval = await (await expectStatus("/api/price-approvals", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: leadCalculation.id, requestedSalePrice: Number(leadCalculation.clientPrice) - 1, reason: "Клиент сказал: дорого" }) })).json() as { id: number };
+    const managerApprovals = await (await expectStatus("/api/price-approvals", 200, managerCookie)).json() as Array<Record<string, unknown>>;
+    assert(managerApprovals.some((item) => item.id === approval.id) && !JSON.stringify(managerApprovals).includes("internalCost"), "approval list leaks internal prices");
+    await expectStatus(`/api/price-approvals/${approval.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "APPROVED" }) });
+    const approvedCalculation = await (await expectStatus(`/api/price-approvals/${approval.id}/apply`, 201, managerCookie, { method: "POST" })).json() as Record<string, unknown>;
+    assert(!("internalCost" in approvedCalculation), "approved calculation leaks internal price");
+    await expectStatus(`/api/price-approvals/${approval.id}/apply`, 409, managerCookie, { method: "POST" });
+    const rejectedApproval = await (await expectStatus("/api/price-approvals", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: leadCalculation.id, requestedSalePrice: Number(leadCalculation.clientPrice) - 2, reason: "security reject" }) })).json() as { id: number };
+    await expectStatus(`/api/price-approvals/${rejectedApproval.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "REJECTED" }) });
+    const counterApproval = await (await expectStatus("/api/price-approvals", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: leadCalculation.id, requestedSalePrice: Number(leadCalculation.clientPrice) - 3, reason: "security counter" }) })).json() as { id: number };
+    await expectStatus(`/api/price-approvals/${counterApproval.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "COUNTER_OFFER", approvedSalePrice: Number(leadCalculation.clientPrice) - 2 }) });
+    const leadProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: approvedCalculation.id }) })).json() as { id: number; snapshot: unknown };
+    assert(await prisma.order.count() === leadOrderCountBefore && !JSON.stringify(leadProposal).includes("workshopCost"), "proposal created an order or leaked internal prices");
+    const immutableSnapshot = JSON.stringify(leadProposal.snapshot);
+    const revisedProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: approvedCalculation.id, previousProposalId: leadProposal.id }) })).json() as { id: number; version: number };
+    assert(revisedProposal.version === 2 && JSON.stringify((await prisma.commercialProposal.findUniqueOrThrow({ where: { id: leadProposal.id } })).snapshot) === immutableSnapshot, "proposal version changed an immutable snapshot");
+    await expectStatus(`/api/proposals/${leadProposal.id}`, 200, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "Принято" }) });
+    const converted = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
+    const repeatedConversion = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
+    assert(converted.id === repeatedConversion.id, "repeated conversion created a duplicate order");
+    generatedOrderIds.push(converted.id);
     await expectStatus("/api/company-finance", 403, managerCookie);
     await expectStatus("/api/personal-finance", 403, managerCookie);
-    const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
     const managerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in managerCalculation) && !("totalCost" in managerCalculation) && Array.isArray(managerCalculation.lines) && !("unitCost" in (managerCalculation.lines as Array<Record<string, unknown>>)[0]), "manager calculation leaks internal costs");
     const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
@@ -572,7 +608,7 @@ async function main() {
     for (const field of ["workshopCost", "baseWorkshopCost", "workshopRate", "workshopAdjustment", "grossDifference", "materialCost", "installationCost", "deliveryCost", "otherDirectCosts", "totalCost", "grossProfit"]) assert(!(field in managerOrderCalculations[0]), `manager nested calculation leaks ${field}`);
     await expectStatus("/api/calculator-config", 403, managerCookie);
     const managerPricing = await (await expectStatus("/api/calculator-pricing", 200, managerCookie)).json() as { items: Array<Record<string, unknown>> };
-    assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item)), "manager calculator pricing leaks internal prices");
+    assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item) && !("managerMinimumPrice" in item)), "manager calculator pricing leaks protected prices");
     const accountantCookie = await session(accountant.email);
     const accountantConfig = await (await expectStatus("/api/calculator-config", 200, accountantCookie)).json() as { items: Array<Record<string, unknown>> };
     assert(accountantConfig.items.length > 0 && accountantConfig.items.every((item) => "internalPrice" in item), "accountant with permission cannot view internal calculator prices");
@@ -707,6 +743,7 @@ async function main() {
       await prisma.companyLedgerEntry.deleteMany({ where: { comment: tag } });
       await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
       if (generatedOrderIds.length) {
+        await prisma.leadConversion.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
@@ -722,7 +759,12 @@ async function main() {
       await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });
       await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
-      await prisma.client.deleteMany({ where: { name: { startsWith: tag } } });
+      const leadIds = (await prisma.client.findMany({ where: { comment: { startsWith: tag } }, select: { id: true } })).map(({ id }) => id);
+      if (leadIds.length) {
+        await prisma.commercialProposal.deleteMany({ where: { clientId: { in: leadIds } } });
+        await prisma.leadCalculation.deleteMany({ where: { clientId: { in: leadIds } } });
+      }
+      await prisma.client.deleteMany({ where: { OR: [{ name: { startsWith: tag } }, { comment: { startsWith: tag } }] } });
       await prisma.authAuditEvent.deleteMany({ where: { email: { startsWith: tag } } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });

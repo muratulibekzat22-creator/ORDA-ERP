@@ -107,9 +107,169 @@ model Client {
   orders       Order[]
   interactions ClientInteraction[]
   attachments  ClientAttachment[]
+  leadActivities LeadActivity[]
+  leadStatusHistory LeadStatusHistory[]
+  leadCalculations LeadCalculation[]
+  commercialProposals CommercialProposal[]
+  leadConversion LeadConversion?
+  followUps LeadFollowUp[]
+  priceApprovals PriceApprovalRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  nextContactAt DateTime?
+
+  @@index([status, nextContactAt])
+  @@index([manager, status])
+  @@index([source, createdAt])
+}
+
+model LeadActivity {
+  id Int @id @default(autoincrement())
+  clientId Int
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  type String
+  comment String
+  authorId Int?
+  authorName String
+  createdAt DateTime @default(now())
+  @@index([clientId, createdAt])
+}
+
+model LeadStatusHistory {
+  id Int @id @default(autoincrement())
+  clientId Int
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus String
+  authorId Int?
+  authorName String
+  comment String?
+  createdAt DateTime @default(now())
+  @@index([clientId, createdAt])
+}
+
+model LeadCalculation {
+  id Int @id @default(autoincrement())
+  clientId Int
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  material String
+  baseClientPrice Decimal @db.Decimal(12, 2)
+  clientPrice Decimal @db.Decimal(12, 2)
+  internalCost Decimal @db.Decimal(12, 2)
+  snapshot Json
+  comment String?
+  authorId Int?
+  authorName String
+  createdAt DateTime @default(now())
+  adjustments LeadPriceAdjustment[]
+  proposals CommercialProposal[]
+  priceApprovals PriceApprovalRequest[]
+  @@index([clientId, createdAt])
+}
+
+model LeadPriceAdjustment {
+  id Int @id @default(autoincrement())
+  calculationId Int
+  calculation LeadCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  originalPrice Decimal @db.Decimal(12, 2)
+  newPrice Decimal @db.Decimal(12, 2)
+  authorId Int?
+  authorName String
+  comment String?
+  createdAt DateTime @default(now())
+  @@index([calculationId, createdAt])
+}
+
+model CommercialProposal {
+  id Int @id @default(autoincrement())
+  clientId Int
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  calculationId Int
+  calculation LeadCalculation @relation(fields: [calculationId], references: [id], onDelete: Restrict)
+  number String @unique
+  status String @default("Черновик")
+  snapshot Json
+  validUntil DateTime
+  executionTerm String
+  paymentTerms String
+  warranty String
+  managerContact String
+  sentAt DateTime?
+  acceptedAt DateTime?
+  createdById Int?
+  createdByName String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  conversion LeadConversion?
+  priceApprovals PriceApprovalRequest[]
+  version Int @default(1)
+  rootNumber String?
+  @@index([clientId, createdAt])
+  @@index([status, validUntil])
+}
+
+model LeadFollowUp {
+  id Int @id @default(autoincrement())
+  clientId Int
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  calculationId Int?
+  proposalId Int?
+  oldPrice Decimal @db.Decimal(12, 2)
+  proposedPrice Decimal @db.Decimal(12, 2)
+  standardPrice Decimal @db.Decimal(12, 2)
+  discount Decimal @db.Decimal(12, 2)
+  reason String
+  comment String?
+  channel String
+  managerUserId Int
+  managerName String
+  nextActionAt DateTime
+  completedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([managerUserId, nextActionAt])
+  @@index([clientId, createdAt])
+}
+
+model PriceApprovalRequest {
+  id Int @id @default(autoincrement())
+  clientId Int
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  calculationId Int
+  calculation LeadCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  proposalId Int?
+  proposal CommercialProposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
+  managerUserId Int
+  managerName String
+  standardSalePrice Decimal @db.Decimal(12, 2)
+  currentSalePrice Decimal @db.Decimal(12, 2)
+  requestedSalePrice Decimal @db.Decimal(12, 2)
+  approvedSalePrice Decimal? @db.Decimal(12, 2)
+  snapshotHash String
+  reason String
+  comment String?
+  status String @default("PENDING")
+  reviewedAt DateTime?
+  reviewedByUserId Int?
+  reviewedByName String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, createdAt])
+  @@index([managerUserId, createdAt])
+  @@unique([calculationId, managerUserId, status])
+}
+
+model LeadConversion {
+  id Int @id @default(autoincrement())
+  clientId Int @unique
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  proposalId Int @unique
+  proposal CommercialProposal @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  orderId Int @unique
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  managerId Int?
+  managerName String
+  createdAt DateTime @default(now())
 }
 
 model ClientInteraction {
@@ -198,6 +358,7 @@ model Order {
   statusHistory        OrderStatusHistory[]
   calculations         OrderCalculation[]
   companyLedgerEntries CompanyLedgerEntry[]
+  leadConversion LeadConversion?
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -606,6 +767,7 @@ model CalculatorTariff {
   unit               String
   salePrice          Decimal  @db.Decimal(12, 2)
   internalPrice      Decimal  @db.Decimal(12, 2)
+  managerMinimumPrice Decimal @default(0) @db.Decimal(12, 2)
   defaultQuantity    Decimal  @default(0) @db.Decimal(12, 3)
   manualPriceAllowed Boolean  @default(false)
   active             Boolean  @default(true)

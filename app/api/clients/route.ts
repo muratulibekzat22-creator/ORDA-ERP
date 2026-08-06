@@ -11,6 +11,8 @@ export async function GET(request: Request) {
   const auth = await requirePermission("clients");
   if (auth.response) return auth.response;
   const params = new URL(request.url).searchParams;
+  const role = auth.session!.user.role as Role;
+  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const search = params.get("search")?.trim();
   const city = params.get("city")?.trim();
   const manager = params.get("manager")?.trim();
@@ -19,6 +21,7 @@ export async function GET(request: Request) {
   const page = Math.max(1, Number(params.get("page")) || 1);
   const limit = Math.min(100, Math.max(1, Number(params.get("limit")) || 20));
   const where: Prisma.ClientWhereInput = {
+    ...(role === Role.MANAGER ? { manager: auth.session!.user.name ?? "" } : {}),
     ...(params.get("active") === "false" ? { active: false } : { active: true }),
     ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }, { whatsapp: { contains: search } }, { city: { contains: search, mode: "insensitive" } }, { address: { contains: search, mode: "insensitive" } }] } : {}),
     ...(city ? { city } : {}), ...(manager ? { manager } : {}), ...(status ? { status } : {}), ...(source ? { source } : {}),
@@ -37,12 +40,18 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("clients");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role === Role.PARTNER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
-    const name = text(body.name, true), phone = text(body.phone, true), city = text(body.city, true), manager = text(body.manager, true), estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0);
-    if (!name || !phone || !city || !manager || estimatedAmount === null) return NextResponse.json({ error: "Заполните ФИО, телефон, город и менеджера" }, { status: 400 });
-    const client = await prisma.client.create({ data: { name, phone, whatsapp: text(body.whatsapp) ?? phone, city, address: text(body.address) ?? "", manager, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? "", source: text(body.source) ?? "Не указан", comment: text(body.comment) ?? "", status: text(body.status) ?? "Новый" } });
+    const phone = text(body.phone, true), requestText = text(body.comment) ?? text(body.estimateNotes), estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0);
+    if (!phone || !requestText || estimatedAmount === null) return NextResponse.json({ error: "Укажите телефон и краткое описание запроса" }, { status: 400 });
+    const name = text(body.name) ?? `WhatsApp ${phone.slice(-4)}`;
+    const manager = auth.session!.user.role === Role.MANAGER ? (auth.session!.user.name ?? "Менеджер") : (text(body.manager) ?? auth.session!.user.name ?? "Директор");
+    const client = await prisma.$transaction(async (tx) => {
+      const created = await tx.client.create({ data: { name, phone, whatsapp: text(body.whatsapp) ?? phone, city: text(body.city) ?? "Не указан", address: text(body.address) ?? "", manager, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? requestText, source: text(body.source) ?? "WhatsApp", comment: requestText, status: text(body.status) ?? "Новое обращение", nextContactAt: body.nextContactAt ? new Date(String(body.nextContactAt)) : null } });
+      await tx.leadStatusHistory.create({ data: { clientId: created.id, toStatus: created.status, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? manager, comment: "Обращение создано" } });
+      return created;
+    });
     return NextResponse.json(client, { status: 201 });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });

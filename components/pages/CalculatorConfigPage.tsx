@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Plus, Save, ShieldCheck } from "lucide-react";
 import { useSession } from "next-auth/react";
 
-type Item = { code: string; uiName: string; kind: string; unit: string; salePrice: number; internalPrice: number; defaultQuantity: number; manualPriceAllowed: boolean; active: boolean; sortOrder: number };
+type Item = { code: string; uiName: string; kind: string; unit: string; salePrice: number; managerMinimumPrice: number; internalPrice: number; defaultQuantity: number; manualPriceAllowed: boolean; active: boolean; sortOrder: number };
 
 export default function CalculatorConfigPage() {
   const { data: session } = useSession();
@@ -21,7 +21,7 @@ export default function CalculatorConfigPage() {
   }, []);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
   const change = <K extends keyof Item>(index: number, key: K, value: Item[K]) => setItems((current) => current.map((item, position) => position === index ? { ...item, [key]: value } : item));
-  const add = () => setItems((current) => [...current, { code: `NEW_ITEM_${Date.now()}`, uiName: "Новая позиция", kind: "OTHER_WORK", unit: "шт.", salePrice: 0, internalPrice: 0, defaultQuantity: 0, manualPriceAllowed: true, active: true, sortOrder: (current.at(-1)?.sortOrder ?? 0) + 10 }]);
+  const add = () => setItems((current) => [...current, { code: `NEW_ITEM_${Date.now()}`, uiName: "Новая позиция", kind: "OTHER_WORK", unit: "шт.", salePrice: 0, managerMinimumPrice: 0, internalPrice: 0, defaultQuantity: 0, manualPriceAllowed: true, active: true, sortOrder: (current.at(-1)?.sortOrder ?? 0) + 10 }]);
   async function save() {
     setSaving(true); setMessage("");
     try {
@@ -40,11 +40,12 @@ export default function CalculatorConfigPage() {
     {message && <p role="status" className="mt-4 rounded-xl bg-slate-900 p-4 text-slate-200">{message}</p>}
     <div className="mt-6 overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827]">
       <table className="min-w-[1100px] w-full text-left text-sm">
-        <thead className="bg-slate-900 text-slate-300"><tr>{["Название", "Единица", "Цена продажи", "Цена ЦЕХ", "По умолчанию", "Порядок", "Ручная цена", "Активна"].map((title) => <th key={title} className="p-3">{title}</th>)}</tr></thead>
+        <thead className="bg-slate-900 text-slate-300"><tr>{["Название", "Единица", "Цена продажи", "Минимум менеджера", "Цена ЦЕХ", "По умолчанию", "Порядок", "Ручная цена", "Активна"].map((title) => <th key={title} className="p-3">{title}</th>)}</tr></thead>
         <tbody>{items.map((item, index) => <tr key={item.code} className="border-t border-slate-800">
           <td className="p-2"><input aria-label={`Название ${index + 1}`} disabled={!canEdit} value={item.uiName} onChange={(e) => change(index, "uiName", e.target.value)} className="input min-w-48"/></td>
           <td className="p-2"><input aria-label={`Единица ${index + 1}`} disabled={!canEdit} value={item.unit} onChange={(e) => change(index, "unit", e.target.value)} className="input w-28"/></td>
           <td className="p-2"><input aria-label={`Цена продажи ${index + 1}`} type="number" min="0" disabled={!canEdit} value={item.salePrice} onChange={(e) => change(index, "salePrice", Number(e.target.value))} className="input w-36"/></td>
+          <td className="p-2"><input aria-label={`Минимальная цена менеджера ${index + 1}`} type="number" min="0" max={item.salePrice} disabled={!canEdit} value={item.managerMinimumPrice} onChange={(e) => change(index, "managerMinimumPrice", Number(e.target.value))} className="input w-36"/></td>
           <td className="p-2"><input aria-label={`Цена ЦЕХ ${index + 1}`} type="number" min="0" disabled={!canEdit} value={item.internalPrice} onChange={(e) => change(index, "internalPrice", Number(e.target.value))} className="input w-36"/></td>
           <td className="p-2"><input aria-label={`Количество по умолчанию ${index + 1}`} type="number" min="0" step="0.001" disabled={!canEdit} value={item.defaultQuantity} onChange={(e) => change(index, "defaultQuantity", Number(e.target.value))} className="input w-28"/></td>
           <td className="p-2"><input aria-label={`Порядок ${index + 1}`} type="number" disabled={!canEdit} value={item.sortOrder} onChange={(e) => change(index, "sortOrder", Number(e.target.value))} className="input w-24"/></td>

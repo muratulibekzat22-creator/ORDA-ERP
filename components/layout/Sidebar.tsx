@@ -42,7 +42,7 @@ const menu = [
     items: [
       {
         id: "clients",
-        title: "Клиенты",
+        title: "Заявки",
         icon: Users,
       },
       {

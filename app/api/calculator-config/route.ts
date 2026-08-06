@@ -35,11 +35,12 @@ export async function PATCH(request: Request) {
       const unit = String(item.unit ?? "").trim().slice(0, 30);
       const salePrice = Number(item.salePrice);
       const internalPrice = Number(item.internalPrice);
+      const managerMinimumPrice = Number(item.managerMinimumPrice);
       const defaultQuantity = Number(item.defaultQuantity ?? 0);
       const sortOrder = Number(item.sortOrder ?? index * 10);
-      if (!code || !uiName || !kind || !unit || ![salePrice, internalPrice, defaultQuantity, sortOrder].every(Number.isFinite) || salePrice < 0 || internalPrice < 0 || defaultQuantity < 0 || !Number.isInteger(sortOrder))
+      if (!code || !uiName || !kind || !unit || ![salePrice, managerMinimumPrice, internalPrice, defaultQuantity, sortOrder].every(Number.isFinite) || salePrice < 0 || managerMinimumPrice < 0 || managerMinimumPrice > salePrice || internalPrice < 0 || defaultQuantity < 0 || !Number.isInteger(sortOrder))
         throw new Error(`Проверьте позицию «${uiName || code || index + 1}»`);
-      return { code, uiName, kind, unit, salePrice, internalPrice, defaultQuantity, sortOrder, active: item.active !== false, manualPriceAllowed: item.manualPriceAllowed === true };
+      return { code, uiName, kind, unit, salePrice, managerMinimumPrice, internalPrice, defaultQuantity, sortOrder, active: item.active !== false, manualPriceAllowed: item.manualPriceAllowed === true };
     });
     if (new Set(items.map((item) => item.code)).size !== items.length)
       return NextResponse.json({ error: "Коды позиций не должны повторяться" }, { status: 400 });

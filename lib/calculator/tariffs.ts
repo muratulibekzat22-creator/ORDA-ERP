@@ -8,6 +8,7 @@ export type CalculatorTariffValue = {
   unit: string;
   salePrice: number;
   internalPrice: number;
+  managerMinimumPrice: number;
   defaultQuantity: number;
   manualPriceAllowed: boolean;
   active: boolean;
@@ -33,6 +34,7 @@ export async function getCalculatorTariffs(activeOnly = true): Promise<Calculato
     ...row,
     salePrice: number(row.salePrice),
     internalPrice: number(row.internalPrice),
+    managerMinimumPrice: number(row.managerMinimumPrice),
     defaultQuantity: number(row.defaultQuantity),
   }));
 }
@@ -42,6 +44,7 @@ export function redactTariffs(tariffs: CalculatorTariffValue[], role: Role) {
   return tariffs.map((tariff) => {
     const result: Partial<CalculatorTariffValue> = { ...tariff };
     delete result.internalPrice;
+    delete result.managerMinimumPrice;
     return result;
   });
 }
