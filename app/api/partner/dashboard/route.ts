@@ -1,5 +1,74 @@
-import { NextResponse } from "next/server";
 import { Role } from "@prisma/client";
+import { NextResponse } from "next/server";
+
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
-export async function GET() { const auth=await requirePermission("partners"); if(auth.response)return auth.response; if(auth.session!.user.role!==Role.PARTNER)return NextResponse.json({error:"Partner access only"},{status:403}); const partner=await prisma.partner.findUnique({where:{userId:Number(auth.session!.user.id)},select:{id:true}}); if(!partner)return NextResponse.json({error:"Partner profile not found"},{status:404}); const orders=await prisma.order.findMany({where:{partnerId:partner.id},select:{id:true,status:true,partnerPrice:true,partnerPaid:true,partnerBalance:true,updatedAt:true,payments:{where:{type:"PARTNER_PAYOUT"},select:{id:true,amount:true,method:true,comment:true,operationDate:true,order:{select:{number:true}}},orderBy:{operationDate:"desc"},take:5}}}); const totals=orders.reduce((a,o)=>({price:a.price+Number(o.partnerPrice),paid:a.paid+Number(o.partnerPaid),balance:a.balance+Number(o.partnerBalance)}),{price:0,paid:0,balance:0}); return NextResponse.json({activeOrders:orders.filter(o=>o.status!=="Сдано").length,totals,statuses:orders.reduce<Record<string,number>>((a,o)=>(a[o.status]=(a[o.status]??0)+1,a),{}),recentPayments:orders.flatMap(o=>o.payments).sort((a,b)=>b.operationDate.getTime()-a.operationDate.getTime()).slice(0,5)}); }
+
+export async function GET() {
+  const auth = await requirePermission("partners");
+  if (auth.response) return auth.response;
+  if (auth.session!.user.role !== Role.PARTNER) {
+    return NextResponse.json(
+      { error: "Раздел доступен только партнёрам" },
+      { status: 403 },
+    );
+  }
+
+  const partner = await prisma.partner.findUnique({
+    where: { userId: Number(auth.session!.user.id) },
+    select: { id: true },
+  });
+  if (!partner) {
+    return NextResponse.json(
+      { error: "Профиль партнёра не найден" },
+      { status: 404 },
+    );
+  }
+
+  const [orders, recentPayments] = await Promise.all([
+    prisma.order.findMany({
+      where: { partnerId: partner.id },
+      select: {
+        status: true,
+        partnerPrice: true,
+        partnerPaid: true,
+        partnerBalance: true,
+      },
+    }),
+    prisma.payment.findMany({
+      where: {
+        type: "PARTNER_PAYOUT",
+        order: { partnerId: partner.id },
+      },
+      select: {
+        id: true,
+        amount: true,
+        method: true,
+        comment: true,
+        operationDate: true,
+        order: { select: { number: true } },
+      },
+      orderBy: { operationDate: "desc" },
+      take: 5,
+    }),
+  ]);
+
+  const totals = orders.reduce(
+    (accumulator, order) => ({
+      price: accumulator.price + Number(order.partnerPrice),
+      paid: accumulator.paid + Number(order.partnerPaid),
+      balance: accumulator.balance + Number(order.partnerBalance),
+    }),
+    { price: 0, paid: 0, balance: 0 },
+  );
+
+  return NextResponse.json({
+    activeOrders: orders.filter((order) => order.status !== "Сдано").length,
+    totals,
+    statuses: orders.reduce<Record<string, number>>((accumulator, order) => {
+      accumulator[order.status] = (accumulator[order.status] ?? 0) + 1;
+      return accumulator;
+    }, {}),
+    recentPayments,
+  });
+}

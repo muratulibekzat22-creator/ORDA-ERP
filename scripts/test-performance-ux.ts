@@ -19,4 +19,18 @@ assert.match(listQuery, /select:/);
 
 const partners = readFileSync("components/pages/PartnersPage.tsx", "utf8");
 assert.equal((partners.match(/fetch\("\/api\/partners"\)/g) ?? []).length, 1);
+
+const partnerDashboard = readFileSync(
+  "app/api/partner/dashboard/route.ts",
+  "utf8",
+);
+assert.match(partnerDashboard, /prisma\.payment\.findMany/);
+assert.match(partnerDashboard, /take:\s*5/);
+assert.doesNotMatch(partnerDashboard, /payments:\s*\{/);
+
+const partnerProfile = readFileSync("app/api/partner/profile/route.ts", "utf8");
+assert.doesNotMatch(
+  `${partnerDashboard}\n${partnerProfile}`,
+  /Partner access only|Partner profile not found|Name is required/,
+);
 console.log("performance UX checks passed");
