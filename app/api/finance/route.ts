@@ -3,6 +3,7 @@ import { Role } from "@prisma/client";
 
 import { createRequestHash, idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { logRequestFailure } from "@/lib/observability";
 import { requirePermission } from "@/lib/server-auth";
 import { createFinanceOperation, financeOperationTypes, getFinanceDashboard, type AdjustmentDirection, type FinanceOperationType } from "@/lib/services/payment.service";
 
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json(data);
   } catch (error) {
-    console.error("Finance GET failed", error);
+    logRequestFailure("finance.read_failed", request, error);
     return NextResponse.json({ error: "Unable to load finance data" }, { status: 500 });
   }
 }
@@ -105,7 +106,7 @@ export async function POST(request: Request) {
     const mapped = operationError(error);
     if (mapped) return mapped[0].includes("Idempotency") ? idempotencyConflict() : NextResponse.json({ error: mapped[0] }, { status: mapped[1] });
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-    console.error("Finance POST failed", error);
+    logRequestFailure("finance.mutation_failed", request, error);
     return NextResponse.json({ error: "Unable to create finance operation" }, { status: 500 });
   }
 }

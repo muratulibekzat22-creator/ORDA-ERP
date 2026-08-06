@@ -2,6 +2,7 @@ import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { requirePermission } from "@/lib/server-auth";
+import { logRequestFailure } from "@/lib/observability";
 import { CLIENT_ATTACHMENT_TYPES, listClientAttachments, MAX_CLIENT_ATTACHMENT_SIZE, uploadClientAttachment } from "@/lib/services/client-attachment.service";
 
 const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof Error && error.message === "FORBIDDEN") return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     if (error instanceof Error && error.message === "INVALID_FILE_TYPE") return NextResponse.json({ error: "Содержимое файла не соответствует его типу" }, { status: 400 });
+    logRequestFailure("blob.client_upload_failed", request, error);
     return NextResponse.json({ error: "Не удалось загрузить файл" }, { status: 500 });
   }
 }

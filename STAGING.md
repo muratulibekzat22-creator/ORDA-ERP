@@ -55,6 +55,8 @@ npx vercel deploy --target=staging --logs
 
 Run migrations and the first-director seed once from a controlled CI job or terminal that uses the staging environment variables. Do not make migrations part of the concurrent Vercel build step. Vercel runs `vercel-build`, which generates Prisma Client and builds the Next.js app.
 
+The bootstrap command creates a director only when no director exists and never resets an existing password. After the first login and mandatory password change, remove `FIRST_DIRECTOR_EMAIL`, `FIRST_DIRECTOR_PASSWORD`, and `FIRST_DIRECTOR_NAME` from Vercel Production and Preview.
+
 ## Verify the deployment
 
 Replace `STAGING_URL` with the generated Vercel URL:

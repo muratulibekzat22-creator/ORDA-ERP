@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
+import { productionLog } from "@/lib/observability";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_MINUTES = 15;
@@ -27,11 +28,13 @@ export const authOptions: NextAuthOptions = {
         const windowStart = new Date(Date.now() - LOCK_MINUTES * 60_000);
         const recentIpFailures = ipHash ? await prisma.authAuditEvent.count({ where: { ipHash, success: false, createdAt: { gte: windowStart } } }) : 0;
         if (recentIpFailures >= 20) {
+          productionLog("warn", "authentication.ip_rate_limit", { requestId: request.headers?.["x-request-id"] as string | undefined, route: "/api/auth/callback/credentials", method: "POST", reason: "IP_RATE_LIMIT" });
           await prisma.authAuditEvent.create({ data: { email, success: false, reason: "IP_RATE_LIMIT", ipHash } }).catch(() => undefined);
           return null;
         }
         const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
         if (user?.lockedUntil && user.lockedUntil > new Date()) {
+          productionLog("warn", "authentication.account_locked", { requestId: request.headers?.["x-request-id"] as string | undefined, route: "/api/auth/callback/credentials", method: "POST", reason: "ACCOUNT_LOCKED" });
           await bcrypt.compare(credentials.password, user.password);
           await prisma.authAuditEvent.create({ data: { userId: user.id, email, success: false, reason: "ACCOUNT_LOCKED", ipHash } }).catch(() => undefined);
           return null;

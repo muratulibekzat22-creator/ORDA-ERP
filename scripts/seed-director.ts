@@ -14,22 +14,21 @@ async function main() {
     throw new Error("Set FIRST_DIRECTOR_EMAIL and FIRST_DIRECTOR_PASSWORD");
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const existingDirector = await prisma.user.findFirst({ where: { role: Role.DIRECTOR }, select: { id: true } });
+  if (existingDirector) {
+    console.log("Director bootstrap skipped: an existing director account was found");
+    return;
+  }
 
-  await prisma.user.upsert({
-    where: { email },
-    update: {
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.user.create({
+    data: {
       name,
+      email: email.trim().toLowerCase(),
       password: passwordHash,
       role: Role.DIRECTOR,
       active: true,
-    },
-    create: {
-      name,
-      email,
-      password: passwordHash,
-      role: Role.DIRECTOR,
-      active: true,
+      mustChangePassword: true,
     },
   });
 }

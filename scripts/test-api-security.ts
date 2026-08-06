@@ -11,10 +11,10 @@ import { del } from "@vercel/blob";
 import { Agent } from "undici";
 
 const testEnvironmentPath = path.join(process.cwd(), ".env.test.local");
-const rawTestEnvironment = fs.readFileSync(testEnvironmentPath, "utf8").trim();
-const testEnvironment = dotenv.config({ path: testEnvironmentPath, quiet: true }).parsed;
-const testDatabaseUrl = testEnvironment?.TEST_DATABASE_URL ?? (rawTestEnvironment.startsWith("postgresql://") ? rawTestEnvironment : undefined);
-if (!testDatabaseUrl) throw new Error("TEST_DATABASE_URL is missing from .env.test.local");
+const rawTestEnvironment = fs.existsSync(testEnvironmentPath) ? fs.readFileSync(testEnvironmentPath, "utf8").trim() : "";
+const testEnvironment = fs.existsSync(testEnvironmentPath) ? dotenv.config({ path: testEnvironmentPath, quiet: true }).parsed : undefined;
+const testDatabaseUrl = process.env.TEST_DATABASE_URL ?? testEnvironment?.TEST_DATABASE_URL ?? (rawTestEnvironment.startsWith("postgresql://") ? rawTestEnvironment : undefined);
+if (!testDatabaseUrl) throw new Error("TEST_DATABASE_URL is missing from the environment and .env.test.local");
 process.env.DATABASE_URL = testDatabaseUrl;
 process.env.NEXTAUTH_URL = "http://127.0.0.1:3219";
 process.env.NEXTAUTH_SECRET ||= crypto.randomBytes(32).toString("hex");
@@ -313,6 +313,7 @@ async function main() {
     assert(health.status === 200 && healthPayload.status === "ok" && healthPayload.database === "ok", "health endpoint is unavailable");
     assert(!("databaseHost" in healthPayload) && !("environment" in healthPayload) && !("envPresent" in healthPayload), "health endpoint exposes infrastructure details");
     assert(health.headers.get("x-content-type-options") === "nosniff" && health.headers.get("x-frame-options") === "DENY" && Boolean(health.headers.get("content-security-policy")), "security headers are missing");
+    assert(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(health.headers.get("x-request-id") ?? ""), "safe request correlation id is missing");
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const failedCookie = await loginAttempt(lockoutUser.email, `${password}-wrong`);

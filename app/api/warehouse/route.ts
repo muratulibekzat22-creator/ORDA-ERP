@@ -2,6 +2,7 @@ import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
+import { logRequestFailure, productionLog } from "@/lib/observability";
 import { requirePermission } from "@/lib/server-auth";
 import { createMaterialCommand, createWarehouseOperation, deleteMaterialCommand, getWarehouse, updateMaterialCommand, WAREHOUSE_OPERATION_TYPES, WarehouseError, type WarehouseActor, type WarehouseOperationType } from "@/lib/services/warehouse.service";
 
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
   const movementType = params.get("type") || undefined;
   if (!page || !pageSize || pageSize > 100 || orderId === null || materialId === null || (movementType && !WAREHOUSE_OPERATION_TYPES.includes(movementType as WarehouseOperationType))) return NextResponse.json({ error: "Некорректные параметры" }, { status: 400 });
   try { return NextResponse.json(await getWarehouse(actor(auth.session!), { page, pageSize, orderId, materialId, movementType })); }
-  catch (error) { const response = errorResponse(error); if (response) return response; console.error(error); return NextResponse.json({ error: "Ошибка получения склада" }, { status: 500 }); }
+  catch (error) { const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.read_failed", request, error); return NextResponse.json({ error: "Ошибка получения склада" }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
     const payload = { type, materialId, orderId, quantity, price, supplier, comment, operationAt: operationAt?.toISOString(), expiresAt: expiresAt?.toISOString() };
     const result = await createWarehouseOperation({ data: { type, materialId, orderId, quantity, price, supplier, comment, operationAt, expiresAt }, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });
     return NextResponse.json(result.result, { status: result.replayed ? 200 : 201 });
-  } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); const response = errorResponse(error); if (response) return response; console.error(error); return NextResponse.json({ error: "Ошибка складской операции" }, { status: 500 }); }
+  } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); const response = errorResponse(error); if (response) { if (error instanceof WarehouseError && error.code.includes("INSUFFICIENT")) productionLog("warn", "warehouse.conflict", { requestId: request.headers.get("x-request-id") ?? undefined, route: "/api/warehouse", method: "POST", reason: error.code }); return response; } logRequestFailure("warehouse.mutation_failed", request, error); return NextResponse.json({ error: "Ошибка складской операции" }, { status: 500 }); }
 }
 
 export async function PATCH(request: Request) {
@@ -85,7 +86,7 @@ export async function PATCH(request: Request) {
     if (!id || !Object.keys(data).length) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
     const payload = { id, ...data }; const result = await updateMaterialCommand({ id, data, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });
     return NextResponse.json(result.result);
-  } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); const response = errorResponse(error); if (response) return response; console.error(error); return NextResponse.json({ error: "Ошибка обновления материала" }, { status: 500 }); }
+  } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.material_update_failed", request, error); return NextResponse.json({ error: "Ошибка обновления материала" }, { status: 500 }); }
 }
 
 export async function DELETE(request: Request) {
@@ -93,5 +94,5 @@ export async function DELETE(request: Request) {
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   const id = positiveId(new URL(request.url).searchParams.get("id")); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try { const payload = { id }; const result = await deleteMaterialCommand({ id, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) }); return NextResponse.json(result.result); }
-  catch (error) { const response = errorResponse(error); if (response) return response; console.error(error); return NextResponse.json({ error: "Ошибка удаления материала" }, { status: 500 }); }
+  catch (error) { const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.material_delete_failed", request, error); return NextResponse.json({ error: "Ошибка удаления материала" }, { status: 500 }); }
 }

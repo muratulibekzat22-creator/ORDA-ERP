@@ -2,6 +2,7 @@ import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
+import { logRequestFailure } from "@/lib/observability";
 import { requirePermission } from "@/lib/server-auth";
 import { ALLOWED_ATTACHMENT_TYPES, deleteAttachment, listAttachments, MAX_ATTACHMENT_SIZE, uploadAttachment, type AttachmentActor } from "@/lib/services/attachment.service";
 
@@ -16,7 +17,8 @@ export async function GET(request: Request) {
   try {
     const attachments = await listAttachments(orderId, actor(auth.session!));
     return attachments ? NextResponse.json(attachments) : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
-  } catch {
+  } catch (error) {
+    logRequestFailure("blob.list_failed", request, error);
     return NextResponse.json({ error: "Ошибка получения файлов" }, { status: 500 });
   }
 }
@@ -44,6 +46,7 @@ export async function POST(request: Request) {
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT") return idempotencyConflict();
     if (error instanceof Error && error.message === "INVALID_DOCUMENT") return NextResponse.json({ error: "Документ не принадлежит заказу" }, { status: 400 });
     if (error instanceof Error && error.message === "INVALID_FILE_TYPE") return NextResponse.json({ error: "Содержимое файла не соответствует разрешённому типу" }, { status: 400 });
+    logRequestFailure("blob.upload_failed", request, error);
     return NextResponse.json({ error: "Ошибка загрузки файла" }, { status: 500 });
   }
 }
@@ -58,6 +61,7 @@ export async function DELETE(request: Request) {
     return deleted ? NextResponse.json(deleted) : NextResponse.json({ error: "Файл не найден" }, { status: 404 });
   } catch (error) {
     if (error instanceof Error && error.message === "FORBIDDEN") return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+    logRequestFailure("blob.delete_failed", request, error);
     return NextResponse.json({ error: "Ошибка удаления файла" }, { status: 500 });
   }
 }

@@ -2,6 +2,25 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
+  const incomingRequestId = request.headers.get("x-request-id") ?? "";
+  const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(incomingRequestId)
+    ? incomingRequestId
+    : crypto.randomUUID();
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-request-id", requestId);
+  const next = () => {
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
+  const redirect = (url: URL) => {
+    const response = NextResponse.redirect(url);
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
+
+  if (request.nextUrl.pathname.startsWith("/api/")) return next();
+
   const token = await getToken({
     req: request,
     secret: process.env.NEXTAUTH_SECRET,
@@ -10,12 +29,12 @@ export async function proxy(request: NextRequest) {
   if (!token) {
     const url = new URL("/login", request.url);
     url.searchParams.set("callbackUrl", request.nextUrl.pathname);
-    return NextResponse.redirect(url);
+    return redirect(url);
   }
 
-  if (token.invalid) return NextResponse.redirect(new URL("/login", request.url));
+  if (token.invalid) return redirect(new URL("/login", request.url));
   if (token.mustChangePassword && request.nextUrl.pathname !== "/change-password")
-    return NextResponse.redirect(new URL("/change-password", request.url));
+    return redirect(new URL("/change-password", request.url));
 
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
@@ -70,7 +89,7 @@ export async function proxy(request: NextRequest) {
     role !== "DIRECTOR" &&
     role !== "ACCOUNTANT"
   )
-    return NextResponse.redirect(new URL("/", request.url));
+    return redirect(new URL("/", request.url));
   const required =
     firstSegment === "calculator"
       ? "orders"
@@ -87,13 +106,13 @@ export async function proxy(request: NextRequest) {
     !allowed.includes("*") &&
     !allowed.includes(required)
   )
-    return NextResponse.redirect(
+    return redirect(
       new URL(role === "PARTNER" ? "/partner" : "/", request.url),
     );
 
-  return NextResponse.next();
+  return next();
 }
 
 export const config = {
-  matcher: ["/((?!api|login|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|_next/static|_next/image|favicon.ico).*)"],
 };
