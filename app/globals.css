@@ -124,12 +124,30 @@
 
   html {
     @apply font-sans;
+    color-scheme: dark;
+    scrollbar-gutter: stable;
   }
 
   body {
     @apply bg-background text-foreground;
     overflow-x: hidden;
+    min-width: 320px;
   }
+
+  ::selection {
+    background: rgb(37 99 235 / 45%);
+    color: white;
+  }
+
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
+
+  textarea { resize: vertical; }
+  :disabled { cursor: not-allowed; }
+  [role="alert"] { overflow-wrap: anywhere; }
 
   button,
   a,
@@ -146,6 +164,23 @@
   select,
   input[type="checkbox"] {
     touch-action: manipulation;
+  }
+}
+
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px; }
+  [data-scroll-region] {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

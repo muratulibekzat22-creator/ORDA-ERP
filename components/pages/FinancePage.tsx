@@ -21,10 +21,10 @@ export default function FinancePage() {
     ];
   
     return (
-      <section className="flex-1 p-8">
-        <div className="mb-8 flex items-center justify-between">
+      <section className="flex-1 p-4 sm:p-6 md:p-8">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-white">
+            <h1 className="text-2xl font-bold text-white sm:text-3xl">
               Финансы
             </h1>
   
@@ -33,7 +33,7 @@ export default function FinancePage() {
             </p>
           </div>
   
-          <button className="rounded-xl bg-blue-600 px-5 py-3 transition hover:bg-blue-700">
+          <button type="button" className="min-h-11 w-full rounded-xl bg-blue-600 px-5 py-3 transition hover:bg-blue-700 sm:w-auto">
             + Добавить операцию
           </button>
         </div>
@@ -61,14 +61,14 @@ export default function FinancePage() {
           </div>
         </div>
   
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
-          <table className="w-full">
+        <div data-scroll-region className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900">
+          <table className="w-full min-w-[680px]">
             <thead>
               <tr className="border-b border-slate-700 text-left text-slate-400">
-                <th className="pb-4">Дата</th>
-                <th className="pb-4">Тип</th>
-                <th className="pb-4">Описание</th>
-                <th className="pb-4">Сумма</th>
+                <th scope="col" className="p-4">Дата</th>
+                <th scope="col" className="p-4">Тип</th>
+                <th scope="col" className="p-4">Описание</th>
+                <th scope="col" className="p-4">Сумма</th>
               </tr>
             </thead>
   
@@ -78,14 +78,14 @@ export default function FinancePage() {
                   key={index}
                   className="border-b border-slate-800 hover:bg-slate-800/40"
                 >
-                  <td className="py-4">{item.date}</td>
-                  <td>{item.type}</td>
-                  <td>{item.description}</td>
+                  <td className="p-4">{item.date}</td>
+                  <td className="p-4">{item.type}</td>
+                  <td className="p-4">{item.description}</td>
                   <td
                     className={
                       item.type === "Доход"
-                        ? "font-semibold text-green-400"
-                        : "font-semibold text-red-400"
+                      ? "p-4 font-semibold text-green-400"
+                        : "p-4 font-semibold text-red-400"
                     }
                   >
                     {item.amount}

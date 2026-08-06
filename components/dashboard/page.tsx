@@ -122,22 +122,22 @@ export default function DashboardPage() {
   ].filter(Boolean) as Array<{ href: string; label: string; color: string }>;
 
   return (
-    <section className="space-y-8 p-8">
+    <section className="space-y-6 p-4 sm:p-6 md:space-y-8 md:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold text-white">
+          <h1 className="text-2xl font-bold text-white sm:text-3xl lg:text-4xl">
             Рабочий день ALTYN SAPA
           </h1>
           <p className="text-slate-400">
             Заказы, производство и ближайшие задачи в одном месте
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <button
             type="button"
             onClick={() => void loadDashboard()}
             disabled={loading}
-            className="flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 sm:w-auto"
           >
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />{" "}
             Обновить данные
@@ -145,7 +145,7 @@ export default function DashboardPage() {
         </div>
       </div>
       {error && (
-        <div className="flex items-center justify-between gap-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">
+        <div role="alert" className="flex flex-col gap-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200 sm:flex-row sm:items-center sm:justify-between">
           <span className="flex items-center gap-2">
             <AlertCircle size={20} />
             {error}
@@ -153,7 +153,7 @@ export default function DashboardPage() {
           <button
             type="button"
             onClick={() => void loadDashboard()}
-            className="rounded-lg bg-red-500/20 px-3 py-2 font-medium"
+            className="min-h-11 rounded-lg bg-red-500/20 px-3 py-2 font-medium"
           >
             Повторить
           </button>
@@ -248,7 +248,7 @@ export default function DashboardPage() {
       </div>
       {can("calendar") && <CalendarAgenda />}
       <section>
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-2xl font-bold text-white">Последние заказы</h2>
           <Link
             href="/orders"

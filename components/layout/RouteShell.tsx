@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   CalendarDays,
+  Calculator,
   ClipboardList,
   Factory,
   FileText,
@@ -28,6 +29,8 @@ const links = [
   ["/", "Главная", LayoutDashboard],
   ["/clients", "Заявки", Users],
   ["/orders", "Заказы", ClipboardList],
+  ["/calculator", "Калькулятор", Calculator],
+  ["/documents", "Документы и КП", FileText],
   ["/partners", "Цех", Handshake],
   ["/production", "Производство", Factory],
   ["/warehouse", "Склад", Warehouse],
@@ -48,6 +51,8 @@ export default function RouteShell({
   const permissionByHref: Partial<Record<string, Permission>> = {
     "/clients": "clients",
     "/orders": "orders",
+    "/calculator": "orders",
+    "/documents": "documents",
     "/partners": "partners",
     "/production": "production",
     "/warehouse": "warehouse",
@@ -142,17 +147,6 @@ export default function RouteShell({
               >
                 <LockKeyhole size={20} />
                 Личные финансы
-              </Link>
-            )}
-            {role && hasDefaultPermission(role, "orders") && (
-              <Link
-                href="/calculator"
-                onClick={() => setOpen(false)}
-                aria-current={active("/calculator") ? "page" : undefined}
-                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/calculator") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
-              >
-                <FileText size={20} />
-                Калькулятор
               </Link>
             )}
             {session?.user.role === "DIRECTOR" && (
