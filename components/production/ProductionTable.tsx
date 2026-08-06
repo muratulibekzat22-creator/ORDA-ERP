@@ -55,7 +55,33 @@ export default function ProductionTable({
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-700 bg-[#101827]">
 
-      <table className="w-full">
+      <div className="space-y-3 p-3 md:hidden">
+        {productions.map((item) => (
+          <article key={item.id} className="rounded-xl border border-slate-700 bg-slate-900 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs text-slate-500">Заказ {item.order.number}</p>
+                <h2 className="mt-1 break-words font-semibold text-white">{item.order.client.name}</h2>
+              </div>
+              <span className={`shrink-0 rounded-lg px-2 py-1 text-xs text-white ${stageColor(item.stage)}`}>
+                {item.stage}
+              </span>
+            </div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800" aria-label={`Готовность ${item.percent}%`}>
+              <div className="h-full rounded-full bg-yellow-400" style={{ width: `${Math.min(100, Math.max(0, item.percent))}%` }} />
+            </div>
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-slate-400">{item.master || "Мастер не назначен"}</span>
+              <strong className="text-yellow-300">{item.percent}%</strong>
+            </div>
+            <Link href={`/orders/${item.order.id}`} className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-blue-600 px-4 font-semibold text-white hover:bg-blue-500">
+              Открыть заказ
+            </Link>
+          </article>
+        ))}
+      </div>
+
+      <table className="hidden w-full md:table">
 
         <thead className="bg-slate-900">
 

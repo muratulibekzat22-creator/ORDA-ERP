@@ -79,6 +79,12 @@ export default function RouteShell({
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
   }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previous; };
+  }, [open]);
   if (standalone) return children;
   const active = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);

@@ -1,13 +1,16 @@
 "use client";
 
-import { Building2, Clock3, LogOut, Menu, UserCircle } from "lucide-react";
+import { ArrowLeft, Building2, Clock3, LogOut, Menu, UserCircle } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { roleNames, type Role } from "@/lib/roles";
 
 export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
   const { data: session } = useSession();
+  const pathname = usePathname();
+  const router = useRouter();
   const [time, setTime] = useState("");
 
   useEffect(() => {
@@ -23,7 +26,8 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-[#0f172a]/95 px-3 py-2 backdrop-blur md:px-6">
       <div className="flex min-w-0 items-center gap-3">
         <button type="button" aria-label="Открыть меню" onClick={onOpenMenu} className="grid size-11 shrink-0 place-items-center rounded-xl border border-slate-700 text-white hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 lg:hidden"><Menu /></button>
-        <div className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2">
+        {pathname !== "/" && <button type="button" aria-label="Назад" onClick={() => router.back()} className="grid size-11 shrink-0 place-items-center rounded-xl border border-slate-700 text-white hover:bg-slate-800 lg:hidden"><ArrowLeft size={20}/></button>}
+        <div className="hidden min-w-0 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 sm:flex">
           <Building2 size={20} className="shrink-0 text-yellow-400" />
           <div className="min-w-0"><p className="hidden text-xs text-slate-400 sm:block">Организация</p><span className="block truncate text-sm font-semibold text-white sm:text-base">ALTYN SAPA</span></div>
         </div>
