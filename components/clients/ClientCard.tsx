@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
+  CheckCircle2,
   Download,
   ExternalLink,
   File,
@@ -56,6 +57,10 @@ type ClientDetail = {
   source: string;
   manager: string;
   status: string;
+  stage: string;
+  lostReason?: string | null;
+  nextActions: Array<{ id: number; nextActionType: string; nextActionAt: string; nextActionComment?: string | null; completedAt?: string | null; resultComment?: string | null }>;
+  leadStatusHistory: Array<{ id: number; fromStage?: string | null; toStage?: string | null; authorName: string; comment?: string | null; createdAt: string }>;
   estimateNotes: string;
   estimatedAmount: string;
   createdAt: string;
@@ -131,8 +136,6 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           city: client.city,
           address: client.address,
           source: client.source,
-          manager: client.manager,
-          status: client.status,
           estimateNotes: client.estimateNotes,
           estimatedAmount: client.estimatedAmount,
         }),
@@ -298,6 +301,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           {success}
         </p>
       )}
+      <LeadWorkflow client={client} saving={saving} setSaving={setSaving} setError={setError} onSaved={load} />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <div className="space-y-5">
           <Card title="Контакты и заявка" icon={<UserRound size={20} />}>
@@ -353,28 +357,12 @@ export default function ClientCard({ clientId }: { clientId: number }) {
               <Field label="Менеджер">
                 <input
                   value={client.manager}
-                  onChange={(e) => update("manager", e.target.value)}
+                  disabled
                   className={inputClass}
                 />
               </Field>
               <Field label="Статус">
-                <select
-                  value={client.status}
-                  onChange={(e) => update("status", e.target.value)}
-                  className={inputClass}
-                >
-                  {[
-                    "Новый",
-                    "В работе",
-                    "Ждёт КП",
-                    "Замер назначен",
-                    "Не отвечает",
-                    "Сделка",
-                    "Завершено",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
+                <input value={client.stage} disabled className={inputClass} />
               </Field>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
@@ -666,4 +654,29 @@ function Empty({ text }: { text: string }) {
       {text}
     </p>
   );
+}
+
+const stageOptions = ["NEW", "QUALIFIED", "CALCULATION_READY", "PROPOSAL_SENT", "FOLLOW_UP", "MEASUREMENT_SCHEDULED", "MEASUREMENT_COMPLETED", "NEGOTIATION", "WON", "LOST"];
+const stageNames: Record<string, string> = { NEW: "Новое обращение", QUALIFIED: "Квалифицирован", CALCULATION_READY: "Расчёт готов", PROPOSAL_SENT: "КП отправлено", FOLLOW_UP: "Повторный контакт", MEASUREMENT_SCHEDULED: "Замер назначен", MEASUREMENT_COMPLETED: "Замер проведён", NEGOTIATION: "Согласование", WON: "Выиграно", LOST: "Проиграно" };
+const actionOptions = [["CALL", "Позвонить"], ["WHATSAPP", "Написать WhatsApp"], ["FOLLOW_UP", "Повторный контакт"], ["MEASUREMENT", "Замер"], ["MEETING", "Встреча"], ["CALCULATION", "Подготовить расчёт"], ["PROPOSAL", "Отправить КП"], ["OTHER", "Другое"]];
+const lostOptions = [["EXPENSIVE", "Дорого"], ["NO_RESPONSE", "Не отвечает"], ["COMPETITOR", "Выбрал конкурента"], ["POSTPONED", "Отложил"], ["NO_BUDGET", "Нет бюджета"], ["NOT_RELEVANT", "Неактуально"], ["LOCATION", "Регион/локация"], ["TIMING", "Не подходит срок"], ["OTHER", "Другое"]];
+
+function LeadWorkflow({ client, saving, setSaving, setError, onSaved }: { client: ClientDetail; saving: boolean; setSaving: (value: boolean) => void; setError: (value: string) => void; onSaved: () => Promise<void> }) {
+  const [stage, setStage] = useState(client.stage), [actionType, setActionType] = useState("CALL"), [actionAt, setActionAt] = useState(""), [comment, setComment] = useState(""), [lostReason, setLostReason] = useState(""), [lostComment, setLostComment] = useState("");
+  const activeAction = client.nextActions.find((action) => !action.completedAt), closed = stage === "WON" || stage === "LOST", requiresAction = !closed && stage !== "NEW";
+  async function changeStage() {
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/clients/${client.id}/stage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage, comment, lostReason: stage === "LOST" ? lostReason : undefined, lostComment: stage === "LOST" ? lostComment : undefined, nextAction: requiresAction && !activeAction ? { type: actionType, at: actionAt, comment } : undefined }) });
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Не удалось изменить стадию"); await onSaved();
+    } catch (error) { setError(error instanceof Error ? error.message : "Не удалось изменить стадию"); } finally { setSaving(false); }
+  }
+  async function completeAction() {
+    if (!activeAction) return; setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/clients/${client.id}/next-actions/${activeAction.id}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultComment: comment, nextAction: !closed ? { type: actionType, at: actionAt, comment } : undefined }) });
+      const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Не удалось завершить действие"); await onSaved();
+    } catch (error) { setError(error instanceof Error ? error.message : "Не удалось завершить действие"); } finally { setSaving(false); }
+  }
+  return <section className="rounded-2xl border border-blue-800/60 bg-blue-950/20 p-4 md:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold text-white">Воронка продаж и следующее действие</h2><p className="mt-1 text-sm text-slate-400">Открытая заявка после первичной обработки всегда должна иметь запланированное действие.</p></div>{activeAction && <span className={`rounded-full px-3 py-1 text-sm ${new Date(activeAction.nextActionAt) < new Date() ? "bg-red-950 text-red-300" : "bg-blue-950 text-blue-300"}`}>{actionOptions.find(([value]) => value === activeAction.nextActionType)?.[1]} · {date(activeAction.nextActionAt)}</span>}</div><div className="mt-5 grid gap-3 md:grid-cols-3"><Field label="Стадия"><select value={stage} onChange={(event) => setStage(event.target.value)} className={inputClass}>{stageOptions.map((value) => <option key={value} value={value}>{stageNames[value]}</option>)}</select></Field>{stage === "LOST" && <Field label="Причина проигрыша"><select value={lostReason} onChange={(event) => setLostReason(event.target.value)} className={inputClass}><option value="">Выберите причину</option>{lostOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}{stage === "LOST" && <Field label="Комментарий"><input value={lostComment} onChange={(event) => setLostComment(event.target.value)} className={inputClass} /></Field>}</div>{!closed && <div className="mt-4 grid gap-3 md:grid-cols-3"><Field label={activeAction ? "Следующее действие после выполнения" : "Следующее действие"}><select value={actionType} onChange={(event) => setActionType(event.target.value)} className={inputClass}>{actionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="Дата и время"><input type="datetime-local" value={actionAt} onChange={(event) => setActionAt(event.target.value)} className={inputClass} /></Field><Field label="Комментарий / результат"><input value={comment} onChange={(event) => setComment(event.target.value)} className={inputClass} /></Field></div>}<div className="mt-4 flex flex-wrap gap-3"><button onClick={() => void changeStage()} disabled={saving} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50">Сохранить стадию</button>{activeAction && <button onClick={() => void completeAction()} disabled={saving} className="flex min-h-11 items-center gap-2 rounded-xl bg-green-700 px-5 font-semibold text-white disabled:opacity-50"><CheckCircle2 size={18}/>Выполнено</button>}</div></section>;
 }

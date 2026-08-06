@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const calculationId = Number(body.calculationId), requested = Number(body.requestedSalePrice);
     if (!Number.isInteger(calculationId) || !Number.isFinite(requested) || requested <= 0) return NextResponse.json({ error: "Некорректная цена" }, { status: 400 });
     const calculation = await prisma.leadCalculation.findUnique({ where: { id: calculationId }, include: { client: true } });
-    if (!calculation || calculation.client.manager !== auth.session!.user.name) return NextResponse.json({ error: "Расчёт не найден" }, { status: 404 });
+    if (!calculation || calculation.client.managerUserId !== Number(auth.session!.user.id)) return NextResponse.json({ error: "Расчёт не найден" }, { status: 404 });
     if (requested >= Number(calculation.clientPrice)) return NextResponse.json({ error: "Согласование требуется только для снижения цены" }, { status: 400 });
     const created = await prisma.priceApprovalRequest.create({ data: { clientId: calculation.clientId, calculationId, proposalId: body.proposalId ? Number(body.proposalId) : null, managerUserId: Number(auth.session!.user.id), managerName: auth.session!.user.name ?? "Менеджер", standardSalePrice: calculation.baseClientPrice, currentSalePrice: calculation.clientPrice, requestedSalePrice: requested, snapshotHash: hash(calculation.snapshot), reason: String(body.reason ?? "Клиент сказал: дорого").slice(0, 300), comment: String(body.comment ?? "").slice(0, 1000) || null } });
     return NextResponse.json(created, { status: 201 });

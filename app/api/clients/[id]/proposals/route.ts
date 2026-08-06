@@ -12,8 +12,8 @@ export async function GET(_: Request, context: Context) {
   const role = auth.session!.user.role as Role;
   if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const clientId = await idOf(context); if (!clientId) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { manager: true } });
-  if (!client || (role === Role.MANAGER && client.manager !== auth.session!.user.name)) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { managerUserId: true } });
+  if (!client || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
   const rows = await prisma.commercialProposal.findMany({ where: { clientId }, include: { calculation: true, conversion: { select: { orderId: true } } }, orderBy: { createdAt: "desc" } });
   return NextResponse.json(rows.map((row) => proposalView(row as unknown as Record<string, unknown>)));
 }
@@ -25,7 +25,7 @@ export async function POST(request: Request, context: Context) {
   try {
     const body = await request.json() as Record<string, unknown>, calculationId = Number(body.calculationId);
     const [client, calculation, settings] = await Promise.all([prisma.client.findUnique({ where: { id: clientId } }), prisma.leadCalculation.findFirst({ where: { id: calculationId, clientId } }), prisma.companySettings.findUnique({ where: { id: 1 } })]);
-    if (!client || !calculation || (role === Role.MANAGER && client.manager !== auth.session!.user.name)) return NextResponse.json({ error: "Заявка или расчёт не найдены" }, { status: 404 });
+    if (!client || !calculation || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка или расчёт не найдены" }, { status: 404 });
     const now = new Date(), validUntil = new Date(now.getTime() + Math.min(90, Math.max(1, Number(body.validDays) || 14)) * 86400000);
     const previous = body.previousProposalId ? await prisma.commercialProposal.findFirst({ where: { id: Number(body.previousProposalId), clientId } }) : null;
     const rootNumber = previous?.rootNumber ?? previous?.number ?? `КП-${now.getFullYear()}-${now.getTime().toString(36).toUpperCase()}`;

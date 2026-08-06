@@ -15,6 +15,8 @@ export async function GET(_: Request, context: Context) {
   const id = await clientId(context); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const role = auth.session!.user.role as Role;
   if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const client = await prisma.client.findUnique({ where: { id }, select: { managerUserId: true } });
+  if (!client || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
   const values = await prisma.leadCalculation.findMany({ where: { clientId: id }, include: { adjustments: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } });
   return NextResponse.json(values.map((value) => redacted(value as unknown as Record<string, unknown>, role)));
 }
@@ -26,7 +28,7 @@ export async function POST(request: Request, context: Context) {
   try {
     const body = await request.json() as Record<string, unknown>;
     if ("internalCost" in body || "workshopCost" in body) return NextResponse.json({ error: "Внутренние цены недоступны" }, { status: 403 });
-    const client = await prisma.client.findUnique({ where: { id }, select: { id: true } }); if (!client) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+    const client = await prisma.client.findUnique({ where: { id }, select: { id: true, managerUserId: true } }); if (!client || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
     const tariffs = await getCalculatorTariffs(), byCode = tariffMap(tariffs);
     const rates = Object.fromEntries(Object.entries(MATERIAL_CODES).map(([name, code]) => { const tariff = byCode.get(code); if (!tariff) throw new Error("Тариф материала не настроен"); return [name, { workshopRate: tariff.internalPrice, saleRate: tariff.salePrice }]; })) as StairRates;
     const lines: CalculationLineInput[] = (Array.isArray(body.lines) ? body.lines as Array<Record<string, unknown>> : []).map((line) => { const tariff = typeof line.code === "string" ? byCode.get(line.code) : undefined; if (!tariff) throw new Error("Позиция калькулятора не найдена"); return { code: tariff.code, kind: tariff.kind as CalculationLineInput["kind"], name: tariff.uiName, quantity: Number(line.quantity ?? tariff.defaultQuantity), unit: tariff.unit, unitCost: tariff.internalPrice, unitSale: tariff.manualPriceAllowed && line.unitSale !== undefined ? Number(line.unitSale) : tariff.salePrice, comment: typeof line.comment === "string" ? line.comment.slice(0, 500) : undefined, enabled: line.enabled !== false }; });

@@ -307,6 +307,7 @@ async function main() {
     const manager = await prisma.user.create({
       data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: hash, role: Role.MANAGER },
     });
+    await prisma.client.update({ where: { id: client.id }, data: { managerUserId: manager.id } });
     const lockoutUser = await prisma.user.create({
       data: { name: `${tag}-lockout`, email: `${tag}-lockout@test.local`, password: hash, role: Role.MANAGER },
     });
@@ -566,9 +567,14 @@ async function main() {
     console.log("installer and production API security checks passed");
 
     const managerCookie = await session(manager.email);
+    const otherManagerCookie = await session(lockoutUser.email);
     const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ code: "GLASS_RAILING", kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
     const leadOrderCountBefore = await prisma.order.count();
     const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
+    await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie);
+    await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment: "IDOR" }) });
+    await expectStatus(`/api/clients/${lead.id}`, 400, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ managerUserId: lockoutUser.id, stage: "WON", lostByUserId: lockoutUser.id }) });
+    await expectStatus("/api/clients", 403, firstCookie);
     assert(await prisma.order.count() === leadOrderCountBefore, "creating an inquiry created an order");
     const leadCalculation = await (await expectStatus(`/api/clients/${lead.id}/calculations`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("internalCost" in leadCalculation) && !JSON.stringify(leadCalculation).includes("workshopCost"), "lead calculation leaked internal prices");
@@ -591,6 +597,7 @@ async function main() {
     const revisedProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: approvedCalculation.id, previousProposalId: leadProposal.id }) })).json() as { id: number; version: number };
     assert(revisedProposal.version === 2 && JSON.stringify((await prisma.commercialProposal.findUniqueOrThrow({ where: { id: leadProposal.id } })).snapshot) === immutableSnapshot, "proposal version changed an immutable snapshot");
     await expectStatus(`/api/proposals/${leadProposal.id}`, 200, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "Принято" }) });
+    await expectStatus(`/api/clients/${lead.id}/stage`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage: "WON", comment: "Клиент согласился оформить сделку" }) });
     const converted = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
     const repeatedConversion = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
     assert(converted.id === repeatedConversion.id, "repeated conversion created a duplicate order");
@@ -610,6 +617,7 @@ async function main() {
     const managerPricing = await (await expectStatus("/api/calculator-pricing", 200, managerCookie)).json() as { items: Array<Record<string, unknown>> };
     assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item) && !("managerMinimumPrice" in item)), "manager calculator pricing leaks protected prices");
     const accountantCookie = await session(accountant.email);
+    await expectStatus("/api/clients", 403, accountantCookie);
     const accountantConfig = await (await expectStatus("/api/calculator-config", 200, accountantCookie)).json() as { items: Array<Record<string, unknown>> };
     assert(accountantConfig.items.length > 0 && accountantConfig.items.every((item) => "internalPrice" in item), "accountant with permission cannot view internal calculator prices");
     await expectStatus("/api/calculator-config", 403, accountantCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(accountantConfig) });

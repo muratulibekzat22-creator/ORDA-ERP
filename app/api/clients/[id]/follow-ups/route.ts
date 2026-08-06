@@ -13,7 +13,7 @@ export async function POST(request: Request, { params }: Context) {
     const oldPrice = Number(body.oldPrice), proposedPrice = Number(body.proposedPrice), standardPrice = Number(body.standardPrice), nextActionAt = new Date(String(body.nextActionAt));
     if (![oldPrice, proposedPrice, standardPrice].every((v) => Number.isFinite(v) && v > 0) || Number.isNaN(nextActionAt.getTime())) return NextResponse.json({ error: "Проверьте цену и дату контакта" }, { status: 400 });
     const client = await prisma.client.findUnique({ where: { id: clientId } });
-    if (!client || (auth.session!.user.role === Role.MANAGER && client.manager !== auth.session!.user.name)) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+    if (!client || (auth.session!.user.role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
     const followUp = await prisma.$transaction(async (tx) => {
       const created = await tx.leadFollowUp.create({ data: { clientId, calculationId: body.calculationId ? Number(body.calculationId) : null, proposalId: body.proposalId ? Number(body.proposalId) : null, oldPrice, proposedPrice, standardPrice, discount: standardPrice - proposedPrice, reason: String(body.reason ?? "Клиент сказал: дорого").slice(0, 300), comment: String(body.comment ?? "").slice(0, 1000) || null, channel: ["WhatsApp", "Звонок"].includes(String(body.channel)) ? String(body.channel) : "WhatsApp", managerUserId: Number(auth.session!.user.id), managerName: auth.session!.user.name ?? client.manager, nextActionAt } });
       await tx.client.update({ where: { id: clientId }, data: { status: "Дорого — повторный контакт", nextContactAt: nextActionAt } });
