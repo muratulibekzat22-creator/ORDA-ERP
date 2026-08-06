@@ -125,17 +125,21 @@ model User {
 }
 
 model AuthAuditEvent {
-  id        Int      @id @default(autoincrement())
-  userId    Int?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  email     String
-  success   Boolean
-  reason    String
-  ipHash    String?
-  createdAt DateTime @default(now())
+  id                    Int      @id @default(autoincrement())
+  userId                Int?
+  user                  User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email                 String?
+  accountIdentifierHash String?
+  success               Boolean
+  reason                String
+  requestId             String?
+  ipHash                String?
+  userAgentClass        String?
+  createdAt             DateTime @default(now())
 
   @@index([email, createdAt])
   @@index([ipHash, createdAt])
+  @@index([accountIdentifierHash, ipHash, createdAt])
   @@index([userId, createdAt])
 }
 

@@ -27,7 +27,8 @@
     "test:clients": "tsx scripts/test-clients-workspace.ts",
     "test:sales-funnel": "tsx scripts/test-sales-funnel.ts",
     "test:commercial-boundary": "tsx scripts/test-commercial-boundary.ts",
-    "test:role-acceptance": "tsx scripts/test-role-acceptance.ts"
+    "test:role-acceptance": "tsx scripts/test-role-acceptance.ts",
+    "test:auth-mobile": "tsx scripts/test-auth-mobile.ts"
   },
   "engines": {
     "node": ">=20.9.0"

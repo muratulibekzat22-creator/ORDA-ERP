@@ -32,7 +32,11 @@ export async function proxy(request: NextRequest) {
     return redirect(url);
   }
 
-  if (token.invalid) return redirect(new URL("/login", request.url));
+  if (token.invalid) {
+    const url = new URL("/login", request.url);
+    url.searchParams.set("reason", "SESSION_INVALID");
+    return redirect(url);
+  }
   if (token.mustChangePassword && request.nextUrl.pathname !== "/change-password")
     return redirect(new URL("/change-password", request.url));
 

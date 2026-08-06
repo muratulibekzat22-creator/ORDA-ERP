@@ -18,6 +18,8 @@ if (!testDatabaseUrl) throw new Error("TEST_DATABASE_URL is missing from the env
 process.env.DATABASE_URL = testDatabaseUrl;
 process.env.NEXTAUTH_URL = "http://127.0.0.1:3219";
 process.env.NEXTAUTH_SECRET ||= crypto.randomBytes(32).toString("hex");
+process.env.AUTH_ACCOUNT_IP_FAILURE_LIMIT = "8";
+process.env.AUTH_IP_ABUSE_FAILURE_LIMIT = "14";
 delete process.env.VERCEL;
 
 const port = 3219;
@@ -117,41 +119,50 @@ function cookieValue(response: Response) {
   return headers.getSetCookie?.().map((value) => value.split(";", 1)[0]).join("; ") ?? (headers.get("set-cookie")?.split(";", 1)[0] ?? "");
 }
 
-async function session(email: string) {
+function assertSessionCookieFlags(response: Response) {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const cookies = (headers.getSetCookie?.() ?? [headers.get("set-cookie") ?? ""]).filter((value) => /(?:__Secure-)?next-auth\.session-token=/i.test(value));
+  assert(cookies.length > 0 && cookies.every((value) => /HttpOnly/i.test(value) && /SameSite=Lax/i.test(value) && /Path=\//i.test(value)), "session cookie flags are incomplete");
+}
+
+async function session(email: string, extraHeaders: Record<string, string> = {}, candidatePassword = password) {
   const csrf = await apiFetch(`${baseUrl}/api/auth/csrf`);
   const initialCookie = cookieValue(csrf);
   const { csrfToken } = await csrf.json() as { csrfToken: string };
-  const body = new URLSearchParams({ csrfToken, email, password, callbackUrl: baseUrl, json: "true" });
+  const body = new URLSearchParams({ csrfToken, email, password: candidatePassword, callbackUrl: baseUrl, json: "true" });
   const login = await apiFetch(`${baseUrl}/api/auth/callback/credentials`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: initialCookie },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: initialCookie, ...extraHeaders },
     body,
     redirect: "manual",
   });
+  assertSessionCookieFlags(login);
   const cookie = [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
   await login.arrayBuffer();
   assert(cookie.includes("next-auth"), `session cookie missing for ${email}`);
   const sessionResponse = await apiFetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: cookie } });
   const sessionPayload = await sessionResponse.json() as { user?: { email?: string; role?: string } };
-  assert(sessionResponse.status === 200 && sessionPayload.user?.email === email && Boolean(sessionPayload.user.role), `authenticated session missing for ${email}`);
+  assert(sessionResponse.status === 200 && sessionPayload.user?.email === email.trim().toLowerCase() && Boolean(sessionPayload.user.role), `authenticated session missing for ${email}`);
   confirmedSessions += 1;
   return cookie;
 }
 
-async function loginAttempt(email: string, candidatePassword: string) {
+async function detailedLoginAttempt(email: string, candidatePassword: string, extraHeaders: Record<string, string> = {}) {
   const csrf = await apiFetch(`${baseUrl}/api/auth/csrf`);
   const initialCookie = cookieValue(csrf);
   const { csrfToken } = await csrf.json() as { csrfToken: string };
   const login = await apiFetch(`${baseUrl}/api/auth/callback/credentials`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: initialCookie },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: initialCookie, ...extraHeaders },
     body: new URLSearchParams({ csrfToken, email, password: candidatePassword, callbackUrl: baseUrl, json: "true" }),
     redirect: "manual",
   });
   const cookie = [initialCookie, cookieValue(login)].filter(Boolean).join("; ");
-  await login.arrayBuffer();
-  return cookie;
+  const responseBody = await login.text();
+  return { cookie, responseBody, location: login.headers.get("location") ?? "", status: login.status };
 }
+
+async function loginAttempt(email: string, candidatePassword: string, extraHeaders: Record<string, string> = {}) { return (await detailedLoginAttempt(email, candidatePassword, extraHeaders)).cookie; }
 
 async function expectStatus(pathname: string, status: number, cookie: string, init: RequestInit = {}) {
   const response = await apiFetch(`${baseUrl}${pathname}`, {
@@ -311,7 +322,10 @@ async function main() {
     const lockoutUser = await prisma.user.create({
       data: { name: `${tag}-lockout`, email: `${tag}-lockout@test.local`, password: hash, role: Role.MANAGER },
     });
-    managerUserIds.push(manager.id, lockoutUser.id);
+    const inactiveUser = await prisma.user.create({ data: { name: `${tag}-inactive`, email: `${tag}-inactive@test.local`, password: hash, role: Role.MANAGER, active: false } });
+    const temporaryUser = await prisma.user.create({ data: { name: `${tag}-temporary`, email: `${tag}-temporary@test.local`, password: hash, role: Role.MANAGER, mustChangePassword: true } });
+    const sharedUsers = await Promise.all(Array.from({ length: 6 }, (_, index) => prisma.user.create({ data: { name: `${tag}-shared-${index}`, email: `${tag}-shared-${index}@test.local`, password: hash, role: Role.MANAGER } })));
+    managerUserIds.push(manager.id, lockoutUser.id, inactiveUser.id, temporaryUser.id, ...sharedUsers.map((user) => user.id));
     const financeData = await createPayment({ orderId: firstOrder.id, amount: 20, method: "cash", type: "payment", comment: tag });
     assert(financeData !== null, "failed to create temporary finance data");
 
@@ -324,17 +338,48 @@ async function main() {
     assert(health.headers.get("x-content-type-options") === "nosniff" && health.headers.get("x-frame-options") === "DENY" && Boolean(health.headers.get("content-security-policy")), "security headers are missing");
     assert(/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(health.headers.get("x-request-id") ?? ""), "safe request correlation id is missing");
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
       const failedCookie = await loginAttempt(lockoutUser.email, `${password}-wrong`);
       assert(!failedCookie.includes("next-auth.session-token") && !failedCookie.includes("__Secure-next-auth.session-token"), "invalid credentials created a session");
     }
+    assert((await prisma.user.findUniqueOrThrow({ where: { id: lockoutUser.id } })).lockedUntil === null, "account locked before configured threshold");
+    await loginAttempt(lockoutUser.email, `${password}-wrong`);
     const lockedCookie = await loginAttempt(lockoutUser.email, password);
     assert(!lockedCookie.includes("next-auth.session-token") && !lockedCookie.includes("__Secure-next-auth.session-token"), "locked account created a session");
     const lockedUser = await prisma.user.findUniqueOrThrow({ where: { id: lockoutUser.id } });
-    const failedAudits = await prisma.authAuditEvent.count({ where: { email: lockoutUser.email, success: false } });
+    const failedAudits = await prisma.authAuditEvent.count({ where: { userId: lockoutUser.id, success: false } });
     assert(Boolean(lockedUser.lockedUntil && lockedUser.lockedUntil > new Date()) && failedAudits >= 5, "login lockout or audit trail is missing");
+    const fixedLock = lockedUser.lockedUntil!.getTime();
+    await loginAttempt(lockoutUser.email, password);
+    await loginAttempt(lockoutUser.email, password);
+    assert((await prisma.user.findUniqueOrThrow({ where: { id: lockoutUser.id } })).lockedUntil?.getTime() === fixedLock, "blocked retries extended the lock window");
     await prisma.user.update({ where: { id: lockoutUser.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
-    await session(lockoutUser.email);
+    await session(`  ${lockoutUser.email.toUpperCase()}  `);
+    assert(!(await loginAttempt(inactiveUser.email, password)).includes("next-auth.session-token"), "inactive user created a session");
+    const temporaryCookie = await session(temporaryUser.email);
+    const temporarySession = await (await apiFetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: temporaryCookie } })).json() as { user?: { mustChangePassword?: boolean } };
+    assert(temporarySession.user?.mustChangePassword === true, "temporary password session is missing password-change state");
+    const changedPassword = `${password}-changed`;
+    await expectStatus("/api/auth/change-password", 200, temporaryCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword: password, newPassword: changedPassword }) });
+    const invalidatedTemporarySession = await (await apiFetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: temporaryCookie } })).json() as { invalid?: boolean };
+    assert(invalidatedTemporarySession.invalid === true, "password change did not invalidate the prior session");
+    await session(temporaryUser.email, {}, changedPassword);
+    const staleCookie = await session(sharedUsers[0].email);
+    await prisma.user.update({ where: { id: sharedUsers[0].id }, data: { sessionVersion: { increment: 1 } } });
+    const staleSession = await (await apiFetch(`${baseUrl}/api/auth/session`, { headers: { Cookie: staleCookie } })).json() as { invalid?: boolean; user?: { role?: string } };
+    assert(staleSession.invalid === true && !staleSession.user?.role, "stale JWT remained authorized after sessionVersion change");
+    const sharedIp = "198.51.100.44";
+    for (const sharedUser of sharedUsers.slice(1)) { await loginAttempt(sharedUser.email, `${password}-wrong`, { "x-forwarded-for": sharedIp }); await session(sharedUser.email, { "x-forwarded-for": sharedIp }); }
+    const comboIp = "198.51.100.45", comboEmail = `${tag}-unknown-combo@test.local`;
+    for (let attempt = 0; attempt < 8; attempt += 1) await detailedLoginAttempt(comboEmail, `${password}-wrong`, { "x-forwarded-for": comboIp });
+    const comboBlocked = await detailedLoginAttempt(comboEmail, `${password}-wrong`, { "x-forwarded-for": comboIp });
+    assert(comboBlocked.responseBody.includes("RATE_LIMITED") || comboBlocked.location.includes("RATE_LIMITED"), "IP+account limiter did not return safe rate-limit code");
+    const abuseIp = "198.51.100.46";
+    for (let attempt = 0; attempt < 14; attempt += 1) await detailedLoginAttempt(`${tag}-abuse-${attempt}@test.local`, `${password}-wrong`, { "x-forwarded-for": abuseIp });
+    const abuseBlocked = await detailedLoginAttempt(`${tag}-abuse-final@test.local`, `${password}-wrong`, { "x-forwarded-for": abuseIp });
+    assert(abuseBlocked.responseBody.includes("RATE_LIMITED") || abuseBlocked.location.includes("RATE_LIMITED"), "high-level IP abuse limiter did not activate");
+    const csrfFailure = await apiFetch(`${baseUrl}/api/auth/callback/credentials`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ email: manager.email, password }), redirect: "manual" });
+    assert(!cookieValue(csrfFailure).includes("session-token"), "invalid CSRF flow created a session"); await csrfFailure.arrayBuffer();
     console.log("authentication lockout and audit checks passed");
 
     const firstCookie = await session(firstUser.email);
@@ -748,6 +793,7 @@ async function main() {
   } finally {
     const cleanupErrors: unknown[] = [];
     try {
+      if (prisma) {
       await prisma.companyLedgerEntry.deleteMany({ where: { comment: tag } });
       await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
       if (generatedOrderIds.length) {
@@ -773,11 +819,12 @@ async function main() {
         await prisma.leadCalculation.deleteMany({ where: { clientId: { in: leadIds } } });
       }
       await prisma.client.deleteMany({ where: { OR: [{ name: { startsWith: tag } }, { comment: { startsWith: tag } }] } });
-      await prisma.authAuditEvent.deleteMany({ where: { email: { startsWith: tag } } });
+      await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
       if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
       console.log("cleanup completed");
+      }
     } catch (error) {
       cleanupErrors.push(error);
     }

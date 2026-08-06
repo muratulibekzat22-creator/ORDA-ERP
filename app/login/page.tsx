@@ -4,8 +4,17 @@ import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from "lucide-react";
 import { getSession, signIn } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
-const INVALID_CREDENTIALS = "Не удалось войти. Проверьте данные и попробуйте ещё раз.";
-const CONNECTION_ERROR = "Нет связи с ORDA. Проверьте интернет и повторите попытку.";
+const INVALID_CREDENTIALS = "Не удалось войти. Проверьте данные или обратитесь к администратору.";
+const LOCKED = "Слишком много попыток входа. Подождите и попробуйте снова.";
+const SESSION_ENDED = "Сессия завершена. Войдите снова.";
+const CONNECTION_ERROR = "Не удалось связаться с сервером. Проверьте интернет и повторите.";
+
+function authMessage(code?: string | null) {
+  const value = decodeURIComponent(code ?? "").toUpperCase();
+  if (value.includes("TEMPORARILY_LOCKED") || value.includes("RATE_LIMITED")) return LOCKED;
+  if (value.includes("SESSION_INVALID")) return SESSION_ENDED;
+  return INVALID_CREDENTIALS;
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -20,6 +29,13 @@ export default function LoginPage() {
     const timer = window.setTimeout(() => setSlow(true), 8_000);
     return () => window.clearTimeout(timer);
   }, [loading]);
+
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get("reason");
+    if (!reason) return;
+    const timer = window.setTimeout(() => setError(authMessage(reason)), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,7 +58,7 @@ export default function LoginPage() {
       });
 
       if (!result || result.error) {
-        setError(INVALID_CREDENTIALS);
+        setError(authMessage(result?.error));
         return;
       }
 
