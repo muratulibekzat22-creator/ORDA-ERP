@@ -82,7 +82,7 @@ export default function OrderCard({ order }: Props) {
         },
         body: JSON.stringify({ status: nextStatus, comment: statusComment }),
       });
-      if (!response.ok) throw new Error("Unable to update order status");
+      if (!response.ok) throw new Error("Не удалось обновить статус заказа");
       const updatedOrder: { status: string } = await response.json();
       setStatus(updatedOrder.status);
       setStatusComment("");
@@ -123,7 +123,7 @@ export default function OrderCard({ order }: Props) {
           partnerPrice: Number(partnerPrice),
         }),
       });
-      if (!response.ok) throw new Error("Unable to assign partner");
+      if (!response.ok) throw new Error("Не удалось назначить цех");
       const updatedOrder: { status: string } = await response.json();
       setStatus(updatedOrder.status);
       resetAssignPartnerKey();

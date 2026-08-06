@@ -50,7 +50,7 @@ export default function OrderForm({ onSave }: Props) {
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": getKey() },
-        body: JSON.stringify({ clientId: parsedClientId, address: address.trim(), staircase, material, amount: parsedAmount, prepayment: 0, partnerPrice: 0, partnerPaid: 0, steps: parsedSteps, platforms: parsedPlatforms }),
+        body: JSON.stringify({ clientId: parsedClientId, address: address.trim(), staircase, material, amount: parsedAmount, prepayment: 0, steps: parsedSteps, platforms: parsedPlatforms }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) return setError(result.error ?? "Не удалось создать заказ");

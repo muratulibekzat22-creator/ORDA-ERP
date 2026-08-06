@@ -64,6 +64,8 @@ export async function proxy(request: NextRequest) {
   };
   const firstSegment =
     request.nextUrl.pathname.split("/").filter(Boolean)[0] ?? "";
+  if (role === "PARTNER" && firstSegment === "finance")
+    return redirect(new URL("/partner", request.url));
   const protectedSegment = [
     "clients",
     "orders",

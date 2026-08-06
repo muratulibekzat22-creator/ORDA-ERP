@@ -65,6 +65,7 @@ export default function RouteShell({
     href === "/" ||
     Boolean(
       role &&
+      !(role === "PARTNER" && href === "/finance") &&
       permissionByHref[href] &&
       hasDefaultPermission(role, permissionByHref[href]!),
     );

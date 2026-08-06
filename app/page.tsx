@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
 import Header from "@/components/Header";
 import Sidebar from "@/components/layout/Sidebar";
@@ -17,8 +19,12 @@ import DocumentsPage from "@/components/pages/DocumentsPage";
 import CalendarPage from "@/components/pages/CalendarPage";
 import EmployeesPage from "@/components/pages/EmployeesPage";
 import SettingsPage from "@/components/pages/SettingsPage";
+import { roleHome } from "@/lib/role-home";
+import { type Role } from "@/lib/roles";
 
 export default function Home() {
+  const router = useRouter();
+  const { data: session, status } = useSession();
   const [page, setPage] = useState("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -28,6 +34,26 @@ export default function Home() {
     document.addEventListener("keydown", close);
     return () => document.removeEventListener("keydown", close);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const destination = roleHome[session.user.role as Role];
+    if (destination) router.replace(destination);
+  }, [router, session, status]);
+
+  if (
+    status === "loading" ||
+    (status === "authenticated" && roleHome[session.user.role as Role])
+  )
+    return (
+      <main
+        role="status"
+        aria-live="polite"
+        className="grid min-h-screen place-items-center bg-slate-950 text-slate-300"
+      >
+        Открываем рабочий раздел…
+      </main>
+    );
 
   return (
     <main className="flex h-screen flex-col bg-slate-950 text-white">

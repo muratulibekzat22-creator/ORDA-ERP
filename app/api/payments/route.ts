@@ -13,7 +13,26 @@ export async function GET() {
   if (auth.response) return auth.response;
   try {
     const partner = auth.session!.user.role === Role.PARTNER ? await prisma.partner.findUnique({ where: { userId: Number(auth.session!.user.id) }, select: { id: true } }) : null;
-    const payments = partner ? await prisma.payment.findMany({ where: { order: { partnerId: partner.id } }, include: { order: { include: { client: true } } }, orderBy: { createdAt: "desc" } }) : await getPayments();
+    if (auth.session!.user.role === Role.PARTNER && !partner)
+      return NextResponse.json({ error: "Профиль цеха не найден" }, { status: 404 });
+    const payments = partner
+      ? await prisma.payment.findMany({
+          where: {
+            type: "PARTNER_PAYOUT",
+            order: { partnerId: partner.id },
+          },
+          select: {
+            id: true,
+            amount: true,
+            type: true,
+            method: true,
+            comment: true,
+            operationDate: true,
+            order: { select: { id: true, number: true } },
+          },
+          orderBy: { operationDate: "desc" },
+        })
+      : await getPayments();
 
     return NextResponse.json(payments);
   } catch (error) {
@@ -33,6 +52,11 @@ export async function GET() {
 export async function POST(req: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
+  if (auth.session!.user.role === Role.PARTNER)
+    return NextResponse.json(
+      { error: "Цех не может создавать финансовые операции" },
+      { status: 403 },
+    );
   const idempotency=readIdempotencyKey(req);if("response" in idempotency)return idempotency.response;
   let hash = "";
   try {

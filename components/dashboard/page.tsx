@@ -118,7 +118,11 @@ export default function DashboardPage() {
       label: "Производство",
       color: "bg-purple-600",
     },
-    { href: "/calculator", label: "Калькулятор", color: "bg-slate-700" },
+    can("orders") && {
+      href: "/calculator",
+      label: "Калькулятор",
+      color: "bg-slate-700",
+    },
   ].filter(Boolean) as Array<{ href: string; label: string; color: string }>;
 
   return (

@@ -97,6 +97,14 @@ export async function POST(request: Request) {
 
   try {
     const body = (await request.json()) as Record<string, unknown>;
+    if (
+      auth.session!.user.role !== Role.DIRECTOR &&
+      ("partnerPrice" in body || "partnerPaid" in body)
+    )
+      return NextResponse.json(
+        { error: "Внутренние суммы цеха доступны только директору" },
+        { status: 403 },
+      );
     const clientId = positiveInteger(body.clientId);
     const partnerId =
       body.partnerId == null || body.partnerId === ""
