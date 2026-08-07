@@ -37,6 +37,7 @@ const links = [
   ["/finance", "Финансы", Wallet],
   ["/calendar", "Календарь", CalendarDays],
   ["/employees", "Сотрудники", UserCog],
+  ["/payroll", "Моя зарплата", Wallet],
   ["/settings", "Настройки", Settings],
 ] as const;
 
@@ -62,7 +63,7 @@ export default function RouteShell({
     "/settings": "settings",
   };
   const visible = (href: string) =>
-    href === "/" ||
+    href === "/" || (href === "/payroll" && role !== "PARTNER") ||
     Boolean(
       role &&
       !(role === "PARTNER" && href === "/finance") &&

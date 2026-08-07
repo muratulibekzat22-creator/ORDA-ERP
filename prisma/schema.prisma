@@ -39,6 +39,7 @@ enum Permission {
   production
   installation
   warehouse
+  payroll
 }
 
 enum LeadStage {
@@ -99,6 +100,51 @@ enum InventoryCostStatus {
   LEGACY_UNVERIFIED
   PROVISIONAL
   FINAL
+}
+
+enum PayrollPeriodStatus {
+  OPEN
+  REVIEW
+  CLOSED
+}
+
+enum PayrollAccrualType {
+  BASE_SALARY
+  GUARANTEED_ORDER_BONUS
+  ORDER_BONUS
+  EXTRA_BONUS
+  PREMIUM
+  DEDUCTION
+  ADJUSTMENT_INCREASE
+  ADJUSTMENT_DECREASE
+  BONUS_REVERSAL
+}
+
+enum PayrollDirection {
+  INCREASE
+  DECREASE
+}
+
+enum PayrollPaymentType {
+  ADVANCE
+  IMMEDIATE_BONUS
+  SALARY_PAYMENT
+  FINAL_SETTLEMENT
+  OTHER_PAYROLL_PAYMENT
+  EMPLOYEE_REFUND
+}
+
+enum AdvanceRequestStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+}
+
+enum BonusPaymentMode {
+  ACCUMULATE
+  IMMEDIATE
 }
 
 enum LeadSource {
@@ -162,6 +208,13 @@ model User {
   finalizedPurchaseBatches   PurchaseBatch[]            @relation("PurchaseBatchFinalizer")
   purchaseAdditionalCosts    PurchaseAdditionalCost[]
   purchaseCostRevisions      PurchaseCostRevision[]
+  payrollProfile             EmployeePayrollProfile?
+  approvedSalaryRates        EmployeeSalaryRate[]       @relation("SalaryRateApprover")
+  approvedPayrollAccruals    PayrollAccrual[]           @relation("PayrollAccrualApprover")
+  createdPayrollAccruals     PayrollAccrual[]           @relation("PayrollAccrualCreator")
+  payrollPayments            PayrollPayment[]           @relation("PayrollPaymentAuthor")
+  reviewedAdvanceRequests    PayrollAdvanceRequest[]    @relation("AdvanceReviewer")
+  closedPayrollPeriods       PayrollPeriod[]            @relation("PayrollPeriodCloser")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -502,6 +555,7 @@ model Order {
   partnerAssignmentHistory PartnerAssignmentHistory[]
   financeAuditEvents       FinanceAuditEvent[]
   inventoryCogsEntries     InventoryCogsEntry[]
+  payrollAccruals          PayrollAccrual[]
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -587,23 +641,161 @@ model OrderCalculationLine {
 }
 
 model CompanyLedgerEntry {
-  id             Int      @id @default(autoincrement())
-  type           String
-  category       String
-  direction      String
-  amount         Decimal  @db.Decimal(14, 2)
-  operationDate  DateTime @default(now())
-  orderId        Int?
-  order          Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  comment        String?
-  authorId       Int?
-  author         User?    @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
-  idempotencyKey String?  @unique
-  requestHash    String?
-  createdAt      DateTime @default(now())
+  id               Int             @id @default(autoincrement())
+  type             String
+  category         String
+  direction        String
+  amount           Decimal         @db.Decimal(14, 2)
+  operationDate    DateTime        @default(now())
+  orderId          Int?
+  order            Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  comment          String?
+  authorId         Int?
+  author           User?           @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  idempotencyKey   String?         @unique
+  requestHash      String?
+  affectsProfit    Boolean         @default(true)
+  payrollAccrualId Int?            @unique
+  payrollAccrual   PayrollAccrual? @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
+  payrollPaymentId Int?            @unique
+  payrollPayment   PayrollPayment? @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
+  createdAt        DateTime        @default(now())
 
   @@index([operationDate])
   @@index([orderId])
+}
+
+model EmployeePayrollProfile {
+  id                     Int                     @id @default(autoincrement())
+  userId                 Int                     @unique
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  hiredAt                DateTime
+  terminatedAt           DateTime?
+  payrollEnabled         Boolean                 @default(true)
+  baseSalary             Decimal                 @default(0) @db.Decimal(14, 2)
+  defaultGuaranteedBonus Decimal                 @default(20000) @db.Decimal(14, 2)
+  active                 Boolean                 @default(true)
+  comment                String?
+  salaryRates            EmployeeSalaryRate[]
+  accruals               PayrollAccrual[]
+  payments               PayrollPayment[]
+  advanceRequests        PayrollAdvanceRequest[]
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+}
+
+model EmployeeSalaryRate {
+  id            Int                    @id @default(autoincrement())
+  employeeId    Int
+  employee      EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  amount        Decimal                @db.Decimal(14, 2)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  approvedById  Int
+  approvedBy    User                   @relation("SalaryRateApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  comment       String?
+  createdAt     DateTime               @default(now())
+
+  @@index([employeeId, effectiveFrom])
+}
+
+model PayrollPeriod {
+  id              Int                     @id @default(autoincrement())
+  year            Int
+  month           Int
+  status          PayrollPeriodStatus     @default(OPEN)
+  closedAt        DateTime?
+  closedById      Int?
+  closedBy        User?                   @relation("PayrollPeriodCloser", fields: [closedById], references: [id], onDelete: Restrict)
+  closeKey        String?                 @unique
+  accruals        PayrollAccrual[]
+  payments        PayrollPayment[]
+  advanceRequests PayrollAdvanceRequest[]
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  @@unique([year, month])
+}
+
+model PayrollAccrual {
+  id             Int                    @id @default(autoincrement())
+  employeeId     Int
+  employee       EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId       Int
+  period         PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  earnedPeriodId Int?
+  type           PayrollAccrualType
+  direction      PayrollDirection
+  amount         Decimal                @db.Decimal(14, 2)
+  orderId        Int?
+  order          Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  reason         String
+  paymentMode    BonusPaymentMode?
+  approvedAt     DateTime               @default(now())
+  approvedById   Int
+  approvedBy     User                   @relation("PayrollAccrualApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdById    Int
+  createdBy      User                   @relation("PayrollAccrualCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reversalOfId   Int?                   @unique
+  reversalOf     PayrollAccrual?        @relation("PayrollReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy     PayrollAccrual?        @relation("PayrollReversal")
+  idempotencyKey String                 @unique
+  requestHash    String
+  ledgerEntry    CompanyLedgerEntry?
+  payments       PayrollPayment[]
+  createdAt      DateTime               @default(now())
+
+  @@index([employeeId, periodId])
+  @@index([orderId])
+}
+
+model PayrollPayment {
+  id               Int                    @id @default(autoincrement())
+  employeeId       Int
+  employee         EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId         Int
+  period           PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  amount           Decimal                @db.Decimal(14, 2)
+  paymentDate      DateTime
+  type             PayrollPaymentType
+  method           String?
+  comment          String?
+  paidById         Int
+  paidBy           User                   @relation("PayrollPaymentAuthor", fields: [paidById], references: [id], onDelete: Restrict)
+  relatedAccrualId Int?
+  relatedAccrual   PayrollAccrual?        @relation(fields: [relatedAccrualId], references: [id], onDelete: Restrict)
+  advanceRequest   PayrollAdvanceRequest?
+  idempotencyKey   String                 @unique
+  requestHash      String
+  reversedAt       DateTime?
+  ledgerEntry      CompanyLedgerEntry?
+  createdAt        DateTime               @default(now())
+
+  @@index([employeeId, periodId])
+}
+
+model PayrollAdvanceRequest {
+  id              Int                    @id @default(autoincrement())
+  employeeId      Int
+  employee        EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId        Int
+  period          PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  requestedAmount Decimal                @db.Decimal(14, 2)
+  approvedAmount  Decimal?               @db.Decimal(14, 2)
+  comment         String?
+  reviewComment   String?
+  status          AdvanceRequestStatus   @default(REQUESTED)
+  reviewedById    Int?
+  reviewedBy      User?                  @relation("AdvanceReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewedAt      DateTime?
+  paymentId       Int?                   @unique
+  payment         PayrollPayment?        @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  idempotencyKey  String                 @unique
+  requestHash     String
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([employeeId, status])
 }
 
 model PersonalLedgerEntry {

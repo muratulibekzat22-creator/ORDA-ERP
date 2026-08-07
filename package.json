@@ -30,7 +30,8 @@
     "test:role-acceptance": "tsx scripts/test-role-acceptance.ts",
     "test:auth-mobile": "tsx scripts/test-auth-mobile.ts",
     "test:finance-integrity": "tsx scripts/test-finance-integrity.ts",
-    "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts"
+    "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
+    "test:payroll": "tsx scripts/test-payroll.ts"
   },
   "engines": {
     "node": ">=20.9.0"

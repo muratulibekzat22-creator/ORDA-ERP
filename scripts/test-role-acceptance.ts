@@ -15,13 +15,13 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
   [Role.DIRECTOR]: [
     "employees", "clients", "orders", "measurements", "calendar",
     "documents", "finance", "partners", "reports", "settings", "design",
-    "production", "installation", "warehouse",
+    "production", "installation", "warehouse", "payroll",
   ],
   [Role.MANAGER]: [
     "clients", "orders", "measurements", "calendar", "documents",
     "production", "warehouse", "partners",
   ],
-  [Role.ACCOUNTANT]: ["finance", "partners", "reports", "warehouse"],
+  [Role.ACCOUNTANT]: ["finance", "partners", "reports", "warehouse", "payroll"],
   [Role.MEASURER]: ["measurements", "calendar"],
   [Role.PRODUCTION]: ["production", "calendar", "warehouse"],
   [Role.INSTALLER]: ["production", "installation", "calendar", "warehouse"],

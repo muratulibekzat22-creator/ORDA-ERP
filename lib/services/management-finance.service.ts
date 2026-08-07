@@ -13,7 +13,7 @@ export async function getCompanyFinance(from?: Date, to?: Date) {
   ]);
   const orderProfit = completedOrders.reduce((sum, order) => sum + Number(order.companyProfit), 0);
   const otherIncome = entries.filter((entry) => entry.direction === "INCOME").reduce((sum, entry) => sum + Number(entry.amount), 0);
-  const operatingExpenses = entries.filter((entry) => entry.direction === "EXPENSE").reduce((sum, entry) => sum + Number(entry.amount), 0);
+  const operatingExpenses = entries.filter((entry) => entry.direction === "EXPENSE" && entry.affectsProfit).reduce((sum, entry) => sum + Number(entry.amount), 0);
   return { entries, totals: { orderProfit, otherIncome, operatingExpenses, companyNetProfit: orderProfit + otherIncome - operatingExpenses } };
 }
 

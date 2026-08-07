@@ -59,12 +59,13 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id } });
       if (!user) throw new Error("NOT_FOUND");
+      if (await tx.employeePayrollProfile.count({ where: { userId: id } })) throw new Error("PAYROLL_HISTORY");
       await ensureDirectorRemains(user.role === Role.DIRECTOR && user.active, tx);
       await tx.user.delete({ where: { id } });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
-    return NextResponse.json({ error: code === "LAST_DIRECTOR" ? "Нельзя удалить последнего активного директора" : "Сотрудник не найден" }, { status: code === "LAST_DIRECTOR" ? 409 : 404 });
+    return NextResponse.json({ error: code === "LAST_DIRECTOR" ? "Нельзя удалить последнего активного директора" : code === "PAYROLL_HISTORY" ? "Сотрудника с историей зарплаты можно только отключить" : "Сотрудник не найден" }, { status: code === "LAST_DIRECTOR" || code === "PAYROLL_HISTORY" ? 409 : 404 });
   }
 }
