@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ProductionEditor, { type ProductionEditorPayload, type ProductionOptions } from "@/components/production/ProductionEditor";
 import ProductionKanban, { type ProductionKanbanItem } from "@/components/production/ProductionKanban";
 import { distributeProductions, EMPTY_PRODUCTION_FILTERS, filterProductions, isProductionOverdue, optimisticProductionMove, type ProductionKanbanFilter } from "@/lib/production/kanban";
-import { PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
+import { getAllowedProductionStageTransitions, PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
 
 const emptyOptions: ProductionOptions = { orders: [], assignees: [] };
 
@@ -65,6 +65,10 @@ export default function ProductionPage() {
   async function moveCard(id: number, stage: ProductionStage) {
     const current = productions.find((item) => item.id === id);
     if (!current || current.stage === stage || savingIds.has(id)) return;
+    if (!getAllowedProductionStageTransitions(role, current.stage as ProductionStage).includes(stage)) {
+      setError("Переход на эту стадию недоступен для вашей роли");
+      return;
+    }
     const snapshot = productions;
     setSavingIds((ids) => new Set(ids).add(id));
     setProductions((items) => optimisticProductionMove(items, id, stage));
@@ -116,7 +120,7 @@ export default function ProductionPage() {
       </div>
       <div className="grid gap-3 sm:grid-cols-3"><Stat label="Всего" value={productions.length} /><Stat label="Просрочено" value={productions.filter((item) => isProductionOverdue(item)).length} /><Stat label="Показано" value={visible.length} /></div>
       {error && <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
-      {!productions.length ? <div className="rounded-2xl border border-dashed border-slate-700 py-16 text-center text-slate-400">Производственных задач пока нет</div> : <ProductionKanban columns={columns} savingIds={savingIds} onDropCard={moveCard} onEdit={canManage ? (item) => setEditor(item) : undefined} />}
+      {!productions.length ? <div className="rounded-2xl border border-dashed border-slate-700 py-16 text-center text-slate-400">Производственных задач пока нет</div> : <ProductionKanban columns={columns} savingIds={savingIds} onDropCard={moveCard} onEdit={canManage ? (item) => setEditor(item) : undefined} role={role} />}
       <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">Фото и файлы будут подключены после выбора файлового хранилища.</div>
       {editor && <ProductionEditor item={editor === "new" ? null : editor} options={options} saving={editorSaving} onClose={() => setEditor(null)} onSave={saveEditor} />}
     </section>

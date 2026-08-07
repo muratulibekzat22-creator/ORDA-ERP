@@ -44,6 +44,16 @@ export async function getAuthorizedOrder(id: number) {
     }),
   } as unknown as typeof order;
 
+  if (role === Role.PARTNER) return {
+    ...order,
+    amount: undefined,
+    prepayment: undefined,
+    balance: undefined,
+    companyProfit: undefined,
+    payments: [],
+    calculations: [],
+  } as unknown as typeof order;
+
   // Server Components serialize their props into the RSC response. Remove
   // management figures here as well as in the REST API so they never reach a
   // manager's browser, even when the interface does not render them.

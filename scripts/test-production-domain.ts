@@ -17,6 +17,7 @@ import {
   canTransitionProductionStage,
   canTransitionProductionStageEitherDirection,
   getNextProductionStage,
+  getAllowedProductionStageTransitions,
   getPreviousProductionStage,
   isCompletedProductionStage,
   isProductionStage,
@@ -65,6 +66,12 @@ assert.equal(canTransitionProduction(Role.PRODUCTION, 10, { masterUserId: 10, st
 assert.equal(canTransitionProduction(Role.INSTALLER, 20, installationCard, "Сдано"), true);
 assert.equal(canTransitionProduction(Role.DIRECTOR, 999, productionCard, "Каркас"), true);
 assert.equal(canTransitionProduction(Role.MANAGER, 999, productionCard, "Подготовка"), false);
+assert.deepEqual(getAllowedProductionStageTransitions("DIRECTOR", "Дерево"), ["Каркас", "Покраска"]);
+assert.deepEqual(getAllowedProductionStageTransitions("MANAGER", "Подготовка"), ["Каркас"]);
+assert.deepEqual(getAllowedProductionStageTransitions("PRODUCTION", "Комплектация"), ["Готово к монтажу"]);
+assert.deepEqual(getAllowedProductionStageTransitions("PRODUCTION", "Готово к монтажу"), []);
+assert.deepEqual(getAllowedProductionStageTransitions("INSTALLER", "Монтаж"), ["Сдано"]);
+assert.deepEqual(getAllowedProductionStageTransitions("INSTALLER", "Покраска"), []);
 assert.deepEqual(allowedAssigneeRoles("Монтаж"), [Role.PRODUCTION, Role.INSTALLER]);
 assert.deepEqual(allowedAssigneeRoles("Сдано"), [Role.PRODUCTION, Role.INSTALLER]);
 assert.deepEqual(allowedAssigneeRoles("Покраска"), [Role.PRODUCTION, Role.INSTALLER]);

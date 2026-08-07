@@ -2,6 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import { useSession } from "next-auth/react";
 
 import OrderTable from "@/components/orders/OrderTable";
 import { ORDER_STATUSES } from "@/lib/orders/lifecycle";
@@ -27,6 +28,7 @@ const statuses = ["Все заказы", ...ORDER_STATUSES];
 const statusLabel = (value: string) => value;
 
 export default function OrdersPage() {
+  const { data: session } = useSession();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -91,7 +93,7 @@ export default function OrdersPage() {
         >
           {loading ? "Обновление..." : "Обновить"}
         </button>
-        <button type="button" onClick={() => setShowForm((value) => !value)} className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">{showForm ? "Закрыть форму" : "Новый заказ"}</button>
+        {session?.user.role === "DIRECTOR" && <button type="button" onClick={() => setShowForm((value) => !value)} className="rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white">{showForm ? "Закрыть форму" : "Новый заказ"}</button>}
       </div>
       <div className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
         <div className="flex flex-wrap gap-3">

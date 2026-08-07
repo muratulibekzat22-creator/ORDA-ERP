@@ -3,7 +3,7 @@
 import { CalendarDays, Clock3, MapPin, UserRound } from "lucide-react";
 
 import { isProductionOverdue } from "@/lib/production/kanban";
-import { PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
+import { getAllowedProductionStageTransitions, PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
 
 export type ProductionHistoryItem = {
   id: number;
@@ -41,11 +41,12 @@ type Props = {
   savingIds: Set<number>;
   onDropCard: (id: number, stage: ProductionStage) => void;
   onEdit?: (item: ProductionKanbanItem) => void;
+  role?: string;
 };
 
 const date = (value: string | null) => value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "—";
 
-export default function ProductionKanban({ columns, savingIds, onDropCard, onEdit }: Props) {
+export default function ProductionKanban({ columns, savingIds, onDropCard, onEdit, role = "" }: Props) {
   return (
     <div className="overflow-x-auto overscroll-x-contain pb-4 [scrollbar-width:thin]">
       <div className="flex min-w-max snap-x snap-mandatory gap-4 xl:grid xl:min-w-0 xl:grid-cols-4 2xl:grid-cols-8">
@@ -70,6 +71,8 @@ export default function ProductionKanban({ columns, savingIds, onDropCard, onEdi
                 const overdue = isProductionOverdue(item);
                 const lastHistory = item.stageHistory[0];
                 const saving = savingIds.has(item.id);
+                const currentStage = item.stage as ProductionStage;
+                const allowedStages = getAllowedProductionStageTransitions(role, currentStage);
                 return (
                   <article
                     key={item.id}
@@ -100,11 +103,12 @@ export default function ProductionKanban({ columns, savingIds, onDropCard, onEdi
                       </div>
                     </details>
                     {onEdit && <button type="button" disabled={saving} onClick={() => onEdit(item)} className="mt-3 w-full rounded-lg bg-slate-800 px-3 py-2 text-xs text-white hover:bg-slate-700 disabled:opacity-50">Редактировать</button>}
-                    <label className="mt-3 block text-xs font-medium text-slate-300 md:hidden">Переместить на этап
+                    {!!allowedStages.length && <label className="mt-3 block text-xs font-medium text-slate-300 md:hidden">Переместить на этап
                       <select aria-label={`Переместить заказ ${item.order.number} на этап`} disabled={saving} value={item.stage} onChange={(event) => onDropCard(item.id, event.target.value as ProductionStage)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white disabled:opacity-50">
-                        {PRODUCTION_STAGES.map((nextStage) => <option key={nextStage} value={nextStage}>{nextStage}</option>)}
+                        <option value={currentStage}>{currentStage}</option>
+                        {allowedStages.map((nextStage) => <option key={nextStage} value={nextStage}>{nextStage}</option>)}
                       </select>
-                    </label>
+                    </label>}
                   </article>
                 );
               })}

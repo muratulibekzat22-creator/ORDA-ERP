@@ -390,8 +390,9 @@ async function main() {
     const secondCookie = await session(secondUser.email);
     const orders = await (await expectStatus("/api/orders", 200, firstCookie)).json() as Array<Record<string, unknown>>;
     assert(orders.length === 1 && orders[0].id === firstOrder.id && !orders.some((order) => order.id === secondOrder.id), "partner can only list own orders");
-    assert(orders.every((order) => !("companyProfit" in order) && !("partnerPrice" in order) && !("partnerPaid" in order) && !("partnerBalance" in order) && !("userId" in order)), "partner list exposes internal financial fields");
-    await expectStatus(`/api/orders/${firstOrder.id}`, 200, firstCookie);
+    assert(orders.every((order) => !("companyProfit" in order) && !("amount" in order) && !("balance" in order) && "partnerPrice" in order && "partnerPaid" in order && "partnerBalance" in order && !("userId" in order)), "partner list does not enforce workshop-only finances");
+    const partnerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, firstCookie)).json() as Record<string, unknown>;
+    assert(["partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in partnerOrderDetail) && ["amount", "prepayment", "balance", "companyProfit", "payments", "calculations"].every((field) => !(field in partnerOrderDetail)), "partner detail does not enforce workshop-only finances");
     await expectStatus(`/api/orders/${secondOrder.id}`, 404, firstCookie);
     await expectStatus(`/api/partners/${firstPartner.id}`, 200, firstCookie);
     await expectStatus(`/api/partners/${secondPartner.id}`, 404, firstCookie);
@@ -426,7 +427,7 @@ async function main() {
 
     const secondOrders = await (await expectStatus("/api/orders", 200, secondCookie)).json() as Array<Record<string, unknown>>;
     assert(secondOrders.length === 1 && secondOrders[0].id === secondOrder.id && !secondOrders.some((order) => order.id === firstOrder.id), "second partner can only list own orders");
-    assert(secondOrders.every((order) => !("companyProfit" in order) && !("partnerPrice" in order) && !("partnerPaid" in order) && !("partnerBalance" in order) && !("userId" in order)), "second partner list exposes internal financial fields");
+    assert(secondOrders.every((order) => !("companyProfit" in order) && !("amount" in order) && !("balance" in order) && "partnerPrice" in order && "partnerPaid" in order && "partnerBalance" in order && !("userId" in order)), "second partner list does not enforce workshop-only finances");
     await expectStatus(`/api/orders/${secondOrder.id}`, 200, secondCookie);
     await expectStatus(`/api/orders/${firstOrder.id}`, 404, secondCookie);
     await expectStatus(`/api/partners/${secondPartner.id}`, 200, secondCookie);
@@ -497,6 +498,7 @@ async function main() {
     const firstProductionCookie = await session(firstProductionUser.email);
     const secondProductionCookie = await session(secondProductionUser.email);
     const directorCookie = await session(director.email);
+    const orderBoundaryManagerCookie = await session(manager.email);
     await expectStatus("/api/company-finance", 403, firstProductionCookie);
     await expectStatus("/api/personal-finance", 403, firstProductionCookie);
     await expectStatus("/", 200, directorCookie);
@@ -511,6 +513,16 @@ async function main() {
       partnerPrice: 400,
       partnerPaid: 100,
     };
+    await expectStatus("/api/orders", 403, orderBoundaryManagerCookie, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(orderCreationPayload),
+    });
+    await expectStatus(`/api/orders/${firstOrder.id}`, 403, orderBoundaryManagerCookie, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "assignPartner", partnerId: firstPartner.id, partnerPrice: 1 }),
+    });
     const createdApiOrder = await (await expectStatus("/api/orders", 201, directorCookie, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` },
@@ -661,6 +673,8 @@ async function main() {
     const converted = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
     const repeatedConversion = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
     assert(converted.id === repeatedConversion.id, "repeated conversion created a duplicate order");
+    const convertedOrder = await prisma.order.findUniqueOrThrow({ where: { id: converted.id }, include: { calculations: true } });
+    assert(convertedOrder.clientId === lead.id && convertedOrder.address.trim().length > 0 && convertedOrder.material === leadCalculation.material && Number(convertedOrder.amount) === Number(approvedCalculation.clientPrice) && convertedOrder.calculations.length === 1, "proposal conversion lost canonical lead or calculation data");
     generatedOrderIds.push(converted.id);
     await expectStatus("/api/company-finance", 403, managerCookie);
     await expectStatus("/api/personal-finance", 403, managerCookie);
@@ -754,8 +768,9 @@ async function main() {
     console.log("document and private attachment API security checks passed");
     const managerClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, managerCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(managerClients.data) && managerClients.pagination.total > 0 && managerClients.data.some((item) => item.id === client.id), "manager clients payload is invalid");
-    const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<{ id: number }>;
+    const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(managerOrders) && managerOrders.some((order) => order.id === firstOrder.id), "manager orders payload is invalid");
+    assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
     const managerCalendar = await (await expectStatus("/api/calendar", 200, managerCookie)).json() as { events: Array<{ id: string }>; orders: Array<{ id: number }>; filters: { assignees: unknown[] } };
     assert(Array.isArray(managerCalendar.events) && Array.isArray(managerCalendar.orders) && Array.isArray(managerCalendar.filters.assignees), "manager calendar payload is invalid");
     assert(managerCalendar.events.some((event) => event.id === String(firstMeasurement.id)) && managerCalendar.orders.some((order) => order.id === firstOrder.id), "manager calendar payload is missing temporary data");
@@ -763,8 +778,9 @@ async function main() {
     for (const pathname of ["/api/settings", "/api/employees", "/api/finance", "/api/analytics"]) await expectStatus(pathname, 403, managerCookie);
     console.log("manager API security matrix passed");
 
-    const directorOrders = await (await expectStatus("/api/orders", 200, directorCookie)).json() as Array<{ id: number }>;
+    const directorOrders = await (await expectStatus("/api/orders", 200, directorCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(directorOrders) && directorOrders.some((order) => order.id === firstOrder.id), "director orders payload is invalid");
+    assert(directorOrders.some((order) => order.id === firstOrder.id && ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
     const directorClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(directorClients.data) && directorClients.pagination.total > 0 && directorClients.data.some((item) => item.id === client.id), "director clients payload is invalid");
     const directorMeasurements = await (await expectStatus("/api/measurements", 200, directorCookie)).json() as Array<{ id: number; order: { id: number } }>;

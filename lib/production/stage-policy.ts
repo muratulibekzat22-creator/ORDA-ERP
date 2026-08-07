@@ -40,6 +40,17 @@ export function canTransitionProductionStageEitherDirection(from: ProductionStag
   return getNextProductionStage(from) === to || getPreviousProductionStage(from) === to;
 }
 
+export function getAllowedProductionStageTransitions(role: string, from: ProductionStage) {
+  const next = getNextProductionStage(from);
+  const previous = getPreviousProductionStage(from);
+  if (role === "DIRECTOR" || role === "MANAGER")
+    return [previous, next].filter((stage): stage is ProductionStage => stage !== null);
+  if (role === "PRODUCTION")
+    return next && next !== "Монтаж" ? [next] : [];
+  if (role === "INSTALLER" && from === "Монтаж" && next === "Сдано") return [next];
+  return [];
+}
+
 export function isCompletedProductionStage(stage: ProductionStage) {
   return stage === COMPLETED_PRODUCTION_STAGE;
 }

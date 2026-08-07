@@ -73,6 +73,7 @@ export async function GET() {
           orderBy: { createdAt: "desc" },
         })
       : await getOrders();
+    if (auth.session!.user.role === Role.PARTNER) return NextResponse.json(orders);
     if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) {
       return NextResponse.json(orders.map((order) => {
         const result = { ...order } as Record<string, unknown>;
@@ -92,7 +93,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role === Role.PARTNER)
+  if (auth.session!.user.role !== Role.DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
 
   try {
@@ -124,6 +125,7 @@ export async function POST(request: Request) {
       !staircase ||
       !material ||
       amount === null ||
+      amount <= 0 ||
       prepayment === null ||
       partnerPrice === null ||
       partnerPaid === null ||

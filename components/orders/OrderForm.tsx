@@ -16,7 +16,7 @@ export default function OrderForm({ onSave }: Props) {
   const [material, setMaterial] = useState("Карагач");
   const [steps, setSteps] = useState("20");
   const [platforms, setPlatforms] = useState("1");
-  const [amount, setAmount] = useState("0");
+  const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -40,7 +40,7 @@ export default function OrderForm({ onSave }: Props) {
     const parsedPlatforms = Number(platforms);
     const parsedAmount = Number(amount);
     if (!Number.isInteger(parsedClientId) || parsedClientId <= 0) return setError("Выберите клиента");
-    if (!address.trim() || !Number.isInteger(parsedSteps) || parsedSteps <= 0 || !Number.isInteger(parsedPlatforms) || parsedPlatforms < 0 || !Number.isFinite(parsedAmount) || parsedAmount < 0) {
+    if (!address.trim() || !Number.isInteger(parsedSteps) || parsedSteps <= 0 || !Number.isInteger(parsedPlatforms) || parsedPlatforms < 0 || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       return setError("Проверьте обязательные и числовые поля заказа");
     }
 
@@ -60,7 +60,7 @@ export default function OrderForm({ onSave }: Props) {
       setAddress("");
       setSteps("20");
       setPlatforms("1");
-      setAmount("0");
+      setAmount("");
     } catch {
       setError("Не удалось создать заказ");
     } finally {
@@ -81,7 +81,7 @@ export default function OrderForm({ onSave }: Props) {
         <input value={material} onChange={(event) => setMaterial(event.target.value)} placeholder="Материал" className="rounded-xl bg-slate-900 p-3 text-white" />
         <input type="number" min="1" value={steps} onChange={(event) => setSteps(event.target.value)} placeholder="Ступени" className="rounded-xl bg-slate-900 p-3 text-white" />
         <input type="number" min="0" value={platforms} onChange={(event) => setPlatforms(event.target.value)} placeholder="Площадки" className="rounded-xl bg-slate-900 p-3 text-white" />
-        <input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Сумма заказа" className="rounded-xl bg-slate-900 p-3 text-white" />
+        <input type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Сумма заказа" className="rounded-xl bg-slate-900 p-3 text-white" />
       </div>
       {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
       <button type="button" onClick={save} disabled={saving} className="mt-6 w-full rounded-xl bg-blue-600 py-3 text-lg font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">

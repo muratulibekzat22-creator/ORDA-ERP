@@ -69,6 +69,15 @@ function redactForRole<T extends Record<string, unknown>>(
     });
     return result;
   }
+  if (role === Role.PARTNER) {
+    delete result.amount;
+    delete result.prepayment;
+    delete result.balance;
+    delete result.companyProfit;
+    delete result.payments;
+    delete result.calculations;
+    return result;
+  }
   for (const field of [
     "companyProfit",
     "partnerPrice",
@@ -102,13 +111,6 @@ function redactForRole<T extends Record<string, unknown>>(
         });
       return calculation;
     });
-  }
-  if (role === Role.PARTNER) {
-    delete result.amount;
-    delete result.prepayment;
-    delete result.balance;
-    delete result.payments;
-    delete result.calculations;
   }
   return result;
 }
@@ -179,7 +181,7 @@ export async function PATCH(request: Request, { params }: Context) {
         );
     }
     if (body.action === "assignPartner") {
-      if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+      if (role !== Role.DIRECTOR)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
