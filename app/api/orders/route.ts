@@ -72,7 +72,15 @@ export async function GET() {
           },
           orderBy: { createdAt: "desc" },
         })
-      : await getOrders();
+      : await getOrders(auth.session!.user.role === Role.MANAGER
+          ? { OR: [{ managerUserId: Number(auth.session!.user.id) }, { managerUserId: null, manager: auth.session!.user.name ?? "" }, { leadConversion: { managerId: Number(auth.session!.user.id) } }] }
+          : auth.session!.user.role === Role.PRODUCTION
+            ? { productions: { some: { masterUserId: Number(auth.session!.user.id) } } }
+            : auth.session!.user.role === Role.INSTALLER
+              ? { installation: { installerUserId: Number(auth.session!.user.id) } }
+              : auth.session!.user.role === Role.MEASURER
+                ? { measurements: { some: { measurerUserId: Number(auth.session!.user.id) } } }
+                : {});
     if (auth.session!.user.role === Role.PARTNER) return NextResponse.json(orders);
     if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) {
       return NextResponse.json(orders.map((order) => {
@@ -178,6 +186,7 @@ export async function POST(request: Request) {
       partnerPaid,
       manager:
         requiredText(body.manager) ?? auth.session!.user.name ?? "Система",
+      managerUserId: Number(auth.session!.user.id),
     };
     const result = await createOrder({
       ...payload,

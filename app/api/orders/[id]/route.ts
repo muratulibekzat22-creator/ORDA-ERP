@@ -15,6 +15,7 @@ import { prisma } from "@/lib/prisma";
 import { assignPartnerToOrder } from "@/lib/services/partner.service";
 import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
+import { canAccessOrder360 } from "@/lib/services/order360.service";
 
 type Context = { params: Promise<{ id: string }> };
 const include = {
@@ -35,22 +36,9 @@ const idOf = (value: string) => {
 const text = (value: unknown, max = 1000) =>
   typeof value === "string" ? value.trim().slice(0, max) : null;
 
-async function partnerScope(userId: string) {
-  return prisma.partner.findUnique({
-    where: { userId: Number(userId) },
-    select: { id: true },
-  });
-}
 async function canAccess(id: number, role: Role, userId: string) {
-  if (role !== Role.PARTNER) return true;
-  const partner = await partnerScope(userId);
-  return (
-    !!partner &&
-    !!(await prisma.order.findFirst({
-      where: { id, partnerId: partner.id },
-      select: { id: true },
-    }))
-  );
+  const user = await prisma.user.findUnique({ where: { id: Number(userId) }, select: { name: true } });
+  return !!user && canAccessOrder360(id, { userId: Number(userId), role, name: user.name });
 }
 
 function redactForRole<T extends Record<string, unknown>>(
@@ -141,6 +129,8 @@ export async function PATCH(request: Request, { params }: Context) {
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   try {
     const body = (await request.json()) as Record<string, unknown>;
+    const commandOnly = ["lifecycle", "version", "managerUserId", "contractConfirmedAt", "controlMeasurementCompletedAt", "drawingApprovedAt", "specificationDefinedAt", "workshopConfirmedAt", "productionDeadline", "materialsReadyAt", "qaApprovedAt", "completenessConfirmedAt", "operationalAcceptedAt", "completedAt"];
+    if (commandOnly.some((field) => field in body)) return NextResponse.json({ error: "Критические поля изменяются только domain-командами" }, { status: 400 });
     if (body.action === "commercialAdjustment") {
       if (role !== Role.DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
       const newAmount = Number(body.newAmount), reason = text(body.reason, 1000);

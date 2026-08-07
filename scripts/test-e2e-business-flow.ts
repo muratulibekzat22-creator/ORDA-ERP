@@ -32,6 +32,7 @@ async function main() {
     step = "create generated order";
     const generatedOrder = (await createOrder({ clientId: client.id, partnerId: partner.id, address: "E2E generated", staircase: "Straight", material: "Oak", amount: 100, prepayment: 10, partnerPrice: 40, partnerPaid: 5, manager: `${tag}-MANAGER`, idempotencyKey: `${tag}:generated-order`, requestHash: "generated-order" })).order;
     assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(generatedOrder.number) && Number(generatedOrder.balance) === 90 && Number(generatedOrder.partnerBalance) === 35 && Number(generatedOrder.companyProfit) === 60, step);
+    await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: generatedOrder.id } });
     await prisma.orderEvent.deleteMany({ where: { orderId: generatedOrder.id } });
     await prisma.payment.deleteMany({ where: { orderId: generatedOrder.id } });
     await prisma.production.deleteMany({ where: { orderId: generatedOrder.id } });
@@ -68,7 +69,8 @@ async function main() {
     for (const stage of ["Покраска", "Комплектация", "Готово к монтажу"]) await updateProduction(production!.id, { stage });
     await updateProduction(production!.id, { stage: "Монтаж", master: `${tag}-INSTALLER`, masterUserId: installerId });
     await updateProduction(production!.id, { stage: "Сдано", percent: 100 });
-    current = await prisma.order.findUniqueOrThrow({ where: { id: order.id } }); assert(current.status === "Сдано", step);
+    current = await prisma.order.findUniqueOrThrow({ where: { id: order.id } }); assert(current.status === "Новая заявка", `${step}: production stage must not overwrite Order status`);
+    assert((await prisma.production.findUniqueOrThrow({ where: { id: production.id } })).stage === "Сдано", step);
 
     step = "warehouse movements and idempotency";
     const material = await prisma.material.create({ data: { name: tag, lookupKey: `${tag.toLocaleLowerCase("ru")}::шт`, category: "E2E", unit: "шт", stock: 10, minimumStock: 0, purchasePrice: "10" } }); ids.material = material.id;
@@ -90,7 +92,7 @@ async function main() {
     console.error(step, error);
     process.exitCode = 1;
   } finally {
-    if (ids.order) { await prisma.orderEvent.deleteMany({ where: { orderId: ids.order } }); await prisma.payment.deleteMany({ where: { orderId: ids.order } }); await prisma.materialMovement.deleteMany({ where: { orderId: ids.order } }); await prisma.measurement.deleteMany({ where: { orderId: ids.order } }); await prisma.production.deleteMany({ where: { orderId: ids.order } }); }
+    if (ids.order) { await prisma.orderGateOverride.deleteMany({ where: { orderId: ids.order } }); await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: ids.order } }); await prisma.orderBlocker.deleteMany({ where: { orderId: ids.order } }); await prisma.orderInstallation.deleteMany({ where: { orderId: ids.order } }); await prisma.orderEvent.deleteMany({ where: { orderId: ids.order } }); await prisma.payment.deleteMany({ where: { orderId: ids.order } }); await prisma.materialMovement.deleteMany({ where: { orderId: ids.order } }); await prisma.measurement.deleteMany({ where: { orderId: ids.order } }); await prisma.production.deleteMany({ where: { orderId: ids.order } }); }
     if (ids.material) await prisma.material.delete({ where: { id: ids.material } });
     if (ids.order) await prisma.order.delete({ where: { id: ids.order } });
     if (ids.partner) await prisma.partner.delete({ where: { id: ids.partner } });

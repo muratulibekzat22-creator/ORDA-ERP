@@ -2,8 +2,9 @@ import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { del } from "@vercel/blob";
 
-export async function getOrders() {
+export async function getOrders(where: import("@prisma/client").Prisma.OrderWhereInput = {}) {
   return prisma.order.findMany({
+    where,
     select: {
       id: true,
       number: true,
@@ -18,6 +19,9 @@ export async function getOrders() {
       partnerPaid: true,
       partnerBalance: true,
       manager: true,
+      managerUserId: true,
+      lifecycle: true,
+      version: true,
       status: true,
       createdAt: true,
       updatedAt: true,
@@ -78,6 +82,7 @@ async function createLegacyOrder(data: {
   partnerBalance: string;
 
   manager: string;
+  managerUserId?: number;
   status: string;
 }) {
   const order = await prisma.order.create({
@@ -116,6 +121,7 @@ type CreateOrderInput = {
   partnerPrice: number;
   partnerPaid: number;
   manager: string;
+  managerUserId?: number;
   actorRole?: import("@prisma/client").Role;
   idempotencyKey?: string;
   requestHash?: string;
@@ -177,6 +183,7 @@ export async function createOrder(data: CreateOrderInput) {
             partnerBalance: money(partnerBalance),
             companyProfit: money(companyProfit),
             manager: data.manager,
+            managerUserId: data.managerUserId,
             status: "Новая заявка",
           },
         });
@@ -202,6 +209,7 @@ export async function createOrder(data: CreateOrderInput) {
             comment: "Заказ создан",
           },
         });
+        await tx.orderLifecycleEvent.create({ data: { orderId: order.id, type: "ORDER_CREATED", toLifecycle: "CREATED", actorId: data.managerUserId, actorName: data.manager, role: data.actorRole ?? "MANAGER", idempotencyKey: data.idempotencyKey ? `order-lifecycle:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
         return { order, created: true };
       });
     } catch (error) {

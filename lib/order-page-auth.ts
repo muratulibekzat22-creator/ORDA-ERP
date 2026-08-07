@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { Role } from "@/lib/roles";
 import { hasPermission } from "@/lib/services/permission.service";
 import { getOrder } from "@/lib/services/order.service";
+import { canAccessOrder360 } from "@/lib/services/order360.service";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -17,6 +18,7 @@ export async function getAuthorizedOrder(id: number) {
     !(await hasPermission(role, "orders"))
   )
     return null;
+  if (!(await canAccessOrder360(id, { userId: Number(session.user.id), role: role as unknown as PrismaRole, name: session.user.name ?? "" }))) return null;
   if ((role as unknown as PrismaRole) === PrismaRole.PARTNER) {
     const partner = await prisma.partner.findUnique({
       where: { userId: Number(session.user.id) },

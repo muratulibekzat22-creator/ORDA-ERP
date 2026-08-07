@@ -147,6 +147,29 @@ enum BonusPaymentMode {
   IMMEDIATE
 }
 
+enum OrderLifecycle {
+  CREATED
+  PREPARATION
+  READY_FOR_PRODUCTION
+  IN_PRODUCTION
+  READY_FOR_INSTALLATION
+  INSTALLATION
+  ACCEPTANCE
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderBlockerSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum OrderBlockerStatus {
+  OPEN
+  RESOLVED
+}
+
 enum LeadSource {
   WHATSAPP
   INSTAGRAM
@@ -215,6 +238,13 @@ model User {
   payrollPayments            PayrollPayment[]           @relation("PayrollPaymentAuthor")
   reviewedAdvanceRequests    PayrollAdvanceRequest[]    @relation("AdvanceReviewer")
   closedPayrollPeriods       PayrollPeriod[]            @relation("PayrollPeriodCloser")
+  managedOrders              Order[]                    @relation("OrderResponsibleManager")
+  openedOrderBlockers        OrderBlocker[]             @relation("OrderBlockerOpenedBy")
+  responsibleOrderBlockers   OrderBlocker[]             @relation("OrderBlockerResponsible")
+  resolvedOrderBlockers      OrderBlocker[]             @relation("OrderBlockerResolvedBy")
+  orderGateOverrides         OrderGateOverride[]        @relation("OrderGateOverrideAuthor")
+  orderLifecycleEvents       OrderLifecycleEvent[]      @relation("OrderLifecycleEventActor")
+  assignedInstallations      OrderInstallation[]        @relation("OrderInstallationInstaller")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -536,8 +566,26 @@ model Order {
   partnerPaid    Decimal @default(0) @db.Decimal(12, 2)
   partnerBalance Decimal @default(0) @db.Decimal(12, 2)
 
-  manager String
-  status  String @default("Новая заявка")
+  manager                       String
+  managerUserId                 Int?
+  managerUser                   User?          @relation("OrderResponsibleManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  lifecycle                     OrderLifecycle @default(CREATED)
+  version                       Int            @default(1)
+  promisedAt                    DateTime?
+  requiredPrepayment            Decimal        @default(0) @db.Decimal(14, 2)
+  contractConfirmedAt           DateTime?
+  controlMeasurementCompletedAt DateTime?
+  drawingApprovedAt             DateTime?
+  specificationDefinedAt        DateTime?
+  workshopConfirmedAt           DateTime?
+  productionDeadline            DateTime?
+  materialsReadyAt              DateTime?
+  qaRequired                    Boolean        @default(false)
+  qaApprovedAt                  DateTime?
+  completenessConfirmedAt       DateTime?
+  operationalAcceptedAt         DateTime?
+  completedAt                   DateTime?
+  status                        String         @default("Новая заявка")
 
   measurements             Measurement[]
   payments                 Payment[]
@@ -556,6 +604,10 @@ model Order {
   financeAuditEvents       FinanceAuditEvent[]
   inventoryCogsEntries     InventoryCogsEntry[]
   payrollAccruals          PayrollAccrual[]
+  blockers                 OrderBlocker[]
+  gateOverrides            OrderGateOverride[]
+  lifecycleEvents          OrderLifecycleEvent[]
+  installation             OrderInstallation?
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -564,6 +616,87 @@ model Order {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([lifecycle, promisedAt])
+  @@index([managerUserId, lifecycle])
+}
+
+model OrderBlocker {
+  id                Int                  @id @default(autoincrement())
+  orderId           Int
+  order             Order                @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  type              String
+  severity          OrderBlockerSeverity
+  title             String
+  comment           String?
+  responsibleUserId Int?
+  responsibleUser   User?                @relation("OrderBlockerResponsible", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+  openedAt          DateTime             @default(now())
+  openedById        Int
+  openedBy          User                 @relation("OrderBlockerOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
+  dueAt             DateTime?
+  resolvedAt        DateTime?
+  resolvedById      Int?
+  resolvedBy        User?                @relation("OrderBlockerResolvedBy", fields: [resolvedById], references: [id], onDelete: Restrict)
+  resolution        String?
+  status            OrderBlockerStatus   @default(OPEN)
+  idempotencyKey    String               @unique
+  requestHash       String
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([orderId, status, severity])
+}
+
+model OrderGateOverride {
+  id             Int      @id @default(autoincrement())
+  orderId        Int
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  gate           String
+  reason         String
+  snapshot       Json
+  authorId       Int
+  author         User     @relation("OrderGateOverrideAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  idempotencyKey String   @unique
+  requestHash    String
+  createdAt      DateTime @default(now())
+
+  @@index([orderId, gate, createdAt])
+}
+
+model OrderLifecycleEvent {
+  id             Int             @id @default(autoincrement())
+  orderId        Int
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  type           String
+  fromLifecycle  OrderLifecycle?
+  toLifecycle    OrderLifecycle?
+  message        String?
+  actorId        Int?
+  actor          User?           @relation("OrderLifecycleEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorName      String
+  role           Role
+  metadata       Json?
+  idempotencyKey String?         @unique
+  requestHash    String?
+  createdAt      DateTime        @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model OrderInstallation {
+  id               Int       @id @default(autoincrement())
+  orderId          Int       @unique
+  order            Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  scheduledAt      DateTime
+  installerUserId  Int
+  installerUser    User      @relation("OrderInstallationInstaller", fields: [installerUserId], references: [id], onDelete: Restrict)
+  packageConfirmed Boolean   @default(false)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  comment          String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model OrderStatusHistory {

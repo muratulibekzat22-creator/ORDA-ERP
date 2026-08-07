@@ -839,11 +839,19 @@ async function main() {
       await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
       if (generatedOrderIds.length) {
         await prisma.leadConversion.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.orderGateOverride.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.orderBlocker.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.orderInstallation.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.payment.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
       }
+      await prisma.orderGateOverride.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.orderLifecycleEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.orderBlocker.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.orderInstallation.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.inventoryCogsEntry.deleteMany({ where: { order: { number: { startsWith: tag } } } });

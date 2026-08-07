@@ -71,6 +71,7 @@ async function main() {
     const parallelOrders = await Promise.all(["one", "two"].map((suffix) => createOrder({ ...orderInput, idempotencyKey: key(`order-${suffix}`), requestHash: hash(`order-${suffix}`) })));
     ensure(parallelOrders[0].order.number !== parallelOrders[1].order.number, "parallel order numbers");
     ensure(Number(createdOrder.balance) === 900 && Number(createdOrder.partnerBalance) === 350 && Number(createdOrder.companyProfit) === 600, "order calculated totals");
+    await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
     await prisma.orderEvent.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
     await prisma.payment.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
     await prisma.production.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
@@ -280,6 +281,10 @@ async function main() {
   } finally {
     await prisma.payment.deleteMany({ where: { idempotencyKey: { startsWith: tag } } });
     if (orderId) {
+      await prisma.orderGateOverride.deleteMany({ where: { orderId } });
+      await prisma.orderLifecycleEvent.deleteMany({ where: { orderId } });
+      await prisma.orderBlocker.deleteMany({ where: { orderId } });
+      await prisma.orderInstallation.deleteMany({ where: { orderId } });
       await prisma.orderEvent.deleteMany({ where: { orderId } });
       await prisma.payment.deleteMany({ where: { orderId } });
       await prisma.inventoryCogsEntry.deleteMany({ where: { orderId } });

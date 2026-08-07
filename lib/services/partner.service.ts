@@ -181,7 +181,7 @@ export async function assignPartnerToOrder(data: { orderId: number; partnerId: n
     const reason = data.reason?.trim() || "Partner assignment";
     if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
     const companyProfit = Number(order.amount) - data.partnerPrice;
-    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit), status: "Дерево" } });
+    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit) } });
     if (data.authorId) {
       await tx.partnerAssignmentHistory.create({ data: { orderId: order.id, previousPartnerId: order.partnerId, newPartnerId: partner.id, previousPayable: order.partnerPrice, newPayable: String(data.partnerPrice), paidAtChange: String(previousPaid), remainingAtChange: String(Math.max(Number(order.partnerPrice) - previousPaid, 0)), reason, authorId: data.authorId } });
       await tx.financeAuditEvent.create({ data: { orderId: order.id, action: "PARTNER_REASSIGNMENT", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });

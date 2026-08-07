@@ -156,7 +156,6 @@ export async function createProductionCommand(input: {
         },
         include: productionInclude,
       });
-      await tx.order.update({ where: { id: input.orderId }, data: { status: input.data.stage } });
       await tx.orderEvent.create({
         data: {
           orderId: input.orderId,
@@ -252,7 +251,6 @@ export async function updateProductionCommand(input: {
             requestHash: input.requestHash,
           },
         });
-        await tx.order.update({ where: { id: current.orderId }, data: { status: targetStage } });
       }
       await tx.orderEvent.create({
         data: {
@@ -291,19 +289,11 @@ export async function deleteProductionCommand(id: number, actor: ProductionActor
 
 // Compatibility helpers for existing internal scripts; API writes use the command functions above.
 export async function createProduction(data: { orderId: number; stage: string; percent: number; master: string; masterUserId?: number | null; comment?: string; startDate?: Date | null; finishDate?: Date | null }) {
-  return prisma.$transaction(async (tx) => {
-    const production = await tx.production.create({ data: { ...data, masterUserId: data.masterUserId ?? null } });
-    await tx.order.update({ where: { id: data.orderId }, data: { status: data.stage } });
-    return production;
-  });
+  return prisma.production.create({ data: { ...data, masterUserId: data.masterUserId ?? null } });
 }
 
 export async function updateProduction(id: number, data: { stage?: string; percent?: number; master?: string; masterUserId?: number | null; comment?: string; startDate?: Date | null; finishDate?: Date | null }) {
-  return prisma.$transaction(async (tx) => {
-    const production = await tx.production.update({ where: { id }, data });
-    if (data.stage) await tx.order.update({ where: { id: production.orderId }, data: { status: data.stage } });
-    return production;
-  });
+  return prisma.production.update({ where: { id }, data });
 }
 
 export function assignMaster(id: number, master: string) {

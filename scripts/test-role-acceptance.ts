@@ -80,7 +80,7 @@ const orderDetail = read("app/api/orders/[id]/route.ts");
 includesAll(
   orderDetail,
   [
-    "where: { id, partnerId: partner.id }",
+    "canAccessOrder360(id, { userId: Number(userId), role, name: user.name })",
     'delete result.amount',
     'delete result.prepayment',
     'delete result.balance',
