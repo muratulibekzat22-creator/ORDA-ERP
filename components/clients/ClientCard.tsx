@@ -246,13 +246,13 @@ export default function ClientCard({ clientId }: { clientId: number }) {
     return (
       <main className="p-8">
         <Link href="/clients" className="text-blue-300">
-          ← К списку клиентов
+          ← К списку заявок
         </Link>
         <p
           role="alert"
           className="mt-8 rounded-xl bg-red-950/40 p-5 text-red-300"
         >
-          {error || "Клиент не найден"}
+          {error || "Заявка не найдена"}
         </p>
       </main>
     );
@@ -265,17 +265,21 @@ export default function ClientCard({ clientId }: { clientId: number }) {
             className="inline-flex min-h-11 items-center gap-2 text-slate-300 hover:text-white"
           >
             <ArrowLeft size={18} />
-            Все клиенты
+            Все заявки
           </Link>
           <h1 className="mt-2 text-3xl font-bold text-white">{client.name}</h1>
           <p className="mt-1 text-slate-400">
-            Карточка клиента · создана {date(client.createdAt)}
+            Заявка · создана {date(client.createdAt)}
           </p>
         </div>
+        <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+        <a href={`https://wa.me/${(client.whatsapp || client.phone).replace(/\D/g, "")}`} target="_blank" rel="noreferrer" className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-green-700 px-4 font-semibold text-white"><MessageCircle size={18}/>WhatsApp</a>
+        <a href={`tel:${client.phone}`} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 text-white"><Phone size={18}/>Позвонить</a>
+        <Link href={`/clients/${client.id}/proposal`} className="col-span-2 flex min-h-12 items-center justify-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Рассчитать и сформировать КП</Link>
         <button
           onClick={() => void save()}
           disabled={saving}
-          className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-60"
+          className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-700 px-5 font-semibold text-white disabled:opacity-60"
         >
           {saving ? (
             <Loader2 className="animate-spin" size={18} />
@@ -283,7 +287,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
             <Save size={18} />
           )}
           Сохранить изменения
-        </button>
+        </button></div>
       </div>
       {error && (
         <p
@@ -304,7 +308,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
       <LeadWorkflow client={client} saving={saving} setSaving={setSaving} setError={setError} onSaved={load} />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <div className="space-y-5">
-          <Card title="Контакты и заявка" icon={<UserRound size={20} />}>
+          <Card title="Что нужно клиенту" icon={<UserRound size={20} />}>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="ФИО">
                 <input
@@ -384,7 +388,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
               </a>
             </div>
           </Card>
-          <Card title="Предварительный расчёт" icon={<Save size={20} />}>
+          <Card title="Расчёт и КП" icon={<Save size={20} />}>
             <Field label="Ориентировочная сумма">
               <input
                 type="number"

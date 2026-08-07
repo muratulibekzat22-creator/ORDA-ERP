@@ -1,5 +1,5 @@
 const INTERNAL_KEYS = new Set([
-  "internalCost", "workshopCost", "baseWorkshopCost", "workshopRate",
+  "internalCost", "workshopCost", "workshopPrice", "baseWorkshopCost", "workshopRate", "managerMinimumPrice", "margin",
   "workshopAdjustment", "grossDifference", "companyProfit", "partnerPrice",
   "partnerBalance", "materialCost", "installationCost", "deliveryCost",
   "otherDirectCosts", "totalCost", "grossProfit", "unitCost",

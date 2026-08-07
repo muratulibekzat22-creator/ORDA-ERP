@@ -9,7 +9,10 @@ type CalculationLineInput = { code: string; kind: string; name: string; quantity
 
 const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 
-export default function StairCalculator({ orderId, clientId }: { orderId?: number; clientId?: number }) {
+const leadMaterials = ["Сосна", "Карагач", "Дуб ламель"] as const;
+type LeadOption = { id: number; material: string; clientPrice: string | number };
+
+export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved }: { orderId?: number; clientId?: number; onLeadOptionsSaved?: (options: LeadOption[]) => void }) {
   const { data: session } = useSession();
   const [targetOrderId, setTargetOrderId] = useState(
     orderId ? String(orderId) : "",
@@ -29,6 +32,7 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
   const [message, setMessage] = useState("");
   const [savedOrderId, setSavedOrderId] = useState<number | null>(null);
   const [savedLeadCalculationId, setSavedLeadCalculationId] = useState<number | null>(null);
+  const [leadOptions, setLeadOptions] = useState<LeadOption[]>([]);
   const isDirector = session?.user.role === "DIRECTOR";
   const canSeeInternal = isDirector || session?.user.role === "ACCOUNTANT";
   useEffect(() => {
@@ -81,6 +85,7 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
     setSaving(true);
     setMessage("");
     try {
+      const saveOne = async (selectedMaterial: string) => {
       const response = await fetch(clientId ? `/api/clients/${clientId}/calculations` : `/api/orders/${targetOrderId}/calculation`, {
         method: "POST",
         headers: {
@@ -88,7 +93,7 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
           "Idempotency-Key": crypto.randomUUID(),
         },
         body: JSON.stringify({
-          material,
+          material: selectedMaterial,
           regularSteps: Number(regularSteps),
           platformEquivalents: platforms,
           ...(clientOverride === ""
@@ -104,13 +109,21 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
           lines,
         }),
       });
-      const payload = (await response.json()) as { id?: number; error?: string };
+      const payload = (await response.json()) as { id?: number; material?: string; clientPrice?: string | number; error?: string };
       if (!response.ok)
         throw new Error(payload.error ?? "Не удалось сохранить расчёт");
+      return payload;
+      };
+      if (clientId) {
+        const options = await Promise.all(leadMaterials.map((selectedMaterial) => saveOne(selectedMaterial)));
+        const saved = options.map((option, index) => ({ id: Number(option.id), material: option.material ?? leadMaterials[index], clientPrice: option.clientPrice ?? 0 }));
+        setLeadOptions(saved); setSavedLeadCalculationId(saved[1]?.id ?? saved[0]?.id ?? null); onLeadOptionsSaved?.(saved);
+      } else {
+        await saveOne(material); setSavedOrderId(Number(targetOrderId));
+      }
       setMessage(
-        "Расчёт сохранён в заказе. Суммы зафиксированы снимком и не изменятся при обновлении тарифов.",
+        clientId ? "Три варианта рассчитаны из одних параметров." : "Расчёт сохранён в заказе. Суммы зафиксированы снимком.",
       );
-      if (clientId) setSavedLeadCalculationId(Number(payload.id)); else setSavedOrderId(Number(targetOrderId));
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Не удалось сохранить расчёт",
@@ -123,7 +136,7 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2">
-        <label className="text-sm text-slate-300">
+        {!clientId && <label className="text-sm text-slate-300">
           Материал
           <select
             value={material}
@@ -134,7 +147,7 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
               <option key={value.code}>{value.uiName}</option>
             ))}
           </select>
-        </label>
+        </label>}
         <label className="text-sm text-slate-300">
           Обычные ступени
           <input
@@ -430,7 +443,7 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
           onClick={() => void save()}
           className="min-h-12 self-end rounded-xl bg-green-600 px-6 font-semibold text-white disabled:opacity-50"
         >
-          {saving ? "Сохранение…" : clientId ? "Сохранить расчёт заявки" : "Сохранить в заказ"}
+          {saving ? "Рассчитываем…" : clientId ? "Рассчитать 3 варианта" : "Сохранить в заказ"}
         </button>
       </div>
       {message && (
@@ -442,7 +455,8 @@ export default function StairCalculator({ orderId, clientId }: { orderId?: numbe
         </p>
       )}
       {savedOrderId && <Link href={`/orders/${savedOrderId}/offer`} className="inline-flex min-h-11 items-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Сформировать КП</Link>}
-      {clientId && savedLeadCalculationId && <Link href={`/clients/${clientId}/proposal?calculationId=${savedLeadCalculationId}`} className="inline-flex min-h-11 items-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Сформировать КП</Link>}
+      {clientId && leadOptions.length > 0 && <div className="grid gap-3 sm:grid-cols-3">{leadOptions.map((option,index)=><article key={option.id} className="rounded-xl border border-slate-700 bg-slate-900 p-4"><p className="text-xs uppercase tracking-wide text-slate-400">{["Базовый вариант","Оптимальный вариант","Премиальный вариант"][index]}</p><h3 className="mt-1 font-bold text-white">{option.material}</h3><p className="mt-3 text-lg font-semibold text-blue-300">{money(Number(option.clientPrice))}</p></article>)}</div>}
+      {clientId && savedLeadCalculationId && <Link href={`/clients/${clientId}/proposal?calculationId=${savedLeadCalculationId}`} className="inline-flex min-h-12 items-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Сформировать КП</Link>}
     </div>
   );
 }

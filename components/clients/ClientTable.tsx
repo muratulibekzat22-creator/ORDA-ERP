@@ -108,7 +108,6 @@ export default function ClientTable({ clients }: Props) {
                   <div>
                     <p className="font-semibold text-white">{client.name}</p>
 
-                    <p className="text-sm text-slate-500">ID #{client.id}</p>
                   </div>
                 </div>
               </td>
@@ -137,7 +136,7 @@ export default function ClientTable({ clients }: Props) {
                     href={`/clients/${client.id}`}
                     className="rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700"
                   >
-                    Открыть
+                    Открыть заявку
                   </Link>
                 </div>
               </td>

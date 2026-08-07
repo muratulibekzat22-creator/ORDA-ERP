@@ -1,16 +1,29 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+
 type Context = { params: Promise<{ id: string }> };
 const statuses = ["Черновик", "Подготовлено", "Отправлено", "Принято", "Отклонено", "Истекло"];
+
 export async function PATCH(request: Request, { params }: Context) {
-  const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const auth = await requirePermission("clients");
+  if (auth.response) return auth.response;
+  const role = auth.session!.user.role as Role;
+  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = Number((await params).id), body = await request.json() as Record<string, unknown>, status = String(body.status ?? "");
   if (!Number.isInteger(id) || !statuses.includes(status)) return NextResponse.json({ error: "Некорректный статус" }, { status: 400 });
-  const current = await prisma.commercialProposal.findUnique({ where: { id }, include: { client: { select: { status: true } } } }); if (!current) return NextResponse.json({ error: "КП не найдено" }, { status: 404 });
+  const current = await prisma.commercialProposal.findUnique({ where: { id }, include: { client: { select: { status: true, managerUserId: true } } } });
+  if (!current || role === Role.MANAGER && current.client.managerUserId !== Number(auth.session!.user.id)) return NextResponse.json({ error: "КП не найдено" }, { status: 404 });
   const clientStatus = status === "Отправлено" ? "КП отправлено" : status === "Принято" ? "Готов оформить заказ" : current.client.status;
-  const result = await prisma.$transaction(async (tx) => { const proposal = await tx.commercialProposal.update({ where: { id }, data: { status, sentAt: status === "Отправлено" ? new Date() : current.sentAt, acceptedAt: status === "Принято" ? new Date() : current.acceptedAt } }); if (clientStatus !== current.client.status) { await tx.client.update({ where: { id: current.clientId }, data: { status: clientStatus } }); await tx.leadStatusHistory.create({ data: { clientId: current.clientId, fromStatus: current.client.status, toStatus: clientStatus, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Система", comment: `Статус КП: ${status}` } }); } return proposal; });
+  const sent = status === "Отправлено", snapshot = current.snapshot as Prisma.JsonObject;
+  const result = await prisma.$transaction(async (tx) => {
+    const proposal = await tx.commercialProposal.update({ where: { id }, data: { status, sentAt: sent ? new Date() : current.sentAt, acceptedAt: status === "Принято" ? new Date() : current.acceptedAt, ...(sent ? { snapshot: { ...snapshot, delivery: { channel: "WhatsApp", sentById: Number(auth.session!.user.id), sentByName: auth.session!.user.name ?? "Пользователь" } } } : {}) } });
+    if (clientStatus !== current.client.status) {
+      await tx.client.update({ where: { id: current.clientId }, data: { status: clientStatus } });
+      await tx.leadStatusHistory.create({ data: { clientId: current.clientId, fromStatus: current.client.status, toStatus: clientStatus, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Пользователь", comment: `Статус КП: ${status}` } });
+    }
+    return proposal;
+  });
   return NextResponse.json(result);
 }
