@@ -771,6 +771,9 @@ async function main() {
     const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(managerOrders) && managerOrders.some((order) => order.id === firstOrder.id), "manager orders payload is invalid");
     assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
+    const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers: Array<{ managerUserId: number }> };
+    assert(!/companyProfit|partnerPrice|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
+    assert(managerDashboard.managers.every((row) => row.managerUserId === manager.id), "manager dashboard contains another manager's indicators");
     const managerCalendar = await (await expectStatus("/api/calendar", 200, managerCookie)).json() as { events: Array<{ id: string }>; orders: Array<{ id: number }>; filters: { assignees: unknown[] } };
     assert(Array.isArray(managerCalendar.events) && Array.isArray(managerCalendar.orders) && Array.isArray(managerCalendar.filters.assignees), "manager calendar payload is invalid");
     assert(managerCalendar.events.some((event) => event.id === String(firstMeasurement.id)) && managerCalendar.orders.some((order) => order.id === firstOrder.id), "manager calendar payload is missing temporary data");
@@ -781,6 +784,11 @@ async function main() {
     const directorOrders = await (await expectStatus("/api/orders", 200, directorCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(directorOrders) && directorOrders.some((order) => order.id === firstOrder.id), "director orders payload is invalid");
     assert(directorOrders.some((order) => order.id === firstOrder.id && ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
+    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { metrics: Record<string, unknown>; managers: unknown[]; activities: unknown[] };
+    assert(Boolean(directorDashboard.metrics) && Array.isArray(directorDashboard.managers) && Array.isArray(directorDashboard.activities), "director dashboard payload is invalid");
+    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+    const expectedDashboardOrders = await prisma.order.findMany({ where: { createdAt: { gte: monthStart }, status: { notIn: ["Отказ / отменён", "Отменен", "Отменён"] } }, select: { amount: true, prepayment: true, balance: true } });
+    assert(Number(directorDashboard.metrics.orders) === expectedDashboardOrders.length && Number(directorDashboard.metrics.totalSales) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) && Number(directorDashboard.metrics.receivedPrepayment) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.prepayment), 0) && Number(directorDashboard.metrics.balanceToReceive) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.balance), 0), "director dashboard order totals are incorrect");
     const directorClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(directorClients.data) && directorClients.pagination.total > 0 && directorClients.data.some((item) => item.id === client.id), "director clients payload is invalid");
     const directorMeasurements = await (await expectStatus("/api/measurements", 200, directorCookie)).json() as Array<{ id: number; order: { id: number } }>;
