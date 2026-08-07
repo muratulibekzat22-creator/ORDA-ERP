@@ -43,6 +43,7 @@ function operationError(error: unknown) {
     PAYMENT_EXCEEDS_BALANCE: ["Оплата превышает остаток по заказу", 409],
     REFUND_EXCEEDS_PAID: ["Возврат превышает оплаченную сумму", 409],
     PARTNER_PAYMENT_EXCEEDS_BALANCE: ["Выплата превышает остаток по заказу", 409],
+    EXPENSE_USE_COMPANY_LEDGER: ["Расходы проводятся через журнал расходов компании", 409],
   };
   return messages[error.message] ?? null;
 }

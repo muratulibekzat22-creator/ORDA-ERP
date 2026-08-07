@@ -12,5 +12,6 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   if (role === Role.PRODUCTION && !await prisma.production.findFirst({ where: { orderId: id, masterUserId: Number(auth.session!.user.id) }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   if (role === Role.INSTALLER && !await prisma.production.findFirst({ where: { orderId: id, masterUserId: Number(auth.session!.user.id), stage: "Монтаж" }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   if (!await prisma.order.findUnique({ where: { id }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
-  return NextResponse.json(await getOrderMaterials(id));
+  const canSeeCost = role === Role.DIRECTOR || role === Role.ACCOUNTANT;
+  return NextResponse.json(await getOrderMaterials(id, canSeeCost));
 }

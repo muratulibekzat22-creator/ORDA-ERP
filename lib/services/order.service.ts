@@ -131,6 +131,7 @@ function money(value: number) {
 }
 
 export async function createOrder(data: CreateOrderInput) {
+  if (data.partnerPaid > 0 && !data.partnerId) throw new Error("PARTNER_REQUIRED_FOR_INITIAL_PAYOUT");
   const eventKey = data.idempotencyKey
     ? `order:${data.idempotencyKey}`
     : undefined;
@@ -179,6 +180,8 @@ export async function createOrder(data: CreateOrderInput) {
             status: "Новая заявка",
           },
         });
+        if (data.prepayment > 0) await tx.payment.create({ data: { orderId: order.id, amount: money(data.prepayment), type: "CLIENT_PAYMENT", method: "initial_order_posting", comment: "Initial client payment", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-client-payment:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
+        if (data.partnerPaid > 0) await tx.payment.create({ data: { orderId: order.id, partnerId: data.partnerId, amount: money(data.partnerPaid), type: "PARTNER_PAYOUT", method: "initial_order_posting", comment: "Initial partner payout", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-partner-payout:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
         await tx.orderEvent.create({
           data: {
             orderId: order.id,

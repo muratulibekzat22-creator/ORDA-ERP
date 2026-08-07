@@ -28,7 +28,8 @@
     "test:sales-funnel": "tsx scripts/test-sales-funnel.ts",
     "test:commercial-boundary": "tsx scripts/test-commercial-boundary.ts",
     "test:role-acceptance": "tsx scripts/test-role-acceptance.ts",
-    "test:auth-mobile": "tsx scripts/test-auth-mobile.ts"
+    "test:auth-mobile": "tsx scripts/test-auth-mobile.ts",
+    "test:finance-integrity": "tsx scripts/test-finance-integrity.ts"
   },
   "engines": {
     "node": ">=20.9.0"

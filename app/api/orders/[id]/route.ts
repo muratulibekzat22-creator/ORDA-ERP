@@ -9,9 +9,11 @@ import {
 import {
   canTransitionOrderStatus,
   normalizeOrderStatus,
+  ORDER_STATUSES,
 } from "@/lib/orders/lifecycle";
 import { prisma } from "@/lib/prisma";
 import { assignPartnerToOrder } from "@/lib/services/partner.service";
+import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
 
 type Context = { params: Promise<{ id: string }> };
@@ -137,6 +139,15 @@ export async function PATCH(request: Request, { params }: Context) {
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   try {
     const body = (await request.json()) as Record<string, unknown>;
+    if (body.action === "commercialAdjustment") {
+      if (role !== Role.DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+      const newAmount = Number(body.newAmount), reason = text(body.reason, 1000);
+      if (!Number.isFinite(newAmount) || newAmount < 0 || !reason) return NextResponse.json({ error: "Укажите новую сумму и причину" }, { status: 400 });
+      const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
+      const payload = { orderId: id, newAmount, reason };
+      const result = await adjustOrderAmount({ ...payload, authorId: Number(auth.session!.user.id), author: auth.session!.user.name ?? "System", idempotencyKey: idempotency.key, requestHash: createRequestHash(payload) });
+      return NextResponse.json(result, { status: result.created ? 201 : 200 });
+    }
     const financial = [
       "prepayment",
       "balance",
@@ -190,6 +201,9 @@ export async function PATCH(request: Request, { params }: Context) {
         partnerId,
         partnerPrice,
         manager: auth.session!.user.name ?? undefined,
+        authorId: Number(auth.session!.user.id),
+        reason: text(body.reason, 1000) ?? "Назначение производственного партнёра",
+        directorConfirmed: role === Role.DIRECTOR && body.directorConfirmed === true,
       });
       return updated
         ? NextResponse.json(
@@ -274,6 +288,8 @@ export async function PATCH(request: Request, { params }: Context) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)
           throw new Error("INVALID_AMOUNT");
+        const hasFinancialHistory = await tx.payment.count({ where: { orderId: id } });
+        if (hasFinancialHistory) throw new Error("COMMERCIAL_ADJUSTMENT_REQUIRED");
         data.amount = amount;
       }
       if ("partnerPlannedReadyAt" in body)
@@ -287,6 +303,14 @@ export async function PATCH(request: Request, { params }: Context) {
       if (typeof body.installationCompleted === "boolean")
         data.installationCompleted = body.installationCompleted;
       await tx.order.update({ where: { id }, data });
+      if (status === ORDER_STATUSES[ORDER_STATUSES.length - 1]) {
+        const activeReservations = await tx.materialReservation.findMany({ where: { orderId: id, status: "ACTIVE", quantity: { gt: 0 } } });
+        for (const reservation of activeReservations) {
+          await tx.material.update({ where: { id: reservation.materialId }, data: { reserved: { decrement: reservation.quantity } } });
+          await tx.materialReservation.update({ where: { id: reservation.id }, data: { quantity: 0, status: "RELEASED" } });
+          await tx.materialMovement.create({ data: { materialId: reservation.materialId, orderId: id, type: "release", quantity: reservation.quantity, reserveDelta: -reservation.quantity, employeeId: Number(auth.session!.user.id) || null, comment: "Автоматическое освобождение при отмене заказа" } });
+        }
+      }
       if (status) {
         await tx.orderStatusHistory.create({
           data: {
@@ -345,6 +369,8 @@ export async function PATCH(request: Request, { params }: Context) {
         { error: "Переход статуса запрещён" },
         { status: 409 },
       );
+    if (error instanceof Error && ["COMMERCIAL_ADJUSTMENT_REQUIRED", "DIRECTOR_CONFIRMATION_REQUIRED", "PARTNER_PRICE_BELOW_PAID"].includes(error.message))
+      return NextResponse.json({ error: "Изменение требует контролируемой финансовой операции и подтверждения директора" }, { status: 409 });
     if (
       error instanceof Error &&
       ["INVALID_STATUS", "INVALID_AMOUNT"].includes(error.message)
@@ -368,9 +394,10 @@ export async function DELETE(_: Request, { params }: Context) {
   const id = idOf((await params).id);
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const deleted = await prisma.order
-    .delete({ where: { id } })
-    .catch(() => null);
+  const protectedOrder = await prisma.order.findUnique({ where: { id }, select: { _count: { select: { payments: true, calculations: true, events: true, materialMovements: true, materialReservations: true, productions: true, statusHistory: true, documents: true } } } });
+  if (!protectedOrder) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+  if (Object.values(protectedOrder._count).some((count) => count > 0)) return NextResponse.json({ error: "Финансово или операционно проведённый заказ нельзя удалить; используйте отмену или архив" }, { status: 409 });
+  const deleted = await prisma.order.delete({ where: { id } }).catch(() => null);
   return deleted
     ? NextResponse.json(deleted)
     : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });

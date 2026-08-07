@@ -106,19 +106,22 @@ model User {
   partnerProfile        Partner?
   assignedMeasurements  Measurement[]
   assignedProductions   Production[]
-  uploadedAttachments   Attachment[]          @relation("AttachmentUploadedBy")
-  clientInteractions    ClientInteraction[]   @relation("ClientInteractionAuthor")
-  clientAttachments     ClientAttachment[]    @relation("ClientAttachmentUploader")
-  warehouseMovements    MaterialMovement[]    @relation("WarehouseMovementEmployee")
-  warehouseReservations MaterialReservation[] @relation("WarehouseReservationCreator")
-  warehouseMutations    WarehouseMutation[]   @relation("WarehouseMutationActor")
-  companyLedgerEntries  CompanyLedgerEntry[]  @relation("CompanyLedgerAuthor")
-  personalLedgerEntries PersonalLedgerEntry[] @relation("PersonalLedgerAuthor")
+  uploadedAttachments   Attachment[]               @relation("AttachmentUploadedBy")
+  clientInteractions    ClientInteraction[]        @relation("ClientInteractionAuthor")
+  clientAttachments     ClientAttachment[]         @relation("ClientAttachmentUploader")
+  warehouseMovements    MaterialMovement[]         @relation("WarehouseMovementEmployee")
+  warehouseReservations MaterialReservation[]      @relation("WarehouseReservationCreator")
+  warehouseMutations    WarehouseMutation[]        @relation("WarehouseMutationActor")
+  companyLedgerEntries  CompanyLedgerEntry[]       @relation("CompanyLedgerAuthor")
+  personalLedgerEntries PersonalLedgerEntry[]      @relation("PersonalLedgerAuthor")
+  financeAuditEvents    FinanceAuditEvent[]        @relation("FinanceAuditAuthor")
+  commercialAdjustments CommercialAdjustment[]     @relation("CommercialAdjustmentAuthor")
+  partnerAssignments    PartnerAssignmentHistory[] @relation("PartnerAssignmentAuthor")
   authAuditEvents       AuthAuditEvent[]
-  managedClients        Client[]              @relation("ClientManager")
-  changedLeadStages     LeadStatusHistory[]   @relation("LeadStageChangedBy")
-  createdLeadActions    LeadNextAction[]      @relation("LeadActionCreatedBy")
-  completedLeadActions  LeadNextAction[]      @relation("LeadActionCompletedBy")
+  managedClients        Client[]                   @relation("ClientManager")
+  changedLeadStages     LeadStatusHistory[]        @relation("LeadStageChangedBy")
+  createdLeadActions    LeadNextAction[]           @relation("LeadActionCreatedBy")
+  completedLeadActions  LeadNextAction[]           @relation("LeadActionCompletedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -443,18 +446,21 @@ model Order {
   manager String
   status  String @default("Новая заявка")
 
-  measurements         Measurement[]
-  payments             Payment[]
-  productions          Production[]
-  events               OrderEvent[]
-  materialMovements    MaterialMovement[]
-  documents            Document[]
-  attachments          Attachment[]
-  materialReservations MaterialReservation[]
-  statusHistory        OrderStatusHistory[]
-  calculations         OrderCalculation[]
-  companyLedgerEntries CompanyLedgerEntry[]
-  leadConversion       LeadConversion?
+  measurements             Measurement[]
+  payments                 Payment[]
+  productions              Production[]
+  events                   OrderEvent[]
+  materialMovements        MaterialMovement[]
+  documents                Document[]
+  attachments              Attachment[]
+  materialReservations     MaterialReservation[]
+  statusHistory            OrderStatusHistory[]
+  calculations             OrderCalculation[]
+  companyLedgerEntries     CompanyLedgerEntry[]
+  leadConversion           LeadConversion?
+  commercialAdjustments    CommercialAdjustment[]
+  partnerAssignmentHistory PartnerAssignmentHistory[]
+  financeAuditEvents       FinanceAuditEvent[]
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -695,19 +701,22 @@ model MaterialMovement {
 
   type           String
   quantity       Float
-  price          Decimal  @default(0) @db.Decimal(12, 2)
+  price          Decimal           @default(0) @db.Decimal(12, 2)
   supplier       String?
   comment        String?
-  idempotencyKey String?  @unique
+  idempotencyKey String?           @unique
   requestHash    String?
-  amount         Decimal  @default(0) @db.Decimal(14, 2)
+  reversalOfId   Int?              @unique
+  reversalOf     MaterialMovement? @relation("MaterialMovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal       MaterialMovement? @relation("MaterialMovementReversal")
+  amount         Decimal           @default(0) @db.Decimal(14, 2)
   stockAfter     Float?
   reservedAfter  Float?
-  stockDelta     Float    @default(0)
-  reserveDelta   Float    @default(0)
+  stockDelta     Float             @default(0)
+  reserveDelta   Float             @default(0)
   employeeId     Int?
-  employee       User?    @relation("WarehouseMovementEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
-  operationAt    DateTime @default(now())
+  employee       User?             @relation("WarehouseMovementEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
+  operationAt    DateTime          @default(now())
 
   createdAt DateTime @default(now())
 }
@@ -772,12 +781,12 @@ model Payment {
   id Int @id @default(autoincrement())
 
   orderId Int?
-  order   Order? @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   partnerId Int?
   partner   Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
-  amount Float
+  amount Decimal @db.Decimal(14, 2)
 
   type   String
   method String
@@ -787,8 +796,67 @@ model Payment {
   author         String?
   idempotencyKey String?  @unique
   requestHash    String?
+  reversalOfId   Int?     @unique
+  reversalOf     Payment? @relation("PaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal       Payment? @relation("PaymentReversal")
+  reversalReason String?
 
   createdAt DateTime @default(now())
+}
+
+model CommercialAdjustment {
+  id             Int      @id @default(autoincrement())
+  orderId        Int
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  previousAmount Decimal  @db.Decimal(14, 2)
+  newAmount      Decimal  @db.Decimal(14, 2)
+  balanceImpact  Decimal  @db.Decimal(14, 2)
+  reason         String
+  authorId       Int
+  author         User     @relation("CommercialAdjustmentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  idempotencyKey String?  @unique
+  requestHash    String?
+  createdAt      DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model PartnerAssignmentHistory {
+  id                Int      @id @default(autoincrement())
+  orderId           Int
+  order             Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  previousPartnerId Int?
+  newPartnerId      Int
+  previousPayable   Decimal  @db.Decimal(14, 2)
+  newPayable        Decimal  @db.Decimal(14, 2)
+  paidAtChange      Decimal  @db.Decimal(14, 2)
+  remainingAtChange Decimal  @db.Decimal(14, 2)
+  reason            String
+  authorId          Int
+  author            User     @relation("PartnerAssignmentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  createdAt         DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([previousPartnerId, createdAt])
+  @@index([newPartnerId, createdAt])
+}
+
+model FinanceAuditEvent {
+  id         Int      @id @default(autoincrement())
+  orderId    Int?
+  order      Order?   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  action     String
+  entityType String
+  entityId   Int?
+  before     Json?
+  after      Json?
+  reason     String
+  authorId   Int
+  author     User     @relation("FinanceAuditAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([entityType, entityId, createdAt])
 }
 
 model Production {

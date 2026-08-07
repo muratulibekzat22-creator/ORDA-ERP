@@ -72,6 +72,7 @@ async function main() {
     ensure(parallelOrders[0].order.number !== parallelOrders[1].order.number, "parallel order numbers");
     ensure(Number(createdOrder.balance) === 900 && Number(createdOrder.partnerBalance) === 350 && Number(createdOrder.companyProfit) === 600, "order calculated totals");
     await prisma.orderEvent.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
+    await prisma.payment.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
     await prisma.production.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
     await prisma.order.deleteMany({ where: { id: { in: parallelOrders.map((result) => result.order.id) } } });
 
@@ -136,7 +137,7 @@ async function main() {
       where: { id: createdOrder.id },
     });
     ensure(
-      (await prisma.payment.count({ where: { orderId: createdOrder.id } })) === 2,
+      (await prisma.payment.count({ where: { orderId: createdOrder.id } })) === 4,
       "payments"
     );
     ensure(
@@ -173,7 +174,7 @@ async function main() {
       where: { id: createdOrder.id },
     });
     ensure(
-      (await prisma.payment.count({ where: { orderId: createdOrder.id } })) === 4,
+      (await prisma.payment.count({ where: { orderId: createdOrder.id } })) === 6,
       "partner payments"
     );
     ensure(

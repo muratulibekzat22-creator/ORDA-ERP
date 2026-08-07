@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
+import { createFinanceOperation } from "@/lib/services/payment.service";
 
 export async function getPartners() {
   const partners = await prisma.partner.findMany({
@@ -164,27 +164,28 @@ export async function deletePartner(id: number) {
 }
 
 export async function payPartner(data: { orderId: number; amount: number; method: string; comment?: string; author?: string; idempotencyKey?:string; requestHash?:string }) {
-  try { return await prisma.$transaction(async (tx) => {
-    if(data.idempotencyKey&&data.requestHash){const existing=await tx.payment.findUnique({where:{idempotencyKey:data.idempotencyKey}});if(existing){if(existing.requestHash!==data.requestHash)throw new Error("IDEMPOTENCY_CONFLICT");return existing;}}
-    const order = await tx.order.findUnique({ where: { id: data.orderId }, select: { id: true, partnerId: true, partnerPaid: true, partnerBalance: true } });
-    if (!order || !order.partnerId) return null;
-    if (data.amount > Number(order.partnerBalance)) throw new Error("PARTNER_PAYMENT_EXCEEDS_BALANCE");
-    const payment = await tx.payment.create({ data: { orderId: data.orderId, partnerId: order.partnerId, amount: data.amount, type: "PARTNER_PAYOUT", method: data.method, comment: data.comment,author:data.author,idempotencyKey:data.idempotencyKey,requestHash:data.requestHash } });
-    const partnerPaid = Number(order.partnerPaid) + data.amount;
-    const partnerBalance = Math.max(Number(order.partnerBalance) - data.amount, 0);
-    await tx.order.update({ where: { id: order.id }, data: { partnerPaid: String(partnerPaid), partnerBalance: String(partnerBalance) } });
-    await tx.orderEvent.create({ data: { orderId: order.id, title: "Выплата партнёру", description: `${data.amount.toLocaleString("ru-RU")} ₸ • ${data.method}${data.comment ? ` • ${data.comment}` : ""}`, user: "Система",idempotencyKey:data.idempotencyKey?`partner-event:${data.idempotencyKey}`:undefined,requestHash:data.requestHash } });
-    return payment;
-  }); } catch(error) { if(isPrismaUniqueConflict(error)&&data.idempotencyKey&&data.requestHash){const existing=await prisma.payment.findUnique({where:{idempotencyKey:data.idempotencyKey}});if(existing&&compareRequestHash(existing.requestHash,data.requestHash))return existing;throw new Error("IDEMPOTENCY_CONFLICT");}throw error; }
+  const result = await createFinanceOperation({ ...data, type: "PARTNER_PAYOUT" });
+  return result?.payment ?? null;
 }
 
-export async function assignPartnerToOrder(data: { orderId: number; partnerId: number; partnerPrice: number; manager?: string }) {
+export async function assignPartnerToOrder(data: { orderId: number; partnerId: number; partnerPrice: number; manager?: string; authorId?: number; reason?: string; directorConfirmed?: boolean }) {
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
     const order = await tx.order.findUnique({ where: { id: data.orderId } });
     const partner = await tx.partner.findUnique({ where: { id: data.partnerId } });
     if (!order || !partner) return null;
+    const previousPayouts = await tx.payment.aggregate({ where: { orderId: order.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true }, _count: true });
+    const newPartnerPayouts = await tx.payment.aggregate({ where: { orderId: order.id, partnerId: partner.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true } });
+    const previousPaid = Number(previousPayouts._sum.amount ?? 0), paid = Number(newPartnerPayouts._sum.amount ?? 0);
+    if (order.partnerId !== null && order.partnerId !== partner.id && previousPayouts._count > 0 && !data.directorConfirmed) throw new Error("DIRECTOR_CONFIRMATION_REQUIRED");
+    const reason = data.reason?.trim() || "Partner assignment";
+    if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
     const companyProfit = Number(order.amount) - data.partnerPrice;
-    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerBalance: String(data.partnerPrice), companyProfit: String(companyProfit), status: "Дерево" } });
+    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit), status: "Дерево" } });
+    if (data.authorId) {
+      await tx.partnerAssignmentHistory.create({ data: { orderId: order.id, previousPartnerId: order.partnerId, newPartnerId: partner.id, previousPayable: order.partnerPrice, newPayable: String(data.partnerPrice), paidAtChange: String(previousPaid), remainingAtChange: String(Math.max(Number(order.partnerPrice) - previousPaid, 0)), reason, authorId: data.authorId } });
+      await tx.financeAuditEvent.create({ data: { orderId: order.id, action: "PARTNER_REASSIGNMENT", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });
+    }
     const production = await tx.production.findFirst({ where: { orderId: order.id }, orderBy: { createdAt: "desc" } });
     if (production) await tx.production.update({ where: { id: production.id }, data: { stage: "Дерево" } });
     else await tx.production.create({ data: { orderId: order.id, stage: "Дерево", percent: 0, master: "" } });

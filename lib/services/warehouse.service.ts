@@ -54,7 +54,7 @@ async function idempotentMutation<T>(input: { key: string; requestHash: string; 
     if (!compareRequestHash(existing.requestHash, input.requestHash)) throw new WarehouseError("IDEMPOTENCY_CONFLICT");
     return { result: existing.result as T, replayed: true };
   }
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
       const result = await prisma.$transaction(async (tx) => {
         const repeated = await tx.warehouseMutation.findUnique({ where: { key: input.key } });
@@ -68,7 +68,7 @@ async function idempotentMutation<T>(input: { key: string; requestHash: string; 
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
       return { result, replayed: false };
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" && attempt < 2) continue;
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" && attempt < 7) { await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1))); continue; }
       if (isPrismaUniqueConflict(error)) {
         const repeated = await prisma.warehouseMutation.findUnique({ where: { key: input.key } });
         if (repeated && compareRequestHash(repeated.requestHash, input.requestHash)) return { result: repeated.result as T, replayed: true };
@@ -125,7 +125,7 @@ async function canOperateOrder(tx: Prisma.TransactionClient, actor: WarehouseAct
   return false;
 }
 
-export async function createWarehouseOperation(input: { data: { materialId: number; type: WarehouseOperationType; quantity: number; price?: number; orderId?: number; supplier?: string; comment?: string; operationAt?: Date; expiresAt?: Date | null }; key: string; requestHash: string; actor: WarehouseActor }) {
+export async function createWarehouseOperation(input: { data: { materialId: number; type: WarehouseOperationType; quantity: number; price?: number; orderId?: number; supplier?: string; comment?: string; operationAt?: Date; expiresAt?: Date | null; reversalOfId?: number }; key: string; requestHash: string; actor: WarehouseActor }) {
   if (input.actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
   if (input.actor.role === Role.MANAGER && !["reserve", "release"].includes(input.data.type)) throw new WarehouseError("FORBIDDEN");
   return idempotentMutation({ key: input.key, requestHash: input.requestHash, action: `movement.${input.data.type}`, actor: input.actor }, async (tx) => {
@@ -137,7 +137,13 @@ export async function createWarehouseOperation(input: { data: { materialId: numb
     if (input.actor.role === Role.ACCOUNTANT && !["incoming", "adjustment", "return"].includes(input.data.type)) throw new WarehouseError("FORBIDDEN");
     let stock = material.stock, reserved = material.reserved, stockDelta = 0, reserveDelta = 0;
     let reservation = input.data.orderId ? await tx.materialReservation.findUnique({ where: { orderId_materialId: { orderId: input.data.orderId, materialId: material.id } } }) : null;
-    if (input.data.type === "incoming" || input.data.type === "return") { stockDelta = input.data.quantity; stock += stockDelta; }
+    let reversalOfId: number | undefined;
+    if (input.data.type === "return") {
+      if (!input.data.reversalOfId) throw new WarehouseError("INVALID_OPERATION");
+      const original = await tx.materialMovement.findUnique({ where: { id: input.data.reversalOfId }, include: { reversal: { select: { id: true } } } });
+      if (!original || original.reversal || !["consume", "outgoing"].includes(original.type) || original.materialId !== material.id || original.orderId !== (input.data.orderId ?? null) || input.data.quantity > original.quantity) throw new WarehouseError("INVALID_OPERATION");
+      reversalOfId = original.id; stockDelta = input.data.quantity; stock += stockDelta;
+    } else if (input.data.type === "incoming") { stockDelta = input.data.quantity; stock += stockDelta; }
     else if (input.data.type === "outgoing") { if (stock - reserved < input.data.quantity) throw new WarehouseError("INSUFFICIENT_AVAILABLE"); stockDelta = -input.data.quantity; stock += stockDelta; }
     else if (input.data.type === "adjustment") { if (input.data.quantity < reserved) throw new WarehouseError("INSUFFICIENT_RESERVED"); stockDelta = input.data.quantity - stock; stock = input.data.quantity; }
     else if (input.data.type === "reserve") {
@@ -154,7 +160,8 @@ export async function createWarehouseOperation(input: { data: { materialId: numb
     const unitPrice = input.actor.role === Role.PRODUCTION || input.actor.role === Role.INSTALLER ? Number(material.purchasePrice) : input.data.price ?? Number(material.purchasePrice);
     const movementQuantity = input.data.type === "adjustment" ? Math.abs(stockDelta) : input.data.quantity;
     const updated = await tx.material.update({ where: { id: material.id }, data: { stock, reserved, ...(input.data.supplier ? { supplier: input.data.supplier } : {}), ...(["incoming", "return", "adjustment"].includes(input.data.type) && input.data.price !== undefined ? { purchasePrice: String(input.data.price) } : {}) } });
-    const movement = await tx.materialMovement.create({ data: { materialId: material.id, orderId: input.data.orderId, type: input.data.type, quantity: movementQuantity, stockDelta, reserveDelta, price: String(unitPrice), amount: String(movementQuantity * unitPrice), stockAfter: updated.stock, reservedAfter: updated.reserved, employeeId: input.actor.userId, supplier: input.data.supplier, comment: input.data.comment, operationAt: input.data.operationAt, idempotencyKey: input.key, requestHash: input.requestHash }, include: movementInclude });
+    const movement = await tx.materialMovement.create({ data: { materialId: material.id, orderId: input.data.orderId, type: input.data.type, quantity: movementQuantity, stockDelta, reserveDelta, price: String(unitPrice), amount: String(movementQuantity * unitPrice), stockAfter: updated.stock, reservedAfter: updated.reserved, employeeId: input.actor.userId, supplier: input.data.supplier, comment: input.data.comment, operationAt: input.data.operationAt, idempotencyKey: input.key, requestHash: input.requestHash, reversalOfId }, include: movementInclude });
+    if (input.data.type === "return") await tx.financeAuditEvent.create({ data: { orderId: input.data.orderId, action: "WAREHOUSE_RETURN", entityType: "MaterialMovement", entityId: movement.id, before: { movementId: reversalOfId }, after: { quantity: movementQuantity, materialId: material.id }, reason: input.data.comment ?? "Warehouse return", authorId: input.actor.userId } });
     if (input.data.orderId) await tx.orderEvent.create({ data: { orderId: input.data.orderId, title: `Склад: ${input.data.type}`, description: `${material.name}: ${movementQuantity} ${material.unit}`, user: input.actor.name, idempotencyKey: `warehouse-event:${input.key}`, requestHash: input.requestHash } });
     return { movement, reservation, material: { ...updated, available: updated.stock - updated.reserved } };
   });
@@ -203,4 +210,8 @@ export async function createMaterialMovement(data: { materialId: number; type: "
   throw new Error("WAREHOUSE_CONCURRENCY_RETRY_EXHAUSTED");
 }
 
-export async function getOrderMaterials(orderId: number) { const items = await prisma.materialMovement.findMany({ where: { orderId, type: { in: ["outgoing", "consume"] } }, include: { material: true, employee: { select: { id: true, name: true } } }, orderBy: { operationAt: "desc" } }); return { items, totalCost: items.reduce((sum, item) => sum + Number(item.amount), 0) }; }
+export async function getOrderMaterials(orderId: number, canSeeCost = true) {
+  const items = await prisma.materialMovement.findMany({ where: { orderId, type: { in: ["outgoing", "consume"] } }, include: { material: true, employee: { select: { id: true, name: true } } }, orderBy: { operationAt: "desc" } });
+  if (canSeeCost) return { items, totalCost: items.reduce((sum, item) => sum + Number(item.amount), 0) };
+  return { items: items.map((value) => { const item = { ...value, material: { ...value.material } } as Record<string, unknown> & { material: Record<string, unknown> }; for (const key of ["price", "amount"]) delete item[key]; for (const key of ["purchasePrice"]) delete item.material[key]; return item; }) };
+}

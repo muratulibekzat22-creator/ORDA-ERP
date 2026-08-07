@@ -31,6 +31,7 @@ const measurerUserIds: number[] = [];
 const productionUserIds: number[] = [];
 const managerUserIds: number[] = [];
 const generatedOrderIds: number[] = [];
+const generatedMaterialIds: number[] = [];
 const installationStage = "\u041c\u043e\u043d\u0442\u0430\u0436";
 const productionStage = "\u0414\u0435\u0440\u0435\u0432\u043e";
 let server: ChildProcess | undefined;
@@ -328,6 +329,9 @@ async function main() {
     managerUserIds.push(manager.id, lockoutUser.id, inactiveUser.id, temporaryUser.id, ...sharedUsers.map((user) => user.id));
     const financeData = await createPayment({ orderId: firstOrder.id, amount: 20, method: "cash", type: "payment", comment: tag });
     assert(financeData !== null, "failed to create temporary finance data");
+    const costMaterial = await prisma.material.create({ data: { name: `${tag}-cost`, category: "TEST", unit: "kg", lookupKey: `${tag}-cost::kg`, stock: 100, purchasePrice: "37.50" } });
+    generatedMaterialIds.push(costMaterial.id);
+    await prisma.materialMovement.createMany({ data: [firstOrder.id, firstProductionOrder.id, firstInstallerOrder.id].map((orderId, index) => ({ materialId: costMaterial.id, orderId, type: "consume", quantity: index + 1, price: "37.50", amount: String((index + 1) * 37.5), stockDelta: -(index + 1) })) });
 
     server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: "ignore", detached: false });
     await waitForServer();
@@ -498,6 +502,7 @@ async function main() {
     await expectStatus("/", 200, directorCookie);
     const orderCreationPayload = {
       clientId: client.id,
+      partnerId: firstPartner.id,
       address: "E2E order creation",
       staircase: "Straight",
       material: "Oak",
@@ -613,6 +618,16 @@ async function main() {
 
     const managerCookie = await session(manager.email);
     const otherManagerCookie = await session(lockoutUser.email);
+    const managerMaterials = await (await expectStatus(`/api/orders/${firstOrder.id}/materials`, 200, managerCookie)).json() as { items: Array<Record<string, unknown> & { material?: Record<string, unknown> }>; totalCost?: unknown };
+    assert(managerMaterials.items.length > 0 && managerMaterials.totalCost === undefined && managerMaterials.items.every((item) => !("price" in item) && !("amount" in item) && !("purchasePrice" in (item.material ?? {}))), "manager material cost fields leaked");
+    const productionMaterials = await (await expectStatus(`/api/orders/${firstProductionOrder.id}/materials`, 200, firstProductionCookie)).json() as { items: Array<Record<string, unknown> & { material?: Record<string, unknown> }> };
+    assert(productionMaterials.items.every((item) => !("price" in item) && !("amount" in item) && !("purchasePrice" in (item.material ?? {}))), "production material cost fields leaked");
+    const installerMaterials = await (await expectStatus(`/api/orders/${firstInstallerOrder.id}/materials`, 200, firstInstallerCookie)).json() as { items: Array<Record<string, unknown> & { material?: Record<string, unknown> }> };
+    assert(installerMaterials.items.every((item) => !("price" in item) && !("amount" in item) && !("purchasePrice" in (item.material ?? {}))), "installer material cost fields leaked");
+    await expectStatus(`/api/orders/${firstOrder.id}/materials`, 403, firstMeasurerCookie);
+    await expectStatus(`/api/orders/${firstOrder.id}/materials`, 403, firstCookie);
+    const directorMaterials = await (await expectStatus(`/api/orders/${firstOrder.id}/materials`, 200, directorCookie)).json() as { items: Array<Record<string, unknown>>; totalCost?: unknown };
+    assert(directorMaterials.items.some((item) => "price" in item && "amount" in item) && typeof directorMaterials.totalCost === "number", "director material costs were incorrectly redacted");
     const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ code: "GLASS_RAILING", kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
     const leadOrderCountBefore = await prisma.order.count();
     const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
@@ -781,8 +796,8 @@ async function main() {
     assert(companyEntry.id > 0 && personalEntry.id > 0, "management ledger creation failed");
     const personalDashboard = await (await expectStatus("/api/personal-finance", 200, directorCookie)).json() as { entries: Array<{ id: number }>; totals: { balance: number } };
     assert(personalDashboard.entries.some((entry) => entry.id === personalEntry.id) && typeof personalDashboard.totals.balance === "number", "personal finance payload is invalid");
-    const directorAnalytics = await (await expectStatus("/api/analytics", 200, directorCookie)).json() as { kpi: Record<string, number>; funnel: unknown[]; byManager: Array<{ manager: string }>; byPartner: Array<{ partner: string }>; months: unknown[]; filters: { partners: Array<{ id: number }> } };
-    assert(typeof directorAnalytics.kpi.leads === "number" && Array.isArray(directorAnalytics.funnel) && Array.isArray(directorAnalytics.months) && directorAnalytics.byManager.some((item) => item.manager === tag) && directorAnalytics.filters.partners.some((partner) => partner.id === firstPartner.id), "director analytics payload is invalid");
+    const directorAnalytics = await (await expectStatus("/api/analytics", 200, directorCookie)).json() as { kpi: Record<string, number>; funnel: unknown[]; byManager: Array<{ managerUserId: number; manager: string }>; byPartner: Array<{ partner: string }>; months: unknown[]; filters: { partners: Array<{ id: number }> } };
+    assert(typeof directorAnalytics.kpi.leads === "number" && Array.isArray(directorAnalytics.funnel) && Array.isArray(directorAnalytics.months) && directorAnalytics.byManager.some((item) => item.managerUserId === manager.id) && directorAnalytics.filters.partners.some((partner) => partner.id === firstPartner.id), "director analytics payload is invalid");
     const directorSettings = await (await expectStatus("/api/settings", 200, directorCookie)).json() as Record<string, unknown>;
     assert(typeof directorSettings === "object" && directorSettings !== null, "director settings payload is invalid");
     const directorEmployees = await (await expectStatus("/api/employees", 200, directorCookie)).json() as Array<{ id: number; role: Role }>;
@@ -800,6 +815,7 @@ async function main() {
         await prisma.leadConversion.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.payment.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
       }
       await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
@@ -821,6 +837,7 @@ async function main() {
       await prisma.client.deleteMany({ where: { OR: [{ name: { startsWith: tag } }, { comment: { startsWith: tag } }] } });
       await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
+      if (generatedMaterialIds.length) await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } });
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
       if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
       console.log("cleanup completed");
