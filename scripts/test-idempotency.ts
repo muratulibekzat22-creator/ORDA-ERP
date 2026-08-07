@@ -282,6 +282,7 @@ async function main() {
     if (orderId) {
       await prisma.orderEvent.deleteMany({ where: { orderId } });
       await prisma.payment.deleteMany({ where: { orderId } });
+      await prisma.inventoryCogsEntry.deleteMany({ where: { orderId } });
       await prisma.materialMovement.deleteMany({ where: { orderId } });
     }
 

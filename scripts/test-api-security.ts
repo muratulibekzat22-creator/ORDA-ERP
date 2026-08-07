@@ -631,11 +631,13 @@ async function main() {
     const managerCookie = await session(manager.email);
     const otherManagerCookie = await session(lockoutUser.email);
     const managerMaterials = await (await expectStatus(`/api/orders/${firstOrder.id}/materials`, 200, managerCookie)).json() as { items: Array<Record<string, unknown> & { material?: Record<string, unknown> }>; totalCost?: unknown };
-    assert(managerMaterials.items.length > 0 && managerMaterials.totalCost === undefined && managerMaterials.items.every((item) => !("price" in item) && !("amount" in item) && !("purchasePrice" in (item.material ?? {}))), "manager material cost fields leaked");
+    const hiddenInventoryFields = ["price", "amount", "unitCostSnapshot", "totalCogs", "valuationMethod", "valuationVersion", "purchaseBatchLineId"];
+    const hiddenMaterialFields = ["purchasePrice", "averageCost", "inventoryValue", "valuationVersion", "costStatus"];
+    assert(managerMaterials.items.length > 0 && managerMaterials.totalCost === undefined && managerMaterials.items.every((item) => hiddenInventoryFields.every((field) => !(field in item)) && hiddenMaterialFields.every((field) => !(field in (item.material ?? {})))), "manager material cost fields leaked");
     const productionMaterials = await (await expectStatus(`/api/orders/${firstProductionOrder.id}/materials`, 200, firstProductionCookie)).json() as { items: Array<Record<string, unknown> & { material?: Record<string, unknown> }> };
-    assert(productionMaterials.items.every((item) => !("price" in item) && !("amount" in item) && !("purchasePrice" in (item.material ?? {}))), "production material cost fields leaked");
+    assert(productionMaterials.items.every((item) => hiddenInventoryFields.every((field) => !(field in item)) && hiddenMaterialFields.every((field) => !(field in (item.material ?? {})))), "production material cost fields leaked");
     const installerMaterials = await (await expectStatus(`/api/orders/${firstInstallerOrder.id}/materials`, 200, firstInstallerCookie)).json() as { items: Array<Record<string, unknown> & { material?: Record<string, unknown> }> };
-    assert(installerMaterials.items.every((item) => !("price" in item) && !("amount" in item) && !("purchasePrice" in (item.material ?? {}))), "installer material cost fields leaked");
+    assert(installerMaterials.items.every((item) => hiddenInventoryFields.every((field) => !(field in item)) && hiddenMaterialFields.every((field) => !(field in (item.material ?? {})))), "installer material cost fields leaked");
     await expectStatus(`/api/orders/${firstOrder.id}/materials`, 403, firstMeasurerCookie);
     await expectStatus(`/api/orders/${firstOrder.id}/materials`, 403, firstCookie);
     const directorMaterials = await (await expectStatus(`/api/orders/${firstOrder.id}/materials`, 200, directorCookie)).json() as { items: Array<Record<string, unknown>>; totalCost?: unknown };
@@ -844,6 +846,7 @@ async function main() {
       }
       await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.inventoryCogsEntry.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       const attachmentPaths = (await prisma.attachment.findMany({ where: { order: { number: { startsWith: tag } } }, select: { pathname: true } })).map((item) => item.pathname);
       if (attachmentPaths.length) await del(attachmentPaths).catch(() => undefined);
@@ -861,7 +864,7 @@ async function main() {
       await prisma.client.deleteMany({ where: { OR: [{ name: { startsWith: tag } }, { comment: { startsWith: tag } }] } });
       await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
-      if (generatedMaterialIds.length) await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } });
+      if (generatedMaterialIds.length) { await prisma.inventoryCogsEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.inventoryValuationEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } }); }
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
       if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
       console.log("cleanup completed");

@@ -74,9 +74,9 @@ async function main() {
     check(foreign.orders.length === 1 && foreign.orders[0].id === orders[1].id, "foreign production isolated");
     check(own.movements.every((movement) => movement.orderId === orders[0].id || movement.employeeId === production.id), "movement scope");
     const costs = await getOrderMaterials(orders[0].id);
-    check(costs.totalCost === 60 && costs.items.length === 2, "order actual cost uses movement price snapshot");
+    check(costs.totalCost === 52 && costs.items.length === 2, "order actual cost uses moving-average snapshot");
     await updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price`, requestHash: "price", actor: actor(accountant) });
-    check((await getOrderMaterials(orders[0].id)).totalCost === 60, "historical cost remains stable");
+    check((await getOrderMaterials(orders[0].id)).totalCost === 52, "historical cost remains stable");
     const latest = await getWarehouse(actor(director), { page: 1, pageSize: 2 });
     check(latest.movements.length === 2 && latest.pagination.total >= 7 && latest.movements[0].operationAt >= latest.movements[1].operationAt, "paginated sorted history");
     const stored = await prisma.material.findUniqueOrThrow({ where: { id: materialId } });
@@ -89,6 +89,8 @@ async function main() {
   } finally {
     await prisma.warehouseMutation.deleteMany({ where: { key: { startsWith: tag } } });
     await prisma.orderEvent.deleteMany({ where: { orderId: { in: ids.orders } } });
+    await prisma.inventoryCogsEntry.deleteMany({ where: { OR: [{ materialId: { in: ids.materials } }, { orderId: { in: ids.orders } }] } });
+    await prisma.inventoryValuationEntry.deleteMany({ where: { materialId: { in: ids.materials } } });
     await prisma.materialMovement.deleteMany({ where: { OR: [{ materialId: { in: ids.materials } }, { orderId: { in: ids.orders } }] } });
     await prisma.materialReservation.deleteMany({ where: { OR: [{ materialId: { in: ids.materials } }, { orderId: { in: ids.orders } }] } });
     await prisma.productionStageHistory.deleteMany({ where: { production: { orderId: { in: ids.orders } } } });
