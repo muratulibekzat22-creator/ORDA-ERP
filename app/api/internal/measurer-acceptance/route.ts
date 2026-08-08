@@ -2,6 +2,7 @@ import { Role } from "@prisma/client";
 import { encode } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { scheduleMeasurement } from "@/lib/services/measurement.service";
 
 const managerEmail = "manager.test@altynsapa.kz";
 const measurerEmail = "measurer.test@altynsapa.kz";
@@ -76,7 +77,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   const body = (await request.json().catch(() => ({}))) as {
     action?: string;
+    clientId?: number;
     measurementId?: number;
+    visitDate?: string;
   };
   const [manager, measurer] = await Promise.all([
     prisma.user.findFirst({
@@ -120,6 +123,29 @@ export async function POST(request: Request) {
       orderBy: { updatedAt: "desc" },
     });
     return NextResponse.json({ manager, measurer, client });
+  }
+  if (
+    body.action === "schedule" &&
+    Number.isInteger(body.clientId) &&
+    typeof body.visitDate === "string"
+  ) {
+    const visitDate = new Date(body.visitDate);
+    if (Number.isNaN(visitDate.getTime())) {
+      return NextResponse.json({ error: "INVALID_DATE" }, { status: 400 });
+    }
+    const measurement = await scheduleMeasurement(
+      { userId: manager.id, name: manager.name, role: Role.MANAGER },
+      {
+        clientId: body.clientId!,
+        measurerUserId: measurer.id,
+        visitDate,
+        city: "Алматы",
+        address: "Алматы, проспект Абая 1",
+        mapLink: "https://maps.google.com/?q=43.238949,76.889709",
+        comment: "Production acceptance MEASURER TEST",
+      },
+    );
+    return NextResponse.json({ measurement });
   }
   if (body.action === "inspect" && Number.isInteger(body.measurementId)) {
     const measurement = await prisma.measurement.findUnique({
