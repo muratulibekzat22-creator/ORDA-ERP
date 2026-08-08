@@ -2,7 +2,8 @@ const INTERNAL_KEYS = new Set([
   "internalCost", "purchaseCost", "costPrice", "workshopCost", "workshopPrice", "baseWorkshopCost", "workshopRate", "managerMinimumPrice", "margin", "markup", "internalCoefficient",
   "workshopAdjustment", "grossDifference", "companyProfit", "partnerPrice",
   "partnerBalance", "materialCost", "installationCost", "deliveryCost",
-  "otherDirectCosts", "totalCost", "grossProfit", "unitCost",
+  "otherDirectCosts", "totalCost", "grossProfit", "unitCost", "saleRate",
+  "baseClientPrice", "equivalentSteps", "clientAdjustment",
 ]);
 
 export function publicCalculationSnapshot(value: unknown): unknown {

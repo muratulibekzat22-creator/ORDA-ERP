@@ -154,8 +154,15 @@ export async function POST(request: Request, context: Context) {
           delivery: calculation.deliveryRequired ?? false,
           installation: calculation.installationRequired ?? false,
         },
+        deliveryOption: calculation.deliveryOption ?? "NONE",
+        deliveryCharge: Number(calculation.deliveryCharge ?? 0),
       };
     });
+    const deliveryOptions = new Set(variants.map((item) => item.deliveryOption));
+    if (deliveryOptions.size !== 1)
+      return NextResponse.json({ error: "Варианты расчёта должны использовать одну доставку" }, { status: 400 });
+    const deliveryOption = variants[0].deliveryOption;
+    const deliveryCharge = variants[0].deliveryCharge;
     const total = Math.max(...variants.map((item) => item.total));
     const result = await prisma.$transaction(
       async (tx) => {
@@ -183,6 +190,7 @@ export async function POST(request: Request, context: Context) {
               city: client.city,
             },
             variants,
+            delivery: { option: deliveryOption, amount: deliveryCharge },
             paymentTerms: String(
               body.paymentTerms ??
                 "Условия оплаты согласовываются при оформлении заказа",

@@ -6,6 +6,13 @@ export const STAIR_RATES = {
 
 export type StairMaterial = keyof typeof STAIR_RATES;
 
+export const DELIVERY_CHARGES = {
+  NONE: 0,
+  OPTION_1: 300_000,
+  OPTION_2: 500_000,
+} as const;
+export type DeliveryOption = keyof typeof DELIVERY_CHARGES;
+
 export type StairCalculationInput = {
   material: StairMaterial;
   regularSteps: number;
@@ -17,6 +24,7 @@ export type StairCalculationInput = {
   measurementRequired?: boolean;
   otherCity?: boolean;
   pickup?: boolean;
+  deliveryOption?: DeliveryOption;
   lines?: CalculationLineInput[];
 };
 
@@ -63,12 +71,17 @@ export function calculateStair(input: StairCalculationInput, configuredRates: St
   )
     throw new Error("Итоговые суммы должны быть неотрицательными числами");
   const installationRequired = input.installationRequired !== false;
-  const deliveryRequired = input.deliveryRequired !== false && input.pickup !== true;
+  const requestedDeliveryOption = input.deliveryOption ?? "NONE";
+  if (!(requestedDeliveryOption in DELIVERY_CHARGES))
+    throw new Error("Некорректный вариант доставки");
+  const deliveryOption: DeliveryOption = input.otherCity === true ? requestedDeliveryOption : "NONE";
+  const deliveryCharge = DELIVERY_CHARGES[deliveryOption];
+  const deliveryRequired = deliveryOption !== "NONE" || (input.deliveryRequired !== false && input.pickup !== true);
   const measurementRequired = input.measurementRequired !== false;
   const lines = normalizedLines(input.lines, installationRequired, deliveryRequired, measurementRequired);
   const lineCost = lines.reduce((sum, line) => sum + line.totalCost, 0);
   const lineSale = lines.reduce((sum, line) => sum + line.totalSale, 0);
-  const calculatedClientPrice = input.clientPrice ?? baseClientPrice + lineSale;
+  const calculatedClientPrice = input.clientPrice ?? baseClientPrice + lineSale + deliveryCharge;
   const calculatedWorkshopCost = input.workshopCost ?? baseWorkshopCost;
   const materialCost = lines.filter((line) => line.kind === "MATERIAL").reduce((sum, line) => sum + line.totalCost, 0);
   const installationCost = lines.filter((line) => line.kind === "INSTALLATION").reduce((sum, line) => sum + line.totalCost, 0);
@@ -90,6 +103,8 @@ export function calculateStair(input: StairCalculationInput, configuredRates: St
     clientAdjustment: calculatedClientPrice - (baseClientPrice + lineSale),
     installationRequired,
     deliveryRequired,
+    deliveryOption,
+    deliveryCharge,
     measurementRequired,
     otherCity: input.otherCity === true,
     pickup: input.pickup === true,

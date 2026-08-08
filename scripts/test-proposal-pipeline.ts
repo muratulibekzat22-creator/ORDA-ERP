@@ -1,9 +1,9 @@
 import "dotenv/config";
-import { calculateStair, STAIR_RATES } from "@/lib/calculator/stair-calculation";
+import { calculateStair, DELIVERY_CHARGES, STAIR_RATES } from "@/lib/calculator/stair-calculation";
 import { normalizePhone } from "@/lib/leads/domain";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { prisma } from "@/lib/prisma";
-import { buildProposalPdf } from "@/lib/services/proposal-pdf.service";
+import { buildProposalPdf, proposalDeliveryText } from "@/lib/services/proposal-pdf.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Proposal integration requires TEST_DATABASE_URL");
 const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
@@ -20,6 +20,17 @@ async function main() {
   const full = calculateStair({ material: "Сосна", regularSteps: 10, platformEquivalents: [], lines }, STAIR_RATES);
   const excluded = calculateStair({ material: "Сосна", regularSteps: 10, platformEquivalents: [], lines, installationRequired: false, deliveryRequired: false, measurementRequired: false }, STAIR_RATES);
   assert(full.clientPrice - excluded.clientPrice === 60, "service flags do not affect total");
+  for (const material of Object.keys(STAIR_RATES) as Array<keyof typeof STAIR_RATES>) {
+    const none = calculateStair({ material, regularSteps: 15, platformEquivalents: [2], otherCity: true, deliveryOption: "NONE" }, STAIR_RATES);
+    const option1 = calculateStair({ material, regularSteps: 15, platformEquivalents: [2], otherCity: true, deliveryOption: "OPTION_1" }, STAIR_RATES);
+    const option2 = calculateStair({ material, regularSteps: 15, platformEquivalents: [2], otherCity: true, deliveryOption: "OPTION_2" }, STAIR_RATES);
+    assert(option1.clientPrice - none.clientPrice === DELIVERY_CHARGES.OPTION_1, `${material}: delivery OPTION_1 is not included`);
+    assert(option2.clientPrice - none.clientPrice === DELIVERY_CHARGES.OPTION_2, `${material}: delivery OPTION_2 is not included`);
+    assert(option2.deliveryOption === "OPTION_2" && option2.deliveryCharge === 500_000, `${material}: delivery snapshot is incorrect`);
+  }
+  assert(proposalDeliveryText("NONE") === "Доставка не входит в стоимость", "PDF NONE delivery text is incorrect");
+  assert(proposalDeliveryText("OPTION_1", 300_000).includes("300 000 ₸"), "PDF OPTION_1 delivery text is incorrect");
+  assert(proposalDeliveryText("OPTION_2", 500_000).includes("500 000 ₸"), "PDF OPTION_2 delivery text is incorrect");
   const publicValue = JSON.stringify(publicCalculationSnapshot({ purchaseCost: 1, margin: 2, internalCoefficient: 3, unitCost: 4, nested: { grossProfit: 5 }, safe: "ok" }));
   for (const secret of ["purchaseCost", "margin", "internalCoefficient", "unitCost", "grossProfit"]) assert(!publicValue.includes(secret), `public DTO leaks ${secret}`);
   const sequenceValues = await Promise.all(Array.from({ length: 50 }, () => prisma.$queryRaw<Array<{ value: bigint }>>`SELECT nextval('commercial_proposal_number_seq') AS value`));

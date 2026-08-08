@@ -12,8 +12,10 @@ const clientApi = read("app/api/clients/route.ts");
 const modal = read("components/clients/ClientModal.tsx");
 const proposalWorkspace = read("components/clients/LeadProposalWorkspace.tsx");
 const proposalApi = read("app/api/clients/[id]/proposals/route.ts");
-const calculator = read("components/calculator/StairCalculator.tsx");
 const managersApi = read("app/api/client-managers/route.ts");
+
+for (const contract of ["deliveryOption", "OPTION_1", "OPTION_2", "deliveryCharge"])
+  if (!modal.includes(contract)) throw new Error(`Missing inline delivery contract: ${contract}`);
 
 for (const expected of [
   "whatsapp",
@@ -69,11 +71,10 @@ if (
 )
   throw new Error("Sales analytics must use leads, not orders");
 for (const field of [
-  "Имя (необязательно)",
-  "Номер WhatsApp",
+  "Имя клиента (необязательно)",
+  "WhatsApp / телефон",
   "Город",
   "Ответственный менеджер",
-  "Комментарий (необязательно)",
 ])
   if (!modal.includes(field))
     throw new Error(`Minimal application field missing: ${field}`);
@@ -90,8 +91,10 @@ if (
     "Responsible manager selector is not restricted to active staff",
   );
 for (const material of ["Сосна", "Карагач", "Дуб ламель"])
-  if (!calculator.includes(material) || !proposalApi.includes(material))
+  if (!modal.includes(material) || !proposalApi.includes(material))
     throw new Error(`Three-variant flow is missing ${material}`);
+for (const contract of ["Создать заявку и КП", "/calculations", "/proposals", "/pdf", "/send"])
+  if (!modal.includes(contract)) throw new Error(`Inline proposal workflow is missing ${contract}`);
 for (const action of [
   "Сформировать КП",
   "Открыть / скачать PDF",

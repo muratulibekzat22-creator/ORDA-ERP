@@ -7,7 +7,7 @@ import { buildProposalPdf } from "@/lib/services/proposal-pdf.service";
 
 export const runtime = "nodejs";
 export async function GET(
-  _: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const auth = await requirePermission("clients");
@@ -31,7 +31,7 @@ export async function GET(
   return new Response(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="proposal-${proposal.number}.pdf"`,
+      "Content-Disposition": `${new URL(request.url).searchParams.get("download") === "1" ? "attachment" : "inline"}; filename="proposal-${proposal.number}.pdf"`,
       "Cache-Control": "private, no-store",
     },
   });

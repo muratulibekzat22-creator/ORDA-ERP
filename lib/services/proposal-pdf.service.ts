@@ -14,7 +14,15 @@ type Variant = {
     delivery?: boolean;
     installation?: boolean;
   };
+  deliveryOption?: "NONE" | "OPTION_1" | "OPTION_2";
+  deliveryCharge?: number;
 };
+
+export function proposalDeliveryText(option: Variant["deliveryOption"], amount = 0) {
+  if (option === "OPTION_1" || option === "OPTION_2")
+    return `Доставка в другой город — ${Number(amount).toLocaleString("ru-RU")} ₸`;
+  return "Доставка не входит в стоимость";
+}
 
 export async function buildProposalPdf(snapshotValue: unknown) {
   const snapshot = publicCalculationSnapshot(snapshotValue) as Record<
@@ -93,9 +101,7 @@ export async function buildProposalPdf(snapshotValue: unknown) {
     document.text(
       `Замер: ${services.measurement ? "включён" : "не входит в стоимость"}`,
     );
-    document.text(
-      `Доставка: ${services.delivery ? "включена" : "не входит в стоимость"}`,
-    );
+    document.text(proposalDeliveryText(variant.deliveryOption, variant.deliveryCharge));
     document.text(
       `Монтаж: ${services.installation ? "включён" : "не входит в стоимость"}`,
     );
