@@ -7,7 +7,7 @@ import DirectorCockpit from "@/components/dashboard/DirectorCockpit";
 export default function Dashboard() {
   const { data: session, status } = useSession();
   if (status === "loading") return <div role="status" className="space-y-4 p-4 md:p-8"><div className="h-20 animate-pulse rounded-2xl bg-slate-900"/><div className="h-64 animate-pulse rounded-2xl bg-slate-900"/></div>;
-  if (session?.user.role === "DIRECTOR") return <DirectorCockpit />;
-  if (session?.user.role === "MANAGER") return <DirectorCockpit />;
+  if (["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"].includes(session?.user.role ?? ""))
+    return <DirectorCockpit />;
   return <DashboardPage />;
 }

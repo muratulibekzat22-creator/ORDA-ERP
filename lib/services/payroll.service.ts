@@ -19,6 +19,17 @@ const money = (value: unknown) => {
     throw new PayrollError("INVALID_AMOUNT");
   return new Prisma.Decimal(amount.toFixed(2));
 };
+const nonNegativeMoney = (value: unknown) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0)
+    throw new PayrollError("INVALID_AMOUNT");
+  return new Prisma.Decimal(amount.toFixed(2));
+};
+const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => {
+  const reason = value?.trim();
+  if (!reason) throw new PayrollError(code);
+  return reason;
+};
 const director = (actor: PayrollActor) => {
   if (actor.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
 };
@@ -26,6 +37,7 @@ const finance = (actor: PayrollActor) => {
   if (!(actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT))
     throw new PayrollError("FORBIDDEN");
 };
+const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
 
 export async function ensurePeriod(year: number, month: number) {
   if (
@@ -45,9 +57,36 @@ export async function ensurePeriod(year: number, month: number) {
 async function openPeriod(tx: Prisma.TransactionClient, periodId: number) {
   const period = await tx.payrollPeriod.findUnique({ where: { id: periodId } });
   if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
-  if (period.status === PayrollPeriodStatus.CLOSED)
-    throw new PayrollError("PERIOD_CLOSED");
+  if (period.status !== PayrollPeriodStatus.OPEN)
+    throw new PayrollError(period.status === PayrollPeriodStatus.CLOSED ? "PERIOD_CLOSED" : "PERIOD_NOT_OPEN");
   return period;
+}
+
+async function audit(
+  tx: Prisma.TransactionClient,
+  input: {
+    action: string;
+    actor: PayrollActor;
+    periodId?: number;
+    employeeId?: number;
+    before?: Prisma.InputJsonValue;
+    after?: Prisma.InputJsonValue;
+    reason: string;
+    idempotencyKey?: string;
+  },
+) {
+  return tx.payrollAuditEvent.create({
+    data: {
+      action: input.action,
+      actorId: input.actor.userId,
+      periodId: input.periodId,
+      employeeId: input.employeeId,
+      before: input.before,
+      after: input.after,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+    },
+  });
 }
 
 export async function upsertPayrollProfile(
@@ -61,12 +100,13 @@ export async function upsertPayrollProfile(
   actor: PayrollActor,
 ) {
   director(actor);
-  const salary = money(input.baseSalary);
-  const guaranteed = money(input.defaultGuaranteedBonus ?? 20000);
+  const salary = nonNegativeMoney(input.baseSalary);
+  const guaranteed = nonNegativeMoney(input.defaultGuaranteedBonus ?? 20000);
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: input.userId } });
     if (!user || user.role === Role.PARTNER)
       throw new PayrollError("EMPLOYEE_NOT_FOUND");
+    const previousProfile = await tx.employeePayrollProfile.findUnique({ where: { userId: input.userId } });
     const profile = await tx.employeePayrollProfile.upsert({
       where: { userId: input.userId },
       create: {
@@ -107,6 +147,14 @@ export async function upsertPayrollProfile(
         data: { baseSalary: salary },
       });
     }
+    await audit(tx, {
+      action: "PAYROLL_PROFILE_CONFIGURED",
+      actor,
+      employeeId: profile.id,
+      before: previousProfile ? { baseSalary: Number(previousProfile.baseSalary), guaranteedBonus: Number(previousProfile.defaultGuaranteedBonus) } : undefined,
+      after: { baseSalary: Number(salary), guaranteedBonus: Number(guaranteed) },
+      reason: input.comment?.trim() || "Настройка зарплатного профиля",
+    });
     return tx.employeePayrollProfile.findUniqueOrThrow({
       where: { id: profile.id },
       include: {
@@ -114,7 +162,7 @@ export async function upsertPayrollProfile(
         user: { select: { id: true, name: true, role: true, active: true } },
       },
     });
-  });
+  }, transactionOptions);
 }
 
 export async function changeSalary(
@@ -153,8 +201,43 @@ export async function changeSalary(
       where: { id: employeeId },
       data: { baseSalary: salary },
     });
+    await audit(tx, {
+      action: "SALARY_CHANGED",
+      actor,
+      employeeId,
+      before: current ? { amount: Number(current.amount), effectiveFrom: current.effectiveFrom.toISOString() } : undefined,
+      after: { amount: Number(salary), effectiveFrom: effectiveFrom.toISOString() },
+      reason: comment?.trim() || "Изменение оклада",
+    });
     return rate;
-  });
+  }, transactionOptions);
+}
+
+export async function changeAllowance(
+  employeeId: number,
+  amount: number,
+  comment: string | undefined,
+  actor: PayrollActor,
+) {
+  director(actor);
+  const allowance = nonNegativeMoney(amount);
+  return prisma.$transaction(async (tx) => {
+    const profile = await tx.employeePayrollProfile.findUnique({ where: { id: employeeId } });
+    if (!profile) throw new PayrollError("EMPLOYEE_NOT_FOUND");
+    const updated = await tx.employeePayrollProfile.update({
+      where: { id: employeeId },
+      data: { defaultGuaranteedBonus: allowance },
+    });
+    await audit(tx, {
+      action: "ALLOWANCE_CHANGED",
+      actor,
+      employeeId,
+      before: { amount: Number(profile.defaultGuaranteedBonus) },
+      after: { amount: Number(allowance) },
+      reason: comment?.trim() || "Изменение гарантированного бонуса",
+    });
+    return updated;
+  }, transactionOptions);
 }
 
 type AccrualInput = {
@@ -172,6 +255,7 @@ type AccrualInput = {
 
 export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
   director(actor);
+  const reason = requiredReason(input.reason);
   return prisma.$transaction(
     async (tx) => {
       const existing = await tx.payrollAccrual.findUnique({
@@ -219,7 +303,7 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
             : PayrollDirection.INCREASE,
           amount: money(input.amount),
           orderId: input.orderId,
-          reason: input.reason,
+          reason,
           paymentMode: input.paymentMode,
           approvedById: actor.userId,
           createdById: actor.userId,
@@ -237,7 +321,7 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
               : "INCOME",
           amount: accrual.amount,
           operationDate: accrual.createdAt,
-          comment: input.reason,
+          comment: reason,
           orderId: input.orderId,
           authorId: actor.userId,
           idempotencyKey: `payroll-accrual:${accrual.id}`,
@@ -257,16 +341,25 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
             type: PayrollPaymentType.IMMEDIATE_BONUS,
             paymentDate: new Date(),
             relatedAccrualId: accrual.id,
-            comment: input.reason,
+            comment: reason,
             key: `${input.key}:payment`,
             requestHash: input.requestHash,
           },
           actor,
         );
       }
+      await audit(tx, {
+        action: input.type === PayrollAccrualType.PREMIUM ? "PREMIUM_ACCRUED" : "PAYROLL_ACCRUAL_CREATED",
+        actor,
+        periodId: period.id,
+        employeeId: input.employeeId,
+        after: { accrualId: accrual.id, type: accrual.type, amount: Number(accrual.amount), direction: accrual.direction },
+        reason,
+        idempotencyKey: `${input.key}:audit`,
+      });
       return { accrual, payment, created: true, cancelledOrderWarning };
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
 }
 
@@ -334,6 +427,7 @@ async function createPaymentTx(
 export async function createPayment(input: PaymentInput, actor: PayrollActor) {
   finance(actor);
   return prisma.$transaction((tx) => createPaymentTx(tx, input, actor), {
+    ...transactionOptions,
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
   });
 }
@@ -358,8 +452,8 @@ export async function requestAdvance(
     where: { id: input.periodId },
   });
   if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
-  if (period.status === PayrollPeriodStatus.CLOSED)
-    throw new PayrollError("PERIOD_CLOSED");
+  if (period.status !== PayrollPeriodStatus.OPEN)
+    throw new PayrollError(period.status === PayrollPeriodStatus.CLOSED ? "PERIOD_CLOSED" : "PERIOD_NOT_OPEN");
   const existing = await prisma.payrollAdvanceRequest.findUnique({
     where: { idempotencyKey: input.key },
   });
@@ -402,7 +496,7 @@ export async function reviewAdvance(
     if (!request || request.status !== AdvanceRequestStatus.REQUESTED)
       throw new PayrollError("CONFLICT");
     await openPeriod(tx, request.periodId);
-    return tx.payrollAdvanceRequest.update({
+    const updated = await tx.payrollAdvanceRequest.update({
       where: { id },
       data: {
         status: input.status,
@@ -415,7 +509,17 @@ export async function reviewAdvance(
         reviewedAt: new Date(),
       },
     });
-  });
+    await audit(tx, {
+      action: input.status === AdvanceRequestStatus.APPROVED ? "ADVANCE_APPROVED" : "ADVANCE_REJECTED",
+      actor,
+      periodId: request.periodId,
+      employeeId: request.employeeId,
+      before: { status: request.status, requestedAmount: Number(request.requestedAmount) },
+      after: { status: updated.status, approvedAmount: updated.approvedAmount ? Number(updated.approvedAmount) : null },
+      reason: input.comment?.trim() || (input.status === AdvanceRequestStatus.APPROVED ? "Аванс одобрен" : "Аванс отклонён"),
+    });
+    return updated;
+  }, transactionOptions);
 }
 
 export async function payAdvance(
@@ -472,7 +576,7 @@ export async function payAdvance(
       });
       return payment;
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
 }
 
@@ -481,20 +585,48 @@ export async function closePeriod(
   key: string,
   actor: PayrollActor,
 ) {
+  return transitionPeriod(periodId, PayrollPeriodStatus.CLOSED, "Закрытие расчётного месяца", key, actor);
+}
+
+export async function transitionPeriod(
+  periodId: number,
+  target: PayrollPeriodStatus,
+  reasonValue: string | undefined,
+  key: string,
+  actor: PayrollActor,
+) {
   director(actor);
-  const existing = await prisma.payrollPeriod.findUnique({
-    where: { closeKey: key },
-  });
-  if (existing) return existing;
-  return prisma.payrollPeriod.update({
-    where: { id: periodId },
-    data: {
-      status: PayrollPeriodStatus.CLOSED,
-      closedAt: new Date(),
-      closedById: actor.userId,
-      closeKey: key,
-    },
-  });
+  return prisma.$transaction(async (tx) => {
+    const replay = await tx.payrollAuditEvent.findUnique({ where: { idempotencyKey: key } });
+    if (replay?.periodId === periodId)
+      return tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
+    const period = await tx.payrollPeriod.findUnique({ where: { id: periodId } });
+    if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
+    const reason = period.status === PayrollPeriodStatus.CLOSED && target === PayrollPeriodStatus.OPEN
+      ? requiredReason(reasonValue)
+      : reasonValue?.trim() || "Изменение статуса расчётного периода";
+    const allowed =
+      (period.status === PayrollPeriodStatus.OPEN && target === PayrollPeriodStatus.REVIEW) ||
+      (period.status === PayrollPeriodStatus.REVIEW && (target === PayrollPeriodStatus.OPEN || target === PayrollPeriodStatus.CLOSED)) ||
+      (period.status === PayrollPeriodStatus.CLOSED && target === PayrollPeriodStatus.OPEN);
+    if (!allowed) throw new PayrollError("INVALID_PERIOD_TRANSITION");
+    const updated = await tx.payrollPeriod.update({
+      where: { id: periodId },
+      data: target === PayrollPeriodStatus.CLOSED
+        ? { status: target, closedAt: new Date(), closedById: actor.userId, closeKey: key }
+        : { status: target, closedAt: null, closedById: null, closeKey: null },
+    });
+    await audit(tx, {
+      action: target === PayrollPeriodStatus.CLOSED ? "PERIOD_CLOSED" : period.status === PayrollPeriodStatus.CLOSED ? "PERIOD_REOPENED" : "PERIOD_STATUS_CHANGED",
+      actor,
+      periodId,
+      before: { status: period.status },
+      after: { status: target },
+      reason,
+      idempotencyKey: key,
+    });
+    return updated;
+  }, transactionOptions);
 }
 
 const signedAccrual = (row: {
@@ -568,6 +700,7 @@ export async function reverseAccrual(
   actor: PayrollActor,
 ) {
   director(actor);
+  const reversalReason = requiredReason(reason);
   const original = await prisma.payrollAccrual.findUnique({ where: { id } });
   if (!original || original.reversalOfId) throw new PayrollError("NOT_FOUND");
   const result = await createAccrual(
@@ -578,15 +711,26 @@ export async function reverseAccrual(
       type: PayrollAccrualType.BONUS_REVERSAL,
       amount: Number(original.amount),
       orderId: original.orderId ?? undefined,
-      reason,
+      reason: reversalReason,
       key,
       requestHash,
     },
     actor,
   );
-  await prisma.payrollAccrual.update({
-    where: { id: result.accrual.id },
-    data: { reversalOfId: original.id },
-  });
+  await prisma.$transaction(async (tx) => {
+    await tx.payrollAccrual.update({
+      where: { id: result.accrual.id },
+      data: { reversalOfId: original.id },
+    });
+    await audit(tx, {
+      action: "PAYROLL_ACCRUAL_REVERSED",
+      actor,
+      periodId,
+      employeeId: original.employeeId,
+      before: { accrualId: original.id, type: original.type, amount: Number(original.amount) },
+      after: { reversalId: result.accrual.id },
+      reason: reversalReason,
+    });
+  }, transactionOptions);
   return result;
 }

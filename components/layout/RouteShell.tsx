@@ -73,8 +73,7 @@ export default function RouteShell({
       hasDefaultPermission(role, permissionByHref[href]!),
     );
   const [open, setOpen] = useState(false);
-  const standalone =
-    pathname === "/" || pathname === "/login" || pathname === "/partner";
+  const standalone = pathname === "/login" || pathname === "/partner";
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) =>

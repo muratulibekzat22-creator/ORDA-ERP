@@ -1,45 +1,47 @@
-import { LeadStage, Prisma, Role } from "@prisma/client";
+import {
+  AdvanceRequestStatus,
+  CalendarTaskStatus,
+  LeadStage,
+  OrderLifecycle,
+  PayrollDirection,
+  PayrollPaymentType,
+  Prisma,
+  Role,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
 type DashboardScope = { role: Role; userId: number; period?: string };
+const percent = (value: number, total: number) =>
+  total ? Math.round((value / total) * 1000) / 10 : 0;
 
-const percent = (value: number, total: number) => total ? Math.round(value / total * 1000) / 10 : 0;
-
-function periodRange(period = "month") {
-  const end = new Date();
-  const start = new Date(end);
-  if (period === "today") start.setHours(0, 0, 0, 0);
-  else if (period === "week") start.setDate(end.getDate() - 7);
-  else {
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-  }
-  return { start, end };
+export function dashboardPeriodRange(period = "month", now = new Date()) {
+  const almaty = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+  const year = almaty.getUTCFullYear();
+  const month = almaty.getUTCMonth();
+  const day = almaty.getUTCDate();
+  const localStartDay = period === "today" ? day : period === "week" ? day - 6 : 1;
+  return {
+    start: new Date(Date.UTC(year, month, localStartDay) - 5 * 60 * 60 * 1000),
+    end: now,
+  };
 }
 
-export async function getDashboardSummary(scope: DashboardScope) {
-  const { start, end } = periodRange(scope.period);
-  const managerLeadWhere: Prisma.ClientWhereInput = scope.role === Role.MANAGER
-    ? { managerUserId: scope.userId }
-    : {};
-  const leadWhere: Prisma.ClientWhereInput = {
-    ...managerLeadWhere,
-    active: true,
-    createdAt: { gte: start, lte: end },
-  };
-  const orderWhere: Prisma.OrderWhereInput = {
-    createdAt: { gte: start, lte: end },
-    status: { notIn: ["Отказ / отменён", "Отменен", "Отменён"] },
-    ...(scope.role === Role.MANAGER ? { leadConversion: { managerId: scope.userId } } : {}),
-  };
-
-  const [leads, orders, leadEvents, orderEvents] = await Promise.all([
+async function salesProjection(scope: DashboardScope) {
+  const { start, end } = dashboardPeriodRange(scope.period);
+  const managerLeadWhere: Prisma.ClientWhereInput =
+    scope.role === Role.MANAGER ? { managerUserId: scope.userId } : {};
+  const managerOrderWhere: Prisma.OrderWhereInput =
+    scope.role === Role.MANAGER
+      ? { OR: [{ managerUserId: scope.userId }, { leadConversion: { managerId: scope.userId } }] }
+      : {};
+  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks] = await Promise.all([
     prisma.client.findMany({
-      where: leadWhere,
+      where: { ...managerLeadWhere, active: true },
       select: {
         id: true,
         name: true,
+        createdAt: true,
         stage: true,
         managerUserId: true,
         manager: true,
@@ -50,78 +52,178 @@ export async function getDashboardSummary(scope: DashboardScope) {
       },
     }),
     prisma.order.findMany({
-      where: orderWhere,
-      select: { id: true, amount: true, prepayment: true, balance: true },
+      where: { ...managerOrderWhere, createdAt: { gte: start, lte: end }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      select: { id: true, amount: true, prepayment: true, balance: true, managerUserId: true, leadConversion: { select: { managerId: true } } },
     }),
     prisma.leadStatusHistory.findMany({
       where: { client: managerLeadWhere, createdAt: { gte: start, lte: end } },
       orderBy: { createdAt: "desc" },
       take: 10,
-      select: { id: true, toStage: true, toStatus: true, authorName: true, createdAt: true, client: { select: { id: true, name: true } } },
+      select: { id: true, toStatus: true, authorName: true, createdAt: true, client: { select: { id: true, name: true, phone: true } } },
     }),
     prisma.orderEvent.findMany({
-      where: {
-        createdAt: { gte: start, lte: end },
-        ...(scope.role === Role.MANAGER ? { order: { leadConversion: { managerId: scope.userId } } } : {}),
-      },
+      where: { createdAt: { gte: start, lte: end }, ...(scope.role === Role.MANAGER ? { order: managerOrderWhere } : {}) },
       orderBy: { createdAt: "desc" },
       take: 10,
       select: { id: true, title: true, user: true, createdAt: true, order: { select: { id: true, number: true } } },
     }),
+    prisma.order.findMany({
+      where: { ...managerOrderWhere, lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+      select: { lifecycle: true, productionDeadline: true, installation: { select: { scheduledAt: true } } },
+    }),
+    scope.role === Role.DIRECTOR
+      ? prisma.material.findMany({ where: { active: true }, select: { stock: true, minimumStock: true } })
+      : Promise.resolve([]),
+    prisma.calendarTask.findMany({
+      where: { ...(scope.role === Role.MANAGER ? { assigneeId: scope.userId } : {}), status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } },
+      select: { dueAt: true },
+    }),
   ]);
-
-  const reached = (lead: typeof leads[number], stage: LeadStage) =>
+  const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
-  const activeLeads = leads.filter((lead) => lead.stage !== LeadStage.WON && lead.stage !== LeadStage.LOST).length;
-  const overdueNextActions = leads.reduce((count, lead) => count + lead.nextActions.filter((action) => action.nextActionAt < end).length, 0);
-  const convertedLeads = leads.filter((lead) => lead.leadConversion).length;
-  const total = orders.reduce((sum, order) => ({
-    sales: sum.sales + Number(order.amount),
-    prepayment: sum.prepayment + Number(order.prepayment),
-    balance: sum.balance + Number(order.balance),
-  }), { sales: 0, prepayment: 0, balance: 0 });
-
-  const groups = new Map<number, { managerUserId: number; manager: string; leads: typeof leads }>();
-  for (const lead of leads) {
+  const periodLeads = leads.filter((lead) => lead.createdAt >= start && lead.createdAt <= end);
+  const convertedLeads = periodLeads.filter((lead) => lead.leadConversion).length;
+  const totals = orders.reduce(
+    (sum, order) => ({ sales: sum.sales + Number(order.amount), received: sum.received + Number(order.prepayment), balance: sum.balance + Number(order.balance) }),
+    { sales: 0, received: 0, balance: 0 },
+  );
+  const managerGroups = new Map<number, { managerUserId: number; manager: string; leads: typeof leads }>();
+  for (const lead of periodLeads) {
     const id = lead.managerUserId ?? 0;
-    const group = groups.get(id) ?? { managerUserId: id, manager: lead.managerUser?.name ?? lead.manager, leads: [] };
+    const group = managerGroups.get(id) ?? { managerUserId: id, manager: lead.managerUser?.name ?? lead.manager, leads: [] };
     group.leads.push(lead);
-    groups.set(id, group);
+    managerGroups.set(id, group);
   }
-  const managers = [...groups.values()].map((group) => {
+  const managers = [...managerGroups.values()].map((group) => {
     const converted = group.leads.filter((lead) => lead.leadConversion).length;
+    const managerOrders = orders.filter((order) => (order.managerUserId ?? order.leadConversion?.managerId) === group.managerUserId);
     return {
       managerUserId: group.managerUserId,
       manager: group.manager,
       newLeads: group.leads.length,
-      activeLeads: group.leads.filter((lead) => lead.stage !== LeadStage.WON && lead.stage !== LeadStage.LOST).length,
-      proposalsSent: group.leads.filter((lead) => reached(lead, LeadStage.PROPOSAL_SENT)).length,
       measurementsScheduled: group.leads.filter((lead) => reached(lead, LeadStage.MEASUREMENT_SCHEDULED)).length,
-      orders: converted,
+      orders: managerOrders.length,
+      totalSales: managerOrders.reduce((sum, order) => sum + Number(order.amount), 0),
       conversion: percent(converted, group.leads.length),
-      overdueNextActions: group.leads.reduce((count, lead) => count + lead.nextActions.filter((action) => action.nextActionAt < end).length, 0),
     };
   });
+  const now = new Date();
+  const { start: todayStart } = dashboardPeriodRange("today", now);
+  const tomorrow = new Date(todayStart.getTime() + 86_400_000);
+  const deadline = (order: (typeof workOrders)[number]) =>
+    order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION || order.lifecycle === OrderLifecycle.INSTALLATION
+      ? order.installation?.scheduledAt ?? order.productionDeadline
+      : order.productionDeadline ?? order.installation?.scheduledAt;
   const activities = [
-    ...leadEvents.map((event) => ({ id: `lead-${event.id}`, kind: "LEAD", title: event.toStatus, subject: event.client.name, href: `/clients/${event.client.id}`, user: event.authorName, createdAt: event.createdAt })),
-    ...orderEvents.map((event) => ({ id: `order-${event.id}`, kind: "ORDER", title: event.title, subject: event.order.number, href: `/orders/${event.order.id}`, user: event.user, createdAt: event.createdAt })),
+    ...leadEvents.map((event) => ({ id: `lead-${event.id}`, title: event.toStatus, subject: event.client.name || event.client.phone, href: `/clients/${event.client.id}`, user: event.authorName, createdAt: event.createdAt })),
+    ...orderEvents.map((event) => ({ id: `order-${event.id}`, title: event.title, subject: event.order.number, href: `/orders/${event.order.id}`, user: event.user, createdAt: event.createdAt })),
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 10);
-
   return {
+    role: scope.role,
     period: { start, end },
     metrics: {
-      newLeads: leads.length,
-      activeLeads,
-      overdueNextActions,
-      proposalsSent: leads.filter((lead) => reached(lead, LeadStage.PROPOSAL_SENT)).length,
-      measurementsScheduled: leads.filter((lead) => reached(lead, LeadStage.MEASUREMENT_SCHEDULED)).length,
+      newLeads: periodLeads.length,
+      activeLeads: leads.filter((lead) => lead.stage !== LeadStage.WON && lead.stage !== LeadStage.LOST).length,
+      overdueNextActions: leads.reduce((count, lead) => count + lead.nextActions.filter((action) => action.nextActionAt < end).length, 0),
+      proposalsSent: periodLeads.filter((lead) => reached(lead, LeadStage.PROPOSAL_SENT)).length,
+      measurementsScheduled: periodLeads.filter((lead) => reached(lead, LeadStage.MEASUREMENT_SCHEDULED)).length,
       orders: orders.length,
-      totalSales: total.sales,
-      receivedPrepayment: total.prepayment,
-      balanceToReceive: total.balance,
-      conversion: percent(convertedLeads, leads.length),
+      totalSales: totals.sales,
+      receivedPrepayment: totals.received,
+      balanceToReceive: totals.balance,
+      conversion: percent(convertedLeads, periodLeads.length),
+      activeOrders: workOrders.length,
+      readyForInstallation: workOrders.filter((order) => order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION).length,
+      onInstallation: workOrders.filter((order) => order.lifecycle === OrderLifecycle.INSTALLATION).length,
+      overdueOrders: workOrders.filter((order) => { const value = deadline(order); return Boolean(value && value < now); }).length,
+      lowStock: materials.filter((item) => item.stock <= item.minimumStock).length,
+      tasksToday: tasks.filter((task) => task.dueAt >= todayStart && task.dueAt < tomorrow).length,
+      overdueTasks: tasks.filter((task) => task.dueAt < now).length,
     },
-    managers,
+    ...(scope.role === Role.DIRECTOR ? { managers } : {}),
     activities,
   };
+}
+
+async function accountantProjection(scope: DashboardScope) {
+  const { start, end } = dashboardPeriodRange(scope.period);
+  const almaty = new Date(end.getTime() + 5 * 60 * 60 * 1000);
+  const period = await prisma.payrollPeriod.findUnique({ where: { year_month: { year: almaty.getUTCFullYear(), month: almaty.getUTCMonth() + 1 } } });
+  const [ledger, recent, accruals, payments, pendingAdvances] = await Promise.all([
+    prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, select: { direction: true, amount: true } }),
+    prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, orderBy: { operationDate: "desc" }, take: 12, select: { id: true, type: true, category: true, direction: true, amount: true, operationDate: true, comment: true } }),
+    period ? prisma.payrollAccrual.findMany({ where: { periodId: period.id }, select: { amount: true, direction: true } }) : Promise.resolve([]),
+    period ? prisma.payrollPayment.findMany({ where: { periodId: period.id }, select: { amount: true, type: true } }) : Promise.resolve([]),
+    period ? prisma.payrollAdvanceRequest.count({ where: { periodId: period.id, status: { in: [AdvanceRequestStatus.REQUESTED, AdvanceRequestStatus.APPROVED] } } }) : Promise.resolve(0),
+  ]);
+  const accrued = accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
+  const paid = payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
+  return {
+    role: scope.role,
+    period: { start, end },
+    metrics: {
+      receipts: ledger.filter((row) => row.direction === "INCOME").reduce((sum, row) => sum + Number(row.amount), 0),
+      expenses: ledger.filter((row) => row.direction === "EXPENSE").reduce((sum, row) => sum + Number(row.amount), 0),
+      payrollPayable: accrued - paid,
+      pendingPayrollPayments: pendingAdvances,
+      attentionOperations: pendingAdvances,
+    },
+    recentFinance: recent,
+  };
+}
+
+async function productionProjection(scope: DashboardScope) {
+  const now = new Date();
+  const [jobs, materials] = await Promise.all([
+    prisma.production.findMany({
+      where: { completedAt: null, OR: [{ masterUserId: scope.userId }, { masterUserId: null }] },
+      orderBy: [{ priority: "desc" }, { plannedEndAt: "asc" }],
+      take: 30,
+      select: { id: true, stage: true, percent: true, plannedEndAt: true, masterUserId: true, order: { select: { id: true, number: true, client: { select: { name: true, city: true } } } } },
+    }),
+    prisma.material.findMany({ where: { active: true }, select: { stock: true, minimumStock: true } }),
+  ]);
+  const preparationStages = ["Подготовка", "Каркас", "Дерево", "Комплектация"];
+  return {
+    role: scope.role,
+    metrics: {
+      preparation: jobs.filter((job) => preparationStages.includes(job.stage)).length,
+      painting: jobs.filter((job) => job.stage === "Покраска").length,
+      readyForInstallation: jobs.filter((job) => job.stage === "Готово к монтажу").length,
+      overdue: jobs.filter((job) => Boolean(job.plannedEndAt && job.plannedEndAt < now)).length,
+      availableTasks: jobs.length,
+      missingMaterials: materials.filter((item) => item.stock <= item.minimumStock).length,
+    },
+    jobs: jobs.map((job) => ({ ...job, href: `/orders/${job.order.id}` })),
+  };
+}
+
+async function installerProjection(scope: DashboardScope) {
+  const now = new Date();
+  const { start: todayStart } = dashboardPeriodRange("today", now);
+  const tomorrow = new Date(todayStart.getTime() + 86_400_000);
+  const installations = await prisma.orderInstallation.findMany({
+    where: { installerUserId: scope.userId, completedAt: null, order: { lifecycle: { not: OrderLifecycle.CANCELLED } } },
+    orderBy: { scheduledAt: "asc" },
+    take: 30,
+    select: { id: true, scheduledAt: true, startedAt: true, order: { select: { id: true, number: true, address: true, client: { select: { name: true, city: true } } } } },
+  });
+  return {
+    role: scope.role,
+    metrics: {
+      today: installations.filter((item) => item.scheduledAt >= todayStart && item.scheduledAt < tomorrow).length,
+      upcoming: installations.filter((item) => item.scheduledAt >= tomorrow).length,
+      overdue: installations.filter((item) => item.scheduledAt < todayStart).length,
+      assigned: installations.length,
+    },
+    installations: installations.map((item) => ({ ...item, href: `/orders/${item.order.id}` })),
+  };
+}
+
+export async function getDashboardSummary(scope: DashboardScope) {
+  if (scope.role === Role.DIRECTOR || scope.role === Role.MANAGER) return salesProjection(scope);
+  if (scope.role === Role.ACCOUNTANT) return accountantProjection(scope);
+  if (scope.role === Role.PRODUCTION) return productionProjection(scope);
+  if (scope.role === Role.INSTALLER) return installerProjection(scope);
+  throw new Error("DASHBOARD_ROLE_FORBIDDEN");
 }

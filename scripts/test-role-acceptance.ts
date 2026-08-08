@@ -36,12 +36,12 @@ for (const [role, permissions] of Object.entries(expectedPermissions))
   );
 
 assert.deepEqual(roleHome, {
-  ACCOUNTANT: "/finance",
   MEASURER: "/calendar",
-  PRODUCTION: "/production",
-  INSTALLER: "/production",
   PARTNER: "/partner",
 });
+
+const roleDashboard = read("components/dashboard/Dashboard.tsx");
+includesAll(roleDashboard, ["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"], "role dashboards");
 
 const proxy = read("proxy.ts");
 includesAll(

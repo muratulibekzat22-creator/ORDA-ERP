@@ -263,6 +263,7 @@ model User {
   payrollPayments            PayrollPayment[]           @relation("PayrollPaymentAuthor")
   reviewedAdvanceRequests    PayrollAdvanceRequest[]    @relation("AdvanceReviewer")
   closedPayrollPeriods       PayrollPeriod[]            @relation("PayrollPeriodCloser")
+  payrollAuditEvents         PayrollAuditEvent[]        @relation("PayrollAuditActor")
   managedOrders              Order[]                    @relation("OrderResponsibleManager")
   openedOrderBlockers        OrderBlocker[]             @relation("OrderBlockerOpenedBy")
   responsibleOrderBlockers   OrderBlocker[]             @relation("OrderBlockerResponsible")
@@ -896,6 +897,7 @@ model EmployeePayrollProfile {
   accruals               PayrollAccrual[]
   payments               PayrollPayment[]
   advanceRequests        PayrollAdvanceRequest[]
+  auditEvents            PayrollAuditEvent[]
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
 }
@@ -927,10 +929,31 @@ model PayrollPeriod {
   accruals        PayrollAccrual[]
   payments        PayrollPayment[]
   advanceRequests PayrollAdvanceRequest[]
+  auditEvents     PayrollAuditEvent[]
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 
   @@unique([year, month])
+}
+
+model PayrollAuditEvent {
+  id             Int                     @id @default(autoincrement())
+  action         String
+  actorId        Int
+  actor          User                    @relation("PayrollAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  periodId       Int?
+  period         PayrollPeriod?          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  employeeId     Int?
+  employee       EmployeePayrollProfile? @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  before         Json?
+  after          Json?
+  reason         String
+  idempotencyKey String?                 @unique
+  createdAt      DateTime                @default(now())
+
+  @@index([periodId, createdAt])
+  @@index([employeeId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model PayrollAccrual {

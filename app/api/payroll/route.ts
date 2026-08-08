@@ -3,6 +3,7 @@ import {
   BonusPaymentMode,
   PayrollAccrualType,
   PayrollPaymentType,
+  PayrollPeriodStatus,
   Role,
 } from "@prisma/client";
 import { NextResponse } from "next/server";
@@ -10,6 +11,7 @@ import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import {
+  changeAllowance,
   changeSalary,
   closePeriod,
   createAccrual,
@@ -20,6 +22,7 @@ import {
   PayrollError,
   reviewAdvance,
   reverseAccrual,
+  transitionPeriod,
   upsertPayrollProfile,
 } from "@/lib/services/payroll.service";
 
@@ -55,11 +58,16 @@ export async function GET(request: Request) {
     const period = await prisma.payrollPeriod.findUnique({
       where: { year_month: { year, month } },
     });
+    const identity = actor(auth.session!);
+    const unconfigured = identity.role === Role.DIRECTOR
+      ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
+      : [];
     if (!period)
       return NextResponse.json({
         period: null,
         rows: [],
         totals: { accrued: 0, paid: 0, payable: 0 },
+        unconfigured,
       });
     return NextResponse.json({
       period,
@@ -68,6 +76,7 @@ export async function GET(request: Request) {
         actor(auth.session!),
         params.get("employeeId") ? Number(params.get("employeeId")) : undefined,
       )),
+      unconfigured,
     });
   } catch (error) {
     return fail(error);
@@ -113,6 +122,15 @@ export async function POST(request: Request) {
           Number(body.employeeId),
           Number(body.amount),
           new Date(String(body.effectiveFrom)),
+          typeof body.comment === "string" ? body.comment : undefined,
+          identity,
+        ),
+      );
+    if (action === "allowance")
+      return NextResponse.json(
+        await changeAllowance(
+          Number(body.employeeId),
+          Number(body.amount),
           typeof body.comment === "string" ? body.comment : undefined,
           identity,
         ),
@@ -196,12 +214,22 @@ export async function POST(request: Request) {
       return NextResponse.json(
         await closePeriod(Number(body.periodId), keyResult.key, identity),
       );
+    if (action === "transition-period")
+      return NextResponse.json(
+        await transitionPeriod(
+          Number(body.periodId),
+          body.status as PayrollPeriodStatus,
+          typeof body.reason === "string" ? body.reason : undefined,
+          keyResult.key,
+          identity,
+        ),
+      );
     if (action === "reverse-accrual")
       return NextResponse.json(
         await reverseAccrual(
           Number(body.id),
           Number(body.periodId),
-          String(body.reason ?? "Сторно"),
+          String(body.reason ?? ""),
           keyResult.key,
           hash,
           identity,

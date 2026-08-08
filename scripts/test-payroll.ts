@@ -3,11 +3,14 @@ import {
   AdvanceRequestStatus,
   BonusPaymentMode,
   PayrollAccrualType,
+  PayrollPeriodStatus,
   Role,
 } from "@prisma/client";
 import { createRequestHash } from "../lib/idempotency";
 import { prisma } from "../lib/prisma";
 import {
+  changeAllowance,
+  changeSalary,
   closePeriod,
   createAccrual,
   ensurePeriod,
@@ -17,6 +20,7 @@ import {
   requestAdvance,
   reviewAdvance,
   reverseAccrual,
+  transitionPeriod,
   upsertPayrollProfile,
 } from "../lib/services/payroll.service";
 
@@ -36,8 +40,9 @@ async function expectCode(run: () => Promise<unknown>, code: string) {
 }
 
 async function main() {
-  const ids: { users: number[]; client?: number; order?: number } = {
+  const ids: { users: number[]; periods: number[]; client?: number; order?: number } = {
     users: [],
+    periods: [],
   };
   try {
     const [director, manager, accountant, partner] = await Promise.all([
@@ -106,6 +111,10 @@ async function main() {
     );
     assert.equal(Number(profile.baseSalary), 200000);
     assert.equal(Number(profile.defaultGuaranteedBonus), 20000);
+    await changeSalary(profile.id, 210000, new Date("2026-06-01"), "Индексация", directorActor);
+    await changeSalary(profile.id, 200000, new Date("2026-07-01"), "Тестовая ставка", directorActor);
+    await changeAllowance(profile.id, 20000, "Гарантированный бонус", directorActor);
+    assert.equal((await prisma.employeeSalaryRate.count({ where: { employeeId: profile.id } })), 3, "salary history preserved");
     await upsertPayrollProfile(
       {
         userId: manager.id,
@@ -123,8 +132,13 @@ async function main() {
       30000,
       "director guaranteed bonus change",
     );
-    const period = await ensurePeriod(2026, 8);
-    const nextPeriod = await ensurePeriod(2026, 9);
+    await changeAllowance(profile.id, 20000, "Возврат гарантированного бонуса", directorActor);
+    assert.equal(Number((await prisma.employeePayrollProfile.findUniqueOrThrow({ where: { id: profile.id } })).defaultGuaranteedBonus), 20000);
+    const periodYear = 3000 + (Date.now() % 100000);
+    const period = await ensurePeriod(periodYear, 8);
+    const nextPeriod = await ensurePeriod(periodYear, 9);
+    const formulaPeriod = await ensurePeriod(periodYear, 10);
+    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id);
     const client = await prisma.client.create({
       data: {
         name: tag,
@@ -259,6 +273,15 @@ async function main() {
       paid: 90000,
       payable: 180000,
     });
+    await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("formula-salary"), requestHash: "formula-salary" }, directorActor);
+    await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.PREMIUM, amount: 30000, reason: "Премия", key: key("formula-premium"), requestHash: "formula-premium" }, directorActor);
+    const formulaAdvance = await requestAdvance({ periodId: formulaPeriod.id, amount: 50000, comment: "Аванс", key: key("formula-advance"), requestHash: "formula-advance" }, managerActor);
+    await reviewAdvance(formulaAdvance.id, { status: AdvanceRequestStatus.APPROVED, approvedAmount: 50000, comment: "Одобрено" }, directorActor);
+    await payAdvance(formulaAdvance.id, { key: key("formula-advance-payment"), requestHash: "formula-advance-payment" }, accountantActor);
+    assert.deepEqual((await payrollSummary(formulaPeriod.id, directorActor)).totals, { accrued: 230000, paid: 50000, payable: 180000 }, "salary 200k + premium 30k - advance 50k");
+    const employeeAuditActions = new Set((await prisma.payrollAuditEvent.findMany({ where: { employeeId: profile.id }, select: { action: true } })).map((event) => event.action));
+    for (const action of ["SALARY_CHANGED", "ALLOWANCE_CHANGED", "PREMIUM_ACCRUED", "ADVANCE_APPROVED"])
+      assert(employeeAuditActions.has(action), `payroll audit missing: ${action}`);
     const self = await payrollSummary(period.id, managerActor, 999999);
     assert.equal(self.rows.length, 1);
     assert.equal(
@@ -304,15 +327,20 @@ async function main() {
               : -Number(row.amount)),
           0,
         ),
-      270000,
+      500000,
       "payroll P&L expense duplicated",
     );
     assert.equal(
       ledger
         .filter((row) => !row.affectsProfit)
         .reduce((sum, row) => sum + Number(row.amount), 0),
-      90000,
+      140000,
       "cash payroll total",
+    );
+    await transitionPeriod(period.id, PayrollPeriodStatus.REVIEW, "Проверка", key("review"), directorActor);
+    await expectCode(
+      () => createAccrual({ ...base, type: PayrollAccrualType.EXTRA_BONUS, amount: 1, reason: "Review", key: key("review-locked"), requestHash: "review-locked" }, directorActor),
+      "PERIOD_NOT_OPEN",
     );
     await closePeriod(period.id, key("close"), directorActor);
     await expectCode(
@@ -330,6 +358,26 @@ async function main() {
         ),
       "PERIOD_CLOSED",
     );
+    await expectCode(
+      () => transitionPeriod(period.id, PayrollPeriodStatus.OPEN, "Accountant reopen", key("accountant-reopen"), accountantActor),
+      "FORBIDDEN",
+    );
+    await expectCode(
+      () => transitionPeriod(period.id, PayrollPeriodStatus.OPEN, "Manager reopen", key("manager-reopen"), managerActor),
+      "FORBIDDEN",
+    );
+    await expectCode(
+      () => transitionPeriod(period.id, PayrollPeriodStatus.OPEN, "", key("empty-reason"), directorActor),
+      "REASON_REQUIRED",
+    );
+    await transitionPeriod(period.id, PayrollPeriodStatus.OPEN, "Исправление начисления сотрудника", key("reopen"), directorActor);
+    await createAccrual(
+      { ...base, type: PayrollAccrualType.EXTRA_BONUS, amount: 1, reason: "После открытия", key: key("after-reopen"), requestHash: "after-reopen" },
+      directorActor,
+    );
+    const periodAudit = await prisma.payrollAuditEvent.findMany({ where: { periodId: period.id } });
+    assert(periodAudit.some((event) => event.action === "PERIOD_CLOSED"));
+    assert(periodAudit.some((event) => event.action === "PERIOD_REOPENED" && event.reason === "Исправление начисления сотрудника"));
     await createAccrual(
       {
         employeeId: profile.id,
@@ -419,6 +467,9 @@ async function main() {
       await prisma.payrollAdvanceRequest.deleteMany({
         where: { employeeId: { in: employeeIds } },
       });
+      await prisma.payrollAuditEvent.deleteMany({
+        where: { OR: [{ employeeId: { in: employeeIds } }, { actorId: { in: ids.users } }] },
+      });
       await prisma.companyLedgerEntry.deleteMany({
         where: {
           OR: [
@@ -447,14 +498,7 @@ async function main() {
         await prisma.order.deleteMany({ where: { id: ids.order } });
       if (ids.client)
         await prisma.client.deleteMany({ where: { id: ids.client } });
-      await prisma.payrollPeriod.deleteMany({
-        where: {
-          year: 2026,
-          month: { in: [8, 9] },
-          accruals: { none: {} },
-          payments: { none: {} },
-        },
-      });
+      await prisma.payrollPeriod.deleteMany({ where: { id: { in: ids.periods }, accruals: { none: {} }, payments: { none: {} } } });
       await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
     }
     await prisma.$disconnect();
