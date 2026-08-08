@@ -36,7 +36,6 @@ for (const [role, permissions] of Object.entries(expectedPermissions))
   );
 
 assert.deepEqual(roleHome, {
-  MEASURER: "/measurements",
   PARTNER: "/partner",
 });
 

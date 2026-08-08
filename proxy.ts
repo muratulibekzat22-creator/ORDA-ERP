@@ -3,13 +3,18 @@ import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
   const incomingRequestId = request.headers.get("x-request-id") ?? "";
-  const requestId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(incomingRequestId)
-    ? incomingRequestId
-    : crypto.randomUUID();
+  const requestId =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      incomingRequestId,
+    )
+      ? incomingRequestId
+      : crypto.randomUUID();
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
   const next = () => {
-    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    const response = NextResponse.next({
+      request: { headers: requestHeaders },
+    });
     response.headers.set("x-request-id", requestId);
     return response;
   };
@@ -37,7 +42,10 @@ export async function proxy(request: NextRequest) {
     url.searchParams.set("reason", "SESSION_INVALID");
     return redirect(url);
   }
-  if (token.mustChangePassword && request.nextUrl.pathname !== "/change-password")
+  if (
+    token.mustChangePassword &&
+    request.nextUrl.pathname !== "/change-password"
+  )
     return redirect(new URL("/change-password", request.url));
 
   const role = String(token.role ?? "");
@@ -73,6 +81,7 @@ export async function proxy(request: NextRequest) {
   const protectedSegment = [
     "clients",
     "orders",
+    "measurements",
     "calendar",
     "documents",
     "production",
