@@ -1,4 +1,10 @@
 @import "tailwindcss";
+
+@layer components {
+  .control {
+    @apply min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-white outline-none focus:border-blue-500;
+  }
+}
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 

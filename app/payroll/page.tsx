@@ -1,341 +1,105 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
+import { ArrowLeft, ArrowRight, Banknote, CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, History, Plus, Receipt, UserRound, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
-type PayrollRow = {
-  id: number;
-  baseSalary: string;
-  user: { name: string; role: string };
-  accruals: Array<{
-    id: number;
-    type: string;
-    amount: string;
-    direction: string;
-    reason: string;
-    createdAt: string;
-  }>;
-  payments: Array<{
-    id: number;
-    type: string;
-    amount: string;
-    paymentDate: string;
-  }>;
-  advanceRequests: Array<{
-    id: number;
-    status: string;
-    requestedAmount: string;
-    approvedAmount?: string | null;
-    comment?: string | null;
-  }>;
-  totals: { accrued: number; paid: number; payable: number };
-};
-type Payload = {
-  period: { id: number; year: number; month: number; status: string } | null;
-  rows: PayrollRow[];
-  totals: { accrued: number; paid: number; payable: number };
-};
-const currency = (value: number | string) =>
-  `${Number(value).toLocaleString("ru-RU")} ₸`;
-const labels: Record<string, string> = {
-  BASE_SALARY: "Оклад",
-  GUARANTEED_ORDER_BONUS: "Гарантированный бонус",
-  ORDER_BONUS: "Бонус за заказ",
-  EXTRA_BONUS: "Дополнительный бонус",
-  PREMIUM: "Премия",
-  DEDUCTION: "Удержание",
-  ADJUSTMENT_INCREASE: "Корректировка +",
-  ADJUSTMENT_DECREASE: "Корректировка −",
-  BONUS_REVERSAL: "Сторно бонуса",
-  REQUESTED: "Запрошен",
-  APPROVED: "Одобрен",
-  REJECTED: "Отклонён",
-  PAID: "Выплачен",
-  CANCELLED: "Отменён",
-};
+type Accrual = { id: number; type: string; amount: string; direction: "INCREASE" | "DECREASE"; reason: string; orderId?: number | null; createdAt: string; reversalOfId?: number | null; reversedBy?: { id: number } | null };
+type Payment = { id: number; type: string; amount: string; paymentDate: string; comment?: string | null };
+type Advance = { id: number; status: string; requestedAmount: string; approvedAmount?: string | null; comment?: string | null; createdAt: string };
+type PayrollRow = { id: number; userId: number; baseSalary: string; defaultGuaranteedBonus: string; user: { id: number; name: string; role: string; active: boolean }; salaryRates: Array<{ id: number; amount: string; effectiveFrom: string; effectiveTo?: string | null }>; accruals: Accrual[]; payments: Payment[]; advanceRequests: Advance[]; totals: { accrued: number; paid: number; payable: number } };
+type Payload = { period: { id: number; year: number; month: number; status: string } | null; rows: PayrollRow[]; totals: { accrued: number; paid: number; payable: number } };
+type Operation = "salary" | "bonus" | "premium" | "deduction" | "payment" | "reversal";
+type Form = { amount: string; reason: string; date: string; orderId: string; type: string; accrualId: string };
+
+const months = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+const roleNames: Record<string, string> = { DIRECTOR: "Директор", MANAGER: "Менеджер", ACCOUNTANT: "Бухгалтер", MEASURER: "Замерщик", DESIGNER: "Конструктор", PRODUCTION: "Производство", INSTALLER: "Монтажник" };
+const labels: Record<string, string> = { BASE_SALARY: "Оклад", GUARANTEED_ORDER_BONUS: "Гарантированный бонус", ORDER_BONUS: "Бонус за заказ", EXTRA_BONUS: "Бонус", PREMIUM: "Премия", DEDUCTION: "Удержание", ADJUSTMENT_INCREASE: "Корректировка", ADJUSTMENT_DECREASE: "Корректировка", BONUS_REVERSAL: "Сторно", ADVANCE: "Аванс", IMMEDIATE_BONUS: "Выплата бонуса", SALARY_PAYMENT: "Выплата зарплаты", FINAL_SETTLEMENT: "Окончательный расчёт", OTHER_PAYROLL_PAYMENT: "Другая выплата", EMPLOYEE_REFUND: "Возврат сотрудника", REQUESTED: "Ожидает решения", APPROVED: "Одобрен", REJECTED: "Отклонён", PAID: "Выплачен", OPEN: "Открыт", REVIEW: "На проверке", CLOSED: "Закрыт" };
+const currency = (value: number | string) => `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`;
+const dateLabel = (value: string) => new Date(value).toLocaleDateString("ru-RU");
+const errorLabels: Record<string, string> = { FORBIDDEN: "Недостаточно прав для этой операции", PERIOD_CLOSED: "Закрытый месяц нельзя изменять", INVALID_AMOUNT: "Введите сумму больше нуля", EMPLOYEE_NOT_FOUND: "Сотрудник не найден", ORDER_REQUIRED: "Для бонуса за заказ укажите заказ", ORDER_NOT_FOUND: "Заказ не найден", INVALID_ACTION: "Операция не поддерживается" };
+const emptyForm = (): Form => ({ amount: "", reason: "", date: new Date().toISOString().slice(0, 10), orderId: "", type: "SALARY_PAYMENT", accrualId: "" });
 
 export default function PayrollPage() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const now = new Date();
-  const [period, setPeriod] = useState({
-    year: now.getFullYear(),
-    month: now.getMonth() + 1,
-  });
-  const [data, setData] = useState<Payload>({
-    period: null,
-    rows: [],
-    totals: { accrued: 0, paid: 0, payable: 0 },
-  });
-  const director = session?.user.role === "DIRECTOR";
-  const payrollAdmin = director || session?.user.role === "ACCOUNTANT";
-  const [advance, setAdvance] = useState("");
-  const [message, setMessage] = useState("");
+  const [selected, setSelected] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
+  const [data, setData] = useState<Payload>({ period: null, rows: [], totals: { accrued: 0, paid: 0, payable: 0 } });
+  const [loading, setLoading] = useState(true), [error, setError] = useState(""), [notice, setNotice] = useState("");
+  const [details, setDetails] = useState<PayrollRow | null>(null), [operation, setOperation] = useState<Operation | null>(null), [target, setTarget] = useState<PayrollRow | null>(null);
+  const [form, setForm] = useState<Form>(emptyForm), [advanceAmount, setAdvanceAmount] = useState("");
+  const role = session?.user.role ?? "", director = role === "DIRECTOR", accountant = role === "ACCOUNTANT", adminView = director || accountant, closed = data.period?.status === "CLOSED";
+
   const load = useCallback(async () => {
-    const query = `year=${period.year}&month=${period.month}`;
-    let response = await fetch(`/api/payroll?${query}`);
-    if (!response.ok) response = await fetch(`/api/payroll/self?${query}`);
-    if (response.ok) setData((await response.json()) as Payload);
-  }, [period.month, period.year]);
+    if (sessionStatus !== "authenticated") return;
+    setLoading(true); setError("");
+    const query = new URLSearchParams({ year: String(selected.year), month: String(selected.month) });
+    const response = await fetch(`${adminView ? "/api/payroll" : "/api/payroll/self"}?${query}`), body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(errorLabels[body.error] ?? "Не удалось загрузить зарплату"); else setData(body as Payload);
+    setLoading(false);
+  }, [adminView, selected.month, selected.year, sessionStatus]);
   useEffect(() => {
-    // Data arrives asynchronously; the effect only synchronizes the selected period with the API.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
-  const requestAdvance = async () => {
-    if (!data.period || Number(advance) <= 0) return;
-    const response = await fetch("/api/payroll/self", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify({
-        periodId: data.period.id,
-        amount: Number(advance),
-      }),
-    });
-    setMessage(
-      response.ok ? "Запрос на аванс отправлен" : "Не удалось отправить запрос",
-    );
-    if (response.ok) {
-      setAdvance("");
-      await load();
-    }
+
+  const changeMonth = (step: number) => setSelected((value) => { const date = new Date(value.year, value.month - 1 + step, 1); return { year: date.getFullYear(), month: date.getMonth() + 1 }; });
+  const run = async (body: Record<string, unknown>, success = "Операция выполнена") => {
+    setError(""); setNotice("");
+    const response = await fetch("/api/payroll", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(body) }), result = await response.json().catch(() => ({}));
+    if (!response.ok) { setError(errorLabels[result.error] ?? "Не удалось выполнить операцию"); return false; }
+    setNotice(success); await load(); return true;
   };
-  const payrollAction = async (body: Record<string, unknown>) => {
-    const response = await fetch("/api/payroll", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify(body),
-    });
-    setMessage(
-      response.ok ? "Операция выполнена" : "Не удалось выполнить операцию",
-    );
-    if (response.ok) await load();
+  const openOperation = (next: Operation, row?: PayrollRow) => { setOperation(next); setTarget(row ?? details ?? data.rows[0] ?? null); setForm(emptyForm()); };
+  const submitOperation = async () => {
+    if (!target || !operation || !data.period) return;
+    const amount = Number(form.amount); let body: Record<string, unknown>;
+    if (operation === "salary") body = { action: "salary", employeeId: target.id, amount, effectiveFrom: form.date, comment: form.reason };
+    else if (operation === "payment") body = { action: "payment", employeeId: target.id, periodId: data.period.id, amount, type: form.type, paymentDate: form.date, comment: form.reason };
+    else if (operation === "reversal") body = { action: "reverse-accrual", id: Number(form.accrualId), periodId: data.period.id, reason: form.reason || "Сторно" };
+    else body = { action: "accrual", employeeId: target.id, periodId: data.period.id, amount, reason: form.reason || labels[operation === "premium" ? "PREMIUM" : operation === "deduction" ? "DEDUCTION" : "EXTRA_BONUS"], type: operation === "premium" ? "PREMIUM" : operation === "deduction" ? "DEDUCTION" : form.orderId ? "ORDER_BONUS" : "EXTRA_BONUS", orderId: form.orderId ? Number(form.orderId) : undefined };
+    if (await run(body)) { setOperation(null); setDetails(null); }
   };
-  return (
-    <main className="min-h-screen bg-slate-950 p-4 text-white md:p-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold md:text-3xl">
-              {payrollAdmin ? "Зарплата сотрудников" : "Моя зарплата"}
-            </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Начисления и фактические выплаты учитываются отдельно.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <input
-              aria-label="Год"
-              className="w-24 rounded-xl bg-slate-800 p-3"
-              type="number"
-              value={period.year}
-              onChange={(e) =>
-                setPeriod({ ...period, year: Number(e.target.value) })
-              }
-            />
-            <select
-              aria-label="Месяц"
-              className="rounded-xl bg-slate-800 p-3"
-              value={period.month}
-              onChange={(e) =>
-                setPeriod({ ...period, month: Number(e.target.value) })
-              }
-            >
-              {Array.from({ length: 12 }, (_, i) => (
-                <option key={i + 1} value={i + 1}>
-                  {new Date(2026, i).toLocaleString("ru-RU", { month: "long" })}
-                </option>
-              ))}
-            </select>
-            {director && !data.period && (
-              <button
-                className="rounded-xl bg-blue-600 px-4"
-                onClick={() =>
-                  void payrollAction({ action: "create-period", ...period })
-                }
-              >
-                Открыть месяц
-              </button>
-            )}
-            {director && data.period?.status !== "CLOSED" && data.period && (
-              <button
-                className="rounded-xl bg-red-700 px-4"
-                onClick={() =>
-                  void payrollAction({
-                    action: "close-period",
-                    periodId: data.period!.id,
-                  })
-                }
-              >
-                Закрыть месяц
-              </button>
-            )}
-          </div>
-        </div>
-        <section className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {[
-            ["Начислено", data.totals.accrued],
-            ["Выплачено", data.totals.paid],
-            ["Ожидается к выплате", data.totals.payable],
-          ].map(([label, value]) => (
-            <article
-              key={String(label)}
-              className="rounded-2xl border border-slate-800 bg-slate-900 p-5"
-            >
-              <p className="text-sm text-slate-400">{label}</p>
-              <p className="mt-2 text-2xl font-bold">{currency(value)}</p>
-            </article>
-          ))}
-        </section>
-        {!director && data.period && (
-          <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <h2 className="font-semibold">Запросить аванс</h2>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-              <input
-                className="min-h-11 flex-1 rounded-xl bg-slate-800 px-4"
-                type="number"
-                min="1"
-                placeholder="Сумма"
-                value={advance}
-                onChange={(e) => setAdvance(e.target.value)}
-              />
-              <button
-                className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold"
-                onClick={() => void requestAdvance()}
-              >
-                Запросить аванс
-              </button>
-            </div>
-            {message && (
-              <p className="mt-2 text-sm text-slate-300">{message}</p>
-            )}
-          </section>
-        )}
-        <section className="mt-6 space-y-4">
-          {data.rows.length === 0 ? (
-            <div className="rounded-2xl bg-slate-900 p-10 text-center text-slate-400">
-              За выбранный месяц данных нет.
-            </div>
-          ) : (
-            data.rows.map((row) => (
-              <article
-                key={row.id}
-                className="rounded-2xl border border-slate-800 bg-slate-900 p-5"
-              >
-                <div className="flex flex-wrap justify-between gap-3">
-                  <div>
-                    <h2 className="text-lg font-semibold">{row.user.name}</h2>
-                    <p className="text-sm text-slate-400">
-                      Оклад: {currency(row.baseSalary)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm text-slate-400">Остаток</p>
-                    <p className="text-xl font-bold">
-                      {currency(row.totals.payable)}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-5 grid gap-4 lg:grid-cols-3">
-                  <div>
-                    <h3 className="mb-2 text-sm font-semibold text-slate-300">
-                      Начисления
-                    </h3>
-                    {row.accruals.length ? (
-                      row.accruals.map((item) => (
-                        <p
-                          key={item.id}
-                          className="border-t border-slate-800 py-2 text-sm"
-                        >
-                          {labels[item.type] ?? item.type}:{" "}
-                          {item.direction === "DECREASE" ? "−" : "+"}
-                          {currency(item.amount)}
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-sm text-slate-500">0</p>
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="mb-2 text-sm font-semibold text-slate-300">
-                      Выплаты
-                    </h3>
-                    {row.payments.length ? (
-                      row.payments.map((item) => (
-                        <p
-                          key={item.id}
-                          className="border-t border-slate-800 py-2 text-sm"
-                        >
-                          {labels[item.type] ?? item.type}:{" "}
-                          {currency(item.amount)}
-                        </p>
-                      ))
-                    ) : (
-                      <p className="text-sm text-slate-500">0</p>
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="mb-2 text-sm font-semibold text-slate-300">
-                      Авансы
-                    </h3>
-                    {row.advanceRequests.length ? (
-                      row.advanceRequests.map((item) => (
-                        <div
-                          key={item.id}
-                          className="border-t border-slate-800 py-2 text-sm"
-                        >
-                          <p>
-                            {currency(item.requestedAmount)} ·{" "}
-                            {labels[item.status] ?? item.status}
-                          </p>
-                          {director && item.status === "REQUESTED" && (
-                            <div className="mt-2 flex gap-2">
-                              <button
-                                className="rounded-lg bg-green-700 px-3 py-2"
-                                onClick={() =>
-                                  void payrollAction({
-                                    action: "review-advance",
-                                    id: item.id,
-                                    status: "APPROVED",
-                                    approvedAmount: Number(
-                                      item.requestedAmount,
-                                    ),
-                                  })
-                                }
-                              >
-                                Одобрить
-                              </button>
-                              <button
-                                className="rounded-lg bg-red-700 px-3 py-2"
-                                onClick={() =>
-                                  void payrollAction({
-                                    action: "review-advance",
-                                    id: item.id,
-                                    status: "REJECTED",
-                                  })
-                                }
-                              >
-                                Отклонить
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-slate-500">0</p>
-                    )}
-                  </div>
-                </div>
-              </article>
-            ))
-          )}
-        </section>
-      </div>
-    </main>
-  );
+  const reviewAdvance = (item: Advance, decision: "APPROVED" | "REJECTED") => run({ action: "review-advance", id: item.id, status: decision, approvedAmount: decision === "APPROVED" ? Number(item.requestedAmount) : undefined }, decision === "APPROVED" ? "Аванс одобрен" : "Запрос отклонён");
+  const payAdvance = (item: Advance) => run({ action: "pay-advance", id: item.id }, "Выплата аванса зарегистрирована");
+  const requestAdvance = async () => { if (!data.period || Number(advanceAmount) <= 0) return; const response = await fetch("/api/payroll/self", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ periodId: data.period.id, amount: Number(advanceAmount) }) }), result = await response.json().catch(() => ({})); if (!response.ok) setError(errorLabels[result.error] ?? "Не удалось отправить запрос"); else { setAdvanceAmount(""); setNotice("Запрос на аванс отправлен"); await load(); } };
+  const pending = useMemo(() => data.rows.flatMap((row) => row.advanceRequests.filter((item) => item.status === "REQUESTED" || item.status === "APPROVED").map((item) => ({ row, item }))), [data.rows]);
+  const bonusTotal = useMemo(() => data.rows.flatMap((row) => row.accruals).filter((item) => ["GUARANTEED_ORDER_BONUS", "ORDER_BONUS", "EXTRA_BONUS", "PREMIUM"].includes(item.type) && item.direction === "INCREASE").reduce((sum, item) => sum + Number(item.amount), 0), [data.rows]);
+  const advanceTotal = useMemo(() => data.rows.flatMap((row) => row.payments).filter((item) => item.type === "ADVANCE").reduce((sum, item) => sum + Number(item.amount), 0), [data.rows]);
+  const stats: Array<[string, number, LucideIcon, string]> = [["Фонд начислений", data.totals.accrued, CircleDollarSign, "text-blue-300"], ["Выплачено", data.totals.paid, Check, "text-emerald-300"], ["К выплате", data.totals.payable, Banknote, "text-amber-300"], ["Авансы", advanceTotal, Clock3, "text-violet-300"], ["Бонусы", bonusTotal, Receipt, "text-cyan-300"]];
+
+  if (sessionStatus === "loading") return <div className="p-8 text-slate-400">Загрузка…</div>;
+  return <main className="min-h-full bg-slate-950 p-4 text-white md:p-6 xl:p-8"><div className="mx-auto max-w-[1500px]">
+    <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between"><div><p className="text-sm font-medium text-blue-400">Финансы · Payroll</p><h1 className="mt-1 text-2xl font-bold md:text-3xl">{adminView ? "Зарплаты" : "Моя зарплата"}</h1><p className="mt-1 text-sm text-slate-400">Начисления, выплаты и остаток без смешивания денежных событий.</p></div><div className="flex flex-wrap items-center gap-2"><button onClick={() => changeMonth(-1)} aria-label="Предыдущий месяц" className="grid size-11 place-items-center rounded-xl border border-slate-700 bg-slate-900"><ArrowLeft size={18}/></button><div className="flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4"><CalendarDays size={18} className="text-blue-400"/><b>{months[selected.month - 1]} {selected.year}</b></div><button onClick={() => changeMonth(1)} aria-label="Следующий месяц" className="grid size-11 place-items-center rounded-xl border border-slate-700 bg-slate-900"><ArrowRight size={18}/></button>{data.period && <span className={`rounded-full px-3 py-2 text-sm font-semibold ${closed ? "bg-slate-700" : "bg-emerald-500/15 text-emerald-300"}`}>{labels[data.period.status]}</span>}{director && !data.period && <button onClick={() => void run({ action: "create-period", ...selected }, "Месяц открыт")} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">Открыть месяц</button>}{director && data.period && !closed && <button onClick={() => window.confirm(`Закрыть ${months[selected.month - 1].toLowerCase()}?`) && void run({ action: "close-period", periodId: data.period!.id }, "Месяц закрыт")} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300">Закрыть месяц</button>}{adminView && data.period && !closed && <button onClick={() => openOperation(accountant ? "payment" : "bonus")} disabled={!data.rows.length} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-40"><Plus size={18}/> Операция</button>}</div></header>
+    {(error || notice) && <div role={error ? "alert" : "status"} className={`mt-4 flex items-center justify-between rounded-xl border p-3 text-sm ${error ? "border-red-500/40 bg-red-500/10 text-red-200" : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"}`}><span>{error || notice}</span><button aria-label="Закрыть сообщение" onClick={() => { setError(""); setNotice(""); }}><X size={18}/></button></div>}
+    <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">{stats.map(([label, value, Icon, color], index) => <article key={label} className={`${index === 4 ? "col-span-2 lg:col-span-1" : ""} rounded-2xl border border-slate-800 bg-slate-900/70 p-4`}><div className="flex items-center justify-between"><p className="text-xs text-slate-400 sm:text-sm">{label}</p><Icon className={color} size={18}/></div><p className={`mt-2 text-lg font-bold sm:text-xl ${color}`}>{currency(value)}</p></article>)}</section>
+    {adminView && pending.length > 0 && <section className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4"><div className="mb-3 flex items-center gap-2"><Clock3 size={19} className="text-amber-300"/><h2 className="font-semibold">Запросы на аванс</h2></div><div className="grid gap-2 lg:grid-cols-2">{pending.map(({ row, item }) => <div key={item.id} className="flex flex-col gap-3 rounded-xl bg-slate-900 p-3 sm:flex-row sm:items-center sm:justify-between"><div><b>{row.user.name}</b><p className="text-sm text-slate-400">{currency(item.requestedAmount)} · {labels[item.status]}</p></div><div className="flex gap-2">{director && item.status === "REQUESTED" && <><button onClick={() => void reviewAdvance(item, "APPROVED")} className="rounded-lg bg-emerald-700 px-3 py-2 text-sm">Одобрить</button><button onClick={() => void reviewAdvance(item, "REJECTED")} className="rounded-lg bg-red-900 px-3 py-2 text-sm">Отклонить</button></>}{item.status === "APPROVED" && <button onClick={() => void payAdvance(item)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm">Зарегистрировать выплату</button>}</div></div>)}</div></section>}
+    {!adminView && data.period && !closed && <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4"><h2 className="font-semibold">Запросить аванс</h2><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input type="number" min="1" value={advanceAmount} onChange={(e) => setAdvanceAmount(e.target.value)} placeholder="Сумма, ₸" className="control flex-1"/><button onClick={() => void requestAdvance()} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold">Отправить запрос</button></div></section>}
+    <section className="mt-5">{loading ? <Empty text="Загружаем ведомость…"/> : !data.period ? <Empty text={director ? "Период ещё не открыт. Откройте месяц, чтобы начать работу." : "За выбранный месяц расчётный период ещё не открыт."}/> : !data.rows.length ? <Empty text="В расчётном периоде пока нет сотрудников."/> : <><div className="hidden overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 xl:block"><table className="w-full text-left text-sm"><thead className="text-xs uppercase text-slate-500"><tr>{["Сотрудник", "Должность", "Оклад", "Бонусы", "Аванс", "Начислено", "Выплачено", "К выплате", "Статус"].map((title) => <th key={title} className="px-4 py-3">{title}</th>)}</tr></thead><tbody>{data.rows.map((row) => <PayrollTableRow key={row.id} row={row} onOpen={() => setDetails(row)}/>)}</tbody></table></div><div className="grid gap-3 xl:hidden">{data.rows.map((row) => <article key={row.id} className="rounded-2xl border border-slate-800 bg-slate-900 p-4"><div className="flex items-start justify-between gap-3"><div><b>{row.user.name}</b><p className="text-sm text-slate-400">{roleNames[row.user.role] ?? row.user.role}</p></div><Status payable={row.totals.payable} paid={row.totals.paid}/></div><div className="mt-4 grid grid-cols-3 gap-2 text-sm"><Metric label="Начислено" value={row.totals.accrued}/><Metric label="Выплачено" value={row.totals.paid}/><Metric label="К выплате" value={row.totals.payable} accent/></div><button onClick={() => setDetails(row)} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-700 font-medium">Открыть <ChevronRight size={17}/></button></article>)}</div></>}</section>
+  </div>{details && <EmployeeDrawer row={data.rows.find((row) => row.id === details.id) ?? details} director={director} accountant={accountant} closed={closed} onClose={() => setDetails(null)} onOperation={openOperation} onReview={reviewAdvance} onPayAdvance={payAdvance}/>} {operation && target && data.period && <OperationModal operation={operation} row={target} form={form} setForm={setForm} onClose={() => setOperation(null)} onSubmit={submitOperation}/>}</main>;
 }
+
+function PayrollTableRow({ row, onOpen }: { row: PayrollRow; onOpen: () => void }) { const bonuses = row.accruals.filter((x) => ["GUARANTEED_ORDER_BONUS", "ORDER_BONUS", "EXTRA_BONUS", "PREMIUM"].includes(x.type) && x.direction === "INCREASE").reduce((s, x) => s + Number(x.amount), 0), advances = row.payments.filter((x) => x.type === "ADVANCE").reduce((s, x) => s + Number(x.amount), 0); return <tr onClick={onOpen} tabIndex={0} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()} className="cursor-pointer border-t border-slate-800 hover:bg-slate-800/60"><td className="px-4 py-4 font-semibold">{row.user.name}</td><td className="px-4 py-4 text-slate-400">{roleNames[row.user.role] ?? row.user.role}</td><td className="px-4 py-4">{currency(row.baseSalary)}</td><td className="px-4 py-4">{currency(bonuses)}</td><td className="px-4 py-4">{currency(advances)}</td><td className="px-4 py-4">{currency(row.totals.accrued)}</td><td className="px-4 py-4 text-emerald-300">{currency(row.totals.paid)}</td><td className="px-4 py-4 font-bold text-amber-300">{currency(row.totals.payable)}</td><td className="px-4 py-4"><Status payable={row.totals.payable} paid={row.totals.paid}/></td></tr>; }
+function Status({ payable, paid }: { payable: number; paid: number }) { const value = payable <= 0 ? "Выплачено" : paid > 0 ? "Частично" : "К выплате"; return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${payable <= 0 ? "bg-emerald-500/15 text-emerald-300" : paid > 0 ? "bg-amber-500/15 text-amber-300" : "bg-blue-500/15 text-blue-300"}`}>{value}</span>; }
+function Metric({ label, value, accent }: { label: string; value: number; accent?: boolean }) { return <div className="min-w-0 rounded-xl bg-slate-950 p-2"><p className="truncate text-[11px] text-slate-500">{label}</p><p className={`mt-1 truncate font-semibold ${accent ? "text-amber-300" : ""}`}>{currency(value)}</p></div>; }
+function Empty({ text }: { text: string }) { return <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 p-12 text-center text-slate-400"><CircleDollarSign className="mx-auto mb-3 text-slate-600"/><p>{text}</p></div>; }
+function Action({ label, onClick }: { label: string; onClick: () => void }) { return <button onClick={onClick} className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm font-medium hover:border-blue-500">{label}</button>; }
+
+function EmployeeDrawer({ row, director, accountant, closed, onClose, onOperation, onReview, onPayAdvance }: { row: PayrollRow; director: boolean; accountant: boolean; closed: boolean; onClose: () => void; onOperation: (operation: Operation, row: PayrollRow) => void; onReview: (item: Advance, decision: "APPROVED" | "REJECTED") => Promise<unknown>; onPayAdvance: (item: Advance) => Promise<unknown> }) {
+  const accrualTotal = (types: string[]) => row.accruals.filter((x) => types.includes(x.type)).reduce((s, x) => s + Number(x.amount) * (x.direction === "DECREASE" ? -1 : 1), 0);
+  const history = [...row.accruals.map((item) => ({ id: `a-${item.id}`, date: item.createdAt, title: labels[item.type] ?? item.type, amount: Number(item.amount) * (item.direction === "DECREASE" ? -1 : 1), reason: item.reason })), ...row.payments.map((item) => ({ id: `p-${item.id}`, date: item.paymentDate, title: labels[item.type] ?? item.type, amount: -Number(item.amount), reason: item.comment ?? "" }))].sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  return <div className="fixed inset-0 z-[80] flex justify-end bg-black/70" role="dialog" aria-modal="true"><button className="absolute inset-0" aria-label="Закрыть" onClick={onClose}/><aside className="relative h-full w-full max-w-3xl overflow-y-auto border-l border-slate-700 bg-slate-950 p-4 sm:p-6"><div className="flex items-start justify-between gap-4"><div className="flex gap-3"><div className="grid size-12 place-items-center rounded-full bg-blue-500/15 text-blue-300"><UserRound/></div><div><h2 className="text-xl font-bold">{row.user.name}</h2><p className="text-sm text-slate-400">{roleNames[row.user.role] ?? row.user.role} · Оклад {currency(row.baseSalary)}</p></div></div><button onClick={onClose} aria-label="Закрыть карточку" className="grid size-11 place-items-center rounded-xl border border-slate-700"><X/></button></div><div className="mt-5 grid grid-cols-3 gap-2"><Metric label="Начислено" value={row.totals.accrued}/><Metric label="Выплачено" value={row.totals.paid}/><Metric label="К выплате" value={row.totals.payable} accent/></div>
+    <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4"><h3 className="font-semibold">Структура зарплаты</h3><div className="mt-3 grid gap-2 sm:grid-cols-2">{[["Оклад", accrualTotal(["BASE_SALARY"])], ["Гарантированный бонус", accrualTotal(["GUARANTEED_ORDER_BONUS"])], ["Бонусы за заказы", accrualTotal(["ORDER_BONUS"])], ["Премии и бонусы", accrualTotal(["PREMIUM", "EXTRA_BONUS"])], ["Авансы", row.payments.filter((x) => x.type === "ADVANCE").reduce((s, x) => s + Number(x.amount), 0)], ["Удержания и сторно", Math.abs(accrualTotal(["DEDUCTION", "ADJUSTMENT_DECREASE", "BONUS_REVERSAL"]))]].map(([label, amount]) => <div key={String(label)} className="flex justify-between rounded-xl bg-slate-950 px-3 py-2 text-sm"><span className="text-slate-400">{String(label)}</span><b>{currency(amount as number)}</b></div>)}</div></section>
+    {(director || accountant) && !closed && <section className="mt-5"><h3 className="mb-3 font-semibold">Действия</h3><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{director && <><Action label="Изменить оклад" onClick={() => onOperation("salary", row)}/><Action label="Добавить бонус" onClick={() => onOperation("bonus", row)}/><Action label="Назначить премию" onClick={() => onOperation("premium", row)}/><Action label="Удержание" onClick={() => onOperation("deduction", row)}/><Action label="Сторно" onClick={() => onOperation("reversal", row)}/></>}<Action label="Выплата" onClick={() => onOperation("payment", row)}/></div></section>}
+    {row.advanceRequests.length > 0 && <section className="mt-5"><h3 className="font-semibold">Запросы на аванс</h3><div className="mt-2 space-y-2">{row.advanceRequests.map((item) => <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3"><div className="flex justify-between"><span>{currency(item.requestedAmount)}</span><span className="text-sm text-slate-400">{labels[item.status]}</span></div>{!closed && <div className="mt-2 flex gap-2">{director && item.status === "REQUESTED" && <><button onClick={() => void onReview(item, "APPROVED")} className="rounded-lg bg-emerald-700 px-3 py-2 text-sm">Одобрить</button><button onClick={() => void onReview(item, "REJECTED")} className="rounded-lg bg-red-900 px-3 py-2 text-sm">Отклонить</button></>}{item.status === "APPROVED" && <button onClick={() => void onPayAdvance(item)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm">Зарегистрировать выплату</button>}</div>}</div>)}</div></section>}
+    <section className="mt-5"><div className="flex items-center gap-2"><History size={19} className="text-blue-300"/><h3 className="font-semibold">История операций</h3></div><div className="mt-3 space-y-2">{history.length ? history.map((item) => <div key={item.id} className="flex gap-3 rounded-xl border border-slate-800 bg-slate-900 p-3"><div className="mt-1 size-2 rounded-full bg-blue-400"/><div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><p className="font-medium">{item.title}</p><b className={item.amount < 0 ? "text-red-300" : "text-emerald-300"}>{item.amount < 0 ? "−" : "+"}{currency(Math.abs(item.amount))}</b></div><p className="text-xs text-slate-500">{dateLabel(item.date)}{item.reason ? ` · ${item.reason}` : ""}</p></div></div>) : <p className="text-sm text-slate-500">Операций пока нет</p>}</div></section>
+    {row.salaryRates.length > 0 && <section className="mt-5"><h3 className="font-semibold">История оклада</h3><div className="mt-2 space-y-2">{row.salaryRates.map((rate) => <div key={rate.id} className="flex justify-between rounded-xl bg-slate-900 p-3 text-sm"><span>{dateLabel(rate.effectiveFrom)}{rate.effectiveTo ? ` — ${dateLabel(rate.effectiveTo)}` : " — сейчас"}</span><b>{currency(rate.amount)}</b></div>)}</div></section>}
+  </aside></div>;
+}
+
+function OperationModal({ operation, row, form, setForm, onClose, onSubmit }: { operation: Operation; row: PayrollRow; form: Form; setForm: (value: Form) => void; onClose: () => void; onSubmit: () => Promise<void> }) {
+  const titles: Record<Operation, string> = { salary: "Назначить новый оклад", bonus: "Добавить бонус", premium: "Назначить премию", deduction: "Добавить удержание", payment: "Зарегистрировать выплату", reversal: "Сторнировать начисление" }, reversible = row.accruals.filter((item) => !item.reversalOfId && !item.reversedBy && item.type !== "BONUS_REVERSAL");
+  return <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-950 p-5"><div className="flex justify-between"><div><h2 className="text-xl font-bold">{titles[operation]}</h2><p className="text-sm text-slate-400">{row.user.name}</p></div><button onClick={onClose} aria-label="Закрыть" className="grid size-11 place-items-center rounded-xl border border-slate-700"><X/></button></div><div className="mt-5 space-y-4">{operation === "reversal" ? <Field label="Начисление"><select value={form.accrualId} onChange={(e) => setForm({ ...form, accrualId: e.target.value })} className="control"><option value="">Выберите операцию</option>{reversible.map((item) => <option key={item.id} value={item.id}>{labels[item.type] ?? item.type} · {currency(item.amount)}</option>)}</select></Field> : <Field label="Сумма, ₸"><input autoFocus type="number" min="1" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="control"/></Field>}{operation === "payment" && <Field label="Тип выплаты"><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="control"><option value="SALARY_PAYMENT">Зарплата</option><option value="ADVANCE">Аванс</option><option value="IMMEDIATE_BONUS">Бонус</option><option value="FINAL_SETTLEMENT">Окончательный расчёт</option><option value="OTHER_PAYROLL_PAYMENT">Другая выплата</option><option value="EMPLOYEE_REFUND">Возврат сотрудника</option></select></Field>}{operation === "bonus" && <Field label="Заказ (необязательно)"><input type="number" min="1" value={form.orderId} onChange={(e) => setForm({ ...form, orderId: e.target.value })} placeholder="ID заказа" className="control"/></Field>}{(operation === "salary" || operation === "payment") && <Field label={operation === "salary" ? "Дата начала действия" : "Дата выплаты"}><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="control"/></Field>}<Field label={operation === "reversal" ? "Причина сторно" : "Комментарий / основание"}><textarea rows={3} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className="control resize-none"/></Field></div><div className="mt-6 flex justify-end gap-2"><button onClick={onClose} className="min-h-11 rounded-xl px-4 text-slate-300">Отмена</button><button onClick={() => void onSubmit()} disabled={operation === "reversal" ? !form.accrualId : Number(form.amount) <= 0} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-40">Сохранить</button></div></div></div>;
+}
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block text-sm text-slate-300"><span className="mb-1.5 block">{label}</span>{children}</label>; }

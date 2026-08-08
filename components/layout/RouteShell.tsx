@@ -16,6 +16,7 @@ import {
   UserCog,
   Users,
   Wallet,
+  Banknote,
   Landmark,
   LockKeyhole,
   Warehouse,
@@ -37,7 +38,7 @@ const links = [
   ["/finance", "Финансы", Wallet],
   ["/calendar", "Календарь", CalendarDays],
   ["/employees", "Сотрудники", UserCog],
-  ["/payroll", "Моя зарплата", Wallet],
+  ["/payroll", "Зарплаты", Banknote],
   ["/settings", "Настройки", Settings],
 ] as const;
 
@@ -60,6 +61,7 @@ export default function RouteShell({
     "/finance": "finance",
     "/calendar": "calendar",
     "/employees": "employees",
+    "/payroll": "payroll",
     "/settings": "settings",
   };
   const visible = (href: string) =>
@@ -131,7 +133,7 @@ export default function RouteShell({
                   className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
                 >
                   <Icon size={20} />
-                  {title}
+                  {href === "/payroll" && role !== "DIRECTOR" && role !== "ACCOUNTANT" ? "Моя зарплата" : title}
                 </Link>
               ))}
             {(session?.user.role === "DIRECTOR" ||

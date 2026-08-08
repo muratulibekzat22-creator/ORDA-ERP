@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Factory,
   Wallet,
+  Banknote,
   BarChart3,
   Settings,
   Handshake,
@@ -17,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { hasDefaultPermission, type Permission } from "@/lib/permissions";
 import { type Role } from "@/lib/roles";
 
@@ -71,6 +73,11 @@ const menu = [
         icon: Warehouse,
       },
       {
+        id: "payroll",
+        title: "Зарплаты",
+        icon: Banknote,
+      },
+      {
         id: "finance",
         title: "Финансы",
         icon: Wallet,
@@ -115,8 +122,9 @@ export default function Sidebar({
   onClose,
 }: SidebarProps) {
   const { data: session } = useSession();
+  const router = useRouter();
   const role = session?.user.role as Role | undefined;
-  const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", partners: "partners", production: "production", warehouse: "warehouse", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
+  const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", partners: "partners", production: "production", warehouse: "warehouse", payroll: "payroll", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
   const visible = (id: string) =>
     id === "dashboard" ||
     Boolean(
@@ -176,7 +184,7 @@ export default function Sidebar({
                 return (
                   <button
                     key={item.id}
-                    onClick={() => setPage(item.id)}
+                    onClick={() => item.id === "payroll" ? router.push("/payroll") : setPage(item.id)}
                     aria-current={active ? "page" : undefined}
                     className={`group flex min-h-12 w-full items-center justify-between rounded-xl px-4 py-3 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 ${
                       active
