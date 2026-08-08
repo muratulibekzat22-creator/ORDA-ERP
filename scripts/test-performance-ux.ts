@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 
 const orders = readFileSync("components/pages/OrdersPage.tsx", "utf8");
 assert.match(orders, /useDeferredValue/);
-assert.match(orders, /dynamic\(\(\) => import\("@\/components\/orders\/OrderForm"\)/);
+assert.match(orders, /OrderTable/);
 assert.match(orders, /visibleCount/);
-assert.match(orders, /ORDER_STATUSES/);
+assert.match(orders, /ORDER_STAGE_KEYS/);
 
 const documents = readFileSync("components/pages/DocumentsPage.tsx", "utf8");
 assert.match(documents, /useDeferredValue/);

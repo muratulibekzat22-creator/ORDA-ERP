@@ -71,7 +71,7 @@ includesAll(
     '"partnerPrice" in body',
     '"partnerPaid" in body',
     '"companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"',
-    'where: { partnerId: partner.id }',
+    '? { partnerId: partner.id }',
   ],
   "orders API",
 );
