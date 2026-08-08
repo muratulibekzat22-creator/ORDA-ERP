@@ -267,7 +267,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
             <ArrowLeft size={18} />
             Все заявки
           </Link>
-          <h1 className="mt-2 text-3xl font-bold text-white">{client.name}</h1>
+          <h1 className="mt-2 break-words text-3xl font-bold text-white">{client.name?.trim() && client.name !== client.phone ? client.name : client.phone}</h1>
           <p className="mt-1 text-slate-400">
             Заявка · создана {date(client.createdAt)}
           </p>
