@@ -6,7 +6,7 @@ import net from "net";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
-import { Permission, Role, type PrismaClient } from "@prisma/client";
+import { CalendarTaskPriority, CalendarTaskType, Permission, Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
 
@@ -188,7 +188,7 @@ async function expectStatuses(pathname: string, statuses: number[], cookie: stri
 
 type MeasurementPayload = { id: number; measurerUserId: number | null; order: { id: number } };
 type ProductionPayload = { id: number; masterUserId: number | null; stage: string; order: { id: number } };
-type CalendarPayload = { events: Array<{ id: string; sourceType: "measurement" | "production"; orderId: number; assignedUserId: number | null; stage: string }>; orders: Array<{ id: number }> };
+type CalendarPayload = { tasks: Array<{ id: number; assigneeId: number; order: { id: number } | null }> };
 type DocumentPayload = { id: number; type: "OFFER" | "CONTRACT" | "ACT" | "INVOICE"; number: string; order: { id: number; client: { name: string } } };
 
 function assertMeasurementPayload(
@@ -223,14 +223,12 @@ function assertProductionPayload(
   assert(payload.every((production) => ownOrderIds.includes(production.order.id)), "production payload leaks a foreign order");
 }
 
-function assertCalendarPayload(payload: CalendarPayload, ownEventIds: string[], foreignEventIds: string[], ownOrderIds: number[], userId: number, sourceType: "measurement" | "production", stages?: string[]) {
-  assert(payload.events.length === ownEventIds.length, "calendar payload has an unexpected number of events");
-  assert(ownEventIds.every((id) => payload.events.some((event) => event.id === id)), "calendar payload is missing an own event");
-  assert(!foreignEventIds.some((id) => payload.events.some((event) => event.id === id)), "calendar payload contains a foreign event");
-  assert(payload.events.every((event) => event.sourceType === sourceType && event.assignedUserId === userId), "calendar payload contains an unauthorized assignment");
-  assert(payload.events.every((event) => ownOrderIds.includes(event.orderId)), "calendar payload leaks a foreign order");
-  assert(payload.orders.every((order) => ownOrderIds.includes(order.id)), "calendar order list leaks a foreign order");
-  if (stages) assert(payload.events.every((event) => stages.includes(event.stage)), "calendar payload contains an unauthorized stage");
+function assertCalendarPayload(payload: CalendarPayload, ownTaskIds: number[], foreignTaskIds: number[], ownOrderIds: number[], userId: number) {
+  assert(payload.tasks.length === ownTaskIds.length, "calendar payload has an unexpected number of tasks");
+  assert(ownTaskIds.every((id) => payload.tasks.some((task) => task.id === id)), "calendar payload is missing an own task");
+  assert(!foreignTaskIds.some((id) => payload.tasks.some((task) => task.id === id)), "calendar payload contains a foreign task");
+  assert(payload.tasks.every((task) => task.assigneeId === userId), "calendar payload contains an unauthorized assignment");
+  assert(payload.tasks.every((task) => task.order && ownOrderIds.includes(task.order.id)), "calendar payload leaks a foreign order");
 }
 
 async function main() {
@@ -282,9 +280,14 @@ async function main() {
         data: { number: `${tag}-measurer-second`, clientId: secondMeasurerClient.id, address: "E2E", staircase: "Straight", material: "Oak", amount: "100", prepayment: "0", balance: "100", partnerPrice: "0", partnerPaid: "0", partnerBalance: "0", companyProfit: "100", manager: tag, status: "Measurement" },
       }),
     ]);
+    const measurementVisitDate = new Date();
+    const [firstMeasurementTask, secondMeasurementTask] = await Promise.all([
+      prisma.calendarTask.create({ data: { title: `${tag}-measurement-first`, type: CalendarTaskType.MEASUREMENT, dueAt: measurementVisitDate, priority: CalendarTaskPriority.IMPORTANT, assigneeId: firstMeasurer.id, creatorId: firstMeasurer.id, clientId: firstMeasurerClient.id, orderId: firstMeasurerOrder.id } }),
+      prisma.calendarTask.create({ data: { title: `${tag}-measurement-second`, type: CalendarTaskType.MEASUREMENT, dueAt: measurementVisitDate, priority: CalendarTaskPriority.IMPORTANT, assigneeId: secondMeasurer.id, creatorId: secondMeasurer.id, clientId: secondMeasurerClient.id, orderId: secondMeasurerOrder.id } }),
+    ]);
     const [firstMeasurement, secondMeasurement] = await Promise.all([
-      prisma.measurement.create({ data: { orderId: firstMeasurerOrder.id, measurerUserId: firstMeasurer.id, measurer: firstMeasurer.name, visitDate: new Date(), comment: "first original" } }),
-      prisma.measurement.create({ data: { orderId: secondMeasurerOrder.id, measurerUserId: secondMeasurer.id, measurer: secondMeasurer.name, visitDate: new Date(), comment: "second original" } }),
+      prisma.measurement.create({ data: { orderId: firstMeasurerOrder.id, clientId: firstMeasurerClient.id, calendarTaskId: firstMeasurementTask.id, measurerUserId: firstMeasurer.id, measurer: firstMeasurer.name, visitDate: measurementVisitDate, comment: "first original" } }),
+      prisma.measurement.create({ data: { orderId: secondMeasurerOrder.id, clientId: secondMeasurerClient.id, calendarTaskId: secondMeasurementTask.id, measurerUserId: secondMeasurer.id, measurer: secondMeasurer.name, visitDate: measurementVisitDate, comment: "second original" } }),
     ]);
 
     const [firstInstaller, secondInstaller, firstProductionUser, secondProductionUser, director, accountant] = await Promise.all([
@@ -315,6 +318,13 @@ async function main() {
       prisma.production.create({ data: { orderId: otherStageOrder.id, stage: productionStage, percent: 40, masterUserId: firstInstaller.id, master: firstInstaller.name, startDate: new Date() } }),
       prisma.production.create({ data: { orderId: firstProductionOrder.id, stage: productionStage, percent: 50, masterUserId: firstProductionUser.id, master: firstProductionUser.name, startDate: new Date() } }),
       prisma.production.create({ data: { orderId: secondProductionOrder.id, stage: productionStage, percent: 60, masterUserId: secondProductionUser.id, master: secondProductionUser.name, startDate: new Date() } }),
+    ]);
+    const [firstInstallerTask, secondInstallerTask, otherStageTask, firstProductionTask, secondProductionTask] = await Promise.all([
+      prisma.calendarTask.create({ data: { title: `${tag}-installer-first`, type: CalendarTaskType.INSTALLATION, dueAt: new Date(), priority: CalendarTaskPriority.NORMAL, assigneeId: firstInstaller.id, creatorId: firstInstaller.id, clientId: workflowClients[0].id, orderId: firstInstallerOrder.id } }),
+      prisma.calendarTask.create({ data: { title: `${tag}-installer-second`, type: CalendarTaskType.INSTALLATION, dueAt: new Date(), priority: CalendarTaskPriority.NORMAL, assigneeId: secondInstaller.id, creatorId: secondInstaller.id, clientId: workflowClients[1].id, orderId: secondInstallerOrder.id } }),
+      prisma.calendarTask.create({ data: { title: `${tag}-installer-other-stage`, type: CalendarTaskType.TASK, dueAt: new Date(), priority: CalendarTaskPriority.NORMAL, assigneeId: firstInstaller.id, creatorId: firstInstaller.id, clientId: workflowClients[2].id, orderId: otherStageOrder.id } }),
+      prisma.calendarTask.create({ data: { title: `${tag}-production-first`, type: CalendarTaskType.TASK, dueAt: new Date(), priority: CalendarTaskPriority.NORMAL, assigneeId: firstProductionUser.id, creatorId: firstProductionUser.id, clientId: workflowClients[3].id, orderId: firstProductionOrder.id } }),
+      prisma.calendarTask.create({ data: { title: `${tag}-production-second`, type: CalendarTaskType.TASK, dueAt: new Date(), priority: CalendarTaskPriority.NORMAL, assigneeId: secondProductionUser.id, creatorId: secondProductionUser.id, clientId: workflowClients[4].id, orderId: secondProductionOrder.id } }),
     ]);
 
     const manager = await prisma.user.create({
@@ -477,22 +487,22 @@ async function main() {
     assert(firstAfterSecondForeignPatch.comment === firstComment, "second measurer changed a foreign measurement");
 
     const firstMeasurerCalendar = await (await expectStatus(`/api/calendar?assignedUserId=${secondMeasurer.id}`, 200, firstMeasurerCookie)).json() as CalendarPayload;
-    assertCalendarPayload(firstMeasurerCalendar, [String(firstMeasurement.id)], [String(secondMeasurement.id)], [firstMeasurerOrder.id], firstMeasurer.id, "measurement");
-    await expectStatus("/api/calendar", 200, firstMeasurerCookie, {
+    assertCalendarPayload(firstMeasurerCalendar, [firstMeasurementTask.id], [secondMeasurementTask.id], [firstMeasurerOrder.id], firstMeasurer.id);
+    await expectStatus(`/api/calendar/${firstMeasurementTask.id}`, 200, firstMeasurerCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceType: "measurement", id: firstMeasurement.id, startDate: "2026-09-01T10:00:00.000Z" }),
+      body: JSON.stringify({ title: firstMeasurementTask.title, type: CalendarTaskType.MEASUREMENT, dueAt: "2026-09-01T10:00", priority: CalendarTaskPriority.IMPORTANT, assigneeId: firstMeasurer.id, clientId: firstMeasurerClient.id, orderId: firstMeasurerOrder.id }),
     });
-    await expectStatuses("/api/calendar", [403, 404], firstMeasurerCookie, {
+    await expectStatuses(`/api/calendar/${secondMeasurementTask.id}`, [403, 404], firstMeasurerCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceType: "measurement", id: secondMeasurement.id, startDate: "2026-09-02T10:00:00.000Z" }),
+      body: JSON.stringify({ title: secondMeasurementTask.title, type: CalendarTaskType.MEASUREMENT, dueAt: "2026-09-02T10:00", priority: CalendarTaskPriority.IMPORTANT, assigneeId: secondMeasurer.id, clientId: secondMeasurerClient.id, orderId: secondMeasurerOrder.id }),
     });
-    const secondAfterCalendarPatch = await prisma.measurement.findUniqueOrThrow({ where: { id: secondMeasurement.id } });
-    assert(secondAfterCalendarPatch.visitDate.getTime() === secondMeasurement.visitDate.getTime(), "first measurer moved a foreign calendar event");
+    const secondAfterCalendarPatch = await prisma.calendarTask.findUniqueOrThrow({ where: { id: secondMeasurementTask.id } });
+    assert(secondAfterCalendarPatch.dueAt.getTime() === secondMeasurementTask.dueAt.getTime(), "first measurer moved a foreign calendar task");
 
     const secondMeasurerCalendar = await (await expectStatus("/api/calendar", 200, secondMeasurerCookie)).json() as CalendarPayload;
-    assertCalendarPayload(secondMeasurerCalendar, [String(secondMeasurement.id)], [String(firstMeasurement.id)], [secondMeasurerOrder.id], secondMeasurer.id, "measurement");
+    assertCalendarPayload(secondMeasurerCalendar, [secondMeasurementTask.id], [firstMeasurementTask.id], [secondMeasurerOrder.id], secondMeasurer.id);
     console.log("measurer API security checks passed");
 
     const firstInstallerCookie = await session(firstInstaller.email);
@@ -578,23 +588,23 @@ async function main() {
     assert(productionWarehouse.orders.length === 1 && productionWarehouse.orders[0].id === firstProductionOrder.id, "production warehouse scope is invalid");
 
     const firstInstallerCalendar = await (await expectStatus("/api/calendar", 200, firstInstallerCookie)).json() as CalendarPayload;
-    assertCalendarPayload(firstInstallerCalendar, [String(firstInstallerProduction.id)], [String(secondInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id), String(secondProduction.id)], [firstInstallerOrder.id], firstInstaller.id, "production", [installationStage]);
+    assertCalendarPayload(firstInstallerCalendar, [firstInstallerTask.id, otherStageTask.id], [secondInstallerTask.id, firstProductionTask.id, secondProductionTask.id], [firstInstallerOrder.id, otherStageOrder.id], firstInstaller.id);
     const secondInstallerCalendar = await (await expectStatus("/api/calendar", 200, secondInstallerCookie)).json() as CalendarPayload;
-    assertCalendarPayload(secondInstallerCalendar, [String(secondInstallerProduction.id)], [String(firstInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id), String(secondProduction.id)], [secondInstallerOrder.id], secondInstaller.id, "production", [installationStage]);
+    assertCalendarPayload(secondInstallerCalendar, [secondInstallerTask.id], [firstInstallerTask.id, otherStageTask.id, firstProductionTask.id, secondProductionTask.id], [secondInstallerOrder.id], secondInstaller.id);
     const firstProductionCalendar = await (await expectStatus("/api/calendar", 200, firstProductionCookie)).json() as CalendarPayload;
-    assertCalendarPayload(firstProductionCalendar, [String(firstProduction.id)], [String(firstInstallerProduction.id), String(secondInstallerProduction.id), String(otherStageProduction.id), String(secondProduction.id)], [firstProductionOrder.id], firstProductionUser.id, "production", [productionStage]);
+    assertCalendarPayload(firstProductionCalendar, [firstProductionTask.id], [firstInstallerTask.id, secondInstallerTask.id, otherStageTask.id, secondProductionTask.id], [firstProductionOrder.id], firstProductionUser.id);
     const secondProductionCalendar = await (await expectStatus("/api/calendar", 200, secondProductionCookie)).json() as CalendarPayload;
-    assertCalendarPayload(secondProductionCalendar, [String(secondProduction.id)], [String(firstInstallerProduction.id), String(secondInstallerProduction.id), String(otherStageProduction.id), String(firstProduction.id)], [secondProductionOrder.id], secondProductionUser.id, "production", [productionStage]);
+    assertCalendarPayload(secondProductionCalendar, [secondProductionTask.id], [firstInstallerTask.id, secondInstallerTask.id, otherStageTask.id, firstProductionTask.id], [secondProductionOrder.id], secondProductionUser.id);
 
-    await expectStatus("/api/calendar", 200, firstInstallerCookie, {
+    await expectStatus(`/api/calendar/${firstInstallerTask.id}`, 200, firstInstallerCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceType: "production", id: firstInstallerProduction.id, startDate: "2026-09-03T10:00:00.000Z" }),
+      body: JSON.stringify({ title: firstInstallerTask.title, type: CalendarTaskType.INSTALLATION, dueAt: "2026-09-03T10:00", priority: CalendarTaskPriority.NORMAL, assigneeId: firstInstaller.id, clientId: workflowClients[0].id, orderId: firstInstallerOrder.id }),
     });
-    for (const id of [secondInstallerProduction.id, otherStageProduction.id]) await expectStatuses("/api/calendar", [403, 404], firstInstallerCookie, {
+    for (const task of [secondInstallerTask, firstProductionTask]) await expectStatuses(`/api/calendar/${task.id}`, [403, 404], firstInstallerCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceType: "production", id, startDate: "2026-09-04T10:00:00.000Z" }),
+      body: JSON.stringify({ title: task.title, type: task.type, dueAt: "2026-09-04T10:00", priority: task.priority, assigneeId: task.assigneeId, clientId: task.clientId, orderId: task.orderId }),
     });
     await expectStatus("/api/production", 200, firstProductionCookie, {
       method: "PATCH",
@@ -625,8 +635,9 @@ async function main() {
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
     assert(directorProductions.some((production) => production.id === otherStageProduction.id && production.stage === productionStage), "director cannot see the installer non-installation record");
     const directorCalendar = await (await expectStatus("/api/calendar", 200, directorCookie)).json() as CalendarPayload;
-    assert([firstMeasurement.id, secondMeasurement.id, ...workflowProductionIds].every((id) => directorCalendar.events.some((event) => event.id === String(id))), "director cannot see all calendar events");
-    await expectStatus("/api/calendar", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceType: "production", id: secondProduction.id, startDate: "2026-09-05T10:00:00.000Z" }) });
+    const expectedCalendarTaskIds = [firstMeasurementTask.id, secondMeasurementTask.id, firstInstallerTask.id, secondInstallerTask.id, otherStageTask.id, firstProductionTask.id, secondProductionTask.id];
+    assert(expectedCalendarTaskIds.every((id) => directorCalendar.tasks.some((task) => task.id === id)), "director cannot see all calendar tasks");
+    await expectStatus(`/api/calendar/${secondProductionTask.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: secondProductionTask.title, type: CalendarTaskType.TASK, dueAt: "2026-09-05T10:00", priority: CalendarTaskPriority.NORMAL, assigneeId: secondProductionUser.id, clientId: workflowClients[4].id, orderId: secondProductionOrder.id }) });
     await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:director-production` }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
     console.log("installer and production API security checks passed");
 
@@ -778,12 +789,12 @@ async function main() {
     const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(managerOrders) && managerOrders.some((order) => order.id === firstOrder.id), "manager orders payload is invalid");
     assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
-    const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers: Array<{ managerUserId: number }> };
+    const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers?: Array<{ managerUserId: number }> };
     assert(!/companyProfit|partnerPrice|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
-    assert(managerDashboard.managers.every((row) => row.managerUserId === manager.id), "manager dashboard contains another manager's indicators");
-    const managerCalendar = await (await expectStatus("/api/calendar", 200, managerCookie)).json() as { events: Array<{ id: string }>; orders: Array<{ id: number }>; filters: { assignees: unknown[] } };
-    assert(Array.isArray(managerCalendar.events) && Array.isArray(managerCalendar.orders) && Array.isArray(managerCalendar.filters.assignees), "manager calendar payload is invalid");
-    assert(managerCalendar.events.some((event) => event.id === String(firstMeasurement.id)) && managerCalendar.orders.some((order) => order.id === firstOrder.id), "manager calendar payload is missing temporary data");
+    assert(!managerDashboard.managers || managerDashboard.managers.every((row) => row.managerUserId === manager.id), "manager dashboard contains another manager's indicators");
+    const managerCalendar = await (await expectStatus("/api/calendar", 200, managerCookie)).json() as CalendarPayload;
+    const managerCalendarMeta = await (await expectStatus("/api/calendar?meta=1", 200, managerCookie)).json() as { assignees: unknown[]; clients: unknown[]; orders: unknown[] };
+    assert(Array.isArray(managerCalendar.tasks) && Array.isArray(managerCalendarMeta.assignees) && Array.isArray(managerCalendarMeta.clients) && Array.isArray(managerCalendarMeta.orders), "manager calendar payload is invalid");
     await expectStatus(`/api/proposal/${firstOrder.id}`, 200, managerCookie);
     for (const pathname of ["/api/settings", "/api/employees", "/api/finance", "/api/analytics"]) await expectStatus(pathname, 403, managerCookie);
     console.log("manager API security matrix passed");
@@ -865,8 +876,12 @@ async function main() {
       if (attachmentPaths.length) await del(attachmentPaths).catch(() => undefined);
       await prisma.attachment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.document.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.measurementAudit.deleteMany({ where: { measurement: { order: { number: { startsWith: tag } } } } });
+      await prisma.measurementAttachment.deleteMany({ where: { measurement: { order: { number: { startsWith: tag } } } } });
       await prisma.measurement.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.calendarTaskAudit.deleteMany({ where: { task: { order: { number: { startsWith: tag } } } } });
+      await prisma.calendarTask.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });
       await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
       const leadIds = (await prisma.client.findMany({ where: { comment: { startsWith: tag } }, select: { id: true } })).map(({ id }) => id);

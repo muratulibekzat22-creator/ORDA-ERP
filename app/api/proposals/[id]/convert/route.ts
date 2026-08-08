@@ -2,6 +2,7 @@ import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+import { ensureMeasurerBonusForOrder } from "@/lib/services/measurement.service";
 type Context = { params: Promise<{ id: string }> };
 export async function POST(_: Request, { params }: Context) {
   const auth = await requirePermission("orders"); if (auth.response) return auth.response;
@@ -9,12 +10,13 @@ export async function POST(_: Request, { params }: Context) {
   const proposalId = Number((await params).id); if (!Number.isInteger(proposalId)) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
     const order = await prisma.$transaction(async (tx) => {
-      const existing = await tx.leadConversion.findUnique({ where: { proposalId }, include: { order: true } }); if (existing) return existing.order;
+      const actor = { userId: Number(auth.session!.user.id), role: auth.session!.user.role as Role, name: auth.session!.user.name ?? "Система" };
+      const existing = await tx.leadConversion.findUnique({ where: { proposalId }, include: { order: true } }); if (existing) { await ensureMeasurerBonusForOrder(tx, existing.orderId, actor); return existing.order; }
       const proposal = await tx.commercialProposal.findUnique({ where: { id: proposalId }, include: { client: true, calculation: true } });
       if (!proposal || !["ACCEPTED", "Принято"].includes(proposal.status)) throw new Error("PROPOSAL_NOT_ACCEPTED");
       if (proposal.client.stage !== "WON") throw new Error("LEAD_NOT_WON");
       if (auth.session!.user.role === Role.MANAGER && proposal.client.managerUserId !== Number(auth.session!.user.id)) throw new Error("LEAD_NOT_FOUND");
-      const anyConversion = await tx.leadConversion.findUnique({ where: { clientId: proposal.clientId }, include: { order: true } }); if (anyConversion) return anyConversion.order;
+      const anyConversion = await tx.leadConversion.findUnique({ where: { clientId: proposal.clientId }, include: { order: true } }); if (anyConversion) { await ensureMeasurerBonusForOrder(tx, anyConversion.orderId, actor); return anyConversion.order; }
       const number = `ORD-${Date.now()}-${proposal.clientId}`;
       const created = await tx.order.create({ data: { number, clientId: proposal.clientId, address: proposal.client.address || "Адрес уточняется", staircase: "По расчёту КП", material: proposal.calculation.material, amount: proposal.calculation.clientPrice, prepayment: 0, balance: proposal.calculation.clientPrice, partnerPrice: proposal.calculation.internalCost, companyProfit: Number(proposal.calculation.clientPrice) - Number(proposal.calculation.internalCost), partnerPaid: 0, partnerBalance: proposal.calculation.internalCost, manager: auth.session!.user.name ?? proposal.client.manager, managerUserId: proposal.client.managerUserId ?? Number(auth.session!.user.id), lifecycle: "CREATED", status: "Оформлен" } });
       const snapshot = proposal.calculation.snapshot as Prisma.JsonObject;
@@ -23,6 +25,7 @@ export async function POST(_: Request, { params }: Context) {
       await tx.leadStatusHistory.create({ data: { clientId: proposal.clientId, fromStatus: proposal.client.status, toStatus: proposal.client.status, fromStage: proposal.client.stage, toStage: proposal.client.stage, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Система", comment: `Создан заказ ${number}` } });
       await tx.orderEvent.create({ data: { orderId: created.id, title: "Заказ оформлен из заявки", description: `КП ${proposal.number}`, user: auth.session!.user.name ?? "Система" } });
       await tx.orderLifecycleEvent.create({ data: { orderId: created.id, type: "ORDER_CREATED", toLifecycle: "CREATED", message: `КП ${proposal.number}`, actorId: Number(auth.session!.user.id), actorName: auth.session!.user.name ?? "Система", role: auth.session!.user.role as Role, metadata: { proposalId: proposal.id, clientId: proposal.clientId } } });
+      await ensureMeasurerBonusForOrder(tx, created.id, actor);
       return created;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json(order, { status: 201 });

@@ -41,7 +41,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const cancelled = await prisma.order.count({ where: { ...orderScope, lifecycle: "CANCELLED", createdAt: range(period.start, period.end) } });
   const managerMap = new Map(managerUsers.map((user) => [user.id, { id: user.id, name: user.name, leads: 0, measurements: 0, orders: 0, salesAmount: 0, received: 0, conversion: null as number | null }]));
   clients.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) managerMap.get(item.managerUserId)!.leads += 1; });
-  measurements.forEach((item) => { const id = item.order.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.measurements += 1; });
+  measurements.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.measurements += 1; });
   orders.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) { const row = managerMap.get(item.managerUserId)!; row.orders += 1; row.salesAmount += money(item.amount); } });
   payments.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.received += paymentEffect(item.type, item.amount); });
   const managers = [...managerMap.values()].map((item) => ({ ...item, conversion: safePercent(item.orders, item.leads) })).sort((a, b) => b.salesAmount - a.salesAmount);

@@ -1,6 +1,6 @@
 import { Role } from "./roles";
 
 export const roleHome: Partial<Record<Role, string>> = {
-  [Role.MEASURER]: "/calendar",
+  [Role.MEASURER]: "/measurements",
   [Role.PARTNER]: "/partner",
 };

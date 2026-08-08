@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "whatsapp", "email", "bankDetails", "directorName", "logoUrl"] as const;
 const systemStringFields = ["currency", "timezone", "dateFormat", "offerPrefix", "contractPrefix", "actPrefix", "invoicePrefix"] as const;
-const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "productionLeadDays", "installationLeadDays", "nextDocumentNumber"] as const;
+const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "measurerOrderBonus", "productionLeadDays", "installationLeadDays", "nextDocumentNumber"] as const;
 const calculatorFields = ["pinePrice", "elmPrice", "oakPrice", "woodRailing", "glassRailing", "brassRailing", "ledPrice", "paintingPrice", "installationPrice"] as const;
 
 type RecordValue = Record<string, unknown>;

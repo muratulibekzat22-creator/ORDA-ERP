@@ -9,9 +9,11 @@ export async function GET(request: Request) {
   const auth = await requirePermission("calendar"); if (auth.response) return auth.response;
   const url = new URL(request.url);
   if (url.searchParams.get("meta") === "1") return NextResponse.json(await getCalendarMeta(calendarActor(auth.session!)));
-  const from = date(url.searchParams.get("from")), to = date(url.searchParams.get("to"));
+  const now = new Date();
+  const from = date(url.searchParams.get("from")) ?? new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const to = date(url.searchParams.get("to")) ?? new Date(Date.UTC(now.getUTCFullYear() + 1, 0, 1));
   if (!from || !to || from >= to || to.getTime() - from.getTime() > 370 * 86400000) return NextResponse.json({ error: "Укажите корректный диапазон не более года" }, { status: 400 });
-  const requestedAssignee = Number(url.searchParams.get("assigneeId"));
+  const requestedAssignee = Number(url.searchParams.get("assigneeId") ?? url.searchParams.get("assignedUserId"));
   return NextResponse.json({ tasks: await listCalendarTasks(calendarActor(auth.session!), { from, to, assigneeId: Number.isInteger(requestedAssignee) && requestedAssignee > 0 ? requestedAssignee : undefined, state: url.searchParams.get("state") ?? undefined }) });
 }
 

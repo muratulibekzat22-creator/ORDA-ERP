@@ -49,7 +49,7 @@ async function main() {
     assert(await prisma.payment.count({ where: { orderId: order.id } }) === 1, `${step} duplicate`);
 
     step = "measurement create and edit";
-    const measurement = await prisma.measurement.create({ data: { orderId: order.id, measurerUserId: measurerId, measurer: `${tag}-MEASURER`, visitDate: new Date(), floorHeight: 3, staircaseWidth: 1.2, stepsCount: 16 } });
+    const measurement = await prisma.measurement.create({ data: { orderId: order.id, clientId: client.id, measurerUserId: measurerId, measurer: `${tag}-MEASURER`, visitDate: new Date(), floorHeight: 3, staircaseWidth: 1.2, stepsCount: 16 } });
     await prisma.measurement.update({ where: { id: measurement.id }, data: { comment: "edited", stepsCount: 17 } });
     assert((await prisma.measurement.findUniqueOrThrow({ where: { id: measurement.id } })).measurerUserId === measurerId, step);
 

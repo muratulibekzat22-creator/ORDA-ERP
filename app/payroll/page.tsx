@@ -106,6 +106,7 @@ const labels: Record<string, string> = {
   BASE_SALARY: "Оклад",
   GUARANTEED_ORDER_BONUS: "Гарантированный бонус",
   ORDER_BONUS: "Бонус за заказ",
+  MEASUREMENT_BONUS: "Бонус за замер",
   EXTRA_BONUS: "Бонус",
   PREMIUM: "Премия",
   DEDUCTION: "Удержание",

@@ -58,7 +58,10 @@ export async function GET() {
     if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) {
       return NextResponse.json(orders.map((order) => {
         const result = { ...order } as Record<string, unknown>;
-        for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) delete result[field];
+        delete result.companyProfit;
+        if (auth.session!.user.role !== Role.PARTNER)
+          for (const field of ["partnerPrice", "partnerPaid", "partnerBalance"])
+            delete result[field];
         if (([Role.PRODUCTION, Role.INSTALLER, Role.MEASURER, Role.PARTNER] as Role[]).includes(auth.session!.user.role as Role))
           for (const field of ["amount", "prepayment", "balance"]) delete result[field];
         return result;

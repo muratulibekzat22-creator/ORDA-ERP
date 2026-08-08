@@ -112,6 +112,7 @@ enum PayrollAccrualType {
   BASE_SALARY
   GUARANTEED_ORDER_BONUS
   ORDER_BONUS
+  MEASUREMENT_BONUS
   EXTRA_BONUS
   PREMIUM
   DEDUCTION
@@ -217,6 +218,21 @@ enum CalendarTaskPriority {
   URGENT
 }
 
+enum MeasurementStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  HANDED_TO_MANAGER
+  CANCELLED
+}
+
+enum MeasurementPhotoType {
+  SHEET
+  OPENING
+  OBJECT
+  EXTRA
+}
+
 model User {
   id                  Int       @id @default(autoincrement())
   name                String
@@ -275,6 +291,8 @@ model User {
   createdCalendarTasks       CalendarTask[]             @relation("CalendarTaskCreator")
   completedCalendarTasks     CalendarTask[]             @relation("CalendarTaskCompleter")
   calendarTaskAuditEvents    CalendarTaskAudit[]        @relation("CalendarTaskAuditActor")
+  uploadedMeasurementPhotos  MeasurementAttachment[]    @relation("MeasurementAttachmentUploader")
+  measurementAuditEvents     MeasurementAudit[]         @relation("MeasurementAuditActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -335,6 +353,7 @@ model Client {
   priceApprovals      PriceApprovalRequest[]
   nextActions         LeadNextAction[]
   calendarTasks       CalendarTask[]
+  measurements        Measurement[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -683,6 +702,7 @@ model CalendarTask {
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   auditEvents   CalendarTaskAudit[]
+  measurement   Measurement?
 
   @@index([assigneeId, dueAt])
   @@index([status, dueAt])
@@ -968,6 +988,8 @@ model PayrollAccrual {
   amount         Decimal                @db.Decimal(14, 2)
   orderId        Int?
   order          Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  measurementId  Int?                   @unique
+  measurement    Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
   reason         String
   paymentMode    BonusPaymentMode?
   approvedAt     DateTime               @default(now())
@@ -1173,6 +1195,7 @@ model SystemSettings {
   dateFormat           String @default("dd.MM.yyyy")
   minimumPrepayment    Int    @default(0)
   measurementLeadDays  Int    @default(3)
+  measurerOrderBonus   Int    @default(20000)
   productionLeadDays   Int    @default(40)
   installationLeadDays Int    @default(7)
   nextDocumentNumber   Int    @default(1)
@@ -1429,24 +1452,92 @@ model WarehouseMutation {
 model Measurement {
   id Int @id @default(autoincrement())
 
-  orderId Int
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId        Int?
+  order          Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  clientId       Int
+  client         Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  calendarTaskId Int?          @unique
+  calendarTask   CalendarTask? @relation(fields: [calendarTaskId], references: [id], onDelete: Restrict)
 
   measurer       String
   measurerUserId Int?
-  measurerUser   User?    @relation(fields: [measurerUserId], references: [id], onDelete: SetNull)
+  measurerUser   User?             @relation(fields: [measurerUserId], references: [id], onDelete: SetNull)
   visitDate      DateTime
+  status         MeasurementStatus @default(ASSIGNED)
+  city           String            @default("")
+  address        String            @default("")
+  mapLink        String?
+  managerComment String?
 
-  floorHeight    Float?
-  staircaseWidth Float?
-  stepsCount     Int?
+  floorHeight     Float?
+  staircaseWidth  Float?
+  stepsCount      Int?
+  sameSize        Boolean @default(true)
+  stepLength      Float?
+  stepWidth       Float?
+  stepHeight      Float?
+  individualSteps Json?
+  riserHeight     Float?
+  winderCount     Int     @default(0)
+  winders         Json?
+  platformsCount  Int     @default(0)
+  platforms       Json?
+  railingLength   Float?
+  railingComment  String?
+  objectNotes     String?
 
-  comment        String?
-  idempotencyKey String? @unique
-  requestHash    String?
+  comment            String?
+  completedSnapshot  Json?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  handedAt           DateTime?
+  cancelledAt        DateTime?
+  readyForContractAt DateTime?
+  idempotencyKey     String?   @unique
+  requestHash        String?
+
+  attachments  MeasurementAttachment[]
+  auditEvents  MeasurementAudit[]
+  bonusAccrual PayrollAccrual?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([measurerUserId, visitDate])
+  @@index([clientId, status, visitDate])
+  @@index([orderId])
+}
+
+model MeasurementAttachment {
+  id            Int                  @id @default(autoincrement())
+  measurementId Int
+  measurement   Measurement          @relation(fields: [measurementId], references: [id], onDelete: Restrict)
+  type          MeasurementPhotoType @default(EXTRA)
+  uploadedById  Int?
+  uploadedBy    User?                @relation("MeasurementAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  fileName      String
+  pathname      String               @unique
+  contentType   String
+  size          Int
+  createdAt     DateTime             @default(now())
+
+  @@index([measurementId, type, createdAt])
+}
+
+model MeasurementAudit {
+  id            Int         @id @default(autoincrement())
+  measurementId Int
+  measurement   Measurement @relation(fields: [measurementId], references: [id], onDelete: Restrict)
+  action        String
+  actorId       Int
+  actor         User        @relation("MeasurementAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  before        Json?
+  after         Json?
+  comment       String?
+  createdAt     DateTime    @default(now())
+
+  @@index([measurementId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model Payment {

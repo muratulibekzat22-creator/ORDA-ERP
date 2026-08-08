@@ -363,8 +363,9 @@ export async function addMeasurement(data: {
   stepsCount?: number;
   comment?: string;
 }) {
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: data.orderId }, select: { clientId: true } });
   const measurement = await prisma.measurement.create({
-    data,
+    data: { ...data, clientId: order.clientId },
   });
 
   await prisma.orderEvent.create({

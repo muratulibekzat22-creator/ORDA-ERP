@@ -335,6 +335,7 @@ export default function SettingsPage() {
               {[
                 ["minimumPrepayment", "Минимальная предоплата"],
                 ["measurementLeadDays", "Срок замера, дней"],
+                ["measurerOrderBonus", "Бонус замерщику за оформленный заказ, ₸"],
                 ["productionLeadDays", "Срок производства, дней"],
                 ["installationLeadDays", "Срок монтажа, дней"],
                 ["nextDocumentNumber", "Следующий номер документа"],

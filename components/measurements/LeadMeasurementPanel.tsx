@@ -1,0 +1,77 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { CalendarPlus, Clipboard, FileImage, MapPin } from "lucide-react";
+
+type Measurement = {
+  id: number;
+  status: string;
+  visitDate: string;
+  city: string;
+  address: string;
+  mapLink?: string | null;
+  stepsCount?: number | null;
+  stepLength?: number | null;
+  stepWidth?: number | null;
+  riserHeight?: number | null;
+  winderCount: number;
+  platformsCount: number;
+  railingLength?: number | null;
+  measurerUser?: { id: number; name: string } | null;
+  attachments: Array<{ id: number; type: string; fileName: string }>;
+};
+type Measurer = { id: number; name: string };
+
+const input = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none focus:border-blue-500";
+const statusNames: Record<string, string> = { ASSIGNED: "Назначен", IN_PROGRESS: "В работе", COMPLETED: "Завершён", HANDED_TO_MANAGER: "Передан менеджеру", CANCELLED: "Отменён" };
+
+export default function LeadMeasurementPanel({ clientId, initialCity, initialAddress }: { clientId: number; initialCity: string; initialAddress: string }) {
+  const [items, setItems] = useState<Measurement[]>([]), [measurers, setMeasurers] = useState<Measurer[]>([]), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [whatsappText, setWhatsappText] = useState("");
+  const [form, setForm] = useState({ measurerUserId: "", visitDate: "", city: initialCity, address: initialAddress, mapLink: "", comment: "" });
+  const [office, setOffice] = useState<Record<number, { dueAt: string; comment: string }>>({});
+  const load = useCallback(async () => {
+    const [list, meta] = await Promise.all([fetch(`/api/measurements?clientId=${clientId}`, { cache: "no-store" }), fetch("/api/measurements?meta=1", { cache: "no-store" })]);
+    if (list.ok) setItems(await list.json());
+    if (meta.ok) setMeasurers((await meta.json()).measurers ?? []);
+  }, [clientId]);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+
+  async function schedule() {
+    setBusy(true); setError(""); setNotice(""); setWhatsappText("");
+    const response = await fetch("/api/measurements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, clientId, measurerUserId: Number(form.measurerUserId) }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
+    else { setNotice("Замер назначен и добавлен в календарь замерщика"); setWhatsappText(body.whatsappText ?? ""); setForm((value) => ({ ...value, visitDate: "", comment: "" })); await load(); }
+    setBusy(false);
+  }
+
+  async function action(id: number, body: Record<string, unknown>, ok: string) {
+    setBusy(true); setError(""); setNotice("");
+    const response = await fetch(`/api/measurements/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) setError(payload.error ?? "Не удалось выполнить действие"); else { setNotice(ok); await load(); }
+    setBusy(false);
+  }
+
+  return <section className="rounded-2xl border border-amber-700/50 bg-amber-950/10 p-4 md:p-6">
+    <div className="flex items-start gap-3"><CalendarPlus className="mt-1 shrink-0 text-amber-300"/><div><h2 className="text-xl font-semibold text-white">Замеры</h2><p className="mt-1 text-sm text-slate-400">Назначение создаёт задачу типа MEASUREMENT и не создаёт продажу или заказ.</p></div></div>
+    {error && <p role="alert" className="mt-4 rounded-xl bg-red-950/50 p-3 text-red-300">{error}</p>}{notice && <p role="status" className="mt-4 rounded-xl bg-emerald-950/50 p-3 text-emerald-300">{notice}</p>}
+    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <label className="text-sm text-slate-300">Замерщик<select className={`${input} mt-1`} value={form.measurerUserId} onChange={(event) => setForm({ ...form, measurerUserId: event.target.value })}><option value="">Выберите</option>{measurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+      <label className="text-sm text-slate-300">Дата и время<input className={`${input} mt-1`} type="datetime-local" value={form.visitDate} onChange={(event) => setForm({ ...form, visitDate: event.target.value })}/></label>
+      <label className="text-sm text-slate-300">Город<input className={`${input} mt-1`} value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })}/></label>
+      <label className="text-sm text-slate-300 md:col-span-2">Адрес<input className={`${input} mt-1`} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })}/></label>
+      <label className="text-sm text-slate-300">Ссылка на локацию<input className={`${input} mt-1`} type="url" value={form.mapLink} onChange={(event) => setForm({ ...form, mapLink: event.target.value })}/></label>
+      <label className="text-sm text-slate-300 md:col-span-2 xl:col-span-3">Комментарий<input className={`${input} mt-1`} value={form.comment} onChange={(event) => setForm({ ...form, comment: event.target.value })}/></label>
+    </div>
+    <button type="button" disabled={busy || !form.measurerUserId || !form.visitDate || (!form.address.trim() && !form.mapLink.trim())} onClick={() => void schedule()} className="mt-4 min-h-12 w-full rounded-xl bg-amber-500 px-5 font-semibold text-slate-950 disabled:opacity-50 sm:w-auto">Назначить замер</button>
+    {whatsappText && <div className="mt-4 rounded-xl border border-green-800 bg-green-950/20 p-4"><div className="flex items-center justify-between gap-3"><b className="text-green-200">Текст для общей WhatsApp-группы</b><button type="button" onClick={() => void navigator.clipboard.writeText(whatsappText).then(() => setNotice("Текст скопирован"))} className="flex min-h-11 items-center gap-2 rounded-lg bg-green-700 px-3 text-sm"><Clipboard size={16}/>Копировать</button></div><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-200">{whatsappText}</pre><p className="mt-2 text-xs text-slate-500">Система не сообщает об отправке: официальная интеграция группового WhatsApp не подключена.</p></div>}
+    <div className="mt-6 space-y-3">{items.length ? items.map((row) => <article key={row.id} className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><b className="text-white">{new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Almaty" }).format(new Date(row.visitDate))}</b><p className="mt-1 text-sm text-slate-400">{row.measurerUser?.name} · {row.city} · {row.address}</p></div><span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">{statusNames[row.status] ?? row.status}</span></div>
+      {row.mapLink && <a href={row.mapLink} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-sm text-blue-300"><MapPin size={15}/>Открыть локацию</a>}
+      {["COMPLETED", "HANDED_TO_MANAGER"].includes(row.status) && <div className="mt-4 grid gap-2 rounded-xl bg-slate-900 p-3 text-sm text-slate-300 sm:grid-cols-3"><span>Ступени: <b className="text-white">{row.stepsCount ?? 0}</b></span><span>Размер: <b className="text-white">{row.stepLength ?? "—"} × {row.stepWidth ?? "—"}</b></span><span>Подступенок: <b className="text-white">{row.riserHeight ?? "—"}</b></span><span>Забежные: <b className="text-white">{row.winderCount}</b></span><span>Площадки: <b className="text-white">{row.platformsCount}</b></span><span>Перила: <b className="text-white">{row.railingLength ?? 0} м</b></span><span className="sm:col-span-3">{row.attachments.map((photo) => <a key={photo.id} href={`/api/measurement-attachments/${photo.id}`} target="_blank" className="mr-3 inline-flex items-center gap-1 text-blue-300"><FileImage size={15}/>{photo.type === "SHEET" ? "Лист замера" : photo.fileName}</a>)}</span></div>}
+      {row.status === "HANDED_TO_MANAGER" && <div className="mt-4 grid gap-3"><div className="flex flex-wrap gap-2"><button disabled={busy} onClick={() => void action(row.id, { action: "ready-contract" }, "Создана приоритетная задача менеджеру")} className="min-h-11 rounded-xl bg-emerald-700 px-4 text-sm font-semibold">Клиент готов к договору</button><Link href={`/clients/${clientId}/proposal`} className="flex min-h-11 items-center rounded-xl bg-blue-700 px-4 text-sm font-semibold">Открыть расчёт / КП</Link></div><div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]"><input type="datetime-local" className={input} value={office[row.id]?.dueAt ?? ""} onChange={(event) => setOffice({ ...office, [row.id]: { dueAt: event.target.value, comment: office[row.id]?.comment ?? "" } })}/><input className={input} placeholder="Комментарий к встрече" value={office[row.id]?.comment ?? ""} onChange={(event) => setOffice({ ...office, [row.id]: { dueAt: office[row.id]?.dueAt ?? "", comment: event.target.value } })}/><button disabled={busy || !office[row.id]?.dueAt} onClick={() => void action(row.id, { action: "invite-office", ...office[row.id] }, "Встреча добавлена в календарь")} className="min-h-11 rounded-xl bg-slate-700 px-4 text-sm disabled:opacity-50">Пригласить в офис</button></div></div>}
+    </article>) : <p className="rounded-xl border border-dashed border-slate-700 p-5 text-slate-400">Замеры ещё не назначены.</p>}</div>
+  </section>;
+}

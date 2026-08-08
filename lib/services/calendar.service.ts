@@ -102,11 +102,11 @@ export async function setCalendarTaskState(actor: CalendarActor, id: number, act
 // Backwards-compatible adapters for legacy Measurement/Production callers.
 export async function createCalendarEvent(data: { sourceType: "measurement" | "production"; orderId: number; startDate: Date; assignedUserId: number; stage?: string; comment?: string; user: string }) {
   return prisma.$transaction(async (tx) => {
-    const [order, user] = await Promise.all([tx.order.findUnique({ where: { id: data.orderId }, select: { id: true } }), tx.user.findUnique({ where: { id: data.assignedUserId }, select: { id: true, name: true, active: true } })]);
+    const [order, user] = await Promise.all([tx.order.findUnique({ where: { id: data.orderId }, select: { id: true, clientId: true } }), tx.user.findUnique({ where: { id: data.assignedUserId }, select: { id: true, name: true, active: true } })]);
     if (!order) return null;
     if (!user?.active) throw new Error("INVALID_ASSIGNEE");
     if (data.sourceType === "measurement") {
-      const item = await tx.measurement.create({ data: { orderId: order.id, measurerUserId: user.id, measurer: user.name, visitDate: data.startDate, comment: data.comment } });
+      const item = await tx.measurement.create({ data: { orderId: order.id, clientId: order.clientId, measurerUserId: user.id, measurer: user.name, visitDate: data.startDate, comment: data.comment } });
       await tx.orderEvent.create({ data: { orderId: order.id, title: "Назначен замер", user: data.user } });
       return item;
     }
@@ -119,7 +119,7 @@ export async function createCalendarEvent(data: { sourceType: "measurement" | "p
 export async function moveCalendarEvent(data: { sourceType: "measurement" | "production"; id: number; startDate: Date; user: string }) {
   return prisma.$transaction(async (tx) => {
     const item = data.sourceType === "measurement" ? await tx.measurement.update({ where: { id: data.id }, data: { visitDate: data.startDate } }) : await tx.production.update({ where: { id: data.id }, data: { startDate: data.startDate } });
-    await tx.orderEvent.create({ data: { orderId: item.orderId, title: "Событие перенесено", user: data.user } });
+    if (item.orderId) await tx.orderEvent.create({ data: { orderId: item.orderId, title: "Событие перенесено", user: data.user } });
     return item;
   });
 }

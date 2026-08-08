@@ -308,11 +308,19 @@ async function main() {
         ),
       "FORBIDDEN",
     );
+    const payrollAccrualIds = (await prisma.payrollAccrual.findMany({
+      where: { employeeId: profile.id },
+      select: { id: true },
+    })).map((row) => row.id);
+    const payrollPaymentIds = (await prisma.payrollPayment.findMany({
+      where: { employeeId: profile.id },
+      select: { id: true },
+    })).map((row) => row.id);
     const ledger = await prisma.companyLedgerEntry.findMany({
       where: {
         OR: [
-          { payrollAccrualId: { not: null } },
-          { payrollPaymentId: { not: null } },
+          { payrollAccrualId: { in: payrollAccrualIds } },
+          { payrollPaymentId: { in: payrollPaymentIds } },
         ],
       },
     });

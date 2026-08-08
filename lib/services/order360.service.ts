@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { reverseMeasurerBonusForCancelledOrder } from "@/lib/services/measurement.service";
 
 export type Order360Actor = { userId: number; role: Role; name: string };
 export class Order360Error extends Error {}
@@ -146,6 +147,7 @@ export async function transitionLifecycle(input: { orderId: number; to: OrderLif
     const updated = await tx.order.updateMany({ where: { id: input.orderId, version: input.expectedVersion }, data: { lifecycle: input.to, version: { increment: 1 }, ...(input.to === OrderLifecycle.COMPLETED ? { completedAt: new Date() } : {}) } });
     if (updated.count !== 1) throw new Order360Error("STALE_VERSION");
     const event = await tx.orderLifecycleEvent.create({ data: { orderId: input.orderId, type: input.to === OrderLifecycle.COMPLETED ? "ORDER_COMPLETED" : "LIFECYCLE_TRANSITION", fromLifecycle: order.lifecycle, toLifecycle: input.to, message: input.reason, actorId: actor.userId, actorName: actor.name, role: actor.role, metadata: { gatePassed: gate.passed, override: Boolean(input.override) }, idempotencyKey: input.key, requestHash: input.requestHash } });
+    if (input.to === OrderLifecycle.CANCELLED) await reverseMeasurerBonusForCancelledOrder(tx, input.orderId, actor);
     return { event, created: true, version: input.expectedVersion + 1 };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }

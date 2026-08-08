@@ -1,7 +1,53 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { parseBusinessDateTime } from "@/lib/calendar-time";
+import { measurementActor, measurementError } from "@/lib/measurement-api";
 import { requirePermission } from "@/lib/server-auth";
+import { prisma } from "@/lib/prisma";
+import { listMeasurements, measurementWorkspace, scheduleMeasurement } from "@/lib/services/measurement.service";
 
-export async function GET(){const auth=await requirePermission("measurements");if(auth.response)return auth.response;const role=auth.session!.user.role;const userId=Number(auth.session!.user.id);const measurements=await prisma.measurement.findMany({where:role===Role.MEASURER?{measurerUserId:userId}:undefined,include:{measurerUser:{select:{id:true,name:true}},order:{include:{client:true}}},orderBy:{createdAt:"desc"}});return NextResponse.json(measurements);}
-export async function POST(request:Request){const auth=await requirePermission("measurements");if(auth.response)return auth.response;try{const b=await request.json() as Record<string,unknown>;const orderId=Number(b.orderId),measurerUserId=Number(b.measurerUserId),visitDate=new Date(String(b.visitDate));if(!Number.isInteger(orderId)||orderId<=0||!Number.isInteger(measurerUserId)||measurerUserId<=0||Number.isNaN(visitDate.getTime()))return NextResponse.json({error:"Некорректные данные замера"},{status:400});const user=await prisma.user.findUnique({where:{id:measurerUserId}});if(!user)return NextResponse.json({error:"Замерщик не найден"},{status:404});const allowed:Role[]=[Role.MEASURER,Role.DIRECTOR];if(!user.active||!allowed.includes(user.role))return NextResponse.json({error:"Пользователь не может быть замерщиком"},{status:409});if(auth.session!.user.role===Role.MEASURER&&Number(auth.session!.user.id)!==user.id)return NextResponse.json({error:"Нельзя назначать другого замерщика"},{status:403});const order=await prisma.order.findUnique({where:{id:orderId},select:{id:true}});if(!order)return NextResponse.json({error:"Заказ не найден"},{status:404});const measurement=await prisma.measurement.create({data:{orderId,measurerUserId:user.id,measurer:user.name,visitDate,floorHeight:typeof b.floorHeight==="number"?b.floorHeight:undefined,staircaseWidth:typeof b.staircaseWidth==="number"?b.staircaseWidth:undefined,stepsCount:typeof b.stepsCount==="number"?b.stepsCount:undefined,comment:typeof b.comment==="string"?b.comment:undefined},include:{measurerUser:{select:{id:true,name:true}},order:{include:{client:true}}}});await prisma.orderEvent.create({data:{orderId,title:"Назначен замер",description:`${user.name} • ${visitDate.toLocaleDateString("ru-RU")}`,user:auth.session!.user.name}});return NextResponse.json(measurement,{status:201});}catch(error){console.error(error);return NextResponse.json({error:"Не удалось создать замер"},{status:500});}}
+const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
+
+export async function GET(request: Request) {
+  const auth = await requirePermission("measurements");
+  if (auth.response) return auth.response;
+  const actor = measurementActor(auth.session!);
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.MEASURER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const url = new URL(request.url);
+  if (url.searchParams.get("meta") === "1") {
+    if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+    return NextResponse.json({ measurers: await prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }) });
+  }
+  if (url.searchParams.get("workspace") === "1") return NextResponse.json(await measurementWorkspace(actor));
+  const clientId = url.searchParams.has("clientId") ? positiveId(url.searchParams.get("clientId")) : undefined;
+  const orderId = url.searchParams.has("orderId") ? positiveId(url.searchParams.get("orderId")) : undefined;
+  if (url.searchParams.has("clientId") && !clientId) return NextResponse.json({ error: "Некорректный clientId" }, { status: 400 });
+  if (url.searchParams.has("orderId") && !orderId) return NextResponse.json({ error: "Некорректный orderId" }, { status: 400 });
+  return NextResponse.json(await listMeasurements(actor, { clientId: clientId ?? undefined, orderId: orderId ?? undefined }));
+}
+
+export async function POST(request: Request) {
+  const auth = await requirePermission("measurements");
+  if (auth.response) return auth.response;
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    const orderId = positiveId(body.orderId);
+    const order = !body.clientId && orderId ? await prisma.order.findUnique({ where: { id: orderId }, select: { clientId: true } }) : null;
+    const clientId = positiveId(body.clientId) ?? order?.clientId ?? null, measurerUserId = positiveId(body.measurerUserId);
+    const visitDate = parseBusinessDateTime(body.visitDate) ?? (typeof body.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.visitDate) ? parseBusinessDateTime(`${body.visitDate}T09:00`) : null);
+    if (!clientId || !measurerUserId || !visitDate) return NextResponse.json({ error: "Укажите заявку, замерщика, дату и время" }, { status: 400 });
+    const result = await scheduleMeasurement(measurementActor(auth.session!), {
+      clientId,
+      orderId: orderId ?? undefined,
+      measurerUserId,
+      visitDate,
+      city: typeof body.city === "string" ? body.city : undefined,
+      address: typeof body.address === "string" ? body.address : undefined,
+      mapLink: typeof body.mapLink === "string" ? body.mapLink : undefined,
+      comment: typeof body.comment === "string" ? body.comment : undefined,
+    });
+    return NextResponse.json(result, { status: 201 });
+  } catch (error) {
+    return error instanceof SyntaxError ? NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }) : measurementError(error);
+  }
+}

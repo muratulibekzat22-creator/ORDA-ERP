@@ -20,6 +20,7 @@ import {
   Upload,
   UserRound,
 } from "lucide-react";
+import LeadMeasurementPanel from "@/components/measurements/LeadMeasurementPanel";
 
 type Interaction = {
   id: number;
@@ -306,6 +307,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
         </p>
       )}
       <LeadWorkflow client={client} saving={saving} setSaving={setSaving} setError={setError} onSaved={load} />
+      <LeadMeasurementPanel clientId={client.id} initialCity={client.city} initialAddress={client.address} />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <div className="space-y-5">
           <Card title="Что нужно клиенту" icon={<UserRound size={20} />}>

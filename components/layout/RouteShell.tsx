@@ -8,6 +8,7 @@ import {
   CalendarDays,
   Calculator,
   ClipboardList,
+  Ruler,
   Factory,
   FileText,
   Handshake,
@@ -30,6 +31,7 @@ const links = [
   ["/", "Главная", LayoutDashboard],
   ["/clients", "Заявки", Users],
   ["/orders", "Заказы", ClipboardList],
+  ["/measurements", "Замеры", Ruler],
   ["/calculator", "Калькулятор", Calculator],
   ["/documents", "Документы и КП", FileText],
   ["/partners", "Цех", Handshake],
@@ -53,6 +55,7 @@ export default function RouteShell({
   const permissionByHref: Partial<Record<string, Permission>> = {
     "/clients": "clients",
     "/orders": "orders",
+    "/measurements": "measurements",
     "/calculator": "orders",
     "/documents": "documents",
     "/partners": "partners",
