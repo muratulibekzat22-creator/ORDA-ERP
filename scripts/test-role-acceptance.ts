@@ -147,12 +147,12 @@ const calendar = read("lib/services/calendar.service.ts");
 includesAll(
   calendar,
   [
-    "role === Role.MEASURER",
-    "measurerUserId: userId",
-    "role === Role.PRODUCTION",
-    "masterUserId: userId",
-    "role === Role.INSTALLER",
-    "stage: installationStage",
+    "if (actor.role === Role.DIRECTOR) return {}",
+    "if (actor.role === Role.MANAGER)",
+    "return { assigneeId: actor.userId }",
+    "actor.userId === assigneeId",
+    "FORBIDDEN_RELATION",
+    "RELATION_MISMATCH",
   ],
   "calendar ownership",
 );

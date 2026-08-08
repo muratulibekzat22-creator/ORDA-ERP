@@ -33,7 +33,8 @@
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
     "test:order360": "tsx scripts/test-order360.ts",
-    "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts"
+    "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts",
+    "test:calendar": "tsx scripts/test-calendar.ts"
   },
   "engines": {
     "node": ">=20.9.0"
