@@ -16,13 +16,15 @@ import { assignPartnerToOrder } from "@/lib/services/partner.service";
 import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
+import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 
 type Context = { params: Promise<{ id: string }> };
 const include = {
   client: true,
   partner: true,
   measurements: true,
-  payments: true,
+  payments: { include: { partner: true }, orderBy: [{ operationDate: "desc" as const }, { id: "desc" as const }] },
+  partnerAssignmentHistory: { include: { author: { select: { name: true } } }, orderBy: { createdAt: "desc" as const } },
   productions: true,
   documents: true,
   calculations: { orderBy: { createdAt: "desc" as const } },
@@ -63,7 +65,17 @@ function redactForRole<T extends Record<string, unknown>>(
     delete result.balance;
     delete result.companyProfit;
     delete result.payments;
+    delete result.partnerAssignmentHistory;
     delete result.calculations;
+    if (result.settlement && typeof result.settlement === "object") {
+      const settlement = result.settlement as Record<string, unknown>;
+      delete settlement.client;
+      if (settlement.partner && typeof settlement.partner === "object") {
+        const partner = settlement.partner as Record<string, unknown>;
+        partner.payouts = Array.isArray(partner.payouts) ? partner.payouts.filter((item) => (item as Record<string, unknown>).partnerId === result.partnerId) : [];
+        delete partner.assignments;
+      }
+    }
     return result;
   }
   for (const field of [
@@ -73,6 +85,15 @@ function redactForRole<T extends Record<string, unknown>>(
     "partnerBalance",
   ] as const)
     delete result[field];
+  delete result.payments;
+  delete result.partnerAssignmentHistory;
+  if (result.settlement && typeof result.settlement === "object") delete (result.settlement as Record<string, unknown>).partner;
+  if (role === Role.PRODUCTION || role === Role.INSTALLER || role === Role.MEASURER) {
+    delete result.amount;
+    delete result.prepayment;
+    delete result.balance;
+    delete result.settlement;
+  }
   if (Array.isArray(result.calculations)) {
     result.calculations = result.calculations.map((value) => {
       const calculation = { ...(value as Record<string, unknown>) };
@@ -114,7 +135,7 @@ export async function GET(_: Request, { params }: Context) {
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   const order = await prisma.order.findUnique({ where: { id }, include });
   return order
-    ? NextResponse.json(redactForRole(order, role))
+    ? NextResponse.json(redactForRole({ ...order, settlement: buildOrderSettlement(order) }, role))
     : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
 }
 
@@ -199,7 +220,7 @@ export async function PATCH(request: Request, { params }: Context) {
       });
       return updated
         ? NextResponse.json(
-            redactForRole(updated as unknown as Record<string, unknown>, role),
+            redactForRole({ ...updated, settlement: buildOrderSettlement(updated) } as unknown as Record<string, unknown>, role),
           )
         : NextResponse.json(
             { error: "Заказ или цех не найден" },
@@ -351,7 +372,7 @@ export async function PATCH(request: Request, { params }: Context) {
       return tx.order.findUnique({ where: { id }, include });
     });
     return updated
-      ? NextResponse.json(redactForRole(updated, role))
+      ? NextResponse.json(redactForRole({ ...updated, settlement: buildOrderSettlement(updated) }, role))
       : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   } catch (error) {
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")

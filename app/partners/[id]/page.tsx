@@ -1,5 +1,8 @@
 import { notFound } from "next/navigation";
+import { Role } from "@prisma/client";
+import { getServerSession } from "next-auth";
 import PartnerPaymentForm from "@/components/partners/PartnerPaymentForm";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { getPartner } from "@/lib/services/partner.service";
 
 interface Props {
@@ -12,6 +15,8 @@ export default async function PartnerPage({
   params,
 }: Props) {
   const { id } = await params;
+  const session = await getServerSession(authOptions);
+  if (session?.user.role !== Role.DIRECTOR && session?.user.role !== Role.ACCOUNTANT) notFound();
 
   const partner = await getPartner(Number(id));
 
@@ -21,7 +26,7 @@ export default async function PartnerPage({
 
   const partnerPayments = partner.orders.flatMap((order) =>
     order.payments
-      .filter((payment) => payment.type === "Выплата партнёру")
+      .filter((payment) => payment.type === "PARTNER_PAYOUT")
       .map((payment) => ({ ...payment, orderNumber: order.number }))
   );
 
@@ -107,10 +112,10 @@ export default async function PartnerPage({
               value={partner.city || "—"}
             />
 
-            <Info
+            {session?.user.role === Role.DIRECTOR && <Info
               title="Прибыль ALTYN SAPA"
               value={`${partner.stats.companyProfit.toLocaleString()} ₸`}
-            />
+            />}
 
           </div>
 

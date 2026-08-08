@@ -17,6 +17,7 @@ export default function PartnerPaymentForm({ orders }: { orders: OrderOption[] }
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("Наличные");
   const [comment, setComment] = useState("");
+  const [operationDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const selectedOrder = orders.find((order) => order.id === Number(orderId));
@@ -29,7 +30,7 @@ export default function PartnerPaymentForm({ orders }: { orders: OrderOption[] }
     if (value > available) { setError("Сумма выплаты не может быть больше задолженности по заказу."); return; }
     setSaving(true); setError("");
     try {
-      const response = await fetch("/api/partners/payments", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": getKey() }, body: JSON.stringify({ orderId: selectedOrder.id, amount: value, method, comment }) });
+      const response = await fetch("/api/partners/payments", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": getKey() }, body: JSON.stringify({ orderId: selectedOrder.id, amount: value, method, comment, operationDate }) });
       const payload: { error?: string } = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Не удалось сохранить выплату.");
       setAmount(""); setComment(""); reset(); router.refresh();

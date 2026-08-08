@@ -59,7 +59,8 @@ export async function getOrder(id: number) {
       client: true,
       partner: true,
       measurements: true,
-      payments: true,
+      payments: { include: { partner: true }, orderBy: [{ operationDate: "desc" }, { id: "desc" }] },
+      partnerAssignmentHistory: { include: { author: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
       productions: true,
       documents: true,
       calculations: {

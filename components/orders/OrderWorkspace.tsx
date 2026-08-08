@@ -25,6 +25,7 @@ import { useState } from "react";
 import StairCalculator from "@/components/calculator/StairCalculator";
 import ProjectPayments from "@/components/project/ProjectPayments";
 import OrderProcess from "./OrderProcess";
+import OrderSettlementPanel from "./OrderSettlementPanel";
 import { ORDER_STAGE_LABELS, projectOrderStage } from "@/lib/orders/presentation";
 
 import DocumentsTab from "./tabs/DocumentsTab";
@@ -111,6 +112,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   });
   const canEdit = ["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "");
   const canAddPayment = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
+    session?.user.role ?? "",
+  );
+  const canSeeClientFinance = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
     session?.user.role ?? "",
   );
   const calculation = order.calculations[0];
@@ -291,7 +295,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             </div>
           </section>
 
-          <section id="calculation" className={panel}>
+          {canSeeClientFinance && <section id="calculation" className={panel}>
             <SectionTitle
               icon={<ClipboardList size={20} />}
               title="Расчёт"
@@ -382,7 +386,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 <StairCalculator orderId={order.id} />
               </div>
             </details>
-          </section>
+          </section>}
+
+          <OrderSettlementPanel order={order} />
 
           <section id="documents" className={panel}>
             <SectionTitle

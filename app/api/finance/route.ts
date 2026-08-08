@@ -88,6 +88,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const type = typeof body.type === "string" && financeOperationTypes.includes(body.type as FinanceOperationType) ? body.type as FinanceOperationType : null;
+    if (type === "PARTNER_PAYOUT" && auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const amount = positiveMoney(body.amount);
     const method = typeof body.method === "string" && methods.includes(body.method as typeof methods[number]) ? body.method : null;
     const orderId = body.orderId == null || body.orderId === "" ? undefined : positiveInteger(body.orderId);
@@ -99,7 +100,7 @@ export async function POST(request: Request) {
     if ((type === "CLIENT_PAYMENT" || type === "REFUND" || type === "PARTNER_PAYOUT") && !orderId) return NextResponse.json({ error: "Для операции необходимо выбрать заказ" }, { status: 400 });
     if (type === "ADJUSTMENT" && !adjustmentDirection) return NextResponse.json({ error: "Укажите направление корректировки" }, { status: 400 });
     const payload = { type, amount, method, orderId: orderId ?? null, partnerId: partnerId ?? null, comment: comment ?? null, operationDate: operationDate?.toISOString() ?? null, adjustmentDirection: adjustmentDirection ?? null };
-    const result = await createFinanceOperation({ ...payload, orderId: orderId ?? undefined, partnerId: partnerId ?? undefined, comment: type === "ADJUSTMENT" ? `[${adjustmentDirection}]${comment ? ` ${comment}` : ""}` : comment, operationDate: operationDate ?? undefined, adjustmentDirection: adjustmentDirection ?? undefined, author: auth.session!.user.name ?? "System", idempotencyKey: idempotency.key, requestHash: createRequestHash(payload) });
+    const result = await createFinanceOperation({ ...payload, orderId: orderId ?? undefined, partnerId: partnerId ?? undefined, comment: type === "ADJUSTMENT" ? `[${adjustmentDirection}]${comment ? ` ${comment}` : ""}` : comment, operationDate: operationDate ?? undefined, adjustmentDirection: adjustmentDirection ?? undefined, author: auth.session!.user.name ?? "System", authorId: Number(auth.session!.user.id), idempotencyKey: idempotency.key, requestHash: createRequestHash(payload) });
     if (!result) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     return NextResponse.json(result, { status: result.created ? 201 : 200 });
   } catch (error) {

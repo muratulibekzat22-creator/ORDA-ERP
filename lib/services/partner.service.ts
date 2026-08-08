@@ -163,7 +163,7 @@ export async function deletePartner(id: number) {
   });
 }
 
-export async function payPartner(data: { orderId: number; amount: number; method: string; comment?: string; author?: string; idempotencyKey?:string; requestHash?:string }) {
+export async function payPartner(data: { orderId: number; amount: number; method: string; comment?: string; author?: string; authorId?: number; operationDate?: Date; idempotencyKey?:string; requestHash?:string }) {
   const result = await createFinanceOperation({ ...data, type: "PARTNER_PAYOUT" });
   return result?.payment ?? null;
 }
@@ -172,11 +172,13 @@ export async function assignPartnerToOrder(data: { orderId: number; partnerId: n
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
     const order = await tx.order.findUnique({ where: { id: data.orderId } });
-    const partner = await tx.partner.findUnique({ where: { id: data.partnerId } });
+    const partner = await tx.partner.findFirst({ where: { id: data.partnerId, active: true } });
     if (!order || !partner) return null;
     const previousPayouts = await tx.payment.aggregate({ where: { orderId: order.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true }, _count: true });
     const newPartnerPayouts = await tx.payment.aggregate({ where: { orderId: order.id, partnerId: partner.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true } });
     const previousPaid = Number(previousPayouts._sum.amount ?? 0), paid = Number(newPartnerPayouts._sum.amount ?? 0);
+    const samePartner = order.partnerId === partner.id;
+    if (samePartner && Number(order.partnerPrice) === data.partnerPrice) return order;
     if (order.partnerId !== null && order.partnerId !== partner.id && previousPayouts._count > 0 && !data.directorConfirmed) throw new Error("DIRECTOR_CONFIRMATION_REQUIRED");
     const reason = data.reason?.trim() || "Partner assignment";
     if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
@@ -184,7 +186,7 @@ export async function assignPartnerToOrder(data: { orderId: number; partnerId: n
     const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit) } });
     if (data.authorId) {
       await tx.partnerAssignmentHistory.create({ data: { orderId: order.id, previousPartnerId: order.partnerId, newPartnerId: partner.id, previousPayable: order.partnerPrice, newPayable: String(data.partnerPrice), paidAtChange: String(previousPaid), remainingAtChange: String(Math.max(Number(order.partnerPrice) - previousPaid, 0)), reason, authorId: data.authorId } });
-      await tx.financeAuditEvent.create({ data: { orderId: order.id, action: "PARTNER_REASSIGNMENT", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });
+      await tx.financeAuditEvent.create({ data: { orderId: order.id, action: order.partnerId === null ? "PARTNER_ASSIGNED" : samePartner ? "PARTNER_AGREED_AMOUNT_CHANGED" : "PARTNER_REASSIGNED", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });
     }
     const production = await tx.production.findFirst({ where: { orderId: order.id }, orderBy: { createdAt: "desc" } });
     if (production) await tx.production.update({ where: { id: production.id }, data: { stage: "Дерево" } });

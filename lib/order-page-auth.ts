@@ -7,6 +7,7 @@ import { Role } from "@/lib/roles";
 import { hasPermission } from "@/lib/services/permission.service";
 import { getOrder } from "@/lib/services/order.service";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
+import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -33,8 +34,10 @@ export async function getAuthorizedOrder(id: number) {
     )
       return null;
   }
-  const order = await getOrder(id);
-  if (!order || role === Role.DIRECTOR) return order;
+  const source = await getOrder(id);
+  if (!source) return null;
+  const order = { ...source, settlement: buildOrderSettlement(source) };
+  if (role === Role.DIRECTOR) return order;
   if (role === Role.ACCOUNTANT) return {
     ...order,
     companyProfit: undefined,
@@ -53,6 +56,8 @@ export async function getAuthorizedOrder(id: number) {
     balance: undefined,
     companyProfit: undefined,
     payments: [],
+    partnerAssignmentHistory: [],
+    settlement: { partner: { ...order.settlement.partner, payouts: order.settlement.partner.payouts.filter((payment) => payment.partnerId === order.partnerId), assignments: [] } },
     calculations: [],
   } as unknown as typeof order;
 
@@ -65,6 +70,14 @@ export async function getAuthorizedOrder(id: number) {
     companyProfit: undefined,
     partnerPaid: undefined,
     partnerBalance: undefined,
+    payments: [],
+    partnerAssignmentHistory: [],
+    settlement: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
+      ? undefined
+      : { client: order.settlement.client },
+    amount: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role) ? undefined : order.amount,
+    prepayment: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role) ? undefined : order.prepayment,
+    balance: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role) ? undefined : order.balance,
     calculations: order.calculations.map((calculation) => ({
       id: calculation.id,
       orderId: calculation.orderId,

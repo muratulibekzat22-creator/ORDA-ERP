@@ -23,6 +23,7 @@ type CreateOperationInput = {
   comment?: string;
   operationDate?: Date;
   author?: string;
+  authorId?: number;
   adjustmentDirection?: AdjustmentDirection;
   idempotencyKey?: string;
   requestHash?: string;
@@ -140,6 +141,18 @@ export async function createFinanceOperation(input: CreateOperationInput) {
           requestHash: input.requestHash,
         },
       });
+      if (affectsPartner && input.authorId) {
+        await tx.financeAuditEvent.create({ data: {
+          orderId: order!.id,
+          action: "PARTNER_PAYOUT_CREATED",
+          entityType: "Payment",
+          entityId: payment.id,
+          before: Prisma.JsonNull,
+          after: { amount: String(payment.amount), partnerId, method: payment.method, operationDate: payment.operationDate.toISOString() },
+          reason: input.comment?.trim() || "Partner payout",
+          authorId: input.authorId,
+        } });
+      }
       const mirrors = order && (affectsClient || affectsPartner) ? await calculatedMirrors(tx, order.id) : null;
       const updatedOrder = mirrors ? await tx.order.update({ where: { id: order!.id }, data: { prepayment: mirrors.paid, balance: mirrors.balance, partnerPaid: mirrors.partnerPaid, partnerBalance: mirrors.partnerBalance, companyProfit: mirrors.companyProfit } }) : order;
       if (mirrors && order) {
@@ -232,8 +245,9 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
     const paid = order.payments.reduce((sum, item) => { const kind = operationKind(item.type); return sum + (kind === "CLIENT_PAYMENT" ? Number(item.amount) : kind === "REFUND" ? -Number(item.amount) : 0); }, 0);
     const partnerPaid = order.payments.reduce((sum, item) => sum + (item.partnerId === order.partnerId && operationKind(item.type) === payoutType ? Number(item.amount) : item.partnerId === order.partnerId && item.type === "PARTNER_PAYOUT_REVERSAL" ? -Number(item.amount) : 0), 0);
     const amount = Number(order.amount), partnerPrice = Number(order.partnerPrice);
-    const balance = amount - paid, partnerBalance = partnerPrice - partnerPaid;
-    return { id: order.id, number: order.number, client: order.client.name, partner: order.partner?.name ?? "—", manager: order.manager, createdAt: order.createdAt, amount, prepayment: paid, balance, partnerPrice, partnerPaid, partnerBalance, companyProfit: amount - partnerPrice, paymentStatus: balance <= 0 ? "paid" : paid > 0 ? "partial" : "debt" };
+    const rawBalance = amount - paid, rawPartnerBalance = partnerPrice - partnerPaid;
+    const balance = Math.max(rawBalance, 0), partnerBalance = Math.max(rawPartnerBalance, 0);
+    return { id: order.id, number: order.number, client: order.client.name, partner: order.partner?.name ?? "—", manager: order.manager, createdAt: order.createdAt, amount, prepayment: paid, balance, clientOverpayment: Math.max(-rawBalance, 0), partnerPrice, partnerPaid, partnerBalance, partnerOverpayment: Math.max(-rawPartnerBalance, 0), companyProfit: amount - partnerPrice, paymentStatus: rawBalance <= 0 ? "paid" : paid > 0 ? "partial" : "debt" };
   });
   const filteredRows = filters.paymentStatus && filters.paymentStatus !== "all" ? rows.filter((row) => row.paymentStatus === filters.paymentStatus) : rows;
   const totals = filteredRows.reduce((sum, row) => ({ turnover: sum.turnover + row.amount, received: sum.received + row.prepayment, clientBalance: sum.clientBalance + row.balance, partnerPaid: sum.partnerPaid + row.partnerPaid, partnerBalance: sum.partnerBalance + row.partnerBalance, profit: sum.profit + row.companyProfit }), { turnover: 0, received: 0, clientBalance: 0, partnerPaid: 0, partnerBalance: 0, profit: 0 });

@@ -27,12 +27,22 @@ export type OrderTabData = {
     address: string;
   };
   partner: {
+    id: number;
     name: string;
     phone: string | null;
     email: string | null;
     city: string | null;
     active: boolean;
   } | null;
+  settlement?: {
+    cancelled: boolean;
+    client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
+    partner?: {
+      partnerId: number | null; partnerName: string | null; agreed: number; paid: number; remaining: number; overpayment: number; status: string;
+      payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
+      assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
+    };
+  };
   measurements: Array<{
     id: number;
     measurer: string;
