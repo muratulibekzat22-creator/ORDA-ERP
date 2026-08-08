@@ -37,10 +37,13 @@ export async function GET(request: Request) {
   const auth = await authWarehouse(); if (auth.response) return auth.response;
   const params = new URL(request.url).searchParams;
   const page = params.has("page") ? positiveId(params.get("page")) : 1, pageSize = params.has("pageSize") ? positiveId(params.get("pageSize")) : 50;
+  const materialPage = params.has("materialPage") ? positiveId(params.get("materialPage")) : 1, materialPageSize = params.has("materialPageSize") ? positiveId(params.get("materialPageSize")) : 48;
+  const search = params.get("search")?.trim().slice(0, 120) || undefined, category = params.get("category")?.trim().slice(0, 80) || undefined;
+  const stockStatusValue = params.get("stockStatus"), stockStatus = stockStatusValue && ["in-stock", "low", "out", "reserved"].includes(stockStatusValue) ? stockStatusValue as "in-stock" | "low" | "out" | "reserved" : undefined;
   const orderId = params.has("orderId") ? positiveId(params.get("orderId")) : undefined, materialId = params.has("materialId") ? positiveId(params.get("materialId")) : undefined;
   const movementType = params.get("type") || undefined;
-  if (!page || !pageSize || pageSize > 100 || orderId === null || materialId === null || (movementType && !WAREHOUSE_OPERATION_TYPES.includes(movementType as WarehouseOperationType))) return NextResponse.json({ error: "Некорректные параметры" }, { status: 400 });
-  try { return NextResponse.json(await getWarehouse(actor(auth.session!), { page, pageSize, orderId, materialId, movementType })); }
+  if (!page || !pageSize || !materialPage || !materialPageSize || pageSize > 100 || materialPageSize > 100 || (stockStatusValue && !stockStatus) || orderId === null || materialId === null || (movementType && !WAREHOUSE_OPERATION_TYPES.includes(movementType as WarehouseOperationType))) return NextResponse.json({ error: "Некорректные параметры" }, { status: 400 });
+  try { return NextResponse.json(await getWarehouse(actor(auth.session!), { page, pageSize, orderId, materialId, movementType, search, category, stockStatus, materialPage, materialPageSize })); }
   catch (error) { const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.read_failed", request, error); return NextResponse.json({ error: "Ошибка получения склада" }, { status: 500 }); }
 }
 
@@ -51,11 +54,11 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     if (!body || Array.isArray(body) || (body.action !== "material" && body.action !== "operation")) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
     if (body.action === "material") {
-      if (!only(body, ["action", "name", "category", "unit", "minimumStock", "purchasePrice", "supplier", "initialStock"])) return NextResponse.json({ error: "Недопустимые поля" }, { status: 400 });
-      const name = text(body.name, 120, true), category = text(body.category, 80, true), unit = text(body.unit, 30, true), supplier = text(body.supplier, 160);
-      const minimumStock = number(body.minimumStock, MAX_QUANTITY, true), purchasePrice = number(body.purchasePrice, MAX_PRICE, true), initialStock = number(body.initialStock ?? 0, MAX_QUANTITY, true);
-      if (!name || !category || !unit || supplier === null || minimumStock === null || purchasePrice === null || initialStock === null) return NextResponse.json({ error: "Некорректные данные материала" }, { status: 400 });
-      const payload = { name, category, unit, supplier, minimumStock, purchasePrice, initialStock };
+      if (!only(body, ["action", "name", "model", "description", "category", "unit", "minimumStock", "purchasePrice", "sellingPrice", "supplier", "initialStock"])) return NextResponse.json({ error: "Недопустимые поля" }, { status: 400 });
+      const name = text(body.name, 120, true), model = text(body.model, 120), description = text(body.description, 2000), category = text(body.category, 80, true), unit = text(body.unit, 30, true), supplier = text(body.supplier, 160);
+      const minimumStock = number(body.minimumStock, MAX_QUANTITY, true), purchasePrice = number(body.purchasePrice, MAX_PRICE, true), sellingPrice = number(body.sellingPrice, MAX_PRICE, true), initialStock = number(body.initialStock ?? 0, MAX_QUANTITY, true);
+      if (!name || !category || !unit || model === null || description === null || supplier === null || minimumStock === null || purchasePrice === null || sellingPrice === null || initialStock === null) return NextResponse.json({ error: "Некорректные данные товара" }, { status: 400 });
+      const payload = { name, model, description, category, unit, supplier, minimumStock, purchasePrice, sellingPrice, initialStock };
       const result = await createMaterialCommand({ data: payload, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });
       return NextResponse.json(result.result, { status: result.replayed ? 200 : 201 });
     }
@@ -77,12 +80,14 @@ export async function PATCH(request: Request) {
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   try {
     const body = await request.json() as Record<string, unknown>;
-    if (!body || Array.isArray(body) || !only(body, ["id", "name", "category", "unit", "minimumStock", "purchasePrice", "supplier", "active"])) return NextResponse.json({ error: "Недопустимые поля" }, { status: 400 });
-    const id = positiveId(body.id), data: { name?: string; category?: string; unit?: string; minimumStock?: number; purchasePrice?: number; supplier?: string | null; active?: boolean } = {};
+    if (!body || Array.isArray(body) || !only(body, ["id", "name", "model", "description", "category", "unit", "minimumStock", "purchasePrice", "sellingPrice", "supplier", "active"])) return NextResponse.json({ error: "Недопустимые поля" }, { status: 400 });
+    const id = positiveId(body.id), data: { name?: string; model?: string | null; description?: string | null; category?: string; unit?: string; minimumStock?: number; purchasePrice?: number; sellingPrice?: number; supplier?: string | null; active?: boolean } = {};
     for (const [field, max] of [["name", 120], ["category", 80], ["unit", 30]] as const) if (body[field] !== undefined) { const value = text(body[field], max, true); if (!value) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 }); data[field] = value; }
     if (body.supplier !== undefined) { const value = body.supplier === null || body.supplier === "" ? null : text(body.supplier, 160); if (value === null && body.supplier !== null && body.supplier !== "") return NextResponse.json({ error: "Некорректные данные" }, { status: 400 }); data.supplier = value; }
+    for (const [field, max] of [["model", 120], ["description", 2000]] as const) if (body[field] !== undefined) { const value = body[field] === null || body[field] === "" ? null : text(body[field], max); if (value === null && body[field] !== null && body[field] !== "") return NextResponse.json({ error: "Некорректные данные" }, { status: 400 }); data[field] = value; }
     if (body.minimumStock !== undefined) { const value = number(body.minimumStock, MAX_QUANTITY, true); if (value === null) return NextResponse.json({ error: "Некорректный минимальный остаток" }, { status: 400 }); data.minimumStock = value; }
     if (body.purchasePrice !== undefined) { const value = number(body.purchasePrice, MAX_PRICE, true); if (value === null) return NextResponse.json({ error: "Некорректная цена" }, { status: 400 }); data.purchasePrice = value; }
+    if (body.sellingPrice !== undefined) { const value = number(body.sellingPrice, MAX_PRICE, true); if (value === null) return NextResponse.json({ error: "Некорректная продажная цена" }, { status: 400 }); data.sellingPrice = value; }
     if (body.active !== undefined) { if (typeof body.active !== "boolean") return NextResponse.json({ error: "Некорректная активность" }, { status: 400 }); data.active = body.active; }
     if (!id || !Object.keys(data).length) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
     const payload = { id, ...data }; const result = await updateMaterialCommand({ id, data, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });

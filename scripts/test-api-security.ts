@@ -16,13 +16,14 @@ const testEnvironment = fs.existsSync(testEnvironmentPath) ? dotenv.config({ pat
 const testDatabaseUrl = process.env.TEST_DATABASE_URL ?? testEnvironment?.TEST_DATABASE_URL ?? (rawTestEnvironment.startsWith("postgresql://") ? rawTestEnvironment : undefined);
 if (!testDatabaseUrl) throw new Error("TEST_DATABASE_URL is missing from the environment and .env.test.local");
 process.env.DATABASE_URL = testDatabaseUrl;
-process.env.NEXTAUTH_URL = "http://127.0.0.1:3219";
+const port = Number(process.env.SECURITY_TEST_PORT ?? 3219);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("SECURITY_TEST_PORT is invalid");
+process.env.NEXTAUTH_URL = `http://127.0.0.1:${port}`;
 process.env.NEXTAUTH_SECRET ||= crypto.randomBytes(32).toString("hex");
 process.env.AUTH_ACCOUNT_IP_FAILURE_LIMIT = "8";
 process.env.AUTH_IP_ABUSE_FAILURE_LIMIT = "14";
 delete process.env.VERCEL;
 
-const port = 3219;
 const baseUrl = `http://127.0.0.1:${port}`;
 const tag = `api-security-${Date.now()}`;
 const password = "E2ePassword!123";

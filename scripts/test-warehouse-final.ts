@@ -9,6 +9,7 @@ import {
   deleteMaterialCommand,
   getOrderMaterials,
   getWarehouse,
+  getWarehouseItem,
   updateMaterialCommand,
   WarehouseActor,
   WarehouseError,
@@ -36,7 +37,8 @@ async function main() {
     const materialInput = { name: `${tag} steel`, category: "Metal", unit: "кг", minimumStock: 5, purchasePrice: 10, supplier: "QA", initialStock: 20 };
     const create = { data: materialInput, key: `${tag}:material`, requestHash: "material-v1", actor: actor(director) };
     const [created, replay] = await Promise.all([createMaterialCommand(create), createMaterialCommand(create)]);
-    const materialId = (created.result as { id: number }).id; ids.materials.push(materialId);
+    const materialId = (created.result as { id: number; code: string }).id; ids.materials.push(materialId);
+    check(/^MAT-\d{6}$/.test((created.result as { code: string }).code), "server generated material code");
     check((replay.result as { id: number }).id === materialId, "parallel idempotent material replay");
     await rejects(() => createMaterialCommand({ ...create, requestHash: "material-conflict" }), "IDEMPOTENCY_CONFLICT");
     await rejects(() => createMaterialCommand({ ...create, key: `${tag}:duplicate`, requestHash: "duplicate" }), "MATERIAL_DUPLICATE");
@@ -44,6 +46,7 @@ async function main() {
     const concurrent = await Promise.allSettled(["one", "two"].map((suffix) => createMaterialCommand({ data: concurrentData, key: `${tag}:concurrent:${suffix}`, requestHash: suffix, actor: actor(director) })));
     check(concurrent.filter((result) => result.status === "fulfilled").length === 1 && concurrent.filter((result) => result.status === "rejected" && isWarehouseError(result.reason, "MATERIAL_DUPLICATE")).length === 1, "concurrent duplicate material is rejected");
     const concurrentMaterial = await prisma.material.findUniqueOrThrow({ where: { lookupKey: `${concurrentData.name.toLocaleLowerCase("ru")}::кг` } }); ids.materials.push(concurrentMaterial.id);
+    check(concurrentMaterial.code !== (created.result as { code: string }).code, "concurrent material codes are unique");
     await updateMaterialCommand({ id: materialId, data: { minimumStock: 6, active: false }, key: `${tag}:disable`, requestHash: "disable", actor: actor(director) });
     await updateMaterialCommand({ id: materialId, data: { active: true }, key: `${tag}:enable`, requestHash: "enable", actor: actor(director) });
 
@@ -55,6 +58,13 @@ async function main() {
     await createWarehouseOperation({ data: { materialId, type: "incoming", quantity: 5, price: 12 }, key: `${tag}:incoming`, requestHash: "incoming", actor: actor(accountant) });
     await createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 2, price: 12, orderId: orders[0].id }, key: `${tag}:outgoing`, requestHash: "outgoing", actor: actor(director) });
     await rejects(() => createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 10_000 }, key: `${tag}:negative`, requestHash: "negative", actor: actor(director) }), "INSUFFICIENT_AVAILABLE");
+    const managerProjection = await getWarehouse(actor(manager));
+    const managerItem = managerProjection.materials.find((item) => item.id === materialId) as unknown as Record<string, unknown>;
+    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "deliveryCost", "landedCost"]) check(!(field in managerItem), `manager projection hides ${field}`);
+    const managerDetail = await getWarehouseItem(materialId, actor(manager)) as Record<string, unknown>;
+    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "purchaseLines", "priceHistory"]) check(!(field in managerDetail), `manager detail hides ${field}`);
+    const directorDetail = await getWarehouseItem(materialId, actor(director)) as Record<string, unknown>;
+    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "purchaseLines", "priceHistory"]) check(field in directorDetail, `director detail exposes ${field}`);
 
     step = "reservations, ownership and concurrency";
     const reserve = { data: { materialId, type: "reserve" as const, quantity: 8, orderId: orders[0].id }, key: `${tag}:reserve`, requestHash: "reserve", actor: actor(manager) };

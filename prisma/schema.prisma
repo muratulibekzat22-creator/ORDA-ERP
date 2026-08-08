@@ -241,6 +241,7 @@ model User {
   warehouseMovements         MaterialMovement[]         @relation("WarehouseMovementEmployee")
   warehouseReservations      MaterialReservation[]      @relation("WarehouseReservationCreator")
   warehouseMutations         WarehouseMutation[]        @relation("WarehouseMutationActor")
+  materialPriceChanges       MaterialPriceHistory[]     @relation("MaterialPriceChangedBy")
   companyLedgerEntries       CompanyLedgerEntry[]       @relation("CompanyLedgerAuthor")
   personalLedgerEntries      PersonalLedgerEntry[]      @relation("PersonalLedgerAuthor")
   financeAuditEvents         FinanceAuditEvent[]        @relation("FinanceAuditAuthor")
@@ -1086,15 +1087,43 @@ model Material {
   inventoryValue   Decimal             @default(0) @db.Decimal(18, 2)
   valuationVersion Int                 @default(1)
   costStatus       InventoryCostStatus @default(LEGACY_UNVERIFIED)
+  code             String?             @unique
+  model            String?
+  description      String?
+  sellingPrice     Decimal             @default(0) @db.Decimal(18, 2)
+  locationName     String              @default("Офис / Шоурум")
+  mainImagePath    String?             @unique
+  mainImageName    String?
+  mainImageType    String?
+  mainImageSize    Int?
 
   movements     MaterialMovement[]
   reservations  MaterialReservation[]
   purchaseLines PurchaseBatchLine[]
   valuations    InventoryValuationEntry[]
   cogsEntries   InventoryCogsEntry[]
+  priceHistory  MaterialPriceHistory[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model WarehouseCodeCounter {
+  prefix    String   @id
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model MaterialPriceHistory {
+  id           Int      @id @default(autoincrement())
+  materialId   Int
+  material     Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  sellingPrice Decimal  @db.Decimal(18, 2)
+  changedById  Int?
+  changedBy    User?    @relation("MaterialPriceChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([materialId, createdAt])
 }
 
 model CompanySettings {

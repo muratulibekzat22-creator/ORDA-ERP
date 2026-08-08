@@ -39,21 +39,36 @@ export class WarehouseError extends Error {
 const materialSelect = {
   id: true,
   name: true,
+  code: true,
+  model: true,
+  description: true,
   category: true,
   unit: true,
   minimumStock: true,
   stock: true,
   reserved: true,
   purchasePrice: true,
+  sellingPrice: true,
   averageCost: true,
   inventoryValue: true,
   valuationVersion: true,
   costStatus: true,
   supplier: true,
   active: true,
+  locationName: true,
+  mainImagePath: true,
+  mainImageName: true,
   createdAt: true,
   updatedAt: true,
 } as const;
+
+const financialMaterialFields = [
+  "purchasePrice",
+  "averageCost",
+  "inventoryValue",
+  "valuationVersion",
+  "costStatus",
+] as const;
 const movementInclude = {
   material: { select: { id: true, name: true, unit: true } },
   order: {
@@ -71,6 +86,29 @@ const reservationInclude = {
 
 function lookupKey(name: string, unit: string) {
   return `${name.trim().toLocaleLowerCase("ru")}::${unit.trim().toLocaleLowerCase("ru")}`;
+}
+
+function categoryPrefix(category: string) {
+  const value = category.trim().toLocaleLowerCase("ru");
+  if (value.includes("латун")) return "LAT";
+  if (value.includes("стекл")) return "GLS";
+  if (value.includes("нож")) return "LEG";
+  if (value.includes("баляс")) return "BAL";
+  if (value.includes("креп")) return "FIX";
+  if (value.includes("комплект")) return "CMP";
+  if (value.includes("образ")) return "SMP";
+  return "MAT";
+}
+
+async function nextMaterialCode(tx: Prisma.TransactionClient, category: string) {
+  const prefix = categoryPrefix(category);
+  const counter = await tx.warehouseCodeCounter.upsert({
+    where: { prefix },
+    create: { prefix, value: 1 },
+    update: { value: { increment: 1 } },
+    select: { value: true },
+  });
+  return `${prefix}-${String(counter.value).padStart(6, "0")}`;
 }
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -108,11 +146,18 @@ export async function getWarehouse(
     movementType?: string;
     orderId?: number;
     materialId?: number;
+    search?: string;
+    category?: string;
+    stockStatus?: "in-stock" | "low" | "out" | "reserved";
+    materialPage?: number;
+    materialPageSize?: number;
   } = {},
 ) {
   if (actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
   const page = filters.page ?? 1,
-    pageSize = filters.pageSize ?? 50;
+    pageSize = filters.pageSize ?? 50,
+    materialPage = filters.materialPage ?? 1,
+    materialPageSize = filters.materialPageSize ?? 48;
   const orderIds = await scopedOrderIds(actor);
   const movementWhere: Prisma.MaterialMovementWhereInput = {
     ...(filters.movementType ? { type: filters.movementType } : {}),
@@ -124,16 +169,29 @@ export async function getWarehouse(
   };
   const reservationWhere: Prisma.MaterialReservationWhereInput =
     orderIds === undefined ? {} : { orderId: { in: orderIds } };
-  const [materials, orders, movements, movementTotal, reservations] =
+  const materialWhere: Prisma.MaterialWhereInput = {
+    ...(actor.role === Role.PRODUCTION || actor.role === Role.INSTALLER ? { active: true } : {}),
+    ...(filters.category ? { category: filters.category } : {}),
+    ...(filters.search ? { OR: [
+      { code: { contains: filters.search, mode: "insensitive" } },
+      { name: { contains: filters.search, mode: "insensitive" } },
+      { model: { contains: filters.search, mode: "insensitive" } },
+      { category: { contains: filters.search, mode: "insensitive" } },
+    ] } : {}),
+    ...(filters.stockStatus === "out" ? { stock: { lte: 0 } } : {}),
+    ...(filters.stockStatus === "reserved" ? { reserved: { gt: 0 } } : {}),
+  };
+  const [materials, materialTotal, statsRows, orders, movements, movementTotal, reservations] =
     await Promise.all([
       prisma.material.findMany({
-        where:
-          actor.role === Role.PRODUCTION || actor.role === Role.INSTALLER
-            ? { active: true }
-            : {},
+        where: materialWhere,
         select: materialSelect,
         orderBy: { name: "asc" },
+        skip: (materialPage - 1) * materialPageSize,
+        take: materialPageSize,
       }),
+      prisma.material.count({ where: materialWhere }),
+      prisma.material.findMany({ select: { stock: true, reserved: true, minimumStock: true, sellingPrice: true, inventoryValue: true, averageCost: true, supplier: true, category: true } }),
       prisma.order.findMany({
         where: orderIds === undefined ? {} : { id: { in: orderIds } },
         select: { id: true, number: true, client: { select: { name: true } } },
@@ -155,6 +213,7 @@ export async function getWarehouse(
     ]);
   const enriched = materials.map((material) => ({
     ...material,
+    photoUrl: material.mainImagePath ? `/api/warehouse/${material.id}/photo` : null,
     available: material.stock - material.reserved,
     alerts: [
       material.stock <= material.minimumStock ? "LOW_STOCK" : null,
@@ -166,17 +225,22 @@ export async function getWarehouse(
   const canSeeCost =
     actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
   const visibleMaterials = canSeeCost
-    ? enriched
+    ? enriched.map((source) => {
+        const { mainImagePath, ...item } = source;
+        void mainImagePath;
+        return {
+          ...item,
+          grossProfit: Number(item.sellingPrice) - Number(item.averageCost),
+          marginPercent: Number(item.sellingPrice) > 0
+            ? ((Number(item.sellingPrice) - Number(item.averageCost)) / Number(item.sellingPrice)) * 100
+            : 0,
+        };
+      })
     : enriched.map((item) => {
         const material = { ...item } as Partial<typeof item>;
-        for (const field of [
-          "purchasePrice",
-          "averageCost",
-          "inventoryValue",
-          "valuationVersion",
-          "costStatus",
-        ] as const)
+        for (const field of financialMaterialFields)
           delete material[field];
+        delete material.mainImagePath;
         return material as typeof item;
       });
   const visibleMovements = canSeeCost
@@ -206,34 +270,71 @@ export async function getWarehouse(
       total: movementTotal,
       pages: Math.ceil(movementTotal / pageSize),
     },
+    materialPagination: { page: materialPage, pageSize: materialPageSize, total: materialTotal, pages: Math.ceil(materialTotal / materialPageSize) },
     stats: {
-      materials: materials.length,
-      lowStock: materials.filter((item) => item.stock <= item.minimumStock)
+      materials: statsRows.length,
+      inStock: statsRows.filter((item) => item.stock - item.reserved > 0).length,
+      outOfStock: statsRows.filter((item) => item.stock - item.reserved <= 0).length,
+      lowStock: statsRows.filter((item) => item.stock - item.reserved > 0 && item.stock - item.reserved <= item.minimumStock)
         .length,
       ...(canSeeCost
         ? {
-            stockValue: materials.reduce(
+            stockValue: statsRows.reduce(
               (sum, item) => sum + Number(item.inventoryValue),
               0,
             ),
-            noPrice: materials.filter((item) => Number(item.averageCost) <= 0)
+            potentialSales: statsRows.reduce(
+              (sum, item) => sum + Math.max(0, item.stock - item.reserved) * Number(item.sellingPrice),
+              0,
+            ),
+            potentialGrossProfit: statsRows.reduce(
+              (sum, item) => sum + Math.max(0, item.stock - item.reserved) * (Number(item.sellingPrice) - Number(item.averageCost)),
+              0,
+            ),
+            noPrice: statsRows.filter((item) => Number(item.averageCost) <= 0)
               .length,
           }
         : {}),
-      reserved: materials.reduce((sum, item) => sum + item.reserved, 0),
-      available: materials.reduce(
+      reserved: statsRows.reduce((sum, item) => sum + item.reserved, 0),
+      available: statsRows.reduce(
         (sum, item) => sum + item.stock - item.reserved,
         0,
       ),
       suppliers: [
         ...new Set(
-          materials
+          statsRows
             .map((item) => item.supplier)
             .filter((value): value is string => Boolean(value)),
         ),
       ],
+      categories: [...new Set(statsRows.map((item) => item.category))],
     },
   };
+}
+
+export async function getWarehouseItem(id: number, actor: WarehouseActor) {
+  if (actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
+  const canSeeCost = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const item = await prisma.material.findUnique({
+    where: { id },
+    select: {
+      id: true, code: true, name: true, model: true, description: true, category: true, unit: true,
+      minimumStock: true, stock: true, reserved: true, sellingPrice: true, active: true, locationName: true,
+      mainImagePath: true, mainImageName: true,
+      ...(canSeeCost ? { purchasePrice: true, averageCost: true, inventoryValue: true, valuationVersion: true, costStatus: true } : {}),
+      movements: { select: { id: true, type: true, quantity: true, stockDelta: true, reserveDelta: true, operationAt: true, comment: true, ...(canSeeCost ? { price: true, amount: true, unitCostSnapshot: true, totalCogs: true } : {}) }, orderBy: { operationAt: "desc" }, take: 50 },
+      reservations: { select: { id: true, quantity: true, consumed: true, status: true, createdAt: true, order: { select: { id: true, number: true, client: { select: { name: true } } } } }, orderBy: { createdAt: "desc" }, take: 50 },
+      ...(canSeeCost ? { purchaseLines: { select: { id: true, orderedQuantity: true, receivedQuantity: true, purchaseUnitPrice: true, purchaseCurrency: true, exchangeRateSnapshot: true, purchaseCostKzt: true, allocatedAdditionalCost: true, provisionalUnitLandedCost: true, finalUnitLandedCost: true, costStatus: true, batch: { select: { id: true, number: true, orderDate: true, status: true, purchaseCurrency: true, fixedExchangeRate: true, purchaseGoodsCostKzt: true, additionalCostKzt: true, landedCostKzt: true, supplier: { select: { id: true, name: true } } } } }, orderBy: { createdAt: "desc" }, take: 25 }, priceHistory: { select: { sellingPrice: true, createdAt: true, changedBy: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" }, take: 25 } } : {}),
+    },
+  });
+  if (!item) return null;
+  const result = { ...item, mainImagePath: undefined, photoUrl: item.mainImagePath ? `/api/warehouse/${item.id}/photo` : null, available: item.stock - item.reserved } as Record<string, unknown>;
+  if (canSeeCost) {
+    result.grossProfit = Number(item.sellingPrice) - Number("averageCost" in item ? item.averageCost : 0);
+    result.marginPercent = Number(item.sellingPrice) > 0 ? Number(result.grossProfit) / Number(item.sellingPrice) * 100 : 0;
+  }
+  delete result.mainImagePath;
+  return result;
 }
 
 async function idempotentMutation<T>(
@@ -313,10 +414,13 @@ async function idempotentMutation<T>(
 export async function createMaterialCommand(input: {
   data: {
     name: string;
+    model?: string;
+    description?: string;
     category: string;
     unit: string;
     minimumStock: number;
     purchasePrice: number;
+    sellingPrice?: number;
     supplier?: string;
     initialStock: number;
   };
@@ -344,12 +448,16 @@ export async function createMaterialCommand(input: {
           throw new WarehouseError("MATERIAL_DUPLICATE");
         const material = await tx.material.create({
           data: {
+            code: await nextMaterialCode(tx, input.data.category),
             name: input.data.name,
+            model: input.data.model || null,
+            description: input.data.description || null,
             category: input.data.category,
             unit: input.data.unit,
             minimumStock: input.data.minimumStock,
             stock: input.data.initialStock,
             purchasePrice: String(input.data.purchasePrice),
+            sellingPrice: String(input.data.sellingPrice ?? 0),
             averageCost: String(input.data.purchasePrice),
             inventoryValue: String(
               input.data.initialStock * input.data.purchasePrice,
@@ -359,6 +467,9 @@ export async function createMaterialCommand(input: {
             lookupKey: key,
           },
           select: materialSelect,
+        });
+        await tx.materialPriceHistory.create({
+          data: { materialId: material.id, sellingPrice: String(input.data.sellingPrice ?? 0), changedById: input.actor.userId },
         });
         if (input.data.initialStock > 0)
           await tx.materialMovement.create({
@@ -394,10 +505,13 @@ export async function updateMaterialCommand(input: {
   id: number;
   data: {
     name?: string;
+    model?: string | null;
+    description?: string | null;
     category?: string;
     unit?: string;
     minimumStock?: number;
     purchasePrice?: number;
+    sellingPrice?: number;
     supplier?: string | null;
     active?: boolean;
   };
@@ -409,6 +523,8 @@ export async function updateMaterialCommand(input: {
     input.actor.role !== Role.DIRECTOR &&
     input.actor.role !== Role.ACCOUNTANT
   )
+    throw new WarehouseError("FORBIDDEN");
+  if (input.data.sellingPrice !== undefined && input.actor.role !== Role.DIRECTOR)
     throw new WarehouseError("FORBIDDEN");
   return idempotentMutation(
     {
@@ -431,7 +547,7 @@ export async function updateMaterialCommand(input: {
         }))
       )
         throw new WarehouseError("MATERIAL_DUPLICATE");
-      return tx.material.update({
+      const updated = await tx.material.update({
         where: { id: input.id },
         data: {
           ...input.data,
@@ -439,10 +555,18 @@ export async function updateMaterialCommand(input: {
             input.data.purchasePrice === undefined
               ? undefined
               : String(input.data.purchasePrice),
+          sellingPrice:
+            input.data.sellingPrice === undefined
+              ? undefined
+              : String(input.data.sellingPrice),
           lookupKey: key,
         },
         select: materialSelect,
       });
+      if (input.data.sellingPrice !== undefined && Number(current.sellingPrice) !== input.data.sellingPrice) {
+        await tx.materialPriceHistory.create({ data: { materialId: current.id, sellingPrice: String(input.data.sellingPrice), changedById: input.actor.userId } });
+      }
+      return updated;
     },
   );
 }
