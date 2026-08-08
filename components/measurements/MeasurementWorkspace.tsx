@@ -248,16 +248,23 @@ export default function MeasurementWorkspace() {
       }),
       body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось загрузить замеры");
-    else setData(body);
+    else {
+      setData(body);
+      const requested = Number(
+        new URLSearchParams(window.location.search).get("measurement"),
+      );
+      const requestedMeasurement = body.measurements?.find(
+        (row: Measurement) => row.id === requested,
+      );
+      if (requestedMeasurement) {
+        setSelectedId(requested);
+        setForm(formOf(requestedMeasurement));
+      }
+    }
   }, []);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void load();
-      const requested = Number(
-        new URLSearchParams(window.location.search).get("measurement"),
-      );
-      if (Number.isInteger(requested) && requested > 0)
-        setSelectedId(requested);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [load]);
