@@ -32,7 +32,8 @@
     "test:finance-integrity": "tsx scripts/test-finance-integrity.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
-    "test:order360": "tsx scripts/test-order360.ts"
+    "test:order360": "tsx scripts/test-order360.ts",
+    "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts"
   },
   "engines": {
     "node": ">=20.9.0"
@@ -46,9 +47,11 @@
     "bcrypt": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dejavu-fonts-ttf": "^2.37.3",
     "lucide-react": "^1.28.0",
     "next": "16.3.0",
     "next-auth": "^4.24.15",
+    "pdfkit": "^0.19.1",
     "pg": "^8.22.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -60,6 +63,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

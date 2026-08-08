@@ -1,10 +1,10 @@
-import { Prisma, Role } from "@prisma/client";
+import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 
 type Context = { params: Promise<{ id: string }> };
-const statuses = ["Черновик", "Подготовлено", "Отправлено", "Принято", "Отклонено", "Истекло"];
+const statuses = ["DRAFT", "GENERATED", "ACCEPTED", "REJECTED", "EXPIRED", "Черновик", "Подготовлено", "Принято", "Отклонено", "Истекло"];
 
 export async function PATCH(request: Request, { params }: Context) {
   const auth = await requirePermission("clients");
@@ -15,10 +15,9 @@ export async function PATCH(request: Request, { params }: Context) {
   if (!Number.isInteger(id) || !statuses.includes(status)) return NextResponse.json({ error: "Некорректный статус" }, { status: 400 });
   const current = await prisma.commercialProposal.findUnique({ where: { id }, include: { client: { select: { status: true, managerUserId: true } } } });
   if (!current || role === Role.MANAGER && current.client.managerUserId !== Number(auth.session!.user.id)) return NextResponse.json({ error: "КП не найдено" }, { status: 404 });
-  const clientStatus = status === "Отправлено" ? "КП отправлено" : status === "Принято" ? "Готов оформить заказ" : current.client.status;
-  const sent = status === "Отправлено", snapshot = current.snapshot as Prisma.JsonObject;
+  const clientStatus = status === "ACCEPTED" || status === "Принято" ? "Готов оформить заказ" : current.client.status;
   const result = await prisma.$transaction(async (tx) => {
-    const proposal = await tx.commercialProposal.update({ where: { id }, data: { status, sentAt: sent ? new Date() : current.sentAt, acceptedAt: status === "Принято" ? new Date() : current.acceptedAt, ...(sent ? { snapshot: { ...snapshot, delivery: { channel: "WhatsApp", sentById: Number(auth.session!.user.id), sentByName: auth.session!.user.name ?? "Пользователь" } } } : {}) } });
+    const proposal = await tx.commercialProposal.update({ where: { id }, data: { status, acceptedAt: status === "ACCEPTED" || status === "Принято" ? new Date() : current.acceptedAt } });
     if (clientStatus !== current.client.status) {
       await tx.client.update({ where: { id: current.clientId }, data: { status: clientStatus } });
       await tx.leadStatusHistory.create({ data: { clientId: current.clientId, fromStatus: current.client.status, toStatus: clientStatus, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Пользователь", comment: `Статус КП: ${status}` } });

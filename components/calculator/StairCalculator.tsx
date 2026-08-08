@@ -24,6 +24,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
   const [workshopOverride, setWorkshopOverride] = useState("");
   const [installationRequired, setInstallationRequired] = useState(true);
   const [deliveryRequired, setDeliveryRequired] = useState(true);
+  const [measurementRequired, setMeasurementRequired] = useState(true);
   const [otherCity, setOtherCity] = useState(false);
   const [pickup, setPickup] = useState(false);
   const [lines, setLines] = useState<CalculationLineInput[]>([]);
@@ -49,7 +50,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
     const steps = Number(regularSteps);
     if (!tariff || !Number.isInteger(steps) || steps < 0 || platforms.some((value) => value !== 2 && value !== 3)) return null;
     const equivalentSteps = steps + platforms.reduce((sum, value) => sum + value, 0);
-    const enabledLines = lines.map((line) => ({ ...line, enabled: line.enabled !== false && (line.kind !== "INSTALLATION" || installationRequired) && (line.kind !== "DELIVERY" || (deliveryRequired && !pickup)) }));
+    const enabledLines = lines.map((line) => ({ ...line, enabled: line.enabled !== false && (line.kind !== "INSTALLATION" || installationRequired) && (line.kind !== "DELIVERY" || (deliveryRequired && !pickup)) && (line.kind !== "MEASUREMENT" || measurementRequired) }));
     const lineSale = enabledLines.reduce((sum, line) => sum + (line.enabled ? line.quantity * line.unitSale : 0), 0);
     const lineCost = enabledLines.reduce((sum, line) => sum + (line.enabled ? line.quantity * line.unitCost : 0), 0);
     const baseClientPrice = equivalentSteps * tariff.salePrice + lineSale;
@@ -62,6 +63,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
     clientOverride,
     deliveryRequired,
     installationRequired,
+    measurementRequired,
     lines,
     material,
     materialTariffs,
@@ -104,6 +106,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
             : {}),
           installationRequired,
           deliveryRequired,
+          measurementRequired,
           otherCity,
           pickup,
           lines,
@@ -224,6 +227,11 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
             label="Требуется монтаж"
             checked={installationRequired}
             onChange={setInstallationRequired}
+          />
+          <Check
+            label="Требуется замер"
+            checked={measurementRequired}
+            onChange={setMeasurementRequired}
           />
           <Check
             label="Требуется доставка"

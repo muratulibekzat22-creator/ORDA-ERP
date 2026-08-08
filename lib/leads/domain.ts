@@ -40,7 +40,10 @@ export const LOST_REASON_LABELS: Record<LeadLostReason, string> = {
 };
 
 export function normalizePhone(value: string) {
-  return value.replace(/\D/g, "");
+  let digits = value.replace(/\D/g, "");
+  if (digits.length === 10 && digits.startsWith("7")) digits = `7${digits}`;
+  if (digits.length === 11 && digits.startsWith("8")) digits = `7${digits.slice(1)}`;
+  return /^77\d{9}$/.test(digits) ? `+${digits}` : "";
 }
 
 export function normalizeLeadSource(value: unknown): LeadSource | null {

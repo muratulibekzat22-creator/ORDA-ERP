@@ -11,7 +11,7 @@ export async function POST(_: Request, { params }: Context) {
     const order = await prisma.$transaction(async (tx) => {
       const existing = await tx.leadConversion.findUnique({ where: { proposalId }, include: { order: true } }); if (existing) return existing.order;
       const proposal = await tx.commercialProposal.findUnique({ where: { id: proposalId }, include: { client: true, calculation: true } });
-      if (!proposal || proposal.status !== "Принято") throw new Error("PROPOSAL_NOT_ACCEPTED");
+      if (!proposal || !["ACCEPTED", "Принято"].includes(proposal.status)) throw new Error("PROPOSAL_NOT_ACCEPTED");
       if (proposal.client.stage !== "WON") throw new Error("LEAD_NOT_WON");
       if (auth.session!.user.role === Role.MANAGER && proposal.client.managerUserId !== Number(auth.session!.user.id)) throw new Error("LEAD_NOT_FOUND");
       const anyConversion = await tx.leadConversion.findUnique({ where: { clientId: proposal.clientId }, include: { order: true } }); if (anyConversion) return anyConversion.order;

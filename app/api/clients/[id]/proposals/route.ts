@@ -1,48 +1,263 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
+
+import {
+  createRequestHash,
+  idempotencyConflict,
+  readIdempotencyKey,
+} from "@/lib/idempotency";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+
 type Context = { params: Promise<{ id: string }> };
-const idOf = async (context: Context) => { const id = Number((await context.params).id); return Number.isInteger(id) && id > 0 ? id : null; };
-function proposalView(value: Record<string, unknown>) { const result: Record<string, unknown> = { ...value, snapshot: publicCalculationSnapshot(value.snapshot) }; if (result.calculation && typeof result.calculation === "object") { const source = result.calculation as Record<string, unknown>; const calculation: Record<string, unknown> = { ...source, snapshot: publicCalculationSnapshot(source.snapshot) }; delete calculation.internalCost; result.calculation = calculation; } return result; }
+const idOf = async (context: Context) => {
+  const id = Number((await context.params).id);
+  return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+function proposalView(value: Record<string, unknown>) {
+  const result: Record<string, unknown> = {
+    ...value,
+    snapshot: publicCalculationSnapshot(value.snapshot),
+  };
+  delete result.requestHash;
+  delete result.idempotencyKey;
+  delete result.sendIdempotencyKey;
+  delete result.providerMessageId;
+  if (result.calculation && typeof result.calculation === "object") {
+    const source = result.calculation as Record<string, unknown>;
+    result.calculation = {
+      id: source.id,
+      material: source.material,
+      clientPrice: source.clientPrice,
+      snapshot: publicCalculationSnapshot(source.snapshot),
+    };
+  }
+  return result;
+}
+
+async function ownedClient(clientId: number, role: Role, userId: number) {
+  return prisma.client.findFirst({
+    where: {
+      id: clientId,
+      ...(role === Role.MANAGER ? { managerUserId: userId } : {}),
+    },
+  });
+}
 
 export async function GET(_: Request, context: Context) {
-  const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-  const clientId = await idOf(context); if (!clientId) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const client = await prisma.client.findUnique({ where: { id: clientId }, select: { managerUserId: true } });
-  if (!client || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
-  const rows = await prisma.commercialProposal.findMany({ where: { clientId }, include: { calculation: true, conversion: { select: { orderId: true } } }, orderBy: { createdAt: "desc" } });
-  return NextResponse.json(rows.map((row) => proposalView(row as unknown as Record<string, unknown>)));
+  const auth = await requirePermission("clients");
+  if (auth.response) return auth.response;
+  const role = auth.session!.user.role as Role,
+    clientId = await idOf(context);
+  if (!clientId || (role !== Role.DIRECTOR && role !== Role.MANAGER))
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!(await ownedClient(clientId, role, Number(auth.session!.user.id))))
+    return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+  const rows = await prisma.commercialProposal.findMany({
+    where: { clientId },
+    include: { calculation: true, conversion: { select: { orderId: true } } },
+    orderBy: [{ createdAt: "desc" }, { version: "desc" }],
+  });
+  return NextResponse.json(
+    rows.map((row) => proposalView(row as unknown as Record<string, unknown>)),
+  );
 }
 
 export async function POST(request: Request, context: Context) {
-  const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role, clientId = await idOf(context);
-  if (!clientId || (role !== Role.DIRECTOR && role !== Role.MANAGER)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const auth = await requirePermission("clients");
+  if (auth.response) return auth.response;
+  const role = auth.session!.user.role as Role,
+    clientId = await idOf(context),
+    userId = Number(auth.session!.user.id);
+  if (!clientId || (role !== Role.DIRECTOR && role !== Role.MANAGER))
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const idempotency = readIdempotencyKey(request);
+  if ("response" in idempotency) return idempotency.response;
   try {
-    const body = await request.json() as Record<string, unknown>;
-    const multiVariant = Array.isArray(body.calculationIds);
-    const requestedIds = multiVariant ? (body.calculationIds as unknown[]).map(Number).filter(Number.isInteger) : [Number(body.calculationId)].filter(Number.isInteger);
-    const [client, calculations, settings] = await Promise.all([prisma.client.findUnique({ where: { id: clientId } }), prisma.leadCalculation.findMany({ where: { id: { in: requestedIds }, clientId } }), prisma.companySettings.findUnique({ where: { id: 1 } })]);
-    const byMaterial = new Map(calculations.map((item) => [item.material, item]));
-    const ordered = multiVariant ? ["Сосна", "Карагач", "Дуб ламель"].map((material) => byMaterial.get(material)).filter((item): item is NonNullable<typeof item> => Boolean(item)) : calculations;
-    const calculation = ordered[1] ?? ordered[0], calculationId = calculation?.id;
-    if (!client || !calculation || (multiVariant && ordered.length !== 3) || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: multiVariant ? "Для КП нужны три варианта расчёта" : "Заявка или расчёт не найдены" }, { status: 404 });
-    const now = new Date(), validUntil = new Date(now.getTime() + Math.min(90, Math.max(1, Number(body.validDays) || 14)) * 86400000);
-    const previous = body.previousProposalId ? await prisma.commercialProposal.findFirst({ where: { id: Number(body.previousProposalId), clientId } }) : null;
-    const rootNumber = previous?.rootNumber ?? previous?.number ?? `КП-${now.getFullYear()}-${now.getTime().toString(36).toUpperCase()}`;
-    const version = previous ? previous.version + 1 : 1, number = version === 1 ? rootNumber : `${rootNumber}-V${version}`;
-    const variants = ordered.map((item, index) => ({ id: item.id, material: item.material, label: multiVariant ? ["Базовый вариант", "Оптимальный вариант", "Премиальный вариант"][index] : "Вариант", description: "Готовая лестница под ключ", calculation: publicCalculationSnapshot(item.snapshot), clientPrice: item.clientPrice }));
-    const snapshot = JSON.parse(JSON.stringify({ company: { name: settings?.name ?? "ALTYN SAPA COMPANY", logoUrl: settings?.logoUrl ?? "", phone: settings?.phone ?? "+7 708 575 0881" }, client: { name: client.name, phone: client.phone, city: client.city, request: client.comment || client.estimateNotes }, variants, calculation: publicCalculationSnapshot(calculation.snapshot), clientPrice: calculation.clientPrice, manager: auth.session!.user.name ?? client.manager, date: now.toISOString(), number, version }));
-    const proposal = await prisma.$transaction(async (tx) => {
-      const created = await tx.commercialProposal.create({ data: { clientId, calculationId, number, rootNumber, version, snapshot, validUntil, executionTerm: typeof body.executionTerm === "string" ? body.executionTerm.slice(0, 200) : "Срок выполнения уточняется после замера", paymentTerms: typeof body.paymentTerms === "string" ? body.paymentTerms.slice(0, 500) : "Порядок оплаты согласовывается при оформлении заказа", warranty: typeof body.warranty === "string" ? body.warranty.slice(0, 300) : "Гарантия согласно договору", managerContact: typeof body.managerContact === "string" ? body.managerContact.slice(0, 100) : (settings?.phone || "+7 708 575 0881"), createdById: Number(auth.session!.user.id), createdByName: auth.session!.user.name ?? "Система" } });
-      await tx.client.update({ where: { id: clientId }, data: { status: "КП подготовлено" } });
-      await tx.leadStatusHistory.create({ data: { clientId, fromStatus: client.status, toStatus: "КП подготовлено", authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Система" } });
-      return created;
+    const body = (await request.json()) as Record<string, unknown>;
+    if ("number" in body || "rootNumber" in body || "createdById" in body)
+      return NextResponse.json(
+        { error: "Служебные поля назначаются сервером" },
+        { status: 400 },
+      );
+    const requestedIds = (
+      Array.isArray(body.calculationIds)
+        ? body.calculationIds
+        : [body.calculationId]
+    )
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0);
+    const requestHash = createRequestHash({
+      clientId,
+      calculationIds: [...requestedIds].sort(),
+      previousProposalId: body.previousProposalId ?? null,
+      validDays: body.validDays ?? 14,
+      executionTerm: body.executionTerm ?? null,
+      paymentTerms: body.paymentTerms ?? null,
+      warranty: body.warranty ?? null,
     });
-    return NextResponse.json(proposalView({ ...proposal, calculation }), { status: 201 });
-  } catch { return NextResponse.json({ error: "Не удалось сформировать КП" }, { status: 400 }); }
+    const existing = await prisma.commercialProposal.findUnique({
+      where: { idempotencyKey: idempotency.key },
+      include: { calculation: true },
+    });
+    if (existing)
+      return existing.requestHash === requestHash
+        ? NextResponse.json(
+            proposalView(existing as unknown as Record<string, unknown>),
+          )
+        : idempotencyConflict();
+    const [client, calculations, settings] = await Promise.all([
+      ownedClient(clientId, role, userId),
+      prisma.leadCalculation.findMany({
+        where: { id: { in: requestedIds }, clientId },
+      }),
+      prisma.companySettings.findUnique({ where: { id: 1 } }),
+    ]);
+    const byMaterial = new Map(
+      calculations.map((item) => [item.material, item]),
+    );
+    const ordered = ["Сосна", "Карагач", "Дуб ламель"]
+      .map((material) => byMaterial.get(material))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+    if (!client || ordered.length !== 3)
+      return NextResponse.json(
+        { error: "Для КП нужны три варианта расчёта" },
+        { status: 404 },
+      );
+    const previous = body.previousProposalId
+      ? await prisma.commercialProposal.findFirst({
+          where: { id: Number(body.previousProposalId), clientId },
+        })
+      : null;
+    const now = new Date(),
+      version = previous ? previous.version + 1 : 1;
+    const variants = ordered.map((item) => {
+      const calculation = publicCalculationSnapshot(item.snapshot) as Record<
+        string,
+        unknown
+      >;
+      return {
+        material: item.material,
+        total: Number(item.clientPrice),
+        composition: calculation.lines ?? [],
+        executionTerm: String(
+          body.executionTerm ?? "Срок уточняется после замера",
+        ),
+        warranty: String(body.warranty ?? "Гарантия согласно договору"),
+        includedServices: {
+          measurement:
+            calculation.includeMeasurement ??
+            calculation.measurementRequired ??
+            false,
+          delivery: calculation.deliveryRequired ?? false,
+          installation: calculation.installationRequired ?? false,
+        },
+      };
+    });
+    const total = Math.max(...variants.map((item) => item.total));
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const rootNumber =
+          previous?.rootNumber ??
+          previous?.number ??
+          String(
+            (
+              await tx.$queryRaw<
+                Array<{ value: bigint }>
+              >`SELECT nextval('commercial_proposal_number_seq') AS value`
+            )[0].value,
+          );
+        const number = version === 1 ? rootNumber : `${rootNumber}-V${version}`;
+        const snapshot = JSON.parse(
+          JSON.stringify({
+            company: {
+              name: settings?.name ?? "ALTYN SAPA COMPANY",
+              phone: settings?.phone ?? "+7 708 575 0881",
+              email: settings?.email ?? "",
+            },
+            client: {
+              name: client.name,
+              phone: client.phone,
+              city: client.city,
+            },
+            variants,
+            paymentTerms: String(
+              body.paymentTerms ??
+                "Условия оплаты согласовываются при оформлении заказа",
+            ),
+            validUntil: new Date(
+              now.getTime() +
+                Math.min(90, Math.max(1, Number(body.validDays) || 14)) *
+                  86400000,
+            ).toISOString(),
+            createdAt: now.toISOString(),
+            number: rootNumber,
+            version,
+          }),
+        );
+        const created = await tx.commercialProposal.create({
+          data: {
+            clientId,
+            calculationId: ordered[1].id,
+            number,
+            rootNumber,
+            version,
+            status: "GENERATED",
+            snapshot,
+            total,
+            validUntil: new Date(snapshot.validUntil),
+            executionTerm: String(
+              body.executionTerm ?? "Срок уточняется после замера",
+            ).slice(0, 200),
+            paymentTerms: String(
+              body.paymentTerms ??
+                "Условия оплаты согласовываются при оформлении заказа",
+            ).slice(0, 500),
+            warranty: String(
+              body.warranty ?? "Гарантия согласно договору",
+            ).slice(0, 300),
+            managerContact: settings?.phone || "+7 708 575 0881",
+            createdById: userId,
+            createdByName: auth.session!.user.name ?? client.manager,
+            idempotencyKey: idempotency.key,
+            requestHash,
+          },
+        });
+        await tx.client.update({
+          where: { id: clientId },
+          data: { status: "КП подготовлено" },
+        });
+        await tx.leadStatusHistory.create({
+          data: {
+            clientId,
+            fromStatus: client.status,
+            toStatus: "КП подготовлено",
+            authorId: userId,
+            authorName: auth.session!.user.name ?? client.manager,
+          },
+        });
+        return created;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return NextResponse.json(
+      proposalView(result as unknown as Record<string, unknown>),
+      { status: 201 },
+    );
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      return idempotencyConflict();
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Не удалось сформировать КП",
+      },
+      { status: 400 },
+    );
+  }
 }

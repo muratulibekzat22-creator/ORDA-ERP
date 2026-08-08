@@ -320,6 +320,7 @@ async function main() {
       data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: hash, role: Role.MANAGER },
     });
     await prisma.client.update({ where: { id: client.id }, data: { managerUserId: manager.id } });
+    await prisma.order.updateMany({ where: { id: { in: [firstOrder.id, secondOrder.id] } }, data: { managerUserId: manager.id, manager: manager.name } });
     const lockoutUser = await prisma.user.create({
       data: { name: `${tag}-lockout`, email: `${tag}-lockout@test.local`, password: hash, role: Role.MANAGER },
     });
@@ -644,7 +645,7 @@ async function main() {
     assert(directorMaterials.items.some((item) => "price" in item && "amount" in item) && typeof directorMaterials.totalCost === "number", "director material costs were incorrectly redacted");
     const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ code: "GLASS_RAILING", kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
     const leadOrderCountBefore = await prisma.order.count();
-    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
+    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, city: "Алматы", estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
     await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie);
     await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment: "IDOR" }) });
     await expectStatus(`/api/clients/${lead.id}`, 400, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ managerUserId: lockoutUser.id, stage: "WON", lostByUserId: lockoutUser.id }) });
@@ -665,10 +666,13 @@ async function main() {
     await expectStatus(`/api/price-approvals/${rejectedApproval.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "REJECTED" }) });
     const counterApproval = await (await expectStatus("/api/price-approvals", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: leadCalculation.id, requestedSalePrice: Number(leadCalculation.clientPrice) - 3, reason: "security counter" }) })).json() as { id: number };
     await expectStatus(`/api/price-approvals/${counterApproval.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "COUNTER_OFFER", approvedSalePrice: Number(leadCalculation.clientPrice) - 2 }) });
-    const leadProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: approvedCalculation.id }) })).json() as { id: number; snapshot: unknown };
+    const elmCalculation = await (await expectStatus(`/api/clients/${lead.id}/calculations`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...calculationPayload, material: "Карагач" }) })).json() as { id: number; material: string; clientPrice: string };
+    const oakCalculation = await (await expectStatus(`/api/clients/${lead.id}/calculations`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...calculationPayload, material: "Дуб ламель" }) })).json() as { id: number };
+    const proposalCalculationIds = [Number(approvedCalculation.id), elmCalculation.id, oakCalculation.id];
+    const leadProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-proposal` }, body: JSON.stringify({ calculationIds: proposalCalculationIds }) })).json() as { id: number; snapshot: unknown };
     assert(await prisma.order.count() === leadOrderCountBefore && !JSON.stringify(leadProposal).includes("workshopCost"), "proposal created an order or leaked internal prices");
     const immutableSnapshot = JSON.stringify(leadProposal.snapshot);
-    const revisedProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calculationId: approvedCalculation.id, previousProposalId: leadProposal.id }) })).json() as { id: number; version: number };
+    const revisedProposal = await (await expectStatus(`/api/clients/${lead.id}/proposals`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-proposal-v2` }, body: JSON.stringify({ calculationIds: proposalCalculationIds, previousProposalId: leadProposal.id }) })).json() as { id: number; version: number };
     assert(revisedProposal.version === 2 && JSON.stringify((await prisma.commercialProposal.findUniqueOrThrow({ where: { id: leadProposal.id } })).snapshot) === immutableSnapshot, "proposal version changed an immutable snapshot");
     await expectStatus(`/api/proposals/${leadProposal.id}`, 200, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "Принято" }) });
     await expectStatus(`/api/clients/${lead.id}/stage`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage: "WON", comment: "Клиент согласился оформить сделку" }) });
@@ -676,7 +680,7 @@ async function main() {
     const repeatedConversion = await (await expectStatus(`/api/proposals/${leadProposal.id}/convert`, 201, managerCookie, { method: "POST" })).json() as { id: number };
     assert(converted.id === repeatedConversion.id, "repeated conversion created a duplicate order");
     const convertedOrder = await prisma.order.findUniqueOrThrow({ where: { id: converted.id }, include: { calculations: true } });
-    assert(convertedOrder.clientId === lead.id && convertedOrder.address.trim().length > 0 && convertedOrder.material === leadCalculation.material && Number(convertedOrder.amount) === Number(approvedCalculation.clientPrice) && convertedOrder.calculations.length === 1, "proposal conversion lost canonical lead or calculation data");
+    assert(convertedOrder.clientId === lead.id && convertedOrder.address.trim().length > 0 && convertedOrder.material === elmCalculation.material && Number(convertedOrder.amount) === Number(elmCalculation.clientPrice) && convertedOrder.calculations.length === 1, "proposal conversion lost canonical lead or calculation data");
     generatedOrderIds.push(converted.id);
     await expectStatus("/api/company-finance", 403, managerCookie);
     await expectStatus("/api/personal-finance", 403, managerCookie);
@@ -866,6 +870,17 @@ async function main() {
       await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
       const leadIds = (await prisma.client.findMany({ where: { comment: { startsWith: tag } }, select: { id: true } })).map(({ id }) => id);
       if (leadIds.length) {
+        const leadOrderIds = (await prisma.order.findMany({ where: { clientId: { in: leadIds } }, select: { id: true } })).map(({ id }) => id);
+        await prisma.leadConversion.deleteMany({ where: { clientId: { in: leadIds } } });
+        if (leadOrderIds.length) {
+          await prisma.orderGateOverride.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.orderBlocker.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.orderInstallation.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.orderEvent.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.orderCalculation.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.order.deleteMany({ where: { id: { in: leadOrderIds } } });
+        }
         await prisma.commercialProposal.deleteMany({ where: { clientId: { in: leadIds } } });
         await prisma.leadCalculation.deleteMany({ where: { clientId: { in: leadIds } } });
       }

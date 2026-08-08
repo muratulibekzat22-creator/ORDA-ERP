@@ -33,18 +33,20 @@ export async function POST(request: Request) {
   const role = auth.session!.user.role as Role;
   if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
-    const body = await request.json() as Record<string, unknown>, phone = text(body.phone, true), requestText = text(body.comment) ?? text(body.estimateNotes), estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0);
-    if (!phone || !requestText || estimatedAmount === null) return NextResponse.json({ error: "Укажите телефон и краткое описание запроса" }, { status: 400 });
-    const normalized = normalizePhone(phone), suffix = normalized.slice(-10);
-    const duplicate = suffix ? await prisma.client.findFirst({ where: { active: true, OR: [{ phone: { contains: suffix } }, { whatsapp: { contains: suffix } }] }, select: { id: true, name: true, phone: true, stage: true } }) : null;
+    const body = await request.json() as Record<string, unknown>, rawPhone = text(body.phone, true), city = text(body.city, true), requestText = text(body.comment) ?? text(body.estimateNotes) ?? "", estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0);
+    const normalized = rawPhone ? normalizePhone(rawPhone) : "";
+    if (!normalized || !city || estimatedAmount === null) return NextResponse.json({ error: "Укажите корректный телефон WhatsApp и город" }, { status: 400 });
+    const duplicate = await prisma.client.findFirst({ where: { active: true, OR: [{ phone: normalized }, { whatsapp: normalized }] }, select: { id: true, name: true, phone: true, stage: true } });
     if (duplicate && body.allowDuplicate !== true) return NextResponse.json({ error: "Клиент с таким телефоном уже существует", code: "DUPLICATE_PHONE", existingClient: duplicate }, { status: 409 });
     const managerUserId = role === Role.MANAGER ? Number(auth.session!.user.id) : Number(body.managerUserId ?? auth.session!.user.id);
     const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR] } }, select: { id: true, name: true } });
     if (!managerUser) return NextResponse.json({ error: "Некорректный ответственный менеджер" }, { status: 400 });
-    const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source) ?? LeadSource.WHATSAPP, name = text(body.name) ?? `WhatsApp ${phone.slice(-4)}`;
+    const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source) ?? LeadSource.WHATSAPP, name = text(body.clientName ?? body.name) ?? "";
     const client = await prisma.$transaction(async (tx) => {
-      const created = await tx.client.create({ data: { name, phone, whatsapp: text(body.whatsapp) ?? phone, city: text(body.city) ?? "Не указан", address: text(body.address) ?? "", manager: managerUser.name, managerUserId: managerUser.id, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? requestText, source: text(body.source) ?? sourceCode, sourceCode, comment: requestText, stage: LeadStage.NEW, status: LeadStage.NEW } });
+      const created = await tx.client.create({ data: { name, phone: normalized, whatsapp: normalized, city, address: text(body.address) ?? "", manager: managerUser.name, managerUserId: managerUser.id, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? requestText, source: text(body.source) ?? sourceCode, sourceCode, comment: requestText, stage: LeadStage.NEW, status: LeadStage.NEW } });
       await tx.leadStatusHistory.create({ data: { clientId: created.id, toStatus: LeadStage.NEW, toStage: LeadStage.NEW, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? managerUser.name, comment: "Обращение создано" } });
+      const nextActionAt = body.nextActionAt ? new Date(String(body.nextActionAt)) : null;
+      if (nextActionAt && !Number.isNaN(nextActionAt.getTime())) await tx.leadNextAction.create({ data: { clientId: created.id, nextActionType: "FOLLOW_UP", nextActionAt, createdByUserId: Number(auth.session!.user.id) } });
       return created;
     });
     return NextResponse.json(client, { status: 201 });

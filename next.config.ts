@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["pdfkit", "dejavu-fonts-ttf"],
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   async headers() {
