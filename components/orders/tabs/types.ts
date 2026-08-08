@@ -4,6 +4,8 @@ export type OrderTabData = {
   id: number;
   number: string;
   status: string;
+  lifecycle: string;
+  version: number;
   createdAt: Date | string;
   address: string;
   staircase: string;

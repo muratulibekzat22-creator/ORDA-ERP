@@ -14,7 +14,6 @@ import {
   Pencil,
   Phone,
   Printer,
-  Send,
   UserRound,
   WalletCards,
 } from "lucide-react";
@@ -25,7 +24,8 @@ import { useState } from "react";
 
 import StairCalculator from "@/components/calculator/StairCalculator";
 import ProjectPayments from "@/components/project/ProjectPayments";
-import { ORDER_STATUSES } from "@/lib/orders/lifecycle";
+import OrderProcess from "./OrderProcess";
+import { ORDER_STAGE_LABELS, projectOrderStage } from "@/lib/orders/presentation";
 
 import DocumentsTab from "./tabs/DocumentsTab";
 import FilesTab from "./tabs/FilesTab";
@@ -108,7 +108,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     staircase: order.staircase,
     manager: order.manager,
     amount: String(order.amount),
-    status: order.status,
   });
   const canEdit = ["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "");
   const canAddPayment = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
@@ -176,7 +175,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 Заказ {order.number}
               </h1>
               <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-300">
-                {order.status}
+                {ORDER_STAGE_LABELS[projectOrderStage(order.lifecycle, order.productions[0]?.stage)]}
               </span>
             </div>
             <p className="mt-2 flex items-center gap-2 text-slate-300">
@@ -204,18 +203,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
             >
               <Printer size={17} /> Печать
-            </Link>
-            <Link
-              href={`/orders/${order.id}/offer`}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400"
-            >
-              <Send size={17} /> Отправить КП
-            </Link>
-            <Link
-              href={`/orders/${order.id}/contract`}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
-            >
-              <Send size={17} /> Отправить договор
             </Link>
             <a
               href="#files"
@@ -254,6 +241,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
       </header>
 
       {paymentOpen && <ProjectPayments orderId={order.id} />}
+
+      <OrderProcess orderId={order.id} lifecycle={order.lifecycle} version={order.version} />
 
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.85fr)] xl:gap-5">
         <div className="space-y-4 md:space-y-5">
@@ -670,23 +659,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                     className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
                   />
                 </label>
-                <label className="text-sm text-slate-300">
-                  Клиентский статус
-                  <select
-                    value={form.status}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        status: event.target.value,
-                      }))
-                    }
-                    className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
-                  >
-                    {ORDER_STATUSES.map((status) => (
-                      <option key={status}>{status}</option>
-                    ))}
-                  </select>
-                </label>
               </div>
             ) : (
               <label className="mt-5 block text-sm text-slate-300">
@@ -729,8 +701,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                     manager: form.manager,
                     amount: Number(form.amount),
                   };
-                  if (form.status !== order.status)
-                    editPayload.status = form.status;
                   void patch(
                     editing ? editPayload : { comment },
                     editing ? "Заказ обновлён" : "Комментарий добавлен",

@@ -7,26 +7,12 @@ import { AlertCircle, ArrowRight, RefreshCw } from "lucide-react";
 
 import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
 import DashboardStats from "@/components/dashboard/DashboardStats";
-import OrderTable from "@/components/orders/OrderTable";
+import OrderTable, { type OrderListItem } from "@/components/orders/OrderTable";
 import { hasDefaultPermission, type Permission } from "@/lib/permissions";
 import { Role } from "@/lib/roles";
 
 type Client = { id: number; name: string; phone: string };
-type Order = {
-  id: number;
-  number: string;
-  amount: string;
-  prepayment: string;
-  balance: string;
-  partnerPrice?: string;
-  partnerBalance?: string;
-  companyProfit?: string;
-  client: { name: string; phone: string };
-  material: string;
-  staircase: string;
-  manager: string;
-  status: string;
-};
+type Order = OrderListItem;
 type Production = {
   id: number;
   stage: string;

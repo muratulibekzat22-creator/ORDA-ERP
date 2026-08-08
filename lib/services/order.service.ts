@@ -23,10 +23,26 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
       lifecycle: true,
       version: true,
       status: true,
+      productionDeadline: true,
+      completedAt: true,
       createdAt: true,
       updatedAt: true,
       client: { select: { id: true, name: true, phone: true, city: true } },
       partner: { select: { id: true, name: true } },
+      productions: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: { stage: true, master: true, plannedEndAt: true },
+      },
+      installation: {
+        select: { scheduledAt: true, installerUser: { select: { name: true } } },
+      },
+      blockers: {
+        where: { status: "OPEN" },
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        select: { title: true, severity: true },
+      },
     },
     orderBy: {
       createdAt: "desc",

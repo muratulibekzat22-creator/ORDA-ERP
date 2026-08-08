@@ -91,14 +91,13 @@ for (const section of [
 for (const action of [
   "Редактировать",
   "Печать",
-  "Отправить КП",
-  "Отправить договор",
   "Добавить файл",
   "Добавить комментарий",
   "Добавить оплату",
 ])
   assert.match(workspace, new RegExp(action));
-assert.match(workspace, /Текущий клиентский статус/);
+assert.doesNotMatch(workspace, /Отправить КП|Отправить договор|Клиентский статус/);
+assert.match(workspace, /OrderProcess/);
 assert.match(workspace, /Внутренние технические этапы/);
 assert.match(orderPageAuth, /Server Components serialize their props/);
 assert.match(orderPageAuth, /partnerPrice: undefined/);

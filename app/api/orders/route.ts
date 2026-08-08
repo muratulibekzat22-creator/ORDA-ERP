@@ -42,37 +42,10 @@ export async function GET() {
             select: { id: true },
           })
         : null;
-    const orders = partner
-      ? await prisma.order.findMany({
-          where: { partnerId: partner.id },
-          select: {
-            id: true,
-            number: true,
-            address: true,
-            staircase: true,
-            material: true,
-            status: true,
-            partnerPrice: true,
-            partnerPaid: true,
-            partnerBalance: true,
-            createdAt: true,
-            updatedAt: true,
-            client: { select: { name: true, city: true } },
-            productions: {
-              select: { stage: true, startDate: true, finishDate: true },
-            },
-            documents: {
-              select: {
-                id: true,
-                type: true,
-                number: true,
-                documentDate: true,
-              },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-        })
-      : await getOrders(auth.session!.user.role === Role.MANAGER
+    const orders = await getOrders(
+      partner
+        ? { partnerId: partner.id }
+        : auth.session!.user.role === Role.MANAGER
           ? { OR: [{ managerUserId: Number(auth.session!.user.id) }, { managerUserId: null, manager: auth.session!.user.name ?? "" }, { leadConversion: { managerId: Number(auth.session!.user.id) } }] }
           : auth.session!.user.role === Role.PRODUCTION
             ? { productions: { some: { masterUserId: Number(auth.session!.user.id) } } }
@@ -80,12 +53,14 @@ export async function GET() {
               ? { installation: { installerUserId: Number(auth.session!.user.id) } }
               : auth.session!.user.role === Role.MEASURER
                 ? { measurements: { some: { measurerUserId: Number(auth.session!.user.id) } } }
-                : {});
-    if (auth.session!.user.role === Role.PARTNER) return NextResponse.json(orders);
+                : {},
+    );
     if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) {
       return NextResponse.json(orders.map((order) => {
         const result = { ...order } as Record<string, unknown>;
         for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) delete result[field];
+        if (([Role.PRODUCTION, Role.INSTALLER, Role.MEASURER, Role.PARTNER] as Role[]).includes(auth.session!.user.role as Role))
+          for (const field of ["amount", "prepayment", "balance"]) delete result[field];
         return result;
       }));
     }

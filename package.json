@@ -35,7 +35,8 @@
     "test:order360": "tsx scripts/test-order360.ts",
     "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts",
     "test:calendar": "tsx scripts/test-calendar.ts",
-    "test:reports": "tsx scripts/test-reports.ts"
+    "test:reports": "tsx scripts/test-reports.ts",
+    "test:orders-module": "tsx scripts/test-orders-module.ts"
   },
   "engines": {
     "node": ">=20.9.0"
