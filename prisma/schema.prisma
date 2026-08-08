@@ -20,8 +20,30 @@ enum Role {
 enum DocumentType {
   OFFER
   CONTRACT
+  ESTIMATE
+  PROJECT
+  MEASUREMENT_SHEET
   ACT
   INVOICE
+  PAYMENT_RECEIPT
+  PHOTO
+  OTHER
+}
+
+enum DocumentStatus {
+  DRAFT
+  READY
+  SIGNED
+  ARCHIVED
+  CANCELLED
+}
+
+enum DocumentSource {
+  UPLOADED
+  GENERATED_ORDER
+  GENERATED_PROPOSAL
+  MEASUREMENT_ATTACHMENT
+  ORDER_ATTACHMENT
 }
 
 enum Permission {
@@ -293,6 +315,10 @@ model User {
   calendarTaskAuditEvents    CalendarTaskAudit[]        @relation("CalendarTaskAuditActor")
   uploadedMeasurementPhotos  MeasurementAttachment[]    @relation("MeasurementAttachmentUploader")
   measurementAuditEvents     MeasurementAudit[]         @relation("MeasurementAuditActor")
+  authoredDocuments          Document[]                 @relation("DocumentAuthor")
+  archivedDocuments          Document[]                 @relation("DocumentArchivedBy")
+  uploadedDocumentVersions   DocumentVersion[]          @relation("DocumentVersionUploader")
+  documentAuditEvents        DocumentAudit[]            @relation("DocumentAuditActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -324,6 +350,7 @@ model Client {
   whatsapp        String          @default("")
   city            String
   address         String          @default("")
+  iin             String          @default("")
   manager         String
   amount          String
   status          String
@@ -354,6 +381,7 @@ model Client {
   nextActions         LeadNextAction[]
   calendarTasks       CalendarTask[]
   measurements        Measurement[]
+  documents           Document[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -1077,21 +1105,85 @@ model PersonalLedgerEntry {
 }
 
 model Document {
-  id             Int          @id @default(autoincrement())
-  orderId        Int
-  order          Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  type           DocumentType
-  number         String
-  documentDate   DateTime
-  idempotencyKey String?      @unique
-  requestHash    String?
-  attachments    Attachment[]
+  id                Int               @id @default(autoincrement())
+  orderId           Int?
+  order             Order?            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  clientId          Int?
+  client            Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  type              DocumentType
+  number            String
+  title             String            @default("")
+  documentDate      DateTime
+  status            DocumentStatus    @default(DRAFT)
+  source            DocumentSource    @default(UPLOADED)
+  comment           String?
+  authorId          Int?
+  author            User?             @relation("DocumentAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  signedAt          DateTime?
+  signedComment     String?
+  archivedAt        DateTime?
+  archivedById      Int?
+  archivedBy        User?             @relation("DocumentArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+  currentVersion    Int               @default(0)
+  templateVersion   String?
+  snapshot          Json?
+  signedFileName    String?
+  signedPathname    String?           @unique
+  signedContentType String?
+  signedSize        Int?
+  signedChecksum    String?
+  idempotencyKey    String?           @unique
+  requestHash       String?
+  attachments       Attachment[]
+  versions          DocumentVersion[]
+  auditEvents       DocumentAudit[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([orderId, type])
   @@unique([type, number])
+  @@index([clientId, documentDate])
+  @@index([orderId, documentDate])
+  @@index([status, documentDate])
+  @@index([authorId, documentDate])
+}
+
+model DocumentVersion {
+  id              Int      @id @default(autoincrement())
+  documentId      Int
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  version         Int
+  uploadedById    Int?
+  uploadedBy      User?    @relation("DocumentVersionUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  comment         String?
+  fileName        String
+  pathname        String   @unique
+  contentType     String
+  size            Int
+  checksum        String
+  templateVersion String?
+  snapshot        Json?
+  idempotencyKey  String?  @unique
+  createdAt       DateTime @default(now())
+
+  @@unique([documentId, version])
+  @@index([documentId, createdAt])
+}
+
+model DocumentAudit {
+  id         Int      @id @default(autoincrement())
+  documentId Int
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  action     String
+  actorId    Int
+  actor      User     @relation("DocumentAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  before     Json?
+  after      Json?
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  @@index([documentId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model Attachment {
@@ -1135,6 +1227,7 @@ model Material {
   code             String?             @unique
   model            String?
   description      String?
+  warrantyMonths   Int?
   sellingPrice     Decimal             @default(0) @db.Decimal(18, 2)
   locationName     String              @default("Офис / Шоурум")
   mainImagePath    String?             @unique
@@ -1172,17 +1265,21 @@ model MaterialPriceHistory {
 }
 
 model CompanySettings {
-  id            Int    @id @default(1)
-  name          String @default("ALTYN SAPA COMPANY")
-  bin           String @default("")
-  legalAddress  String @default("")
-  actualAddress String @default("")
-  phone         String @default("")
-  whatsapp      String @default("")
-  email         String @default("")
-  bankDetails   String @default("")
-  directorName  String @default("")
-  logoUrl       String @default("")
+  id               Int    @id @default(1)
+  name             String @default("ALTYN SAPA COMPANY")
+  bin              String @default("")
+  legalAddress     String @default("")
+  actualAddress    String @default("")
+  phone            String @default("")
+  whatsapp         String @default("")
+  email            String @default("")
+  bankDetails      String @default("")
+  directorName     String @default("")
+  directorFullName String @default("")
+  iik              String @default("")
+  bank             String @default("")
+  bik              String @default("")
+  logoUrl          String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1199,6 +1296,7 @@ model SystemSettings {
   productionLeadDays   Int    @default(40)
   installationLeadDays Int    @default(7)
   nextDocumentNumber   Int    @default(1)
+  nextContractNumber   Int    @default(1)
   offerPrefix          String @default("КП")
   contractPrefix       String @default("ДОГ")
   actPrefix            String @default("АКТ")

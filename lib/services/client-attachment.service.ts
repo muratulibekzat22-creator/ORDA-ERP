@@ -3,6 +3,7 @@ import { del, get, put } from "@vercel/blob";
 import { Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { canUseEntities, type DocumentActor } from "@/lib/services/document.service";
 
 export const MAX_CLIENT_ATTACHMENT_SIZE = 50 * 1024 * 1024;
 export const CLIENT_ATTACHMENT_TYPES = new Set([
@@ -54,14 +55,14 @@ function validContent(fileName: string, type: string, bytes: Buffer) {
   return false;
 }
 
-export async function listClientAttachments(clientId: number) {
-  if (!await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } })) return null;
+export async function listClientAttachments(clientId: number, actor: DocumentActor) {
+  if (!await canUseEntities(actor, clientId)) return null;
   return prisma.clientAttachment.findMany({ where: { clientId }, select: publicSelect, orderBy: { createdAt: "desc" } });
 }
 
-export async function uploadClientAttachment(input: { clientId: number; userId: number; role: Role; file: File }) {
+export async function uploadClientAttachment(input: { clientId: number; userId: number; role: Role; name: string; file: File }) {
   if (input.role !== Role.DIRECTOR && input.role !== Role.MANAGER) throw new Error("FORBIDDEN");
-  if (!await prisma.client.findUnique({ where: { id: input.clientId }, select: { id: true } })) return null;
+  if (!await canUseEntities(input, input.clientId)) return null;
   const fileName = safeName(input.file.name);
   const bytes = Buffer.from(await input.file.arrayBuffer());
   if (!validContent(fileName, input.file.type, bytes)) throw new Error("INVALID_FILE_TYPE");
@@ -75,17 +76,19 @@ export async function uploadClientAttachment(input: { clientId: number; userId: 
   }
 }
 
-export async function getClientAttachment(id: number) {
-  const attachment = await prisma.clientAttachment.findUnique({ where: { id }, select: { id: true, pathname: true, fileName: true, contentType: true, size: true } });
+export async function getClientAttachment(id: number, actor: DocumentActor) {
+  const attachment = await prisma.clientAttachment.findUnique({ where: { id }, select: { id: true, clientId: true, pathname: true, fileName: true, contentType: true, size: true } });
   if (!attachment) return null;
+  if (!await canUseEntities(actor, attachment.clientId)) return null;
   const blob = await get(attachment.pathname, { access: "private" });
   return blob?.statusCode === 200 ? { attachment, blob } : null;
 }
 
-export async function deleteClientAttachment(id: number, role: Role) {
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) throw new Error("FORBIDDEN");
-  const attachment = await prisma.clientAttachment.findUnique({ where: { id }, select: { id: true, pathname: true } });
+export async function deleteClientAttachment(id: number, actor: DocumentActor) {
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) throw new Error("FORBIDDEN");
+  const attachment = await prisma.clientAttachment.findUnique({ where: { id }, select: { id: true, clientId: true, pathname: true } });
   if (!attachment) return null;
+  if (!await canUseEntities(actor, attachment.clientId)) return null;
   await del(attachment.pathname);
   await prisma.clientAttachment.delete({ where: { id } });
   return { id };

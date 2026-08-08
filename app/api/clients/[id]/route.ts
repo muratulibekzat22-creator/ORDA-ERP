@@ -23,7 +23,7 @@ export async function PATCH(request: Request, { params }: Context) {
     if (!existing || !canAccessLead(auth.session!.user.role as Role, Number(auth.session!.user.id), existing)) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
     if (["stage", "status", "manager", "managerUserId", "lostReason", "lostByUserId", "lostAt"].some((key) => key in body)) return NextResponse.json({ error: "Используйте специализированный workflow endpoint", code: "MASS_ASSIGNMENT_BLOCKED" }, { status: 400 });
     const data: Prisma.ClientUpdateInput = {};
-    for (const key of ["name", "phone", "whatsapp", "city", "address", "estimateNotes", "comment"] as const) if (typeof body[key] === "string") data[key] = body[key].trim();
+    for (const key of ["name", "phone", "whatsapp", "city", "address", "iin", "estimateNotes", "comment"] as const) if (typeof body[key] === "string") data[key] = body[key].trim();
     if (["name", "phone", "city"].some((key) => key in body && !String(body[key]).trim())) return NextResponse.json({ error: "Обязательные поля не могут быть пустыми" }, { status: 400 });
     if ("sourceCode" in body || "source" in body) { const source = normalizeLeadSource(body.sourceCode ?? body.source); if (!source) return NextResponse.json({ error: "Некорректный источник" }, { status: 400 }); data.sourceCode = source; data.source = source; }
     if ("estimatedAmount" in body) { const value = Number(body.estimatedAmount); if (!Number.isFinite(value) || value < 0) return NextResponse.json({ error: "Некорректная сумма" }, { status: 400 }); data.estimatedAmount = String(value); data.amount = String(value); }

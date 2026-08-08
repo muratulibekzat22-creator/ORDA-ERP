@@ -36,7 +36,7 @@ export type DocumentOrder = {
     createdAt: Date | string;
   }>;
   documents?: Array<{
-    type: "OFFER" | "CONTRACT" | "ACT" | "INVOICE";
+    type: DocumentType;
     number: string;
     documentDate: Date | string;
   }>;
@@ -51,3 +51,4 @@ export const money = (value: NumericValue) =>
 export const date = (value: Date | string) =>
   new Date(value).toLocaleDateString("ru-RU");
 export const documentNumber = (order: DocumentOrder, type: "OFFER" | "CONTRACT" | "ACT" | "INVOICE") => order.documents?.find((document) => document.type === type)?.number ?? order.number;
+import type { DocumentType } from "@prisma/client";

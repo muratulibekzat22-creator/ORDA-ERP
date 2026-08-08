@@ -875,6 +875,8 @@ async function main() {
       const attachmentPaths = (await prisma.attachment.findMany({ where: { order: { number: { startsWith: tag } } }, select: { pathname: true } })).map((item) => item.pathname);
       if (attachmentPaths.length) await del(attachmentPaths).catch(() => undefined);
       await prisma.attachment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.documentAudit.deleteMany({ where: { document: { order: { number: { startsWith: tag } } } } });
+      await prisma.documentVersion.deleteMany({ where: { document: { order: { number: { startsWith: tag } } } } });
       await prisma.document.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.measurementAudit.deleteMany({ where: { measurement: { order: { number: { startsWith: tag } } } } });
       await prisma.measurementAttachment.deleteMany({ where: { measurement: { order: { number: { startsWith: tag } } } } });

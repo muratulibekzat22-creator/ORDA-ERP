@@ -12,6 +12,7 @@ type Material = {
   category: string;
   unit: string;
   purchasePrice: string;
+  warrantyMonths: number | null;
   active: boolean;
   _count: { movements: number };
 };
@@ -35,6 +36,7 @@ const emptyMaterial = {
   category: "",
   unit: "шт",
   purchasePrice: "0",
+  warrantyMonths: "6",
   active: true,
 };
 
@@ -285,6 +287,10 @@ export default function SettingsPage() {
               ["email", "Email"],
               ["bankDetails", "Банковские реквизиты"],
               ["directorName", "Директор"],
+              ["directorFullName", "ФИО директора для договоров"],
+              ["iik", "ИИК"],
+              ["bank", "Банк"],
+              ["bik", "БИК"],
               ["logoUrl", "Logo URL"],
             ].map(([key, label]) => (
               <Input
@@ -413,6 +419,13 @@ export default function SettingsPage() {
                 setMaterialForm({ ...materialForm, purchasePrice: value })
               }
             />
+            <Input
+              label="Гарантия, месяцев"
+              type="number"
+              value={materialForm.warrantyMonths}
+              disabled={saving}
+              onChange={(value) => setMaterialForm({ ...materialForm, warrantyMonths: value })}
+            />
             <label className="flex items-end gap-2 pb-3 text-slate-200">
               <input
                 checked={materialForm.active}
@@ -487,6 +500,7 @@ export default function SettingsPage() {
                               category: material.category,
                               unit: material.unit,
                               purchasePrice: String(material.purchasePrice),
+                              warrantyMonths: String(material.warrantyMonths ?? 6),
                               active: material.active,
                             });
                           }}

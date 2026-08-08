@@ -3,9 +3,9 @@ import { Prisma } from "@prisma/client";
 import { getPermissionMatrix, replacePermissionMatrix } from "@/lib/services/permission.service";
 import { prisma } from "@/lib/prisma";
 
-const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "whatsapp", "email", "bankDetails", "directorName", "logoUrl"] as const;
+const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "whatsapp", "email", "bankDetails", "directorName", "directorFullName", "iik", "bank", "bik", "logoUrl"] as const;
 const systemStringFields = ["currency", "timezone", "dateFormat", "offerPrefix", "contractPrefix", "actPrefix", "invoicePrefix"] as const;
-const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "measurerOrderBonus", "productionLeadDays", "installationLeadDays", "nextDocumentNumber"] as const;
+const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "measurerOrderBonus", "productionLeadDays", "installationLeadDays", "nextDocumentNumber", "nextContractNumber"] as const;
 const calculatorFields = ["pinePrice", "elmPrice", "oakPrice", "woodRailing", "glassRailing", "brassRailing", "ledPrice", "paintingPrice", "installationPrice"] as const;
 
 type RecordValue = Record<string, unknown>;
@@ -40,7 +40,7 @@ export async function getSettingsManagement() {
     prisma.companySettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
     prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
     prisma.settings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    prisma.material.findMany({ select: { id: true, name: true, category: true, unit: true, purchasePrice: true, active: true, _count: { select: { movements: true } } }, orderBy: { name: "asc" } }),
+    prisma.material.findMany({ select: { id: true, name: true, category: true, unit: true, purchasePrice: true, warrantyMonths: true, active: true, _count: { select: { movements: true } } }, orderBy: { name: "asc" } }),
     getPermissionMatrix(),
   ]);
   return { company, system, calculator, materials, rolePermissions };

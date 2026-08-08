@@ -1,524 +1,83 @@
 "use client";
 
-import { DocumentType } from "@prisma/client";
-import {
-  Eye,
-  FileCheck,
-  FileSpreadsheet,
-  FileText,
-  Plus,
-  Printer,
-  Trash2,
-  X,
-} from "lucide-react";
+import { DocumentStatus, DocumentType } from "@prisma/client";
+import { ExternalLink, FileText, Plus, X } from "lucide-react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { FormEvent, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useDeferredValue, useEffect, useState } from "react";
 
-type DocumentItem = {
-  id: number;
-  type: DocumentType;
-  number: string;
-  documentDate: string;
-  order: { id: number; number: string; client: { name: string } };
-};
-type OrderOption = { id: number; number: string; client: { name: string } };
+import { documentStatusLabels, documentTabs, documentTypeLabels } from "@/lib/document-meta";
 
-const typeMeta: Record<
-  DocumentType,
-  { label: string; short: string; href: (id: number) => string }
-> = {
-  OFFER: {
-    label: "Коммерческое предложение",
-    short: "КП",
-    href: (id) => `/orders/${id}/offer`,
-  },
-  CONTRACT: {
-    label: "Договор",
-    short: "Договоры",
-    href: (id) => `/orders/${id}/contract`,
-  },
-  INVOICE: {
-    label: "Счёт на оплату",
-    short: "Счета",
-    href: (id) => `/orders/${id}/invoice`,
-  },
-  ACT: {
-    label: "Акт выполненных работ",
-    short: "Акты",
-    href: (id) => `/orders/${id}/act`,
-  },
-};
+type Entity = { id: number; name?: string; phone?: string; number?: string; client?: { id: number; name: string } };
+type DocumentItem = { id: number | string; recordKind: string; type: DocumentType; number: string; title: string; documentDate: string; status: DocumentStatus; source: string; currentVersion: number; client: { id: number; name: string; phone: string } | null; order: { id: number; number: string } | null; author: { id: number; name: string } | null; openHref: string };
+type Options = { clients: Entity[]; orders: Entity[]; authors: Entity[]; allowedTypes: DocumentType[] };
+const today = () => new Date().toISOString().slice(0, 10);
+type DocumentForm = { clientId: string; orderId: string; type: DocumentType; title: string; number: string; documentDate: string; comment: string };
+const emptyForm: DocumentForm = { clientId: "", orderId: "", type: DocumentType.CONTRACT, title: "", number: "", documentDate: today(), comment: "" };
+const control = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white outline-none focus:border-blue-500";
 
-const initialForm: {
-  orderId: string;
-  type: DocumentType;
-  number: string;
-  documentDate: string;
-} = {
-  orderId: "",
-  type: DocumentType.OFFER,
-  number: "",
-  documentDate: new Date().toISOString().slice(0, 10),
-};
-
-export default function DocumentsPage() {
+export default function DocumentsPage({ initialOrderId, initialClientId, embedded = false }: { initialOrderId?: number; initialClientId?: number; embedded?: boolean } = {}) {
   const { data: session } = useSession();
-  const [documents, setDocuments] = useState<DocumentItem[]>([]);
-  const [orders, setOrders] = useState<OrderOption[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
-  const [type, setType] = useState<"" | DocumentType>("");
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(initialForm);
-  const canManage =
-    session?.user.role === "DIRECTOR" || session?.user.role === "MANAGER";
+  const [items, setItems] = useState<DocumentItem[]>([]), [options, setOptions] = useState<Options>({ clients: [], orders: [], authors: [], allowedTypes: [] });
+  const [query, setQuery] = useState(""), deferredQuery = useDeferredValue(query);
+  const [type, setType] = useState<"" | DocumentType>(""), [status, setStatus] = useState<"" | DocumentStatus>(""), [authorId, setAuthorId] = useState(""), [from, setFrom] = useState(""), [to, setTo] = useState("");
+  const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState(""), [open, setOpen] = useState(false), [form, setForm] = useState<DocumentForm>({ ...emptyForm, orderId: initialOrderId ? String(initialOrderId) : "", clientId: initialClientId ? String(initialClientId) : "" }), [file, setFile] = useState<File | null>(null);
+  const canUpload = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(session?.user.role ?? "");
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
+    const params = new URLSearchParams();
+    if (initialOrderId) params.set("orderId", String(initialOrderId));
+    if (initialClientId) params.set("clientId", String(initialClientId));
+    if (deferredQuery.trim()) params.set("q", deferredQuery.trim());
+    if (type) params.set("type", type); if (status) params.set("status", status); if (authorId) params.set("authorId", authorId); if (from) params.set("from", new Date(`${from}T00:00:00`).toISOString()); if (to) params.set("to", new Date(`${to}T23:59:59.999`).toISOString());
+    setLoading(true); setError("");
+    try { const response = await fetch(`/api/documents?${params}`, { cache: "no-store" }); const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Не удалось загрузить документы"); setItems(payload); }
+    catch (next) { setError(next instanceof Error ? next.message : "Не удалось загрузить документы"); }
+    finally { setLoading(false); }
+  }, [authorId, deferredQuery, from, initialClientId, initialOrderId, status, to, type]);
+
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 250); return () => window.clearTimeout(timer); }, [load]);
+  useEffect(() => { if (!canUpload) return; void fetch("/api/document-options", { cache: "no-store" }).then(async (response) => response.ok && setOptions(await response.json())); }, [canUpload]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!file) return setError("Выберите файл");
+    setSaving(true); setError("");
     try {
-      const response = await fetch("/api/documents", { cache: "no-store" });
-      if (!response.ok)
-        throw new Error(
-          ((await response.json()) as { error?: string }).error ??
-            "Не удалось загрузить документы",
-        );
-      setDocuments((await response.json()) as DocumentItem[]);
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Не удалось загрузить документы",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: KeyboardEvent) =>
-      event.key === "Escape" && !saving && setOpen(false);
-    document.addEventListener("keydown", close);
-    return () => document.removeEventListener("keydown", close);
-  }, [open, saving]);
-
-  async function showCreate() {
-    setError("");
-    if (!orders.length) {
-      const response = await fetch("/api/orders", { cache: "no-store" });
-      if (!response.ok) return setError("Не удалось загрузить заказы");
-      setOrders((await response.json()) as OrderOption[]);
-    }
-    setOpen(true);
+      const data = new FormData(); Object.entries(form).forEach(([key, value]) => value && data.set(key, value)); data.set("file", file);
+      const response = await fetch("/api/documents", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: data }); const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Не удалось добавить документ");
+      setOpen(false); setFile(null); setForm({ ...emptyForm, orderId: initialOrderId ? String(initialOrderId) : "", clientId: initialClientId ? String(initialClientId) : "" }); await load();
+    } catch (next) { setError(next instanceof Error ? next.message : "Не удалось добавить документ"); }
+    finally { setSaving(false); }
   }
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setSaving(true);
-    setError("");
-    try {
-      const response = await fetch("/api/documents", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({ ...form, orderId: Number(form.orderId) }),
-      });
-      if (!response.ok)
-        throw new Error(
-          ((await response.json()) as { error?: string }).error ??
-            "Не удалось создать документ",
-        );
-      setOpen(false);
-      setForm(initialForm);
-      await load();
-    } catch (nextError) {
-      setError(
-        nextError instanceof Error
-          ? nextError.message
-          : "Не удалось создать документ",
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function remove(id: number) {
-    if (!window.confirm("Удалить документ?")) return;
-    setSaving(true);
-    const response = await fetch(`/api/documents?id=${id}`, {
-      method: "DELETE",
-    });
-    if (!response.ok)
-      setError(
-        ((await response.json()) as { error?: string }).error ??
-          "Не удалось удалить документ",
-      );
-    else await load();
-    setSaving(false);
-  }
-
-  const visible = useMemo(
-    () =>
-      documents.filter((document) => {
-        const search = deferredQuery.trim().toLocaleLowerCase("ru");
-        return (
-          (!type || document.type === type) &&
-          (!search ||
-            [
-              document.number,
-              document.order.number,
-              document.order.client.name,
-            ].some((value) => value.toLocaleLowerCase("ru").includes(search)))
-        );
-      }),
-    [documents, deferredQuery, type],
-  );
-
-  return (
-    <section className="flex-1 overflow-auto p-4 md:p-8">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-white">Документы</h1>
-          <p className="mt-2 text-slate-400">
-            КП, договоры, счета и акты по реальным заказам
-          </p>
-        </div>
-        {canManage && (
-          <button
-            onClick={() => void showCreate()}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-700"
-          >
-            <Plus size={18} />
-            Создать документ
-          </button>
-        )}
-      </div>
-      {error && (
-        <p className="mb-5 rounded-xl border border-red-800 bg-red-950/40 p-4 text-red-300">
-          {error}
-        </p>
-      )}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Object.values(DocumentType).map((value, index) => {
-          const count = documents.filter((item) => item.type === value).length;
-          const Icon =
-            index === 0 ? FileText : index === 2 ? FileSpreadsheet : FileCheck;
-          return (
-            <div
-              key={value}
-              className="rounded-2xl border border-slate-700 bg-[#101827] p-5"
-            >
-              <Icon className="mb-3 text-blue-400" />
-              <p className="text-slate-400">{typeMeta[value].short}</p>
-              <p className="mt-1 text-3xl font-bold text-white">{count}</p>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mb-5 flex flex-wrap gap-3">
-        <label className="min-w-0 flex-1 text-sm text-slate-300 sm:min-w-64">
-          <span className="sr-only">Поиск документов</span>
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Номер, заказ или клиент"
-            className="min-h-12 w-full rounded-xl border border-slate-700 bg-[#101827] px-4 text-white"
-          />
-        </label>
-        <label className="text-sm text-slate-300">
-          <span className="sr-only">Тип документа</span>
-          <select
-            aria-label="Тип документа"
-            value={type}
-            onChange={(event) =>
-              setType(event.target.value as "" | DocumentType)
-            }
-            className="min-h-12 w-full rounded-xl border border-slate-700 bg-[#101827] px-4 text-white"
-          >
-            <option value="">Все типы</option>
-            {Object.values(DocumentType).map((value) => (
-              <option key={value} value={value}>
-                {typeMeta[value].label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="rounded-2xl border border-slate-700 bg-[#101827]">
-        {loading ? (
-          <p
-            role="status"
-            aria-live="polite"
-            className="animate-pulse p-8 text-slate-400"
-          >
-            Загрузка документов…
-          </p>
-        ) : !visible.length ? (
-          <p className="p-8 text-center text-slate-400">
-            Документы не найдены. Измените фильтры или создайте новый документ.
-          </p>
-        ) : (
-          <>
-            <div className="space-y-3 p-3 md:hidden">
-              {visible.map((document) => (
-                <DocumentMobileCard
-                  key={document.id}
-                  document={document}
-                  canManage={canManage}
-                  saving={saving}
-                  onRemove={remove}
-                />
-              ))}
-            </div>
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[760px] text-left">
-                <thead className="bg-slate-900 text-slate-400">
-                  <tr>
-                    <th className="p-4">№</th>
-                    <th className="p-4">Тип</th>
-                    <th className="p-4">Заказ</th>
-                    <th className="p-4">Клиент</th>
-                    <th className="p-4">Дата</th>
-                    <th className="p-4 text-right">Действия</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((document) => {
-                    return (
-                      <tr
-                        key={document.id}
-                        className="border-t border-slate-800 text-slate-300"
-                      >
-                        <td className="p-4 font-semibold text-white">
-                          {document.number}
-                        </td>
-                        <td className="p-4">{typeMeta[document.type].label}</td>
-                        <td className="p-4">{document.order.number}</td>
-                        <td className="p-4">{document.order.client.name}</td>
-                        <td className="p-4">
-                          {new Intl.DateTimeFormat("ru-RU").format(
-                            new Date(document.documentDate),
-                          )}
-                        </td>
-                        <td className="p-4">
-                          <DocumentActions
-                            document={document}
-                            canManage={canManage}
-                            saving={saving}
-                            onRemove={remove}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </div>
-      {open && (
-        <div
-          className="fixed inset-0 z-[70] flex items-end justify-center overflow-y-auto bg-black/70 p-0 sm:items-center sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="new-document-title"
-        >
-          <form
-            onSubmit={submit}
-            className="max-h-dvh w-full max-w-lg space-y-4 overflow-y-auto rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:rounded-2xl sm:p-6"
-          >
-            <div className="flex items-center justify-between">
-              <h2
-                id="new-document-title"
-                className="text-xl font-bold text-white"
-              >
-                Новый документ
-              </h2>
-              <button
-                type="button"
-                aria-label="Закрыть окно"
-                disabled={saving}
-                onClick={() => setOpen(false)}
-                className="grid size-11 place-items-center rounded-xl text-slate-300 hover:bg-slate-800"
-              >
-                <X />
-              </button>
-            </div>
-            <label className="block text-sm text-slate-300">
-              Заказ
-              <select
-                required
-                value={form.orderId}
-                onChange={(event) =>
-                  setForm({ ...form, orderId: event.target.value })
-                }
-                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-white"
-              >
-                <option value="">Выберите заказ</option>
-                {orders.map((order) => (
-                  <option key={order.id} value={order.id}>
-                    {order.number} — {order.client.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm text-slate-300">
-              Тип документа
-              <select
-                value={form.type}
-                onChange={(event) =>
-                  setForm({ ...form, type: event.target.value as DocumentType })
-                }
-                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-white"
-              >
-                {Object.values(DocumentType).map((value) => (
-                  <option key={value} value={value}>
-                    {typeMeta[value].label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-sm text-slate-300">
-              Номер документа
-              <input
-                required
-                maxLength={80}
-                value={form.number}
-                onChange={(event) =>
-                  setForm({ ...form, number: event.target.value })
-                }
-                placeholder="Например, КП-104"
-                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-white"
-              />
-            </label>
-            <label className="block text-sm text-slate-300">
-              Дата документа
-              <input
-                required
-                type="date"
-                value={form.documentDate}
-                onChange={(event) =>
-                  setForm({ ...form, documentDate: event.target.value })
-                }
-                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-white"
-              />
-            </label>
-            <div className="sticky bottom-0 -mx-5 -mb-5 border-t border-slate-700 bg-[#101827] p-5 sm:-mx-6 sm:-mb-6 sm:px-6">
-              <button
-                disabled={saving}
-                className="min-h-12 w-full rounded-xl bg-blue-600 p-3 font-semibold text-white disabled:opacity-50"
-              >
-                {saving ? "Сохранение…" : "Создать"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function DocumentActions({
-  document,
-  canManage,
-  saving,
-  onRemove,
-}: {
-  document: DocumentItem;
-  canManage: boolean;
-  saving: boolean;
-  onRemove: (id: number) => Promise<void>;
-}) {
-  const href = typeMeta[document.type].href(document.order.id);
-  return (
-    <div className="flex justify-end gap-2">
-      <Link
-        aria-label={`Открыть документ ${document.number}`}
-        href={href}
-        className="grid size-11 place-items-center rounded-lg bg-slate-800 hover:bg-slate-700"
-      >
-        <Eye size={18} />
-      </Link>
-      <Link
-        aria-label={`Печать документа ${document.number}`}
-        href={href}
-        className="grid size-11 place-items-center rounded-lg bg-green-700 hover:bg-green-600"
-      >
-        <Printer size={18} />
-      </Link>
-      {canManage && (
-        <button
-          type="button"
-          disabled={saving}
-          aria-label={`Удалить документ ${document.number}`}
-          onClick={() => void onRemove(document.id)}
-          className="grid size-11 place-items-center rounded-lg bg-red-900 hover:bg-red-800 disabled:opacity-50"
-        >
-          <Trash2 size={18} />
-        </button>
-      )}
+  return <section className={embedded ? "min-w-0" : "min-w-0 flex-1 overflow-auto p-4 md:p-8"}>
+    <header className={`mb-6 flex flex-wrap items-center gap-4 ${embedded ? "justify-end" : "justify-between"}`}>{!embedded && <div><h1 className="text-3xl font-bold text-white">Документы</h1><p className="mt-1 text-slate-400">Единый архив документов клиентов и заказов</p></div>}{canUpload && <button onClick={() => setOpen(true)} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white"><Plus size={18}/>Добавить документ</button>}</header>
+    {error && <p className="mb-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-300">{error}</p>}
+    {!initialOrderId && !initialClientId && <div className="mb-5 flex max-w-full gap-2 overflow-x-auto pb-1">{documentTabs.map((tab) => <button key={tab.label} onClick={() => setType(tab.type)} className={`shrink-0 rounded-full px-4 py-2 text-sm ${type === tab.type ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`}>{tab.label}</button>)}</div>}
+    <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+      <input aria-label="Поиск" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Клиент, телефон, заказ, документ" className={`${control} sm:col-span-2 xl:col-span-2`}/>
+      <select aria-label="Тип" value={type} onChange={(event) => setType(event.target.value as "" | DocumentType)} className={control}><option value="">Все типы</option>{Object.values(DocumentType).map((value) => <option key={value} value={value}>{documentTypeLabels[value]}</option>)}</select>
+      <select aria-label="Статус" value={status} onChange={(event) => setStatus(event.target.value as "" | DocumentStatus)} className={control}><option value="">Все статусы</option>{Object.values(DocumentStatus).map((value) => <option key={value} value={value}>{documentStatusLabels[value]}</option>)}</select>
+      <input aria-label="Период с" type="date" value={from} onChange={(event) => setFrom(event.target.value)} className={control}/><input aria-label="Период по" type="date" value={to} onChange={(event) => setTo(event.target.value)} className={control}/>
+      {!!options.authors.length && <select aria-label="Ответственный" value={authorId} onChange={(event) => setAuthorId(event.target.value)} className={control}><option value="">Все ответственные</option>{options.authors.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
     </div>
-  );
+    <div className="overflow-hidden rounded-2xl border border-slate-700 bg-[#101827]">{loading ? <p className="p-8 text-slate-400">Загрузка…</p> : !items.length ? <p className="p-8 text-center text-slate-400">Документы не найдены</p> : <><div className="space-y-3 p-3 md:hidden">{items.map((item) => <MobileCard key={item.id} item={item}/>)}</div><div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[900px] text-left"><thead className="bg-slate-900 text-sm text-slate-400"><tr>{["Тип", "Документ", "Клиент", "Заказ", "Дата", "Ответственный", "Статус", ""].map((value) => <th key={value} className="p-4">{value}</th>)}</tr></thead><tbody>{items.map((item) => <tr key={item.id} className="border-t border-slate-800 text-sm text-slate-300"><td className="p-4">{documentTypeLabels[item.type]}</td><td className="p-4"><p className="font-semibold text-white">{item.title}</p><p className="text-xs text-slate-500">{item.number || "Без номера"}</p></td><td className="p-4">{item.client?.name ?? "—"}</td><td className="p-4">{item.order?.number ?? "—"}</td><td className="p-4">{formatDate(item.documentDate)}</td><td className="p-4">{item.author?.name ?? "—"}</td><td className="p-4"><Status value={item.status}/></td><td className="p-4"><Open item={item}/></td></tr>)}</tbody></table></div></>}</div>
+    {open && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/75 sm:items-center sm:p-4"><form onSubmit={submit} className="max-h-dvh w-full max-w-xl space-y-4 overflow-y-auto rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:rounded-2xl"><div className="flex items-center justify-between"><h2 className="text-xl font-bold text-white">Добавить документ</h2><button type="button" aria-label="Закрыть" onClick={() => setOpen(false)} className="grid size-11 place-items-center text-slate-300"><X/></button></div><div className="grid gap-4 sm:grid-cols-2">
+      <Field label="Тип"><select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as DocumentType })} className={control}>{(options.allowedTypes.length ? options.allowedTypes : Object.values(DocumentType)).map((value) => <option key={value} value={value}>{documentTypeLabels[value]}</option>)}</select></Field>
+      <Field label="Дата"><input required type="date" value={form.documentDate} onChange={(e) => setForm({ ...form, documentDate: e.target.value })} className={control}/></Field>
+      <Field label="Клиент (необязательно)"><select disabled={Boolean(initialClientId)} value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} className={control}><option value="">Не выбран</option>{options.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Заказ (необязательно)"><select disabled={Boolean(initialOrderId)} value={form.orderId} onChange={(e) => { const order = options.orders.find((item) => item.id === Number(e.target.value)); setForm({ ...form, orderId: e.target.value, clientId: order?.client?.id ? String(order.client.id) : form.clientId }); }} className={control}><option value="">Не выбран</option>{options.orders.map((item) => <option key={item.id} value={item.id}>{item.number} — {item.client?.name}</option>)}</select></Field>
+      <Field label="Название"><input required maxLength={200} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className={control}/></Field>
+      <Field label="Номер (пусто = автоматически)"><input maxLength={80} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={control}/></Field>
+      <Field label="Файл"><input required type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp" capture={form.type === DocumentType.PHOTO ? "environment" : undefined} onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block min-h-11 w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-white"/></Field>
+      <Field label="Комментарий"><input maxLength={2000} value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} className={control}/></Field>
+    </div><p className="text-xs text-slate-500">PDF, Word, Excel, PNG, JPEG или WebP до 15 МБ. Файл хранится в закрытом хранилище.</p><button disabled={saving || (!form.clientId && !form.orderId)} className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button></form></div>}
+  </section>;
 }
 
-function DocumentMobileCard({
-  document,
-  canManage,
-  saving,
-  onRemove,
-}: {
-  document: DocumentItem;
-  canManage: boolean;
-  saving: boolean;
-  onRemove: (id: number) => Promise<void>;
-}) {
-  return (
-    <article className="min-w-0 rounded-xl border border-slate-700 bg-slate-900 p-4">
-      <div className="flex min-w-0 justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="break-words font-semibold text-white">
-            {document.number}
-          </h2>
-          <p className="mt-1 text-sm text-blue-300">
-            {typeMeta[document.type].label}
-          </p>
-        </div>
-        <span className="shrink-0 text-xs text-slate-400">
-          {new Intl.DateTimeFormat("ru-RU").format(
-            new Date(document.documentDate),
-          )}
-        </span>
-      </div>
-      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-        <dt className="text-slate-500">Заказ</dt>
-        <dd className="truncate text-slate-200">{document.order.number}</dd>
-        <dt className="text-slate-500">Клиент</dt>
-        <dd className="break-words text-slate-200">
-          {document.order.client.name}
-        </dd>
-      </dl>
-      <div className="mt-4">
-        <DocumentActions
-          document={document}
-          canManage={canManage}
-          saving={saving}
-          onRemove={onRemove}
-        />
-      </div>
-    </article>
-  );
-}
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block min-w-0 text-sm text-slate-300"><span className="mb-1 block">{label}</span>{children}</label>; }
+function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU").format(new Date(value)); }
+function Status({ value }: { value: DocumentStatus }) { return <span className="inline-flex rounded-full bg-slate-800 px-2.5 py-1 text-xs text-slate-200">{documentStatusLabels[value]}</span>; }
+function Open({ item }: { item: DocumentItem }) { const linked = item.recordKind !== "DOCUMENT"; return <Link href={item.openHref} target={linked ? "_blank" : undefined} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-3 font-medium text-white">Открыть{linked && <ExternalLink size={15}/>}</Link>; }
+function MobileCard({ item }: { item: DocumentItem }) { return <article className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div className="flex min-w-0 items-start gap-3"><FileText className="mt-0.5 shrink-0 text-blue-400"/><div className="min-w-0"><p className="break-words font-semibold text-white">{documentTypeLabels[item.type]}{item.number ? ` №${item.number}` : ""}</p><p className="mt-2 break-words text-sm text-slate-300">{item.client?.name ?? "Клиент не указан"}</p><p className="text-sm text-slate-400">{item.order ? `Заказ №${item.order.number}` : "Без заказа"}</p><p className="text-sm text-slate-400">{formatDate(item.documentDate)}</p><div className="mt-2"><Status value={item.status}/></div></div></div><div className="mt-4"><Open item={item}/></div></article>; }

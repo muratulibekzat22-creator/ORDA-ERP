@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
-    const actor: AttachmentActor = { userId: Number(auth.session!.user.id), role: auth.session!.user.role as Role };
+    const actor: AttachmentActor = { userId: Number(auth.session!.user.id), role: auth.session!.user.role as Role, name: auth.session!.user.name ?? "" };
     const result = await getAttachmentContent(id, actor);
     if (!result) return NextResponse.json({ error: "Файл не найден" }, { status: 404 });
     const inlineRequested = new URL(request.url).searchParams.get("disposition") === "inline";

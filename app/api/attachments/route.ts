@@ -6,7 +6,7 @@ import { logRequestFailure } from "@/lib/observability";
 import { requirePermission } from "@/lib/server-auth";
 import { ALLOWED_ATTACHMENT_TYPES, deleteAttachment, listAttachments, MAX_ATTACHMENT_SIZE, uploadAttachment, type AttachmentActor } from "@/lib/services/attachment.service";
 
-const actor = (session: { user: { id: string; role: string } }): AttachmentActor => ({ userId: Number(session.user.id), role: session.user.role as Role });
+const actor = (session: { user: { id: string; role: string; name?: string | null } }): AttachmentActor => ({ userId: Number(session.user.id), role: session.user.role as Role, name: session.user.name ?? "" });
 const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
 
 export async function GET(request: Request) {

@@ -21,6 +21,7 @@ import {
   UserRound,
 } from "lucide-react";
 import LeadMeasurementPanel from "@/components/measurements/LeadMeasurementPanel";
+import DocumentsPage from "@/components/pages/DocumentsPage";
 
 type Interaction = {
   id: number;
@@ -496,6 +497,9 @@ export default function ClientCard({ clientId }: { clientId: number }) {
                 <Empty text="История общения пока пуста. Добавьте первый результат звонка или встречи." />
               )}
             </div>
+          </Card>
+          <Card title="Документы" icon={<File size={20} />}>
+            <DocumentsPage initialClientId={client.id} embedded />
           </Card>
           <Card title="Прикреплённые файлы" icon={<Paperclip size={20} />}>
             <input

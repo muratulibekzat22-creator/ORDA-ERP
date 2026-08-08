@@ -11,5 +11,5 @@ export async function getAuthorizedDocumentOrder(id: number) {
   if (!session?.user) return null;
   const role = session.user.role as Role;
   if (!Object.values(Role).includes(role) || !await hasPermission(role, "documents")) return null;
-  return getDocumentOrder(id, { role: role as unknown as PrismaRole, userId: Number(session.user.id) });
+  return getDocumentOrder(id, { role: role as unknown as PrismaRole, userId: Number(session.user.id), name: session.user.name ?? "" });
 }

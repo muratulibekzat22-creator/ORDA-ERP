@@ -4,6 +4,7 @@ import { Role } from "@prisma/client";
 
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { canUseEntities } from "@/lib/services/document.service";
 
 export const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 export const ALLOWED_ATTACHMENT_TYPES = new Set([
@@ -11,7 +12,7 @@ export const ALLOWED_ATTACHMENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
-export type AttachmentActor = { role: Role; userId: number };
+export type AttachmentActor = { role: Role; userId: number; name: string };
 const publicSelect = { id: true, orderId: true, documentId: true, fileName: true, contentType: true, size: true, createdAt: true, uploadedBy: { select: { id: true, name: true } } } as const;
 
 async function actorPartnerId(actor: AttachmentActor) {
@@ -20,8 +21,11 @@ async function actorPartnerId(actor: AttachmentActor) {
 }
 
 export async function canReadOrderAttachments(orderId: number, actor: AttachmentActor) {
-  const partnerId = await actorPartnerId(actor);
-  return Boolean(await prisma.order.findFirst({ where: { id: orderId, ...(partnerId === undefined ? {} : { partnerId }) }, select: { id: true } }));
+  if (actor.role === Role.PARTNER) {
+    const partnerId = await actorPartnerId(actor);
+    return Boolean(await prisma.order.findFirst({ where: { id: orderId, partnerId }, select: { id: true } }));
+  }
+  return Boolean(await canUseEntities(actor, undefined, orderId));
 }
 
 export async function listAttachments(orderId: number, actor: AttachmentActor) {
@@ -66,8 +70,7 @@ export async function uploadAttachment(input: { orderId: number; documentId?: nu
     void _;
     return { attachment, created: false };
   }
-  const order = await prisma.order.findUnique({ where: { id: input.orderId }, select: { id: true } });
-  if (!order) return null;
+  if (!await canUseEntities(input.actor, undefined, input.orderId)) return null;
   if (input.documentId && !await prisma.document.findFirst({ where: { id: input.documentId, orderId: input.orderId }, select: { id: true } })) throw new Error("INVALID_DOCUMENT");
   const pathname = `orders/${input.orderId}/${randomUUID()}-${fileName}`;
   const blob = await put(pathname, bytes, { access: "private", contentType: input.file.type, addRandomSuffix: false, allowOverwrite: false, maximumSizeInBytes: MAX_ATTACHMENT_SIZE });
@@ -89,8 +92,9 @@ export async function getAttachmentContent(id: number, actor: AttachmentActor) {
 }
 
 export async function deleteAttachment(id: number, actor: AttachmentActor) {
-  const attachment = await prisma.attachment.findUnique({ where: { id }, select: { id: true, uploadedById: true, pathname: true } });
+  const attachment = await prisma.attachment.findUnique({ where: { id }, select: { id: true, orderId: true, uploadedById: true, pathname: true } });
   if (!attachment) return null;
+  if (!await canReadOrderAttachments(attachment.orderId, actor)) return null;
   const allowed = actor.role === Role.DIRECTOR || actor.role === Role.MANAGER || (actor.role !== Role.PARTNER && attachment.uploadedById === actor.userId);
   if (!allowed) throw new Error("FORBIDDEN");
   await del(attachment.pathname);

@@ -20,6 +20,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       }
     }
     if ("purchasePrice" in body) { const value = Number(body.purchasePrice); if (!Number.isFinite(value) || value < 0) return NextResponse.json({ error: "Некорректная цена" }, { status: 400 }); data.purchasePrice = String(value); }
+    if ("warrantyMonths" in body) { const value = Number(body.warrantyMonths); if (!Number.isInteger(value) || value <= 0 || value > 120) return NextResponse.json({ error: "Гарантия должна быть от 1 до 120 месяцев" }, { status: 400 }); data.warrantyMonths = value; }
     if ("active" in body) { if (typeof body.active !== "boolean") return NextResponse.json({ error: "Некорректный статус" }, { status: 400 }); data.active = body.active; }
     if (!Object.keys(data).length) return NextResponse.json({ error: "Нет полей для обновления" }, { status: 400 });
     const material = await prisma.material.update({ where: { id }, data });

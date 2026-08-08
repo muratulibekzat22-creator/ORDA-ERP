@@ -7,11 +7,11 @@ const all: Permission[] = [...permissionKeys];
 export const defaultPermissions: Record<Role, Permission[]> = {
   DIRECTOR: all,
   MANAGER: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse", "partners"],
-  ACCOUNTANT: ["finance", "partners", "reports", "warehouse", "payroll"],
-  MEASURER: ["measurements", "calendar"],
+  ACCOUNTANT: ["documents", "finance", "partners", "reports", "warehouse", "payroll"],
+  MEASURER: ["measurements", "calendar", "documents"],
   DESIGNER: ["design", "orders"],
-  PRODUCTION: ["production", "calendar", "warehouse"],
-  INSTALLER: ["production", "installation", "calendar", "warehouse"],
+  PRODUCTION: ["production", "calendar", "documents", "warehouse"],
+  INSTALLER: ["production", "installation", "calendar", "documents", "warehouse"],
   PARTNER: ["orders", "finance", "partners", "documents"],
 };
 
