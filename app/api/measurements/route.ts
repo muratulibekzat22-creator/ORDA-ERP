@@ -5,6 +5,8 @@ import { measurementActor, measurementError } from "@/lib/measurement-api";
 import { requirePermission } from "@/lib/server-auth";
 import { prisma } from "@/lib/prisma";
 import { listMeasurements, measurementWorkspace, scheduleMeasurement } from "@/lib/services/measurement.service";
+import { selfScheduleMeasurement } from "@/lib/services/measurement.service";
+import { normalizePhone } from "@/lib/leads/domain";
 
 const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
 
@@ -31,12 +33,20 @@ export async function POST(request: Request) {
   if (auth.response) return auth.response;
   try {
     const body = await request.json() as Record<string, unknown>;
+    const actor = measurementActor(auth.session!);
+    if (actor.role === Role.MEASURER && !body.clientId && !body.orderId) {
+      const phone = normalizePhone(typeof body.phone === "string" ? body.phone : "");
+      const visitDate = parseBusinessDateTime(body.visitDate);
+      if (!phone || !visitDate) return NextResponse.json({ error: "Укажите корректные телефон, дату и время" }, { status: 400 });
+      const result = await selfScheduleMeasurement(actor, { clientName: typeof body.clientName === "string" ? body.clientName : undefined, phone, city: typeof body.city === "string" ? body.city : "", visitDate, address: typeof body.address === "string" ? body.address : "", mapLink: typeof body.mapLink === "string" ? body.mapLink : undefined, comment: typeof body.comment === "string" ? body.comment : undefined });
+      return NextResponse.json(result, { status: 201 });
+    }
     const orderId = positiveId(body.orderId);
     const order = !body.clientId && orderId ? await prisma.order.findUnique({ where: { id: orderId }, select: { clientId: true } }) : null;
     const clientId = positiveId(body.clientId) ?? order?.clientId ?? null, measurerUserId = positiveId(body.measurerUserId);
     const visitDate = parseBusinessDateTime(body.visitDate) ?? (typeof body.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.visitDate) ? parseBusinessDateTime(`${body.visitDate}T09:00`) : null);
     if (!clientId || !measurerUserId || !visitDate) return NextResponse.json({ error: "Укажите заявку, замерщика, дату и время" }, { status: 400 });
-    const result = await scheduleMeasurement(measurementActor(auth.session!), {
+    const result = await scheduleMeasurement(actor, {
       clientId,
       orderId: orderId ?? undefined,
       measurerUserId,

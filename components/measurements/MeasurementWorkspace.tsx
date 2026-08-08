@@ -12,6 +12,7 @@ import {
   MessageCircle,
   Phone,
   Play,
+  Plus,
   Save,
   Upload,
 } from "lucide-react";
@@ -239,6 +240,8 @@ export default function MeasurementWorkspace() {
     [notice, setNotice] = useState("");
   const [inviteAt, setInviteAt] = useState(""),
     [inviteComment, setInviteComment] = useState("");
+  const [creating, setCreating] = useState(false), [createOpen, setCreateOpen] = useState(false),
+    [createForm, setCreateForm] = useState({ clientName: "", phone: "", city: "", visitDate: "", address: "", mapLink: "", comment: "" });
   const photoRef = useRef<HTMLInputElement>(null),
     [photoType, setPhotoType] = useState("SHEET");
   const measurer = session?.user.role === "MEASURER";
@@ -352,6 +355,13 @@ export default function MeasurementWorkspace() {
     setPhotoType(type);
     window.setTimeout(() => photoRef.current?.click(), 0);
   }
+  async function createOwnMeasurement(event: React.FormEvent) {
+    event.preventDefault(); setCreating(true); setError("");
+    const response = await fetch("/api/measurements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(createForm) }), body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось создать замер");
+    else { setNotice(body.existingClient ? "Клиент уже существует — новый замер привязан к нему" : "Новый клиент и замер созданы"); setCreateOpen(false); setCreateForm({ clientName: "", phone: "", city: "", visitDate: "", address: "", mapLink: "", comment: "" }); await load(); }
+    setCreating(false);
+  }
   return (
     <main className="space-y-5 p-4 pb-24 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -363,16 +373,19 @@ export default function MeasurementWorkspace() {
             Расписание, фактические размеры и передача результата менеджеру
           </p>
         </div>
-        {measurer && (
-          <Link
+        {measurer && (<div className="flex flex-wrap gap-2"><button type="button" onClick={() => setCreateOpen((value) => !value)} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold"><Plus size={17}/>Новый замер</button><Link
             href="/payroll"
             className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-800 px-4 text-sm text-white"
           >
             <Banknote size={17} />
             Моя зарплата
-          </Link>
-        )}
+          </Link></div>)}
       </header>
+      {measurer && createOpen && <form onSubmit={createOwnMeasurement} className="grid gap-3 rounded-2xl border border-blue-900 bg-[#101827] p-4 sm:grid-cols-2">
+        <h2 className="text-lg font-semibold text-white sm:col-span-2">Новый замер</h2>
+        {([ ["clientName", "Имя клиента (необязательно)", "text"], ["phone", "Телефон / WhatsApp", "tel"], ["city", "Город", "text"], ["visitDate", "Дата и время", "datetime-local"], ["address", "Адрес", "text"], ["mapLink", "Ссылка на карту (необязательно)", "url"], ["comment", "Комментарий", "text"] ] as const).map(([key,label,type]) => <Field key={key} label={label}><input required={["phone","city","visitDate","address"].includes(key)} type={type} className={input} value={createForm[key]} onChange={(event) => setCreateForm({...createForm,[key]:event.target.value})}/></Field>)}
+        <button disabled={creating} className="min-h-12 rounded-xl bg-emerald-700 px-4 font-semibold sm:col-span-2">{creating ? "Создание…" : "Создать замер"}</button>
+      </form>}
       {error && (
         <p
           role="alert"

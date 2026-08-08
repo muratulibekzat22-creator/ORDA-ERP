@@ -9,6 +9,9 @@ import {
   PayrollDirection,
   Prisma,
   Role,
+  LeadNextActionType,
+  LeadSource,
+  LeadStage,
 } from "@prisma/client";
 import { createRequestHash } from "@/lib/idempotency";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
@@ -53,6 +56,50 @@ export type ScheduleMeasurementInput = {
   mapLink?: string;
   comment?: string;
 };
+
+export type SelfScheduleMeasurementInput = {
+  clientName?: string;
+  phone: string;
+  city: string;
+  visitDate: Date;
+  address: string;
+  mapLink?: string;
+  comment?: string;
+};
+
+export async function selfScheduleMeasurement(actor: MeasurementActor, input: SelfScheduleMeasurementInput) {
+  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
+  const phone = input.phone.trim(), city = trim(input.city, 200), address = trim(input.address, 1000);
+  if (!phone || !city || !address || Number.isNaN(input.visitDate.getTime())) throw new MeasurementError("INVALID_INPUT");
+  return prisma.$transaction(async (tx) => {
+    const measurer = await tx.user.findUnique({ where: { id: actor.userId }, select: { id: true, name: true, role: true, active: true } });
+    if (!measurer?.active || measurer.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
+    let client = await tx.client.findFirst({ where: { OR: [{ phone }, { whatsapp: phone }] } });
+    const existingClient = Boolean(client);
+    if (!client) client = await tx.client.create({ data: {
+      name: trim(input.clientName, 200) ?? "", phone, whatsapp: phone, city, address,
+      manager: "Менеджер не назначен", amount: "0", status: LeadStage.NEW, stage: LeadStage.NEW,
+      source: "MEASURER_SELF_CREATED", sourceCode: LeadSource.OTHER, comment: trim(input.comment, 2000) ?? "",
+    } });
+    const mapLink = trim(input.mapLink, 2000), note = trim(input.comment, 2000);
+    const task = await tx.calendarTask.create({ data: {
+      title: `Замер: ${client.name || client.phone}`, description: [city, address, mapLink, note].filter(Boolean).join(" · "),
+      type: CalendarTaskType.MEASUREMENT, dueAt: input.visitDate, priority: CalendarTaskPriority.IMPORTANT,
+      assigneeId: measurer.id, creatorId: measurer.id, clientId: client.id,
+    } });
+    await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CREATED_BY_MEASURER", actorId: measurer.id, after: { dueAt: input.visitDate, assigneeId: measurer.id, clientId: client.id } } });
+    const measurement = await tx.measurement.create({ data: {
+      clientId: client.id, calendarTaskId: task.id, measurer: measurer.name, measurerUserId: measurer.id,
+      visitDate: input.visitDate, city, address, mapLink, managerComment: note,
+    }, include: measurementInclude });
+    await tx.measurementAudit.create({ data: { measurementId: measurement.id, action: "SELF_CREATED", actorId: measurer.id, after: { clientId: client.id, existingClient, visitDate: input.visitDate } } });
+    if (!client.managerUserId) await tx.leadNextAction.create({ data: {
+      clientId: client.id, nextActionType: LeadNextActionType.OTHER, nextActionAt: new Date(),
+      nextActionComment: "Новый замер от замерщика — назначить менеджера", createdByUserId: measurer.id,
+    } });
+    return { measurement, existingClient };
+  });
+}
 
 const measurementInclude = {
   measurerUser: { select: { id: true, name: true } },
@@ -936,10 +983,9 @@ export async function handMeasurementToManager(
       where: { id: current.clientId },
       select: { id: true, name: true, managerUserId: true },
     });
-    if (!client.managerUserId) throw new MeasurementError("MANAGER_REQUIRED");
     const now = new Date(),
       dueAt = new Date(now.getTime() + 3_600_000);
-    const task = await tx.calendarTask.create({
+    const task = client.managerUserId ? await tx.calendarTask.create({
       data: {
         title: `Обработать замер: ${client.name}`,
         description: `Замер №${id} передан менеджеру`,
@@ -951,8 +997,8 @@ export async function handMeasurementToManager(
         clientId: client.id,
         orderId: current.orderId,
       },
-    });
-    await tx.calendarTaskAudit.create({
+    }) : null;
+    if (task) await tx.calendarTaskAudit.create({
       data: {
         taskId: task.id,
         action: "CREATED_FROM_MEASUREMENT",
@@ -960,7 +1006,7 @@ export async function handMeasurementToManager(
         after: { measurementId: id },
       },
     });
-    await tx.leadNextAction.updateMany({
+    if (client.managerUserId) await tx.leadNextAction.updateMany({
       where: { clientId: client.id, completedAt: null },
       data: {
         completedAt: now,
@@ -968,12 +1014,13 @@ export async function handMeasurementToManager(
         resultComment: "Замер передан менеджеру",
       },
     });
-    await tx.leadNextAction.create({
+    const existingAttention = client.managerUserId ? null : await tx.leadNextAction.findFirst({ where: { clientId: client.id, completedAt: null, nextActionType: "OTHER", nextActionComment: "Новый замер от замерщика — назначить менеджера" } });
+    if (!existingAttention) await tx.leadNextAction.create({
       data: {
         clientId: client.id,
-        nextActionType: "FOLLOW_UP",
+        nextActionType: client.managerUserId ? "FOLLOW_UP" : "OTHER",
         nextActionAt: dueAt,
-        nextActionComment: `Обработать замер №${id}`,
+        nextActionComment: client.managerUserId ? `Обработать замер №${id}` : "Новый замер от замерщика — назначить менеджера",
         createdByUserId: actor.userId,
       },
     });
@@ -991,7 +1038,7 @@ export async function handMeasurementToManager(
         measurementId: id,
         action: "HANDED_TO_MANAGER",
         actorId: actor.userId,
-        after: { managerUserId: client.managerUserId, taskId: task.id },
+        after: { managerUserId: client.managerUserId, taskId: task?.id ?? null, attentionRequired: !client.managerUserId },
       },
     });
     return tx.measurement.update({
