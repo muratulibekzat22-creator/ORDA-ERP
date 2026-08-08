@@ -1,108 +1,162 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useSession } from "next-auth/react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
-type Row = {
-  id: number;
-  number: string;
-  client: string;
-  partner: string;
-  amount: number;
-  prepayment: number;
-  balance: number;
-  partnerPrice: number;
-  partnerPaid: number;
-  partnerBalance: number;
-  companyProfit: number;
-};
 type Operation = {
   id: number;
   type: string;
   amount: number;
   method: string;
   comment: string | null;
+  author: string | null;
   operationDate: string;
-  order: { number: string; client: { name: string } } | null;
+  order: { id: number; number: string; client: { name: string } } | null;
   partner: { name: string } | null;
 };
 type Data = {
-  rows: Row[];
+  rows: { id: number; number: string; client: string }[];
   partners: { id: number; name: string }[];
   operations: Operation[];
   operationTotals: { income: number; expense: number; net: number };
-  totals: {
-    turnover: number;
-    received: number;
-    clientBalance: number;
-    partnerPaid: number;
-    partnerBalance: number;
-    profit: number;
-  };
 };
+
 const empty: Data = {
   rows: [],
   partners: [],
   operations: [],
   operationTotals: { income: 0, expense: 0, net: 0 },
-  totals: {
-    turnover: 0,
-    received: 0,
-    clientBalance: 0,
-    partnerPaid: 0,
-    partnerBalance: 0,
-    profit: 0,
-  },
 };
-const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
+const operationLabels: Record<string, string> = {
+  CLIENT_PAYMENT: "Оплата клиента",
+  REFUND: "Возврат клиенту",
+  EXPENSE: "Расход",
+  OTHER_INCOME: "Прочее поступление",
+  PARTNER_PAYOUT: "Выплата цеху",
+  ADJUSTMENT: "Корректировка",
+};
+const methodLabels: Record<string, string> = {
+  cash: "Наличные",
+  kaspi: "Kaspi",
+  bank_transfer: "Банковский перевод",
+  card: "Карта",
+  other: "Другое",
+};
+const outgoingTypes = new Set(["REFUND", "EXPENSE", "PARTNER_PAYOUT"]);
+const money = (value: number) =>
+  new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency: "KZT",
+    maximumFractionDigits: 2,
+  }).format(value);
+const localDateTime = (date: Date) => {
+  const offset = date.getTimezoneOffset();
+  const sign = offset <= 0 ? "+" : "-";
+  const absolute = Math.abs(offset);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+};
+const localDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
 
 export default function FinancePage() {
+  const { data: session } = useSession();
   const [data, setData] = useState<Data>(empty);
-  const [period, setPeriod] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("");
+  const [period, setPeriod] = useState("month");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [direction, setDirection] = useState("all");
+  const [category, setCategory] = useState("");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [operation, setOperation] = useState({
-    type: "CLIENT_PAYMENT",
+    type: "OTHER_INCOME",
     amount: "",
     method: "cash",
     orderId: "",
     partnerId: "",
     comment: "",
-    operationDate: new Date().toISOString().slice(0, 10),
+    operationDate: localDate(),
     adjustmentDirection: "INCOME",
   });
   const { getKey, reset } = useIdempotencyKey();
+  const canCreate = Boolean(session && session.user.role !== "PARTNER");
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedSearch(search.trim().toLocaleLowerCase("ru")),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
   const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const params = new URLSearchParams({ period });
-      if (typeFilter) params.set("type", typeFilter);
-      const response = await fetch(`/api/finance?${params}`);
+      const now = new Date();
+      const from = new Date(now);
+      const to = new Date(now);
+      from.setHours(0, 0, 0, 0);
+      to.setHours(23, 59, 59, 999);
+      if (period === "week") from.setDate(from.getDate() - 6);
+      if (period === "month") from.setDate(1);
+      if (period === "custom") {
+        if (!customFrom || !customTo) {
+          setLoading(false);
+          return;
+        }
+        const [fy, fm, fd] = customFrom.split("-").map(Number);
+        const [ty, tm, td] = customTo.split("-").map(Number);
+        from.setFullYear(fy, fm - 1, fd);
+        from.setHours(0, 0, 0, 0);
+        to.setFullYear(ty, tm - 1, td);
+        to.setHours(23, 59, 59, 999);
+      }
+      const params = new URLSearchParams({
+        from: localDateTime(from),
+        to: localDateTime(to),
+      });
+      const response = await fetch(`/api/finance?${params}`, {
+        cache: "no-store",
+      });
       const result = (await response.json()) as Data & { error?: string };
       if (!response.ok)
         throw new Error(result.error ?? "Не удалось загрузить финансы");
       setData(result);
-      setError("");
-    } catch (value) {
+    } catch (cause) {
       setError(
-        value instanceof Error ? value.message : "Не удалось загрузить финансы",
+        cause instanceof Error ? cause.message : "Не удалось загрузить финансы",
       );
     } finally {
       setLoading(false);
     }
-  }, [period, typeFilter]);
-  // Fetching is the effect's sole external synchronization; the state updates occur after it resolves.
+  }, [customFrom, customTo, period]);
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       const response = await fetch("/api/finance", {
         method: "POST",
@@ -122,53 +176,116 @@ export default function FinancePage() {
       reset();
       setOperation((item) => ({ ...item, amount: "", comment: "" }));
       setOpen(false);
+      setSuccess("Операция сохранена, показатели обновлены.");
       await load();
-    } catch (value) {
+    } catch (cause) {
       setError(
-        value instanceof Error
-          ? value.message
+        cause instanceof Error
+          ? cause.message
           : "Не удалось сохранить операцию",
       );
     } finally {
       setSaving(false);
     }
   }
+
+  const visible = useMemo(
+    () =>
+      data.operations.filter((item) => {
+        const outgoing =
+          outgoingTypes.has(item.type) ||
+          (item.type === "ADJUSTMENT" && item.comment?.includes("[EXPENSE]"));
+        if (direction === "income" && outgoing) return false;
+        if (direction === "expense" && !outgoing) return false;
+        if (category && item.type !== category) return false;
+        if (!debouncedSearch) return true;
+        return [
+          operationLabels[item.type],
+          item.comment,
+          item.order?.number,
+          item.order?.client.name,
+          item.partner?.name,
+          item.author,
+        ].some((value) =>
+          value?.toLocaleLowerCase("ru").includes(debouncedSearch),
+        );
+      }),
+    [category, data.operations, debouncedSearch, direction],
+  );
+
   const set = (key: keyof typeof operation, value: string) =>
     setOperation((item) => ({ ...item, [key]: value }));
   return (
-    <section className="space-y-6 p-5 md:p-8">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+    <section className="space-y-6 p-4 sm:p-6 md:p-8">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white">Финансы</h1>
-          <p className="mt-1 text-slate-400">
-            Операции, расчёты и остатки по заказам
+          <h1 className="text-2xl font-bold text-white sm:text-3xl">Финансы</h1>
+          <p className="mt-1 text-sm text-slate-400 sm:text-base">
+            Движение денег за выбранный период
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          className="rounded-xl bg-blue-600 px-5 py-3 font-medium text-white"
-        >
-          {open ? "Закрыть" : "Добавить операцию"}
-        </button>
+        {canCreate && (
+          <button
+            type="button"
+            onClick={() => {
+              setOpen((value) => !value);
+              setSuccess("");
+            }}
+            className="min-h-11 w-full rounded-xl bg-blue-600 px-5 py-3 font-medium text-white hover:bg-blue-500 sm:w-auto"
+          >
+            {open ? "Закрыть" : "Добавить операцию"}
+          </button>
+        )}
       </header>
+      <div className="flex flex-wrap gap-2" aria-label="Период">
+        {[
+          ["today", "Сегодня"],
+          ["week", "Неделя"],
+          ["month", "Месяц"],
+          ["custom", "Произвольный период"],
+        ].map(([value, label]) => (
+          <button
+            type="button"
+            key={value}
+            onClick={() => setPeriod(value)}
+            className={`min-h-10 rounded-xl px-4 text-sm ${period === value ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {period === "custom" && (
+        <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2">
+          <Field label="С даты">
+            <input
+              type="date"
+              value={customFrom}
+              max={customTo || undefined}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="input"
+            />
+          </Field>
+          <Field label="По дату">
+            <input
+              type="date"
+              value={customTo}
+              min={customFrom || undefined}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="input"
+            />
+          </Field>
+        </div>
+      )}
       {open && (
         <form
           onSubmit={submit}
-          className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-5 md:grid-cols-2 xl:grid-cols-4"
+          className="grid gap-4 rounded-2xl border border-blue-800/60 bg-[#101827] p-4 sm:p-5 md:grid-cols-2 xl:grid-cols-4"
         >
-          <Field label="Тип">
+          <Field label="Категория операции">
             <Select
               value={operation.type}
               onChange={(v) => set("type", v)}
-              options={[
-                ["CLIENT_PAYMENT", "Оплата клиента"],
-                ["REFUND", "Возврат"],
-                ["EXPENSE", "Расход"],
-                ["OTHER_INCOME", "Прочий приход"],
-                ["PARTNER_PAYOUT", "Выплата цеху"],
-                ["ADJUSTMENT", "Корректировка"],
-              ]}
+              options={Object.entries(operationLabels)}
             />
           </Field>
           <Field label="Сумма">
@@ -186,13 +303,7 @@ export default function FinancePage() {
             <Select
               value={operation.method}
               onChange={(v) => set("method", v)}
-              options={[
-                ["cash", "Наличные"],
-                ["kaspi", "Kaspi"],
-                ["bank_transfer", "Банковский перевод"],
-                ["card", "Карта"],
-                ["other", "Другое"],
-              ]}
+              options={Object.entries(methodLabels)}
             />
           </Field>
           <Field label="Дата">
@@ -217,7 +328,7 @@ export default function FinancePage() {
               ]}
             />
           </Field>
-          <Field label="Цех">
+          <Field label="Контрагент">
             <Select
               value={operation.partnerId}
               onChange={(v) => set("partnerId", v)}
@@ -236,7 +347,7 @@ export default function FinancePage() {
                 value={operation.adjustmentDirection}
                 onChange={(v) => set("adjustmentDirection", v)}
                 options={[
-                  ["INCOME", "Приход"],
+                  ["INCOME", "Поступление"],
                   ["EXPENSE", "Расход"],
                 ]}
               />
@@ -250,121 +361,198 @@ export default function FinancePage() {
               className="input"
             />
           </Field>
-          <div className="flex items-end">
-            <button
-              disabled={saving}
-              className="w-full rounded-xl bg-green-600 p-3 font-medium text-white disabled:opacity-50"
-            >
-              {saving ? "Сохранение…" : "Сохранить"}
-            </button>
-          </div>
+          <button
+            disabled={saving}
+            className="min-h-11 self-end rounded-xl bg-green-600 px-5 py-3 font-medium text-white disabled:opacity-50"
+          >
+            {saving ? "Сохранение…" : "Сохранить"}
+          </button>
         </form>
       )}
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card
-          title="Приход"
+      {success && (
+        <p
+          role="status"
+          className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-4 text-sm text-emerald-300"
+        >
+          {success}
+        </p>
+      )}
+      {error && (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-xl border border-red-800 bg-red-950/40 p-4 text-red-300 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="rounded-lg bg-red-900/70 px-4 py-2 text-sm text-white"
+          >
+            Повторить
+          </button>
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Metric
+          title="Поступления"
           value={data.operationTotals.income}
-          color="text-green-400"
+          color="text-emerald-400"
         />
-        <Card
-          title="Расход"
+        <Metric
+          title="Расходы"
           value={data.operationTotals.expense}
-          color="text-red-400"
+          color="text-rose-400"
         />
-        <Card
-          title="Чистое движение"
+        <Metric
+          title="Чистый денежный поток"
           value={data.operationTotals.net}
           color="text-blue-400"
         />
       </div>
-      <div className="flex flex-wrap gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4">
-        <Field label="Период">
+      <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Field label="Движение">
           <Select
-            value={period}
-            onChange={setPeriod}
+            value={direction}
+            onChange={setDirection}
             options={[
-              ["all", "За всё время"],
-              ["month", "Последний месяц"],
-              ["quarter", "Последний квартал"],
-              ["year", "Последний год"],
+              ["all", "Все"],
+              ["income", "Поступления"],
+              ["expense", "Расходы"],
             ]}
           />
         </Field>
-        <Field label="Тип операции">
+        <Field label="Категория">
           <Select
-            value={typeFilter}
-            onChange={setTypeFilter}
+            value={category}
+            onChange={setCategory}
             options={[
-              ["", "Все операции"],
-              ["CLIENT_PAYMENT", "Оплаты клиентов"],
-              ["REFUND", "Возвраты"],
-              ["EXPENSE", "Расходы"],
-              ["OTHER_INCOME", "Прочий приход"],
-              ["PARTNER_PAYOUT", "Выплаты цеху"],
-              ["ADJUSTMENT", "Корректировки"],
+              ["", "Все категории"],
+              ...Object.entries(operationLabels),
             ]}
+          />
+        </Field>
+        <Field label="Поиск">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Заказ, контрагент, комментарий"
+            className="input"
           />
         </Field>
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
-      {loading && <p className="text-sm text-slate-400">Загрузка…</p>}
-      <Table title="Операции">
-        <thead>
-          <tr>
-            <th>Дата</th>
-            <th>Тип</th>
-            <th>Заказ</th>
-            <th>Цех</th>
-            <th>Комментарий</th>
-            <th>Сумма</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.operations.map((item) => (
-            <tr key={item.id}>
-              <td>
-                {new Date(item.operationDate).toLocaleDateString("ru-RU")}
-              </td>
-              <td>{item.type}</td>
-              <td>{item.order?.number ?? "—"}</td>
-              <td>{item.partner?.name ?? "—"}</td>
-              <td>{item.comment ?? "—"}</td>
-              <td>{money(item.amount)}</td>
-            </tr>
-          ))}
-          {!data.operations.length && <Empty colSpan={6} />}
-        </tbody>
-      </Table>
-      <Table title="Заказы">
-        <thead>
-          <tr>
-            <th>Заказ</th>
-            <th>Клиент</th>
-            <th>Сумма</th>
-            <th>Оплачено</th>
-            <th>Остаток</th>
-            <th>Цех</th>
-            <th>Выплачено</th>
-            <th>Прибыль</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.rows.map((row) => (
-            <tr key={row.id}>
-              <td>{row.number}</td>
-              <td>{row.client}</td>
-              <td>{money(row.amount)}</td>
-              <td>{money(row.prepayment)}</td>
-              <td>{money(row.balance)}</td>
-              <td>{row.partner}</td>
-              <td>{money(row.partnerPaid)}</td>
-              <td>{money(row.companyProfit)}</td>
-            </tr>
-          ))}
-          {!data.rows.length && <Empty colSpan={8} />}
-        </tbody>
-      </Table>
+      {loading ? (
+        <Skeleton />
+      ) : visible.length === 0 ? (
+        <Empty />
+      ) : (
+        <>
+          <div className="grid gap-3 md:hidden">
+            {visible.map((item) => (
+              <OperationCard key={item.id} item={item} />
+            ))}
+          </div>
+          <div
+            data-scroll-region
+            className="hidden overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827] md:block"
+          >
+            <table className="w-full min-w-[880px] text-left text-sm">
+              <thead className="bg-slate-900 text-slate-400">
+                <tr>
+                  {[
+                    "Дата",
+                    "Операция",
+                    "Категория",
+                    "Связь",
+                    "Сумма",
+                    "Автор",
+                  ].map((title) => (
+                    <th key={title} className="p-4 font-medium">
+                      {title}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((item) => (
+                  <OperationRow key={item.id} item={item} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </section>
+  );
+}
+
+function isOutgoing(item: Operation) {
+  return (
+    outgoingTypes.has(item.type) ||
+    (item.type === "ADJUSTMENT" && item.comment?.includes("[EXPENSE]"))
+  );
+}
+function OperationLink({ item }: { item: Operation }) {
+  return item.order ? (
+    <Link
+      href={`/orders/${item.order.id}`}
+      className="text-blue-400 hover:text-blue-300"
+    >
+      Заказ №{item.order.number}
+    </Link>
+  ) : (
+    <span>{item.partner?.name ?? "Без связи"}</span>
+  );
+}
+function OperationRow({ item }: { item: Operation }) {
+  const outgoing = isOutgoing(item);
+  return (
+    <tr className="border-t border-slate-800 text-slate-300">
+      <td className="p-4">
+        {new Date(item.operationDate).toLocaleDateString("ru-RU")}
+      </td>
+      <td className="p-4">{outgoing ? "Расход" : "Поступление"}</td>
+      <td className="p-4">{operationLabels[item.type] ?? item.type}</td>
+      <td className="p-4">
+        <OperationLink item={item} />
+      </td>
+      <td
+        className={`p-4 font-semibold ${outgoing ? "text-rose-400" : "text-emerald-400"}`}
+      >
+        {outgoing ? "−" : "+"}
+        {money(item.amount)}
+      </td>
+      <td className="p-4">{item.author ?? "Система"}</td>
+    </tr>
+  );
+}
+function OperationCard({ item }: { item: Operation }) {
+  const outgoing = isOutgoing(item);
+  return (
+    <article className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-white">
+            {operationLabels[item.type] ?? item.type}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            {new Date(item.operationDate).toLocaleDateString("ru-RU")} ·{" "}
+            {item.author ?? "Система"}
+          </p>
+        </div>
+        <p
+          className={`shrink-0 font-bold ${outgoing ? "text-rose-400" : "text-emerald-400"}`}
+        >
+          {outgoing ? "−" : "+"}
+          {money(item.amount)}
+        </p>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-300">
+        <OperationLink item={item} />
+        {item.comment && (
+          <span>{item.comment.replace(/^\[(INCOME|EXPENSE)\]\s*/, "")}</span>
+        )}
+      </div>
+    </article>
   );
 }
 function Field({
@@ -375,7 +563,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="grid gap-1 text-sm text-slate-300">
+    <label className="grid gap-1.5 text-sm text-slate-300">
       <span>{label}</span>
       {children}
     </label>
@@ -396,15 +584,15 @@ function Select({
       onChange={(e) => onChange(e.target.value)}
       className="input"
     >
-      {options.map(([value, label]) => (
-        <option key={value} value={value}>
+      {options.map(([option, label]) => (
+        <option key={option} value={option}>
           {label}
         </option>
       ))}
     </select>
   );
 }
-function Card({
+function Metric({
   title,
   value,
   color,
@@ -415,33 +603,34 @@ function Card({
 }) {
   return (
     <div className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
-      <p className="text-slate-400">{title}</p>
-      <p className={`mt-2 text-2xl font-bold ${color}`}>{money(value)}</p>
+      <p className="text-sm text-slate-400">{title}</p>
+      <p className={`mt-2 break-words text-2xl font-bold ${color}`}>
+        {money(value)}
+      </p>
     </div>
   );
 }
-function Table({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Skeleton() {
   return (
-    <div className="overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827]">
-      <h2 className="p-5 text-lg font-semibold text-white">{title}</h2>
-      <table className="min-w-[800px] w-full text-left text-sm">
-        <tbody>{children}</tbody>
-      </table>
+    <div className="space-y-3" aria-label="Загрузка операций">
+      {[1, 2, 3].map((item) => (
+        <div
+          key={item}
+          className="h-20 animate-pulse rounded-2xl bg-slate-800/70"
+        />
+      ))}
     </div>
   );
 }
-function Empty({ colSpan }: { colSpan: number }) {
+function Empty() {
   return (
-    <tr>
-      <td colSpan={colSpan} className="p-6 text-center text-slate-400">
-        Нет записей.
-      </td>
-    </tr>
+    <div className="rounded-2xl border border-dashed border-slate-700 bg-[#101827] p-8 text-center">
+      <p className="font-medium text-white">
+        За выбранный период операций нет.
+      </p>
+      <p className="mt-1 text-sm text-slate-400">
+        Измените период или фильтры.
+      </p>
+    </div>
   );
 }
