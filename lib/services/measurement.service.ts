@@ -361,7 +361,7 @@ export async function measurementWorkspace(actor: MeasurementActor) {
   const upcoming = await prisma.measurement.count({
     where: {
       AND: [scope],
-      visitDate: { gte: today.end },
+      visitDate: { gt: now },
       status: { in: active },
     },
   });
