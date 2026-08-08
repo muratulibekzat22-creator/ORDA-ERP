@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarPlus, Clipboard, FileImage, MapPin } from "lucide-react";
+import {
+  CalendarPlus,
+  Clipboard,
+  FileImage,
+  MapPin,
+  MessageCircle,
+  Phone,
+} from "lucide-react";
 
 type Measurement = {
   id: number;
@@ -18,6 +25,16 @@ type Measurement = {
   winderCount: number;
   platformsCount: number;
   railingLength?: number | null;
+  individualSteps?: Array<{
+    length: number;
+    width: number;
+    height?: number;
+  }> | null;
+  platforms?: Array<{ length: number; width: number }> | null;
+  winders?: Array<{ length?: number; width?: number; comment?: string }> | null;
+  objectNotes?: string | null;
+  comment?: string | null;
+  completedAt?: string | null;
   measurerUser?: { id: number; name: string } | null;
   attachments: Array<{ id: number; type: string; fileName: string }>;
 };
@@ -37,10 +54,14 @@ export default function LeadMeasurementPanel({
   clientId,
   initialCity,
   initialAddress,
+  clientPhone,
+  clientWhatsapp,
 }: {
   clientId: number;
   initialCity: string;
   initialAddress: string;
+  clientPhone: string;
+  clientWhatsapp: string;
 }) {
   const [items, setItems] = useState<Measurement[]>([]),
     [measurers, setMeasurers] = useState<Measurer[]>([]),
@@ -313,6 +334,56 @@ export default function LeadMeasurementPanel({
                     <b className="text-white">{row.railingLength ?? 0} м</b>
                   </span>
                   <span className="sm:col-span-3">
+                    Дата выполнения:{" "}
+                    <b className="text-white">
+                      {row.completedAt
+                        ? new Intl.DateTimeFormat("ru-RU", {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                            timeZone: "Asia/Almaty",
+                          }).format(new Date(row.completedAt))
+                        : "—"}
+                    </b>
+                  </span>
+                  {row.individualSteps?.length ? (
+                    <span className="sm:col-span-3">
+                      Ступени:{" "}
+                      <b className="text-white">
+                        {row.individualSteps
+                          .map(
+                            (item, index) =>
+                              `№${index + 1}: ${item.length}×${item.width}${item.height ? `×${item.height}` : ""}`,
+                          )
+                          .join("; ")}
+                      </b>
+                    </span>
+                  ) : null}
+                  {row.platforms?.length ? (
+                    <span className="sm:col-span-3">
+                      Площадки:{" "}
+                      <b className="text-white">
+                        {row.platforms
+                          .map(
+                            (item, index) =>
+                              `№${index + 1}: ${item.length}×${item.width}`,
+                          )
+                          .join("; ")}
+                      </b>
+                    </span>
+                  ) : null}
+                  {row.objectNotes && (
+                    <span className="sm:col-span-3">
+                      Особенности:{" "}
+                      <b className="text-white">{row.objectNotes}</b>
+                    </span>
+                  )}
+                  {row.comment && (
+                    <span className="sm:col-span-3">
+                      Комментарий замерщика:{" "}
+                      <b className="text-white">{row.comment}</b>
+                    </span>
+                  )}
+                  <span className="sm:col-span-3">
                     {row.attachments.map((photo) => (
                       <a
                         key={photo.id}
@@ -332,6 +403,22 @@ export default function LeadMeasurementPanel({
               {row.status === "HANDED_TO_MANAGER" && (
                 <div className="mt-4 grid gap-3">
                   <div className="flex flex-wrap gap-2">
+                    <a
+                      href={`tel:${clientPhone}`}
+                      className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 text-sm font-semibold"
+                    >
+                      <Phone size={16} />
+                      Позвонить клиенту
+                    </a>
+                    <a
+                      href={`https://wa.me/${(clientWhatsapp || clientPhone).replace(/\D/g, "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex min-h-11 items-center gap-2 rounded-xl bg-green-700 px-4 text-sm font-semibold"
+                    >
+                      <MessageCircle size={16} />
+                      WhatsApp клиенту
+                    </a>
                     <Link
                       href={`/measurements?measurement=${row.id}`}
                       className="flex min-h-11 items-center rounded-xl bg-slate-700 px-4 text-sm font-semibold"

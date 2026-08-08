@@ -17,7 +17,12 @@ type Measurement = {
   city: string;
   address: string;
   mapLink?: string | null;
-  client: { name: string; phone: string; whatsapp: string };
+  client: {
+    name: string;
+    phone: string;
+    whatsapp: string;
+    managerUser?: { name: string } | null;
+  };
 };
 
 type Workspace = {
@@ -26,7 +31,9 @@ type Workspace = {
     today: number;
     upcoming: number;
     overdue: number;
+    monthAssigned: number;
     monthCompleted: number;
+    handed: number;
     monthOrders: number;
     conversion: number;
     monthBonus: number;
@@ -40,7 +47,9 @@ const empty: Workspace = {
     today: 0,
     upcoming: 0,
     overdue: 0,
+    monthAssigned: 0,
     monthCompleted: 0,
+    handed: 0,
     monthOrders: 0,
     conversion: 0,
     monthBonus: 0,
@@ -100,8 +109,11 @@ export default function MeasurerHome() {
         <Kpi title="Сегодня" value={data.kpi.today} />
         <Kpi title="Предстоящие" value={data.kpi.upcoming} />
         <Kpi title="Просрочено" value={data.kpi.overdue} alert />
+        <Kpi title="Назначено за месяц" value={data.kpi.monthAssigned} />
         <Kpi title="Выполнено за месяц" value={data.kpi.monthCompleted} />
+        <Kpi title="Передано менеджеру" value={data.kpi.handed} />
         <Kpi title="Успешных заказов" value={data.kpi.monthOrders} />
+        <Kpi title="Конверсия в заказ" value={`${data.kpi.conversion}%`} />
         <Kpi title="Бонусов начислено" value={money(data.kpi.monthBonus)} />
       </section>
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-6">
@@ -124,9 +136,16 @@ export default function MeasurerHome() {
               <p className="text-lg font-semibold text-white">
                 {data.nextMeasurement.client.name}
               </p>
+              <p className="mt-1 text-sm text-slate-300">
+                {data.nextMeasurement.client.phone}
+              </p>
               <p className="mt-1 text-sm text-slate-400">
                 {data.nextMeasurement.city} ·{" "}
                 {data.nextMeasurement.address || "Локация по ссылке"}
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Ответственный менеджер:{" "}
+                {data.nextMeasurement.client.managerUser?.name ?? "не указан"}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">

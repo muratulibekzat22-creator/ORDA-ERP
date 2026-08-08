@@ -341,6 +341,10 @@ export default function MeasurementWorkspace() {
     if (photoRef.current) photoRef.current.value = "";
     setBusy(false);
   }
+  function choosePhoto(type: "SHEET" | "OBJECT" | "EXTRA") {
+    setPhotoType(type);
+    window.setTimeout(() => photoRef.current?.click(), 0);
+  }
   return (
     <main className="space-y-5 p-4 pb-24 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -453,38 +457,67 @@ export default function MeasurementWorkspace() {
           <div className="mt-4 space-y-3">
             {rows.length ? (
               rows.map((row) => (
-                <button
+                <article
                   key={row.id}
-                  onClick={() => {
-                    setSelectedId(row.id);
-                    setForm(formOf(row));
-                  }}
-                  className={`w-full rounded-xl border p-4 text-left ${selectedId === row.id ? "border-blue-500 bg-blue-950/30" : "border-slate-800 bg-slate-950/60"}`}
+                  className={`rounded-xl border p-4 ${selectedId === row.id ? "border-blue-500 bg-blue-950/30" : "border-slate-800 bg-slate-950/60"}`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-lg font-bold text-white">
-                      {time(row.visitDate)}
+                  <button
+                    onClick={() => {
+                      setSelectedId(row.id);
+                      setForm(formOf(row));
+                    }}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <span>
+                        <span className="block text-xs text-slate-400">
+                          {new Intl.DateTimeFormat("ru-RU", {
+                            timeZone: "Asia/Almaty",
+                            dateStyle: "medium",
+                          }).format(new Date(row.visitDate))}
+                        </span>
+                        <span className="text-lg font-bold text-white">
+                          {time(row.visitDate)}
+                        </span>
+                      </span>
+                      <span
+                        className={`rounded-full px-2 py-1 text-xs ${statusTone[row.status]}`}
+                      >
+                        {statusNames[row.status]}
+                      </span>
+                    </div>
+                    <b className="mt-2 block break-words text-slate-100">
+                      {row.client.name}
+                    </b>
+                    <span className="mt-1 block text-sm text-slate-300">
+                      {row.client.phone}
                     </span>
-                    <span
-                      className={`rounded-full px-2 py-1 text-xs ${statusTone[row.status]}`}
+                    <span className="mt-1 block text-sm text-slate-400">
+                      {row.city} · {row.address || "Локация по ссылке"}
+                    </span>
+                    <span className="mt-2 block text-xs text-slate-500">
+                      Назначил:{" "}
+                      {row.client.managerUser?.name ?? "менеджер не указан"}
+                    </span>
+                    <span className="mt-3 block text-sm font-semibold text-blue-300">
+                      Открыть замер →
+                    </span>
+                  </button>
+                  {(row.mapLink || row.address) && (
+                    <a
+                      href={
+                        row.mapLink ||
+                        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${row.city} ${row.address}`)}`
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-flex min-h-11 items-center gap-2 rounded-lg bg-slate-800 px-3 text-sm text-blue-200"
                     >
-                      {statusNames[row.status]}
-                    </span>
-                  </div>
-                  <b className="mt-2 block break-words text-slate-100">
-                    {row.client.name}
-                  </b>
-                  <span className="mt-1 block text-sm text-slate-300">
-                    {row.client.phone}
-                  </span>
-                  <span className="mt-1 block text-sm text-slate-400">
-                    {row.city} · {row.address || "Локация по ссылке"}
-                  </span>
-                  <span className="mt-2 block text-xs text-slate-500">
-                    Назначил:{" "}
-                    {row.client.managerUser?.name ?? "менеджер не указан"}
-                  </span>
-                </button>
+                      <MapPin size={16} />
+                      Карта
+                    </a>
+                  )}
+                </article>
               ))
             ) : (
               <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-slate-400">
@@ -569,225 +602,228 @@ export default function MeasurementWorkspace() {
                 Начать замер
               </button>
             )}
-            {measurer &&
-              ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
-                <>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Количество ступеней">
-                      <input
-                        type="number"
-                        min="0"
-                        inputMode="numeric"
-                        className={input}
-                        value={form.stepsCount}
-                        onChange={(event) =>
-                          patchForm("stepsCount", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <label className="flex min-h-11 items-center gap-3 rounded-xl border border-slate-700 px-3 text-sm text-slate-200">
-                      <input
-                        type="checkbox"
-                        checked={form.sameSize}
-                        onChange={(event) =>
-                          patchForm("sameSize", event.target.checked)
-                        }
-                      />
-                      Все ступени одного размера
-                    </label>
-                    {form.sameSize ? (
-                      <>
-                        <Field label="Длина, мм">
-                          <input
-                            type="number"
-                            className={input}
-                            value={form.stepLength}
-                            onChange={(event) =>
-                              patchForm("stepLength", event.target.value)
-                            }
-                          />
-                        </Field>
-                        <Field label="Ширина, мм">
-                          <input
-                            type="number"
-                            className={input}
-                            value={form.stepWidth}
-                            onChange={(event) =>
-                              patchForm("stepWidth", event.target.value)
-                            }
-                          />
-                        </Field>
-                        <Field label="Высота / толщина, мм">
-                          <input
-                            type="number"
-                            className={input}
-                            value={form.stepHeight}
-                            onChange={(event) =>
-                              patchForm("stepHeight", event.target.value)
-                            }
-                          />
-                        </Field>
-                      </>
-                    ) : (
-                      <DimensionRows
-                        title="Размеры каждой ступени"
-                        count={Number(form.stepsCount || 0)}
-                        value={form.individualSteps}
-                        withHeight
-                        onChange={(value) =>
-                          patchForm("individualSteps", value)
-                        }
-                      />
-                    )}
-                    <Field label="Высота подступенка, мм">
-                      <input
-                        type="number"
-                        className={input}
-                        value={form.riserHeight}
-                        onChange={(event) =>
-                          patchForm("riserHeight", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <Field label="Забежные ступени, шт">
-                      <input
-                        type="number"
-                        min="0"
-                        className={input}
-                        value={form.winderCount}
-                        onChange={(event) =>
-                          patchForm("winderCount", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <DimensionRows
-                      title="Размеры забежных ступеней"
-                      count={Number(form.winderCount || 0)}
-                      value={form.winders}
-                      withComment
-                      onChange={(value) => patchForm("winders", value)}
-                    />
-                    <Field label="Площадки, шт">
-                      <input
-                        type="number"
-                        min="0"
-                        className={input}
-                        value={form.platformsCount}
-                        onChange={(event) =>
-                          patchForm("platformsCount", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <DimensionRows
-                      title="Размеры площадок"
-                      count={Number(form.platformsCount || 0)}
-                      value={form.platforms}
-                      onChange={(value) => patchForm("platforms", value)}
-                    />
-                    <Field label="Длина ограждения, м">
-                      <input
-                        type="number"
-                        step="0.1"
-                        className={input}
-                        value={form.railingLength}
-                        onChange={(event) =>
-                          patchForm("railingLength", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <Field label="Комментарий к ограждению">
-                      <input
-                        className={input}
-                        value={form.railingComment}
-                        onChange={(event) =>
-                          patchForm("railingComment", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <Field label="Особенности объекта">
-                      <textarea
-                        rows={3}
-                        className={input}
-                        value={form.objectNotes}
-                        onChange={(event) =>
-                          patchForm("objectNotes", event.target.value)
-                        }
-                      />
-                    </Field>
-                    <Field label="Комментарий замерщика">
-                      <textarea
-                        rows={3}
-                        className={input}
-                        value={form.comment}
-                        onChange={(event) =>
-                          patchForm("comment", event.target.value)
-                        }
-                      />
-                    </Field>
-                  </div>
-                  <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
-                    <h3 className="font-semibold text-white">Фотографии</h3>
-                    <p className="mt-1 text-sm text-slate-400">
-                      Фото листа замера обязательно для завершения. На телефоне
-                      можно сразу открыть камеру.
-                    </p>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                      <select
-                        value={photoType}
-                        onChange={(event) => setPhotoType(event.target.value)}
-                        className={input}
-                      >
-                        <option value="SHEET">Лист замера</option>
-                        <option value="OPENING">Проём</option>
-                        <option value="OBJECT">Объект</option>
-                        <option value="EXTRA">Дополнительное</option>
-                      </select>
-                      <button
-                        disabled={busy}
-                        onClick={() => photoRef.current?.click()}
-                        className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-4"
-                      >
-                        <Upload size={17} />
-                        Сделать / выбрать фото
-                      </button>
-                    </div>
+            {measurer && selected.status === "IN_PROGRESS" && (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Количество ступеней">
                     <input
-                      ref={photoRef}
-                      className="sr-only"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      capture="environment"
-                      onChange={(event) => void upload(event.target.files?.[0])}
+                      type="number"
+                      min="0"
+                      inputMode="numeric"
+                      className={input}
+                      value={form.stepsCount}
+                      onChange={(event) =>
+                        patchForm("stepsCount", event.target.value)
+                      }
                     />
-                    <PhotoList photos={selected.attachments} />
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  </Field>
+                  <label className="flex min-h-11 items-center gap-3 rounded-xl border border-slate-700 px-3 text-sm text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={form.sameSize}
+                      onChange={(event) =>
+                        patchForm("sameSize", event.target.checked)
+                      }
+                    />
+                    Все ступени одного размера
+                  </label>
+                  {form.sameSize ? (
+                    <>
+                      <Field label="Длина, мм">
+                        <input
+                          type="number"
+                          className={input}
+                          value={form.stepLength}
+                          onChange={(event) =>
+                            patchForm("stepLength", event.target.value)
+                          }
+                        />
+                      </Field>
+                      <Field label="Ширина, мм">
+                        <input
+                          type="number"
+                          className={input}
+                          value={form.stepWidth}
+                          onChange={(event) =>
+                            patchForm("stepWidth", event.target.value)
+                          }
+                        />
+                      </Field>
+                      <Field label="Высота / толщина, мм">
+                        <input
+                          type="number"
+                          className={input}
+                          value={form.stepHeight}
+                          onChange={(event) =>
+                            patchForm("stepHeight", event.target.value)
+                          }
+                        />
+                      </Field>
+                    </>
+                  ) : (
+                    <DimensionRows
+                      title="Размеры каждой ступени"
+                      count={Number(form.stepsCount || 0)}
+                      value={form.individualSteps}
+                      withHeight
+                      onChange={(value) => patchForm("individualSteps", value)}
+                    />
+                  )}
+                  <Field label="Высота подступенка, мм">
+                    <input
+                      type="number"
+                      className={input}
+                      value={form.riserHeight}
+                      onChange={(event) =>
+                        patchForm("riserHeight", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <Field label="Забежные ступени, шт">
+                    <input
+                      type="number"
+                      min="0"
+                      className={input}
+                      value={form.winderCount}
+                      onChange={(event) =>
+                        patchForm("winderCount", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <DimensionRows
+                    title="Размеры забежных ступеней"
+                    count={Number(form.winderCount || 0)}
+                    value={form.winders}
+                    withComment
+                    onChange={(value) => patchForm("winders", value)}
+                  />
+                  <Field label="Площадки, шт">
+                    <input
+                      type="number"
+                      min="0"
+                      className={input}
+                      value={form.platformsCount}
+                      onChange={(event) =>
+                        patchForm("platformsCount", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <DimensionRows
+                    title="Размеры площадок"
+                    count={Number(form.platformsCount || 0)}
+                    value={form.platforms}
+                    onChange={(value) => patchForm("platforms", value)}
+                  />
+                  <Field label="Длина ограждения, м">
+                    <input
+                      type="number"
+                      step="0.1"
+                      className={input}
+                      value={form.railingLength}
+                      onChange={(event) =>
+                        patchForm("railingLength", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <Field label="Комментарий к ограждению">
+                    <input
+                      className={input}
+                      value={form.railingComment}
+                      onChange={(event) =>
+                        patchForm("railingComment", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <Field label="Особенности объекта">
+                    <textarea
+                      rows={3}
+                      className={input}
+                      value={form.objectNotes}
+                      onChange={(event) =>
+                        patchForm("objectNotes", event.target.value)
+                      }
+                    />
+                  </Field>
+                  <Field label="Комментарий замерщика">
+                    <textarea
+                      rows={3}
+                      className={input}
+                      value={form.comment}
+                      onChange={(event) =>
+                        patchForm("comment", event.target.value)
+                      }
+                    />
+                  </Field>
+                </div>
+                <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
+                  <h3 className="font-semibold text-white">Фотографии</h3>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Фото листа замера обязательно для завершения. На телефоне
+                    можно сразу открыть камеру.
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <button
                       disabled={busy}
-                      onClick={() =>
-                        void run(payload("save-draft"), "Черновик сохранён")
-                      }
-                      className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-700 font-semibold"
+                      onClick={() => choosePhoto("SHEET")}
+                      className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-3 text-sm"
                     >
-                      <Save size={18} />
-                      Сохранить черновик
+                      <Upload size={17} />
+                      Фото замерного листа
                     </button>
                     <button
                       disabled={busy}
-                      onClick={() =>
-                        void run(
-                          payload("complete"),
-                          "Замер завершён; данные зафиксированы",
-                        )
-                      }
-                      className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 font-semibold"
+                      onClick={() => choosePhoto("OBJECT")}
+                      className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-3 text-sm"
                     >
-                      <CheckCircle2 size={18} />
-                      Завершить замер
+                      <Upload size={17} />
+                      Фото объекта
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() => choosePhoto("EXTRA")}
+                      className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-700 px-3 text-sm"
+                    >
+                      <Upload size={17} />
+                      Дополнительное фото
                     </button>
                   </div>
-                </>
-              )}
+                  <input
+                    ref={photoRef}
+                    className="sr-only"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    capture="environment"
+                    onChange={(event) => void upload(event.target.files?.[0])}
+                  />
+                  <PhotoList photos={selected.attachments} />
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(payload("save-draft"), "Черновик сохранён")
+                    }
+                    className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-700 font-semibold"
+                  >
+                    <Save size={18} />
+                    Сохранить черновик
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        payload("complete"),
+                        "Замер завершён; данные зафиксированы",
+                      )
+                    }
+                    className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 font-semibold"
+                  >
+                    <CheckCircle2 size={18} />
+                    Замер выполнен
+                  </button>
+                </div>
+              </>
+            )}
             {["COMPLETED", "HANDED_TO_MANAGER"].includes(selected.status) && (
               <MeasurementResult row={selected} />
             )}

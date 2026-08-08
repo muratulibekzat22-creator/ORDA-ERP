@@ -60,8 +60,22 @@ type ClientDetail = {
   status: string;
   stage: string;
   lostReason?: string | null;
-  nextActions: Array<{ id: number; nextActionType: string; nextActionAt: string; nextActionComment?: string | null; completedAt?: string | null; resultComment?: string | null }>;
-  leadStatusHistory: Array<{ id: number; fromStage?: string | null; toStage?: string | null; authorName: string; comment?: string | null; createdAt: string }>;
+  nextActions: Array<{
+    id: number;
+    nextActionType: string;
+    nextActionAt: string;
+    nextActionComment?: string | null;
+    completedAt?: string | null;
+    resultComment?: string | null;
+  }>;
+  leadStatusHistory: Array<{
+    id: number;
+    fromStage?: string | null;
+    toStage?: string | null;
+    authorName: string;
+    comment?: string | null;
+    createdAt: string;
+  }>;
   estimateNotes: string;
   estimatedAmount: string;
   createdAt: string;
@@ -268,27 +282,51 @@ export default function ClientCard({ clientId }: { clientId: number }) {
             <ArrowLeft size={18} />
             Все заявки
           </Link>
-          <h1 className="mt-2 break-words text-3xl font-bold text-white">{client.name?.trim() && client.name !== client.phone ? client.name : client.phone}</h1>
+          <h1 className="mt-2 break-words text-3xl font-bold text-white">
+            {client.name?.trim() && client.name !== client.phone
+              ? client.name
+              : client.phone}
+          </h1>
           <p className="mt-1 text-slate-400">
             Заявка · создана {date(client.createdAt)}
           </p>
         </div>
         <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
-        <a href={`https://wa.me/${(client.whatsapp || client.phone).replace(/\D/g, "")}`} target="_blank" rel="noreferrer" className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-green-700 px-4 font-semibold text-white"><MessageCircle size={18}/>WhatsApp</a>
-        <a href={`tel:${client.phone}`} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 text-white"><Phone size={18}/>Позвонить</a>
-        <Link href={`/clients/${client.id}/proposal`} className="col-span-2 flex min-h-12 items-center justify-center rounded-xl bg-blue-600 px-5 font-semibold text-white">Рассчитать и сформировать КП</Link>
-        <button
-          onClick={() => void save()}
-          disabled={saving}
-          className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-700 px-5 font-semibold text-white disabled:opacity-60"
-        >
-          {saving ? (
-            <Loader2 className="animate-spin" size={18} />
-          ) : (
-            <Save size={18} />
-          )}
-          Сохранить изменения
-        </button></div>
+          <a
+            href={`https://wa.me/${(client.whatsapp || client.phone).replace(/\D/g, "")}`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-green-700 px-4 font-semibold text-white"
+          >
+            <MessageCircle size={18} />
+            WhatsApp
+          </a>
+          <a
+            href={`tel:${client.phone}`}
+            className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 text-white"
+          >
+            <Phone size={18} />
+            Позвонить
+          </a>
+          <Link
+            href={`/clients/${client.id}/proposal`}
+            className="col-span-2 flex min-h-12 items-center justify-center rounded-xl bg-blue-600 px-5 font-semibold text-white"
+          >
+            Рассчитать и сформировать КП
+          </Link>
+          <button
+            onClick={() => void save()}
+            disabled={saving}
+            className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-700 px-5 font-semibold text-white disabled:opacity-60"
+          >
+            {saving ? (
+              <Loader2 className="animate-spin" size={18} />
+            ) : (
+              <Save size={18} />
+            )}
+            Сохранить изменения
+          </button>
+        </div>
       </div>
       {error && (
         <p
@@ -306,8 +344,20 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           {success}
         </p>
       )}
-      <LeadWorkflow client={client} saving={saving} setSaving={setSaving} setError={setError} onSaved={load} />
-      <LeadMeasurementPanel clientId={client.id} initialCity={client.city} initialAddress={client.address} />
+      <LeadWorkflow
+        client={client}
+        saving={saving}
+        setSaving={setSaving}
+        setError={setError}
+        onSaved={load}
+      />
+      <LeadMeasurementPanel
+        clientId={client.id}
+        initialCity={client.city}
+        initialAddress={client.address}
+        clientPhone={client.phone}
+        clientWhatsapp={client.whatsapp}
+      />
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <div className="space-y-5">
           <Card title="Что нужно клиенту" icon={<UserRound size={20} />}>
@@ -361,11 +411,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
                 />
               </Field>
               <Field label="Менеджер">
-                <input
-                  value={client.manager}
-                  disabled
-                  className={inputClass}
-                />
+                <input value={client.manager} disabled className={inputClass} />
               </Field>
               <Field label="Статус">
                 <input value={client.stage} disabled className={inputClass} />
@@ -662,27 +708,258 @@ function Empty({ text }: { text: string }) {
   );
 }
 
-const stageOptions = ["NEW", "QUALIFIED", "CALCULATION_READY", "PROPOSAL_SENT", "FOLLOW_UP", "MEASUREMENT_SCHEDULED", "MEASUREMENT_COMPLETED", "NEGOTIATION", "WON", "LOST"];
-const stageNames: Record<string, string> = { NEW: "Новое обращение", QUALIFIED: "Квалифицирован", CALCULATION_READY: "Расчёт готов", PROPOSAL_SENT: "КП отправлено", FOLLOW_UP: "Повторный контакт", MEASUREMENT_SCHEDULED: "Замер назначен", MEASUREMENT_COMPLETED: "Замер проведён", NEGOTIATION: "Согласование", WON: "Выиграно", LOST: "Проиграно" };
-const actionOptions = [["CALL", "Позвонить"], ["WHATSAPP", "Написать WhatsApp"], ["FOLLOW_UP", "Повторный контакт"], ["MEASUREMENT", "Замер"], ["MEETING", "Встреча"], ["CALCULATION", "Подготовить расчёт"], ["PROPOSAL", "Отправить КП"], ["OTHER", "Другое"]];
-const lostOptions = [["EXPENSIVE", "Дорого"], ["NO_RESPONSE", "Не отвечает"], ["COMPETITOR", "Выбрал конкурента"], ["POSTPONED", "Отложил"], ["NO_BUDGET", "Нет бюджета"], ["NOT_RELEVANT", "Неактуально"], ["LOCATION", "Регион/локация"], ["TIMING", "Не подходит срок"], ["OTHER", "Другое"]];
+const stageOptions = [
+  "NEW",
+  "QUALIFIED",
+  "CALCULATION_READY",
+  "PROPOSAL_SENT",
+  "FOLLOW_UP",
+  "MEASUREMENT_SCHEDULED",
+  "MEASUREMENT_COMPLETED",
+  "NEGOTIATION",
+  "WON",
+  "LOST",
+];
+const stageNames: Record<string, string> = {
+  NEW: "Новое обращение",
+  QUALIFIED: "Квалифицирован",
+  CALCULATION_READY: "Расчёт готов",
+  PROPOSAL_SENT: "КП отправлено",
+  FOLLOW_UP: "Повторный контакт",
+  MEASUREMENT_SCHEDULED: "Замер назначен",
+  MEASUREMENT_COMPLETED: "Замер проведён",
+  NEGOTIATION: "Согласование",
+  WON: "Выиграно",
+  LOST: "Проиграно",
+};
+const actionOptions = [
+  ["CALL", "Позвонить"],
+  ["WHATSAPP", "Написать WhatsApp"],
+  ["FOLLOW_UP", "Повторный контакт"],
+  ["MEASUREMENT", "Замер"],
+  ["MEETING", "Встреча"],
+  ["CALCULATION", "Подготовить расчёт"],
+  ["PROPOSAL", "Отправить КП"],
+  ["OTHER", "Другое"],
+];
+const lostOptions = [
+  ["EXPENSIVE", "Дорого"],
+  ["NO_RESPONSE", "Не отвечает"],
+  ["COMPETITOR", "Выбрал конкурента"],
+  ["POSTPONED", "Отложил"],
+  ["NO_BUDGET", "Нет бюджета"],
+  ["NOT_RELEVANT", "Неактуально"],
+  ["LOCATION", "Регион/локация"],
+  ["TIMING", "Не подходит срок"],
+  ["OTHER", "Другое"],
+];
 
-function LeadWorkflow({ client, saving, setSaving, setError, onSaved }: { client: ClientDetail; saving: boolean; setSaving: (value: boolean) => void; setError: (value: string) => void; onSaved: () => Promise<void> }) {
-  const [stage, setStage] = useState(client.stage), [actionType, setActionType] = useState("CALL"), [actionAt, setActionAt] = useState(""), [comment, setComment] = useState(""), [lostReason, setLostReason] = useState(""), [lostComment, setLostComment] = useState("");
-  const activeAction = client.nextActions.find((action) => !action.completedAt), closed = stage === "WON" || stage === "LOST", requiresAction = !closed && stage !== "NEW";
+function LeadWorkflow({
+  client,
+  saving,
+  setSaving,
+  setError,
+  onSaved,
+}: {
+  client: ClientDetail;
+  saving: boolean;
+  setSaving: (value: boolean) => void;
+  setError: (value: string) => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [stage, setStage] = useState(client.stage),
+    [actionType, setActionType] = useState("CALL"),
+    [actionAt, setActionAt] = useState(""),
+    [comment, setComment] = useState(""),
+    [lostReason, setLostReason] = useState(""),
+    [lostComment, setLostComment] = useState("");
+  const activeAction = client.nextActions.find((action) => !action.completedAt),
+    closed = stage === "WON" || stage === "LOST",
+    requiresAction = !closed && stage !== "NEW";
   async function changeStage() {
-    setSaving(true); setError("");
+    setSaving(true);
+    setError("");
     try {
-      const response = await fetch(`/api/clients/${client.id}/stage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stage, comment, lostReason: stage === "LOST" ? lostReason : undefined, lostComment: stage === "LOST" ? lostComment : undefined, nextAction: requiresAction && !activeAction ? { type: actionType, at: actionAt, comment } : undefined }) });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Не удалось изменить стадию"); await onSaved();
-    } catch (error) { setError(error instanceof Error ? error.message : "Не удалось изменить стадию"); } finally { setSaving(false); }
+      const response = await fetch(`/api/clients/${client.id}/stage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stage,
+          comment,
+          lostReason: stage === "LOST" ? lostReason : undefined,
+          lostComment: stage === "LOST" ? lostComment : undefined,
+          nextAction:
+            requiresAction && !activeAction
+              ? { type: actionType, at: actionAt, comment }
+              : undefined,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok)
+        throw new Error(payload.error ?? "Не удалось изменить стадию");
+      await onSaved();
+    } catch (error) {
+      setError(
+        error instanceof Error ? error.message : "Не удалось изменить стадию",
+      );
+    } finally {
+      setSaving(false);
+    }
   }
   async function completeAction() {
-    if (!activeAction) return; setSaving(true); setError("");
+    if (!activeAction) return;
+    setSaving(true);
+    setError("");
     try {
-      const response = await fetch(`/api/clients/${client.id}/next-actions/${activeAction.id}/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resultComment: comment, nextAction: !closed ? { type: actionType, at: actionAt, comment } : undefined }) });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.error ?? "Не удалось завершить действие"); await onSaved();
-    } catch (error) { setError(error instanceof Error ? error.message : "Не удалось завершить действие"); } finally { setSaving(false); }
+      const response = await fetch(
+        `/api/clients/${client.id}/next-actions/${activeAction.id}/complete`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resultComment: comment,
+            nextAction: !closed
+              ? { type: actionType, at: actionAt, comment }
+              : undefined,
+          }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok)
+        throw new Error(payload.error ?? "Не удалось завершить действие");
+      await onSaved();
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Не удалось завершить действие",
+      );
+    } finally {
+      setSaving(false);
+    }
   }
-  return <section className="rounded-2xl border border-blue-800/60 bg-blue-950/20 p-4 md:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold text-white">Воронка продаж и следующее действие</h2><p className="mt-1 text-sm text-slate-400">Открытая заявка после первичной обработки всегда должна иметь запланированное действие.</p></div>{activeAction && <span className={`rounded-full px-3 py-1 text-sm ${new Date(activeAction.nextActionAt) < new Date() ? "bg-red-950 text-red-300" : "bg-blue-950 text-blue-300"}`}>{actionOptions.find(([value]) => value === activeAction.nextActionType)?.[1]} · {date(activeAction.nextActionAt)}</span>}</div><div className="mt-5 grid gap-3 md:grid-cols-3"><Field label="Стадия"><select value={stage} onChange={(event) => setStage(event.target.value)} className={inputClass}>{stageOptions.map((value) => <option key={value} value={value}>{stageNames[value]}</option>)}</select></Field>{stage === "LOST" && <Field label="Причина проигрыша"><select value={lostReason} onChange={(event) => setLostReason(event.target.value)} className={inputClass}><option value="">Выберите причину</option>{lostOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>}{stage === "LOST" && <Field label="Комментарий"><input value={lostComment} onChange={(event) => setLostComment(event.target.value)} className={inputClass} /></Field>}</div>{!closed && <div className="mt-4 grid gap-3 md:grid-cols-3"><Field label={activeAction ? "Следующее действие после выполнения" : "Следующее действие"}><select value={actionType} onChange={(event) => setActionType(event.target.value)} className={inputClass}>{actionOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="Дата и время"><input type="datetime-local" value={actionAt} onChange={(event) => setActionAt(event.target.value)} className={inputClass} /></Field><Field label="Комментарий / результат"><input value={comment} onChange={(event) => setComment(event.target.value)} className={inputClass} /></Field></div>}<div className="mt-4 flex flex-wrap gap-3"><button onClick={() => void changeStage()} disabled={saving} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50">Сохранить стадию</button>{activeAction && <button onClick={() => void completeAction()} disabled={saving} className="flex min-h-11 items-center gap-2 rounded-xl bg-green-700 px-5 font-semibold text-white disabled:opacity-50"><CheckCircle2 size={18}/>Выполнено</button>}</div></section>;
+  return (
+    <section className="rounded-2xl border border-blue-800/60 bg-blue-950/20 p-4 md:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-white">
+            Воронка продаж и следующее действие
+          </h2>
+          <p className="mt-1 text-sm text-slate-400">
+            Открытая заявка после первичной обработки всегда должна иметь
+            запланированное действие.
+          </p>
+        </div>
+        {activeAction && (
+          <span
+            className={`rounded-full px-3 py-1 text-sm ${new Date(activeAction.nextActionAt) < new Date() ? "bg-red-950 text-red-300" : "bg-blue-950 text-blue-300"}`}
+          >
+            {
+              actionOptions.find(
+                ([value]) => value === activeAction.nextActionType,
+              )?.[1]
+            }{" "}
+            · {date(activeAction.nextActionAt)}
+          </span>
+        )}
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-3">
+        <Field label="Стадия">
+          <select
+            value={stage}
+            onChange={(event) => setStage(event.target.value)}
+            className={inputClass}
+          >
+            {stageOptions.map((value) => (
+              <option key={value} value={value}>
+                {stageNames[value]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        {stage === "LOST" && (
+          <Field label="Причина проигрыша">
+            <select
+              value={lostReason}
+              onChange={(event) => setLostReason(event.target.value)}
+              className={inputClass}
+            >
+              <option value="">Выберите причину</option>
+              {lostOptions.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {stage === "LOST" && (
+          <Field label="Комментарий">
+            <input
+              value={lostComment}
+              onChange={(event) => setLostComment(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        )}
+      </div>
+      {!closed && (
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <Field
+            label={
+              activeAction
+                ? "Следующее действие после выполнения"
+                : "Следующее действие"
+            }
+          >
+            <select
+              value={actionType}
+              onChange={(event) => setActionType(event.target.value)}
+              className={inputClass}
+            >
+              {actionOptions.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Дата и время">
+            <input
+              type="datetime-local"
+              value={actionAt}
+              onChange={(event) => setActionAt(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Комментарий / результат">
+            <input
+              value={comment}
+              onChange={(event) => setComment(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button
+          onClick={() => void changeStage()}
+          disabled={saving}
+          className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50"
+        >
+          Сохранить стадию
+        </button>
+        {activeAction && (
+          <button
+            onClick={() => void completeAction()}
+            disabled={saving}
+            className="flex min-h-11 items-center gap-2 rounded-xl bg-green-700 px-5 font-semibold text-white disabled:opacity-50"
+          >
+            <CheckCircle2 size={18} />
+            Выполнено
+          </button>
+        )}
+      </div>
+    </section>
+  );
 }
