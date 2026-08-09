@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import PizZip from "pizzip";
 
 import { amountToRussianWords, calculatePayment, type ContractSnapshot } from "@/lib/contracts/domain";
 import { generateContractDocx } from "@/lib/contracts/docx";
 
 async function main() {
+const documentsUi = readFileSync("components/pages/DocumentsPage.tsx", "utf8");
+const orderDocumentsUi = readFileSync("components/orders/tabs/DocumentsTab.tsx", "utf8");
+assert(documentsUi.includes("ContractComposer") && documentsUi.includes("Сформировать договор") && documentsUi.includes("Выберите заказ"), "ContractComposer is not reachable from Documents");
+assert(orderDocumentsUi.includes("ContractComposer"), "ContractComposer is not reachable from Order Documents");
+assert(documentsUi.includes("PAYMENT_RECEIPT") && documentsUi.includes("Без Payment — только файл подтверждения"), "payment confirmation workflow is missing");
 assert.equal(amountToRussianWords(1_500_000), "один миллион пятьсот тысяч");
 assert.equal(amountToRussianWords(150_000), "сто пятьдесят тысяч");
 assert.deepEqual(calculatePayment(1_000_000, { mode: "AMOUNT", prepaymentAmount: 150_000 }), { prepaymentAmount: 150_000, prepaymentPercent: "15", balanceAmount: 850_000, balancePercent: "85", isFullPayment: false });

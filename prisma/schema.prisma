@@ -637,21 +637,21 @@ model Order {
   partnerId Int?
   partner   Partner? @relation(fields: [partnerId], references: [id])
 
-  address   String
-  staircase String
-  material  String
-  mapUrl             String   @default("")
-  orderReceivedAt    DateTime @default(now())
-  frameComment       String   @default("")
-  railingType        String   @default("")
-  supportType        String   @default("")
-  color              String   @default("")
-  lighting           Boolean  @default(false)
-  lightingDetails    String   @default("")
-  cladding            Boolean  @default(false)
-  claddingDetails     String   @default("")
-  additionalDetails  String   @default("")
-  paymentMethod      String   @default("")
+  address           String
+  staircase         String
+  material          String
+  mapUrl            String   @default("")
+  orderReceivedAt   DateTime @default(now())
+  frameComment      String   @default("")
+  railingType       String   @default("")
+  supportType       String   @default("")
+  color             String   @default("")
+  lighting          Boolean  @default(false)
+  lightingDetails   String   @default("")
+  cladding          Boolean  @default(false)
+  claddingDetails   String   @default("")
+  additionalDetails String   @default("")
+  paymentMethod     String   @default("")
 
   amount Decimal @db.Decimal(12, 2)
 
@@ -1123,6 +1123,8 @@ model Document {
   order             Order?            @relation(fields: [orderId], references: [id], onDelete: Restrict)
   clientId          Int?
   client            Client?           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  paymentId         Int?
+  payment           Payment?          @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   type              DocumentType
   number            String
   title             String            @default("")
@@ -1157,6 +1159,7 @@ model Document {
   @@unique([type, number])
   @@index([clientId, documentDate])
   @@index([orderId, documentDate])
+  @@index([paymentId])
   @@index([status, documentDate])
   @@index([authorId, documentDate])
 }
@@ -1675,7 +1678,8 @@ model Payment {
   reversal       Payment? @relation("PaymentReversal")
   reversalReason String?
 
-  createdAt DateTime @default(now())
+  createdAt DateTime   @default(now())
+  documents Document[]
 }
 
 model CommercialAdjustment {

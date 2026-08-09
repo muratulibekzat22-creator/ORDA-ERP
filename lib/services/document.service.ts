@@ -34,6 +34,7 @@ const measurableTypes: DocumentType[] = [DocumentType.MEASUREMENT_SHEET, Documen
 const documentInclude = {
   client: { select: { id: true, name: true, phone: true, managerUserId: true, manager: true } },
   order: { select: { id: true, number: true, clientId: true } },
+  payment: { select: { id: true, amount: true, method: true, operationDate: true, type: true } },
   author: { select: { id: true, name: true } },
   versions: { select: { id: true, version: true, fileName: true, contentType: true, size: true, checksum: true, comment: true, createdAt: true, uploadedBy: { select: { id: true, name: true } } }, orderBy: { version: "desc" as const } },
   auditEvents: { select: { id: true, action: true, before: true, after: true, comment: true, createdAt: true, actor: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" as const }, take: 100 },
@@ -100,6 +101,7 @@ function listSelect() {
     id: true, type: true, number: true, title: true, documentDate: true, status: true, source: true, currentVersion: true, createdAt: true,
     client: { select: { id: true, name: true, phone: true } },
     order: { select: { id: true, number: true } },
+    payment: { select: { id: true, amount: true, method: true, operationDate: true, type: true } },
     author: { select: { id: true, name: true } },
   } satisfies Prisma.DocumentSelect;
 }
@@ -128,12 +130,13 @@ export async function getDocuments(actor: DocumentActor, filters: { orderId?: nu
 
 export async function getDocumentOptions(actor: DocumentActor) {
   const scope = await entityScope(actor);
-  const [clients, orders, authorRows] = await Promise.all([
+  const [clients, orders, payments, authorRows] = await Promise.all([
     prisma.client.findMany({ where: scope.client, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 1000 }),
-    prisma.order.findMany({ where: scope.order, select: { id: true, number: true, client: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" }, take: 1000 }),
+    prisma.order.findMany({ where: scope.order, select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 1000 }),
+    prisma.payment.findMany({ where: { orderId: { not: null }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"] }, order: scope.order }, select: { id: true, orderId: true, amount: true, method: true, operationDate: true, comment: true }, orderBy: { operationDate: "desc" }, take: 1000 }),
     prisma.document.findMany({ where: { AND: [await documentScope(actor)], authorId: { not: null } }, select: { author: { select: { id: true, name: true } } }, distinct: ["authorId"], take: 500 }),
   ]);
-  return { clients, orders, authors: authorRows.map((row) => row.author).filter((value): value is { id: number; name: string } => Boolean(value)), allowedTypes: allowedDocumentTypes(actor) };
+  return { clients, orders, payments, authors: authorRows.map((row) => row.author).filter((value): value is { id: number; name: string } => Boolean(value)), allowedTypes: allowedDocumentTypes(actor) };
 }
 
 async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: number; clientId?: number; type?: DocumentType; status?: DocumentStatus; query?: string; from?: Date; to?: Date }) {
@@ -200,7 +203,7 @@ function canCreate(actor: DocumentActor, type: DocumentType) {
   return actor.role === Role.DIRECTOR || actor.role === Role.MANAGER || (actor.role === Role.ACCOUNTANT && financialTypes.includes(type));
 }
 
-export async function createDocument(input: { clientId?: number | null; orderId?: number | null; type: DocumentType; title?: string; number?: string; documentDate: Date; comment?: string; file?: File; source?: DocumentSource; idempotencyKey: string; requestHash: string; actor: DocumentActor }) {
+export async function createDocument(input: { clientId?: number | null; orderId?: number | null; paymentId?: number | null; paymentSnapshot?: Prisma.InputJsonObject | null; type: DocumentType; title?: string; number?: string; documentDate: Date; comment?: string; file?: File; source?: DocumentSource; idempotencyKey: string; requestHash: string; actor: DocumentActor }) {
   if (!canCreate(input.actor, input.type)) throw new Error("FORBIDDEN");
   const repeated = await prisma.document.findUnique({ where: { idempotencyKey: input.idempotencyKey }, include: documentInclude });
   if (repeated) {
@@ -209,6 +212,14 @@ export async function createDocument(input: { clientId?: number | null; orderId?
   }
   const entities = await canUseEntities(input.actor, input.clientId, input.orderId);
   if (!entities) return null;
+  let paymentSnapshot = input.paymentSnapshot ?? null;
+  if (input.paymentId && input.type !== DocumentType.PAYMENT_RECEIPT) throw new Error("ENTITY_MISMATCH");
+  if (input.paymentId) {
+    const scope = await entityScope(input.actor);
+    const payment = await prisma.payment.findFirst({ where: { id: input.paymentId, orderId: entities.orderId ?? -1, order: scope.order }, select: { id: true, amount: true, method: true, operationDate: true, type: true, comment: true } });
+    if (!payment) throw new Error("PAYMENT_NOT_FOUND");
+    paymentSnapshot = { paymentId: payment.id, amount: Number(payment.amount), method: payment.method, operationDate: payment.operationDate.toISOString(), type: payment.type, comment: payment.comment ?? "" };
+  }
   const prepared = input.file ? await readFile(input.file) : null;
   let blobPath: string | null = null;
   if (prepared) {
@@ -221,7 +232,7 @@ export async function createDocument(input: { clientId?: number | null; orderId?
       const settings = await tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: { nextDocumentNumber: true } });
       const number = input.number?.trim().slice(0, 80) || `${numberPrefixes[input.type]}-${String(settings.nextDocumentNumber).padStart(6, "0")}`;
       if (!input.number) await tx.systemSettings.update({ where: { id: 1 }, data: { nextDocumentNumber: { increment: 1 } } });
-      const document = await tx.document.create({ data: { clientId: entities.clientId, orderId: entities.orderId, type: input.type, title: input.title?.trim().slice(0, 200) || numberPrefixes[input.type], number, documentDate: input.documentDate, comment: input.comment?.trim().slice(0, 2000) || null, authorId: input.actor.userId, source: input.source ?? (prepared ? DocumentSource.UPLOADED : DocumentSource.GENERATED_ORDER), currentVersion: prepared ? 1 : 0, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, ...(prepared && blobPath ? { versions: { create: { version: 1, uploadedById: input.actor.userId, comment: input.comment?.trim().slice(0, 1000) || null, fileName: prepared.fileName, pathname: blobPath, contentType: input.file!.type, size: prepared.bytes.byteLength, checksum: prepared.checksum } } } : {}), auditEvents: { create: { action: "CREATED", actorId: input.actor.userId, after: { type: input.type, number, currentVersion: prepared ? 1 : 0 } } } }, include: documentInclude });
+      const document = await tx.document.create({ data: { clientId: entities.clientId, orderId: entities.orderId, paymentId: input.paymentId || null, type: input.type, title: input.title?.trim().slice(0, 200) || numberPrefixes[input.type], number, documentDate: input.documentDate, comment: input.comment?.trim().slice(0, 2000) || null, snapshot: paymentSnapshot ?? undefined, authorId: input.actor.userId, source: input.source ?? (prepared ? DocumentSource.UPLOADED : DocumentSource.GENERATED_ORDER), currentVersion: prepared ? 1 : 0, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, ...(prepared && blobPath ? { versions: { create: { version: 1, uploadedById: input.actor.userId, comment: input.comment?.trim().slice(0, 1000) || null, fileName: prepared.fileName, pathname: blobPath, contentType: input.file!.type, size: prepared.bytes.byteLength, checksum: prepared.checksum } } } : {}), auditEvents: { create: { action: "CREATED", actorId: input.actor.userId, after: { type: input.type, number, currentVersion: prepared ? 1 : 0, paymentId: input.paymentId || null } } } }, include: documentInclude });
       return document;
     });
     return { document: result, created: true };

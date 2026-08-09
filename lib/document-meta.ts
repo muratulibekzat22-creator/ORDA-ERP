@@ -30,5 +30,6 @@ export const documentTabs: Array<{ label: string; type: "" | DocumentType }> = [
   { label: "Акты", type: DocumentType.ACT },
   { label: "Проекты", type: DocumentType.PROJECT },
   { label: "Замерные листы", type: DocumentType.MEASUREMENT_SHEET },
+  { label: "Оплаты", type: DocumentType.PAYMENT_RECEIPT },
   { label: "Другие", type: DocumentType.OTHER },
 ];

@@ -63,7 +63,9 @@ export async function getContractDefaults(orderId: number, actor: ContractActor)
     stairMaterial: order.material,
     balusterType: order.staircase,
     contractAmount: Number(order.amount),
-    payment: { mode: "PERCENT", prepaymentPercent: 70 } as ContractPaymentInput,
+    payment: Number(order.prepayment) > 0
+      ? { mode: "AMOUNT", prepaymentAmount: Math.min(Number(order.prepayment), Number(order.amount)) } as ContractPaymentInput
+      : { mode: "PERCENT", prepaymentPercent: 70 } as ContractPaymentInput,
     prepaymentDueText: PREPAYMENT_DUE,
     balanceDueText: "после завершения монтажа",
     fullPaymentDueText: FULL_PAYMENT_DUE,

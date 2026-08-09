@@ -32,6 +32,7 @@ async function cleanup() {
   await prisma.commercialProposal.deleteMany({ where: { clientId: { in: clientIds } } });
   await prisma.leadCalculation.deleteMany({ where: { clientId: { in: clientIds } } });
   await prisma.attachment.deleteMany({ where: { orderId: { in: orderIds } } });
+  await prisma.payment.deleteMany({ where: { orderId: { in: orderIds } } });
   await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
   await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -72,6 +73,11 @@ async function main() {
   const project = await createDocument({ orderId: orderA.id, type: DocumentType.PROJECT, title: "Проект", documentDate: new Date(), idempotencyKey: `${tag}-project`, requestHash: `${tag}-project-hash`, actor: actor(managerA) });
   const invoice = await createDocument({ orderId: orderA.id, type: DocumentType.INVOICE, title: "Счёт", documentDate: new Date(), idempotencyKey: `${tag}-invoice`, requestHash: `${tag}-invoice-hash`, actor: actor(managerA) });
   assert(project && invoice);
+  const payment = await prisma.payment.create({ data: { orderId: orderA.id, amount: 150, type: "CLIENT_PAYMENT", method: "bank_transfer", operationDate: new Date("2026-08-09T07:00:00.000Z") } });
+  const receipt = await createDocument({ orderId: orderA.id, paymentId: payment.id, type: DocumentType.PAYMENT_RECEIPT, title: "Подтверждение оплаты", documentDate: new Date(), file: new File([Buffer.from("%PDF-1.4\n%%EOF")], "payment.pdf", { type: "application/pdf" }), idempotencyKey: `${tag}-payment-document`, requestHash: `${tag}-payment-document-hash`, actor: actor(managerA) });
+  assert.equal(receipt?.document.paymentId, payment.id, "payment confirmation is not linked to Payment");
+  assert.equal(await prisma.payment.count({ where: { orderId: orderA.id } }), 1, "payment confirmation duplicated the financial operation");
+  await assert.rejects(() => createDocument({ orderId: orderA.id, paymentId: payment.id, type: DocumentType.ACT, title: "Unsafe payment relation", documentDate: new Date(), idempotencyKey: `${tag}-unsafe-payment-link`, requestHash: `${tag}-unsafe-payment-link-hash`, actor: actor(managerA) }), /ENTITY_MISMATCH/);
   assert((await getDocuments(actor(accountant))).every((item) => item.type === DocumentType.INVOICE || item.type === DocumentType.PAYMENT_RECEIPT), "accountant scope leaked non-financial docs");
   const productionRows = await getDocuments(actor(production), { orderId: orderA.id });
   assert(productionRows.some((item) => item.type === DocumentType.PROJECT) && productionRows.every((item) => item.type !== DocumentType.CONTRACT && item.type !== DocumentType.INVOICE), "production scope is incorrect");

@@ -2,31 +2,37 @@
 
 import { FileCheck2, X } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
 type Payment = { mode: "PERCENT"; prepaymentPercent: number } | { mode: "AMOUNT"; prepaymentAmount: number };
 type Form = { clientFullName: string; clientIin: string; clientPhone: string; clientAddress: string; installationAddress: string; stairMaterial: string; balusterType: string; contractAmount: number; payment: Payment; prepaymentDueText: string; balanceDueText: string; fullPaymentDueText: string; termCalendarDays: number; termStartCondition: string; warrantyMonths: number | null; productionContactName: string; productionContactPhone: string };
 type Preview = Record<string, string | number | boolean>;
+export type GeneratedContract = { id: number; number: string; currentVersion: number; versions?: Array<{ id: number; version: number }> };
 const control = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white outline-none focus:border-blue-500";
 
-export default function ContractComposer({ orderId, onGenerated }: { orderId: number; onGenerated: () => void }) {
+export default function ContractComposer({ orderId, onGenerated, autoOpen = false, showTrigger = true, onClosed }: { orderId: number; onGenerated: (document?: GeneratedContract) => void; autoOpen?: boolean; showTrigger?: boolean; onClosed?: () => void }) {
   const { data: session } = useSession();
   const [open, setOpen] = useState(false), [loading, setLoading] = useState(false), [error, setError] = useState(""), [form, setForm] = useState<Form | null>(null), [preview, setPreview] = useState<Preview | null>(null);
-  if (!["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "")) return null;
 
-  async function begin() {
+  const begin = useCallback(async () => {
     setOpen(true); setLoading(true); setError(""); setPreview(null);
     try { const response = await fetch(`/api/orders/${orderId}/contract`, { cache: "no-store" }); const body = await response.json(); if (!response.ok) throw new Error(body.error); setForm(body); }
     catch (next) { setError(next instanceof Error ? next.message : "Не удалось загрузить данные"); }
     finally { setLoading(false); }
-  }
+  }, [orderId]);
+
+  useEffect(() => { if (!autoOpen) return; const timer = window.setTimeout(() => void begin(), 0); return () => window.clearTimeout(timer); }, [autoOpen, begin]);
+
+  if (!["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "")) return null;
+
+  function close() { setOpen(false); setPreview(null); onClosed?.(); }
 
   async function send(action: "preview" | "generate") {
     if (!form) return; setLoading(true); setError("");
     try {
       const response = await fetch(`/api/orders/${orderId}/contract`, { method: "POST", headers: { "Content-Type": "application/json", ...(action === "generate" ? { "Idempotency-Key": crypto.randomUUID() } : {}) }, body: JSON.stringify({ action, input: form }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Ошибка формирования договора");
-      if (action === "preview") setPreview(body); else { setOpen(false); setPreview(null); onGenerated(); }
+      if (action === "preview") setPreview(body); else { close(); onGenerated(body); }
     } catch (next) { setError(next instanceof Error ? next.message : "Ошибка формирования договора"); }
     finally { setLoading(false); }
   }
@@ -35,9 +41,9 @@ export default function ContractComposer({ orderId, onGenerated }: { orderId: nu
   function set<K extends keyof Form>(key: K, value: Form[K]) { setForm((current) => current ? { ...current, [key]: value } : current); setPreview(null); }
 
   return <>
-    <button onClick={() => void begin()} className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 font-semibold text-white"><FileCheck2 size={18}/>Оформить договор</button>
+    {showTrigger && <button onClick={() => void begin()} className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 font-semibold text-white"><FileCheck2 size={18}/>Сформировать договор</button>}
     {open && <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/80 sm:items-center sm:p-4"><form onSubmit={submit} className="max-h-dvh w-full max-w-4xl overflow-y-auto rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:rounded-2xl">
-      <div className="mb-5 flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Оформление договора</h2><p className="text-sm text-slate-400">Данные заказа заполнены автоматически. Изменения применяются только к snapshot договора.</p></div><button type="button" aria-label="Закрыть" onClick={() => setOpen(false)} className="grid size-11 place-items-center text-slate-300"><X/></button></div>
+      <div className="mb-5 flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Оформление договора</h2><p className="text-sm text-slate-400">Данные заказа заполнены автоматически. Изменения применяются только к snapshot договора.</p></div><button type="button" aria-label="Закрыть" onClick={close} className="grid size-11 place-items-center text-slate-300"><X/></button></div>
       {error && <p className="mb-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-300">{error}</p>}
       {loading && !form ? <p className="p-8 text-slate-400">Загрузка…</p> : form && !preview ? <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Field label="ФИО клиента *"><input required value={form.clientFullName} onChange={(e) => set("clientFullName", e.target.value)} className={control}/></Field>
@@ -62,4 +68,4 @@ export default function ContractComposer({ orderId, onGenerated }: { orderId: nu
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block text-sm text-slate-300"><span className="mb-1 block">{label}</span>{children}</label>; }
-function PreviewCard({ value }: { value: Preview }) { const rows = [["№", value.contractNumber], ["Дата / время", `${value.contractDay} ${value.contractMonth} ${value.contractYear}, ${value.contractTime}`], ["Клиент", value.clientFullName], ["ИИН", value.clientIin], ["Материал", value.stairMaterial], ["Балясина", value.balusterType], ["Адрес", value.installationAddress], ["Стоимость", `${value.contractAmount} ₸ (${value.contractAmountWords})`], ["Первый платёж", `${value.prepaymentAmount} ₸ / ${value.prepaymentPercent}%`], ["Остаток", value.isFullPayment ? "100% оплата" : `${value.balanceAmount} ₸ / ${value.balancePercent}%`], ["Срок", `${value.termCalendarDays} календарных дней`], ["Гарантия", value.warrantyText]]; return <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-5"><h3 className="mb-4 text-lg font-bold text-white">Предпросмотр договора</h3><dl className="grid gap-3 sm:grid-cols-2">{rows.map(([label, content]) => <div key={String(label)}><dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 text-white">{String(content ?? "—")}</dd></div>)}</dl></div>; }
+function PreviewCard({ value }: { value: Preview }) { const rows = [["№", value.contractNumber], ["Дата / время", `${value.contractDay} ${value.contractMonth} ${value.contractYear}, ${value.contractTime}`], ["Клиент", value.clientFullName], ["ИИН", value.clientIin], ["Телефон", value.clientPhone], ["Адрес клиента", value.clientAddress], ["Адрес монтажа", value.installationAddress], ["Материал", value.stairMaterial], ["Ограждение", value.balusterType], ["Стоимость", `${value.contractAmount} ₸ (${value.contractAmountWords})`], ["Первый платёж", `${value.prepaymentAmount} ₸ / ${value.prepaymentPercent}%`], ["Остаток", value.isFullPayment ? "100% оплата" : `${value.balanceAmount} ₸ / ${value.balancePercent}%`], ["Срок", `${value.termCalendarDays} календарных дней`], ["Гарантия", value.warrantyText]]; return <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-5"><h3 className="mb-4 text-lg font-bold text-white">Предпросмотр договора</h3><dl className="grid gap-3 sm:grid-cols-2">{rows.map(([label, content]) => <div key={String(label)}><dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 break-words text-white">{String(content ?? "—")}</dd></div>)}</dl></div>; }
