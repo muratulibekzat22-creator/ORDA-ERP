@@ -233,6 +233,14 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 <CircleDollarSign size={17} /> Добавить оплату
               </button>
             )}
+            {canSeeClientFinance && (
+              <a
+                href="#settlements"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                <WalletCards size={17} /> Расчёты
+              </a>
+            )}
           </nav>
         </div>
         {(notice || error) && (
@@ -625,6 +633,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 ["Клиент", "client"],
                 ["Технические параметры", "technical"],
                 ...(canSeeClientFinance ? [["Финансы заказа", "order-finance"]] : []),
+                ...(canSeeClientFinance ? [["Расчёты", "settlements"]] : []),
                 ["Расчёт", "calculation"],
                 ["Документы", "documents"],
                 ["История", "history"],

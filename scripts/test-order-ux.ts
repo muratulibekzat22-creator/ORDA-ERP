@@ -78,6 +78,9 @@ const orderApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
 const orderOptions = readFileSync("app/api/orders/options/route.ts", "utf8");
+const settlementPanel = readFileSync("components/orders/OrderSettlementPanel.tsx", "utf8");
+const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
+const directorDashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /pathname\.startsWith\(href\)/);
 for (const section of [
@@ -122,6 +125,15 @@ assert.match(ordersApi, /enforceClientOwnership: enhanced/);
 assert.match(ordersApi, /Полученная сумма не может превышать сумму заказа/);
 assert.match(orderOptions, /active: true, role: Role\.MANAGER/);
 assert.match(orderOptions, /kind: "STAIR_MATERIAL"/);
+for (const label of ["Расчёты", "Получено от клиента", "Остаток клиента", "Согласованная стоимость цеха", "Выплачено цеху", "Осталось выплатить", "Указать стоимость цеха", "Выплатить цеху", "История выплат цеху"])
+  assert.match(settlementPanel, new RegExp(label));
+assert.match(settlementPanel, /id="settlements"/);
+for (const label of ["К выплате цеху", "Стоимость цеха", "Осталось выплатить"])
+  assert.match(ordersPage, new RegExp(label));
+assert.match(directorDashboard, /\/orders\?settlement=partner-payable/);
+assert.match(ordersApi, /role !== Role\.PARTNER/);
+for (const field of ["partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"])
+  assert.match(ordersApi, new RegExp(`"${field}"`));
 for (const page of ["offer", "contract", "act", "invoice", "print"])
   assert.ok(
     readFileSync(`app/orders/[id]/${page}/page.tsx`, "utf8").length > 0,
