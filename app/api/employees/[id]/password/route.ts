@@ -19,8 +19,8 @@ export async function POST(request: Request, { params }: Context) {
     const body = await request.json() as Record<string, unknown>;
     const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
     const confirmPassword = typeof body.confirmPassword === "string" ? body.confirmPassword : "";
-    if (newPassword.length < 12 || newPassword.length > 128 || newPassword !== confirmPassword)
-      return NextResponse.json({ error: "Пароли должны совпадать и содержать от 12 до 128 символов" }, { status: 400 });
+    if (newPassword.length < 10 || newPassword.length > 128 || newPassword !== confirmPassword)
+      return NextResponse.json({ error: "Пароли должны совпадать и содержать от 10 до 128 символов" }, { status: 400 });
     const existing = await prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (!existing) return NextResponse.json({ error: "Сотрудник не найден" }, { status: 404 });
     await prisma.user.update({
