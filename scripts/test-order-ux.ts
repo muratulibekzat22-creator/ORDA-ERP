@@ -75,10 +75,15 @@ const routeShell = readFileSync("components/layout/RouteShell.tsx", "utf8");
 const workspace = readFileSync("components/orders/OrderWorkspace.tsx", "utf8");
 const orderPageAuth = readFileSync("lib/order-page-auth.ts", "utf8");
 const orderApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
+const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
+const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
+const orderOptions = readFileSync("app/api/orders/options/route.ts", "utf8");
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /pathname\.startsWith\(href\)/);
 for (const section of [
   "client",
+  "technical",
+  "order-finance",
   "calculation",
   "documents",
   "history",
@@ -108,6 +113,15 @@ assert.doesNotMatch(
 );
 assert.match(orderApi, /order-comment:/);
 assert.match(orderApi, /Добавлен комментарий/);
+for (const block of ["Клиент", "Заказ", "Технические параметры", "Финансы заказа", "Дополнительно"])
+  assert.match(newOrderForm, new RegExp(`title="${block}"`));
+assert.match(newOrderForm, /router\.push\(`\/orders\/\$\{body\.id\}`\)/);
+assert.match(newOrderForm, /existingClient\?\.id/);
+assert.match(ordersApi, /role !== Role\.DIRECTOR && role !== Role\.MANAGER/);
+assert.match(ordersApi, /enforceClientOwnership: enhanced/);
+assert.match(ordersApi, /Полученная сумма не может превышать сумму заказа/);
+assert.match(orderOptions, /active: true, role: Role\.MANAGER/);
+assert.match(orderOptions, /kind: "STAIR_MATERIAL"/);
 for (const page of ["offer", "contract", "act", "invoice", "print"])
   assert.ok(
     readFileSync(`app/orders/[id]/${page}/page.tsx`, "utf8").length > 0,

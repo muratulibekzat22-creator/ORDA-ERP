@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
+import Link from "next/link";
+import { useSession } from "next-auth/react";
 import OrderTable, { type OrderListItem } from "@/components/orders/OrderTable";
 import {
   ORDER_STAGE_KEYS,
@@ -14,6 +17,7 @@ import {
 type Filter = "all" | OrderStageKey | "overdue";
 
 export default function OrdersPage() {
+  const { data: session } = useSession();
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -63,7 +67,7 @@ export default function OrdersPage() {
 
   const tabs: Array<[Filter, string]> = [["all", "Все"], ...ORDER_STAGE_KEYS.map((key) => [key, ORDER_STAGE_LABELS[key]] as [Filter, string]), ["overdue", "Просрочены"]];
   return <section className="space-y-5 p-4 md:p-8">
-    <header className="flex items-end justify-between gap-4"><div><h1 className="text-3xl font-bold text-white">Заказы</h1><p className="mt-1 text-slate-400">Полученные заказы: от контрольного замера до установки</p></div><button onClick={() => void load()} disabled={loading} className="min-h-11 rounded-xl bg-slate-800 px-4 text-white disabled:opacity-50">Обновить</button></header>
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><h1 className="text-3xl font-bold text-white">Заказы</h1><p className="mt-1 text-slate-400">Полученные заказы: от контрольного замера до установки</p></div><div className="flex flex-col gap-2 sm:flex-row">{["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "") ? <Link href="/orders/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white hover:bg-blue-500"><Plus size={18} /> Новый заказ</Link> : null}<button onClick={() => void load()} disabled={loading} className="min-h-11 rounded-xl bg-slate-800 px-4 text-white disabled:opacity-50">Обновить</button></div></header>
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
       {[["all", "Все"], ["measurement", "Контрольный замер"], ["preparation", "В работе"], ["ready", "Готовы к установке"], ["installation", "На установке"], ["overdue", "Просрочены"]].map(([key, label]) => <button key={key} onClick={() => setFilter(key as Filter)} className={`rounded-xl border p-3 text-left ${filter === key ? "border-blue-500 bg-blue-500/10" : "border-slate-800 bg-[#101827]"}`}><span className="block text-xs text-slate-400">{label}</span><strong className={key === "overdue" && counts.overdue ? "text-red-300" : "text-white"}>{counts[key as keyof typeof counts]}</strong></button>)}
     </div>

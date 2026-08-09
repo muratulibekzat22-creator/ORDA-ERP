@@ -40,6 +40,7 @@
     "test:measurements": "tsx scripts/test-measurements.ts",
     "test:reports": "tsx scripts/test-reports.ts",
     "test:orders-module": "tsx scripts/test-orders-module.ts",
+    "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",
     "test:dashboard-director": "tsx scripts/test-dashboard-director.ts",
     "test:documents": "tsx scripts/test-documents-module.ts",
     "test:contracts": "tsx scripts/test-contract-generation.ts"

@@ -27,6 +27,7 @@ import ProjectPayments from "@/components/project/ProjectPayments";
 import OrderProcess from "./OrderProcess";
 import OrderSettlementPanel from "./OrderSettlementPanel";
 import { ORDER_STAGE_LABELS, projectOrderStage } from "@/lib/orders/presentation";
+import { paymentMethodLabel } from "@/lib/orders/registration";
 
 import DocumentsTab from "./tabs/DocumentsTab";
 import FilesTab from "./tabs/FilesTab";
@@ -290,10 +291,46 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 value={order.address || order.client.address}
               />
               <Field title="Ответственный менеджер" value={order.manager} />
+              <Field title="Дата получения заказа" value={date(order.orderReceivedAt)} />
+              <Field title="Срок" value={date(order.promisedAt)} />
               <Field title="Статус заказа" value={order.status} />
-              <Field title="Дата создания" value={date(order.createdAt)} />
+              <Field title="Зарегистрирован в ORDA" value={date(order.createdAt)} />
+              {order.mapUrl ? <Field title="Карта" value={<a href={order.mapUrl} target="_blank" rel="noreferrer" className="text-blue-300 hover:text-blue-200">Открыть карту</a>} /> : null}
             </div>
           </section>
+
+          <section id="technical" className={panel}>
+            <SectionTitle
+              icon={<ClipboardList size={20} />}
+              title="Технические параметры"
+              description="Зафиксированная комплектация полученного заказа"
+            />
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 md:p-5">
+              <Field title="Каркас" value={order.staircase} />
+              <Field title="Комментарий к каркасу" value={order.frameComment} />
+              <Field title="Материал" value={order.material} />
+              <Field title="Ограждение" value={order.railingType} />
+              <Field title="Стойка / опора" value={order.supportType} />
+              <Field title="Цвет" value={order.color} />
+              <Field title="Подсветка" value={order.lighting ? order.lightingDetails || "Да" : "Нет"} />
+              <Field title="Обшивка" value={order.cladding ? order.claddingDetails || "Да" : "Нет"} />
+              <Field title="Дополнительно" value={order.additionalDetails} />
+            </div>
+          </section>
+
+          {canSeeClientFinance && <section id="order-finance" className={panel}>
+            <SectionTitle
+              icon={<CircleDollarSign size={20} />}
+              title="Финансы заказа"
+              description="Клиентские суммы; расчёт с цехом остаётся отдельным"
+            />
+            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 md:p-5">
+              <Field title="Общая сумма" value={money(order.amount)} />
+              <Field title="Получено" value={money(order.prepayment)} />
+              <Field title="Остаток" value={money(order.balance)} />
+              <Field title="Способ оплаты" value={paymentMethodLabel(order.paymentMethod) || "Не указан"} />
+            </div>
+          </section>}
 
           {canSeeClientFinance && <section id="calculation" className={panel}>
             <SectionTitle
@@ -586,6 +623,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             <nav className="grid grid-cols-2 gap-2 p-4 text-sm md:p-5">
               {[
                 ["Клиент", "client"],
+                ["Технические параметры", "technical"],
+                ...(canSeeClientFinance ? [["Финансы заказа", "order-finance"]] : []),
                 ["Расчёт", "calculation"],
                 ["Документы", "documents"],
                 ["История", "history"],

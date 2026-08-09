@@ -1,3 +1,5 @@
+import { Prisma, Role } from "@prisma/client";
+import { normalizePhone } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { del } from "@vercel/blob";
@@ -128,18 +130,40 @@ async function createLegacyOrder(data: {
 }
 
 type CreateOrderInput = {
-  clientId: number;
+  clientId?: number;
+  client?: {
+    name: string;
+    phone: string;
+    city: string;
+    address: string;
+  };
   partnerId: number | null;
   address: string;
   staircase: string;
   material: string;
+  mapUrl?: string;
+  orderReceivedAt?: Date;
+  promisedAt?: Date | null;
+  frameComment?: string;
+  railingType?: string;
+  supportType?: string;
+  color?: string;
+  lighting?: boolean;
+  lightingDetails?: string;
+  cladding?: boolean;
+  claddingDetails?: string;
+  additionalDetails?: string;
+  paymentMethod?: string;
+  initialPaymentDate?: Date;
+  initialPaymentComment?: string;
   amount: number;
   prepayment: number;
   partnerPrice: number;
   partnerPaid: number;
   manager: string;
   managerUserId?: number;
-  actorRole?: import("@prisma/client").Role;
+  actorRole?: Role;
+  enforceClientOwnership?: boolean;
   idempotencyKey?: string;
   requestHash?: string;
 };
@@ -155,6 +179,8 @@ function money(value: number) {
 
 export async function createOrder(data: CreateOrderInput) {
   if (data.partnerPaid > 0 && !data.partnerId) throw new Error("PARTNER_REQUIRED_FOR_INITIAL_PAYOUT");
+  if (!data.clientId && !data.client) throw new Error("CLIENT_REQUIRED");
+  if (data.actorRole === Role.MANAGER && !data.managerUserId) throw new Error("MANAGER_REQUIRED");
   const eventKey = data.idempotencyKey
     ? `order:${data.idempotencyKey}`
     : undefined;
@@ -184,14 +210,84 @@ export async function createOrder(data: CreateOrderInput) {
           }
         }
 
+        let clientId = data.clientId;
+        if (data.client) {
+          const phone = normalizePhone(data.client.phone);
+          if (!phone) throw new Error("INVALID_CLIENT_PHONE");
+          const existing = await tx.client.findFirst({
+            where: { active: true, OR: [{ phone }, { whatsapp: phone }] },
+            select: { id: true, managerUserId: true, manager: true },
+          });
+          if (existing) {
+            if (
+              (data.actorRole === Role.MANAGER || data.enforceClientOwnership) &&
+              existing.managerUserId &&
+              existing.managerUserId !== data.managerUserId
+            )
+              throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+            if (!existing.managerUserId && data.actorRole === Role.MANAGER && existing.manager && existing.manager !== data.manager)
+              throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+            if (!existing.managerUserId) await tx.client.update({ where: { id: existing.id }, data: { managerUserId: data.managerUserId, manager: data.manager } });
+            if (clientId && clientId !== existing.id) throw new Error("CLIENT_PHONE_MISMATCH");
+            clientId = existing.id;
+          } else if (clientId) {
+            throw new Error("CLIENT_PHONE_MISMATCH");
+          } else {
+            const createdClient = await tx.client.create({
+              data: {
+                name: data.client.name,
+                phone,
+                whatsapp: phone,
+                city: data.client.city,
+                address: data.client.address,
+                manager: data.manager,
+                managerUserId: data.managerUserId,
+                amount: money(data.amount),
+                estimatedAmount: money(data.amount),
+                status: "Order registered",
+                stage: "WON",
+                source: "Existing order",
+                comment: "Created while registering an existing order",
+              },
+              select: { id: true },
+            });
+            clientId = createdClient.id;
+          }
+        }
+        if (!clientId) throw new Error("CLIENT_REQUIRED");
+        const ownedClient = await tx.client.findUnique({ where: { id: clientId }, select: { managerUserId: true, manager: true } });
+        if (!ownedClient) throw new Error("CLIENT_NOT_FOUND");
+        if (
+          (data.actorRole === Role.MANAGER || data.enforceClientOwnership) &&
+          ownedClient.managerUserId &&
+          ownedClient.managerUserId !== data.managerUserId
+        )
+          throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+        if (!ownedClient.managerUserId && data.actorRole === Role.MANAGER && ownedClient.manager && ownedClient.manager !== data.manager)
+          throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+        if (!ownedClient.managerUserId) await tx.client.update({ where: { id: clientId }, data: { managerUserId: data.managerUserId, manager: data.manager } });
+
         const order = await tx.order.create({
           data: {
             number: orderNumber(),
-            clientId: data.clientId,
+            clientId,
             partnerId: data.partnerId,
             address: data.address,
             staircase: data.staircase,
             material: data.material,
+            mapUrl: data.mapUrl ?? "",
+            orderReceivedAt: data.orderReceivedAt ?? new Date(),
+            promisedAt: data.promisedAt,
+            frameComment: data.frameComment ?? "",
+            railingType: data.railingType ?? "",
+            supportType: data.supportType ?? "",
+            color: data.color ?? "",
+            lighting: data.lighting ?? false,
+            lightingDetails: data.lightingDetails ?? "",
+            cladding: data.cladding ?? false,
+            claddingDetails: data.claddingDetails ?? "",
+            additionalDetails: data.additionalDetails ?? "",
+            paymentMethod: data.paymentMethod ?? "",
             amount: money(data.amount),
             prepayment: money(data.prepayment),
             balance: money(balance),
@@ -204,7 +300,7 @@ export async function createOrder(data: CreateOrderInput) {
             status: "Новая заявка",
           },
         });
-        if (data.prepayment > 0) await tx.payment.create({ data: { orderId: order.id, amount: money(data.prepayment), type: "CLIENT_PAYMENT", method: "initial_order_posting", comment: "Initial client payment", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-client-payment:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
+        if (data.prepayment > 0) await tx.payment.create({ data: { orderId: order.id, amount: money(data.prepayment), type: "CLIENT_PAYMENT", method: data.paymentMethod || "OTHER", operationDate: data.initialPaymentDate ?? new Date(), comment: data.initialPaymentComment || "Initial payment registered with existing order", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-client-payment:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
         if (data.partnerPaid > 0) await tx.payment.create({ data: { orderId: order.id, partnerId: data.partnerId, amount: money(data.partnerPaid), type: "PARTNER_PAYOUT", method: "initial_order_posting", comment: "Initial partner payout", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-partner-payout:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
         await tx.orderEvent.create({
           data: {
@@ -228,10 +324,11 @@ export async function createOrder(data: CreateOrderInput) {
         });
         await tx.orderLifecycleEvent.create({ data: { orderId: order.id, type: "ORDER_CREATED", toLifecycle: "CREATED", actorId: data.managerUserId, actorName: data.manager, role: data.actorRole ?? "MANAGER", idempotencyKey: data.idempotencyKey ? `order-lifecycle:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
         return { order, created: true };
-      });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
     } catch (error) {
       if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
         throw error;
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") continue;
       if (!isPrismaUniqueConflict(error)) throw error;
       if (eventKey && data.requestHash) {
         const existingEvent = await prisma.orderEvent.findUnique({

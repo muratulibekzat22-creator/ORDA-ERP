@@ -66,7 +66,7 @@ const orderList = read("app/api/orders/route.ts");
 includesAll(
   orderList,
   [
-    'auth.session!.user.role !== Role.DIRECTOR',
+    'role !== Role.DIRECTOR && role !== Role.MANAGER',
     '"partnerPrice" in body',
     '"partnerPaid" in body',
     '"companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"',

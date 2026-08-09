@@ -640,6 +640,18 @@ model Order {
   address   String
   staircase String
   material  String
+  mapUrl             String   @default("")
+  orderReceivedAt    DateTime @default(now())
+  frameComment       String   @default("")
+  railingType        String   @default("")
+  supportType        String   @default("")
+  color              String   @default("")
+  lighting           Boolean  @default(false)
+  lightingDetails    String   @default("")
+  cladding            Boolean  @default(false)
+  claddingDetails     String   @default("")
+  additionalDetails  String   @default("")
+  paymentMethod      String   @default("")
 
   amount Decimal @db.Decimal(12, 2)
 
@@ -705,6 +717,7 @@ model Order {
 
   @@index([lifecycle, promisedAt])
   @@index([managerUserId, lifecycle])
+  @@index([orderReceivedAt])
 }
 
 model CalendarTask {
