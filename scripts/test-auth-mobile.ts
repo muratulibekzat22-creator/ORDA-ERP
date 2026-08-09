@@ -12,6 +12,7 @@ for (const value of ["accountIdentifierHash", "requestId", "userAgentClass"]) as
 assert(!auth.includes("email, success") && auth.includes("email: null"), "new auth audit must not store raw email");
 for (const reason of ["INVALID_CREDENTIALS", "TEMPORARILY_LOCKED", "RATE_LIMITED"]) assert(auth.includes(reason), `auth reason missing: ${reason}`);
 assert(auth.includes('reason: invalidReason') && auth.includes('reason: "RATE_LIMITED"'), "blocked retries must not count as password failures");
+assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "director password reset does not clear the account/IP failure window");
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");

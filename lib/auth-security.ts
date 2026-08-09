@@ -7,6 +7,11 @@ export const IP_ABUSE_FAILURE_LIMIT = Number(process.env.AUTH_IP_ABUSE_FAILURE_L
 export const AUTH_WINDOW_MS = 15 * 60_000;
 export const AUTH_AUDIT_RETENTION_DAYS = 90;
 
+export function accountFailureWindowStart(passwordChangedAt: Date | null | undefined, now = Date.now()) {
+  const windowStart = new Date(now - AUTH_WINDOW_MS);
+  return passwordChangedAt && passwordChangedAt > windowStart ? passwordChangedAt : windowStart;
+}
+
 export type SafeAuthReason = "INVALID_CREDENTIALS" | "TEMPORARILY_LOCKED" | "RATE_LIMITED" | "SESSION_INVALID" | "PASSWORD_CHANGE_REQUIRED" | "CSRF_OR_AUTH_FLOW_ERROR" | "NETWORK_ERROR";
 
 type RequestLike = { headers?: Record<string, string | string[] | undefined> };

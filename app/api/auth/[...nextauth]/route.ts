@@ -2,7 +2,7 @@ import bcrypt from "bcrypt";
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 
-import { ACCOUNT_FAILURE_LIMIT, ACCOUNT_IP_FAILURE_LIMIT, AUTH_WINDOW_MS, IP_ABUSE_FAILURE_LIMIT, accountIdentifierHash, normalizeAccountIdentifier, pruneAuthAudit, requestId, requestIpHash, userAgentClass, writeAuthAudit, type SafeAuthReason } from "@/lib/auth-security";
+import { ACCOUNT_FAILURE_LIMIT, ACCOUNT_IP_FAILURE_LIMIT, AUTH_WINDOW_MS, IP_ABUSE_FAILURE_LIMIT, accountFailureWindowStart, accountIdentifierHash, normalizeAccountIdentifier, pruneAuthAudit, requestId, requestIpHash, userAgentClass, writeAuthAudit, type SafeAuthReason } from "@/lib/auth-security";
 import { productionLog } from "@/lib/observability";
 import { prisma } from "@/lib/prisma";
 
@@ -19,8 +19,10 @@ export const authOptions: NextAuthOptions = {
       const audit = (userId: number | undefined, success: boolean, reason: string) => writeAuthAudit(prisma, { userId, success, reason, identifierHash, ipHash, requestId: correlationId, userAgentClass: agentClass });
       void pruneAuthAudit(prisma);
       const windowStart = new Date(Date.now() - AUTH_WINDOW_MS), invalidReason = "INVALID_CREDENTIALS";
+      const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+      const accountWindowStart = accountFailureWindowStart(user?.passwordChangedAt);
       const [accountIpFailures, ipFailures] = await Promise.all([
-        identifierHash ? prisma.authAuditEvent.count({ where: { accountIdentifierHash: identifierHash, ipHash, reason: invalidReason, createdAt: { gte: windowStart } } }) : 0,
+        identifierHash ? prisma.authAuditEvent.count({ where: { accountIdentifierHash: identifierHash, ipHash, reason: invalidReason, createdAt: { gte: accountWindowStart } } }) : 0,
         ipHash ? prisma.authAuditEvent.count({ where: { ipHash, reason: invalidReason, createdAt: { gte: windowStart } } }) : 0,
       ]);
       if (ipFailures >= IP_ABUSE_FAILURE_LIMIT || accountIpFailures >= ACCOUNT_IP_FAILURE_LIMIT) {
@@ -28,7 +30,6 @@ export const authOptions: NextAuthOptions = {
         await audit(undefined, false, "RATE_LIMITED");
         throw new SafeAuthError("RATE_LIMITED");
       }
-      const user = await prisma.user.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
       if (user?.lockedUntil && user.lockedUntil > new Date()) {
         await bcrypt.compare(credentials.password, user.password);
         await audit(user.id, false, "TEMPORARILY_LOCKED");
