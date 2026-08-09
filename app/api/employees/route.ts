@@ -7,10 +7,18 @@ import { requirePermission } from "@/lib/server-auth";
 
 const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
-  return NextResponse.json(await prisma.user.findMany({ select, orderBy: { createdAt: "desc" } }));
+  const status = new URL(request.url).searchParams.get("status") ?? "active";
+  if (!(["active", "inactive", "all"] as const).includes(status as "active" | "inactive" | "all")) {
+    return NextResponse.json({ error: "Некорректный фильтр статуса" }, { status: 400 });
+  }
+  const active = status === "all" ? undefined : status === "active";
+  return NextResponse.json(
+    await prisma.user.findMany({ where: active === undefined ? undefined : { active }, select, orderBy: { createdAt: "desc" } }),
+    { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+  );
 }
 
 export async function POST(request: Request) {

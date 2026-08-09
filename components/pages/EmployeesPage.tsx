@@ -22,6 +22,7 @@ type Form = {
   partnerId: string;
   active: boolean;
 };
+type EmployeeFilter = "active" | "inactive" | "all";
 const blank: Form = {
   name: "",
   email: "",
@@ -34,12 +35,13 @@ const blank: Form = {
 export default function EmployeesPage() {
   const [users, setUsers] = useState<User[]>([]),
     [partners, setPartners] = useState<Partner[]>([]),
+    [employeeFilter, setEmployeeFilter] = useState<EmployeeFilter>("active"),
     [form, setForm] = useState(blank),
     [edit, setEdit] = useState<User | null>(null),
     [error, setError] = useState("");
-  const load = async () => {
+  const load = async (filter: EmployeeFilter) => {
     const [u, p] = await Promise.all([
-      fetch("/api/employees"),
+      fetch(`/api/employees?status=${filter}`, { cache: "no-store" }),
       fetch("/api/partners"),
     ]);
     if (!u.ok || !p.ok) throw new Error("Не удалось загрузить данные");
@@ -53,13 +55,13 @@ export default function EmployeesPage() {
   useEffect(() => {
     const id = window.setTimeout(
       () =>
-        void load().catch((e) =>
+        void load(employeeFilter).catch((e) =>
           setError(e instanceof Error ? e.message : "Ошибка"),
         ),
       0,
     );
     return () => window.clearTimeout(id);
-  }, []);
+  }, [employeeFilter]);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (form.role === Role.PARTNER && !form.partnerId)
@@ -81,7 +83,7 @@ export default function EmployeesPage() {
       );
     setForm(blank);
     setEdit(null);
-    await load();
+    await load(employeeFilter);
   };
   const patch = async (user: User, data: Record<string, unknown>) => {
     const r = await fetch(`/api/employees/${user.id}`, {
@@ -93,7 +95,7 @@ export default function EmployeesPage() {
       return setError(
         ((await r.json()) as { error?: string }).error ?? "Ошибка",
       );
-    await load();
+    await load(employeeFilter);
   };
   return (
     <section className="flex-1 overflow-auto p-4 md:p-8">
@@ -194,6 +196,23 @@ export default function EmployeesPage() {
           </button>
         )}
       </form>
+      <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Фильтр сотрудников">
+        {([
+          ["active", "Активные"],
+          ["inactive", "Неактивные"],
+          ["all", "Все"],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setEmployeeFilter(value)}
+            className={`min-h-11 rounded-xl px-4 font-medium ${employeeFilter === value ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+            aria-pressed={employeeFilter === value}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="mt-5 space-y-3 md:hidden">{!users.length ? <p className="rounded-2xl bg-[#101827] p-8 text-center text-slate-400">Сотрудники пока не добавлены.</p> : users.map((user) => <article key={user.id} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-white">{user.name}</h2><p className="truncate text-sm text-slate-400">{user.email}</p><p className="text-sm text-slate-400">{user.phone ?? "Телефон не указан"}</p></div><span className={`rounded-full px-3 py-1 text-xs ${user.active ? "bg-green-700 text-white" : "bg-slate-700 text-slate-300"}`}>{user.active ? "Активен" : "Неактивен"}</span></div><p className="mt-3 text-sm text-slate-300">{roleNames[user.role]}{user.partnerProfile ? ` · ${user.partnerProfile.name}` : ""}</p><p className="mt-2 text-xs text-slate-500">Последний вход: {user.lastLogin ? new Date(user.lastLogin).toLocaleString("ru-RU") : "ещё не входил"}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" className="min-h-11 rounded-lg bg-slate-700 px-3 text-white" onClick={() => { setEdit(user); setForm({ name: user.name, email: user.email, password: "", phone: user.phone ?? "", role: user.role, partnerId: user.partnerProfile ? String(user.partnerProfile.id) : "", active: user.active }); }}>Изменить</button><button type="button" className="min-h-11 rounded-lg bg-amber-700 px-3 text-white" onClick={() => void patch(user, { active: !user.active })}>{user.active ? "Отключить" : "Включить"}</button></div></article>)}</div>
       <div className="mt-5 hidden overflow-auto rounded-2xl bg-[#101827] md:block">
         <table className="w-full min-w-[1050px] text-left text-slate-300 [&_td]:border-t [&_td]:border-slate-800 [&_td]:p-4">
@@ -262,7 +281,7 @@ export default function EmployeesPage() {
                             ((await r.json()) as { error?: string }).error ??
                               "Ошибка",
                           );
-                        else await load();
+                        else await load(employeeFilter);
                       }
                     }}
                   >
