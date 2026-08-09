@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
 
 const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
 const idFrom = (value: string) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
@@ -37,7 +38,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         await tx.partner.update({ where: { id: partnerId }, data: { userId: id } });
       } else if (role && user.role === Role.PARTNER) await tx.partner.updateMany({ where: { userId: id }, data: { userId: null } });
       const accessChanged = (typeof body.active === "boolean" && body.active !== user.active) || (role !== undefined && role !== user.role);
-      return tx.user.update({ where: { id }, data: { ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}), ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}), ...(typeof body.active === "boolean" ? { active: body.active } : {}), ...(role ? { role } : {}), ...(accessChanged ? { sessionVersion: { increment: 1 } } : {}) }, select });
+      const result = await tx.user.update({ where: { id }, data: { ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}), ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}), ...(typeof body.active === "boolean" ? { active: body.active } : {}), ...(role ? { role } : {}), ...(accessChanged ? { sessionVersion: { increment: 1 } } : {}) }, select });
+      if (result.role === Role.MEASURER && result.active)
+        await ensureCurrentMeasurerTraining(tx, result.id);
+      return result;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json(updated);
   } catch (error) {

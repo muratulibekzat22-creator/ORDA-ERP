@@ -239,6 +239,7 @@ export default function MeasurementWorkspace() {
     [form, setForm] = useState<Form>(empty()),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [trainingRequired, setTrainingRequired] = useState(false),
     [notice, setNotice] = useState("");
   const [inviteAt, setInviteAt] = useState(""),
     [inviteComment, setInviteComment] = useState("");
@@ -325,6 +326,7 @@ export default function MeasurementWorkspace() {
     if (!selected) return;
     setBusy(true);
     setError("");
+    setTrainingRequired(false);
     setNotice("");
     const response = await fetch(`/api/measurements/${selected.id}`, {
         method: "PATCH",
@@ -332,7 +334,10 @@ export default function MeasurementWorkspace() {
         body: JSON.stringify(body),
       }),
       result = await response.json().catch(() => ({}));
-    if (!response.ok) setError(result.error ?? "Не удалось выполнить действие");
+    if (!response.ok) {
+      setError(result.error ?? "Не удалось выполнить действие");
+      setTrainingRequired(result.code === "TRAINING_REQUIRED");
+    }
     else {
       setNotice(ok);
       await load();
@@ -439,12 +444,20 @@ export default function MeasurementWorkspace() {
         <button disabled={creating} className="min-h-12 rounded-xl bg-emerald-700 px-4 font-semibold sm:col-span-2">{creating ? "Создание…" : "Создать замер"}</button>
       </form>}
       {error && (
-        <p
+        <div
           role="alert"
           className="rounded-xl border border-red-800 bg-red-950/40 p-4 text-red-300"
         >
-          {error}
-        </p>
+          <p>{error}</p>
+          {trainingRequired && (
+            <Link
+              href="/training"
+              className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-blue-600 px-4 font-semibold text-white"
+            >
+              Перейти к обучению
+            </Link>
+          )}
+        </div>
       )}
       {notice && (
         <p

@@ -255,6 +255,27 @@ enum MeasurementPhotoType {
   EXTRA
 }
 
+enum TrainingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  READY_FOR_TEST
+  FAILED
+  PASSED
+}
+
+enum TrainingAttemptStatus {
+  IN_PROGRESS
+  FAILED
+  PASSED
+}
+
+enum TrainingAuditAction {
+  ASSIGNED
+  ACKNOWLEDGED
+  OVERRIDE_GRANTED
+  QUIZ_SUBMITTED
+}
+
 model User {
   id                  Int       @id @default(autoincrement())
   name                String
@@ -319,6 +340,9 @@ model User {
   archivedDocuments          Document[]                 @relation("DocumentArchivedBy")
   uploadedDocumentVersions   DocumentVersion[]          @relation("DocumentVersionUploader")
   documentAuditEvents        DocumentAudit[]            @relation("DocumentAuditActor")
+  trainingAssignments        TrainingAssignment[]       @relation("TrainingAssignmentUser")
+  trainingOverrides          TrainingAssignment[]       @relation("TrainingAssignmentOverrideBy")
+  trainingAuditEvents        TrainingAudit[]            @relation("TrainingAuditActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1651,6 +1675,110 @@ model MeasurementAudit {
   createdAt     DateTime    @default(now())
 
   @@index([measurementId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model TrainingCourse {
+  id               Int      @id @default(autoincrement())
+  slug             String
+  version          Int      @default(1)
+  title            String
+  description      String
+  targetRole       Role
+  videoLanguage    String
+  quizLanguage     String
+  youtubeVideoId   String
+  passScorePercent Int      @default(80)
+  requiredCoverage Int      @default(90)
+  mandatory        Boolean  @default(true)
+  active           Boolean  @default(true)
+  publishedAt      DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  questions   TrainingQuestion[]
+  assignments TrainingAssignment[]
+
+  @@unique([slug, version])
+  @@index([targetRole, active, mandatory])
+}
+
+model TrainingQuestion {
+  id            Int            @id @default(autoincrement())
+  courseId      Int
+  course        TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  position      Int
+  question      String
+  options       Json
+  correctOption Int
+  explanation   String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([courseId, position])
+  @@index([courseId])
+}
+
+model TrainingAssignment {
+  id                Int            @id @default(autoincrement())
+  courseId          Int
+  course            TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  userId            Int
+  user              User           @relation("TrainingAssignmentUser", fields: [userId], references: [id], onDelete: Restrict)
+  status            TrainingStatus @default(NOT_STARTED)
+  progressPercent   Float          @default(0)
+  watchedRanges     Json           @default("[]")
+  videoDuration     Float?
+  lastVideoTime     Float?
+  lastHeartbeatAt   DateTime?
+  acknowledgedAt    DateTime?
+  attemptsCount     Int            @default(0)
+  bestScore         Int            @default(0)
+  bestPercent       Float          @default(0)
+  passedAt          DateTime?
+  lastViewedAt      DateTime?
+  overrideById      Int?
+  overrideBy        User?          @relation("TrainingAssignmentOverrideBy", fields: [overrideById], references: [id], onDelete: SetNull)
+  overrideReason    String?
+  overrideExpiresAt DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  attempts TrainingAttempt[]
+  audits   TrainingAudit[]
+
+  @@unique([courseId, userId])
+  @@index([userId, status])
+  @@index([courseId, status])
+}
+
+model TrainingAttempt {
+  id            Int                   @id @default(autoincrement())
+  assignmentId  Int
+  assignment    TrainingAssignment    @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  courseVersion Int
+  status        TrainingAttemptStatus @default(IN_PROGRESS)
+  answers       Json?
+  score         Int?
+  percent       Float?
+  startedAt     DateTime              @default(now())
+  completedAt   DateTime?
+
+  @@index([assignmentId, startedAt])
+}
+
+model TrainingAudit {
+  id           Int                 @id @default(autoincrement())
+  assignmentId Int
+  assignment   TrainingAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Restrict)
+  actorId      Int
+  actor        User                @relation("TrainingAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  action       TrainingAuditAction
+  reason       String?
+  metadata     Json?
+  createdAt    DateTime            @default(now())
+
+  @@index([assignmentId, createdAt])
   @@index([actorId, createdAt])
 }
 

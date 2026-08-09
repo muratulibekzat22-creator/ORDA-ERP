@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { Role, roleNames } from "@/lib/roles";
 type Partner = { id: number; name: string; active: boolean };
@@ -120,7 +121,10 @@ export default function EmployeesPage() {
   };
   return (
     <section className="flex-1 overflow-auto p-4 md:p-8">
-      <h1 className="text-3xl font-bold text-white">Сотрудники</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-3xl font-bold text-white">Сотрудники</h1>
+        <Link href="/training" className="flex min-h-11 items-center rounded-xl bg-blue-700 px-4 font-semibold text-white">Обучение замерщиков</Link>
+      </div>
       <p className="mt-2 text-slate-400">
         Доступы, роли и контактные данные команды ALTYN SAPA
       </p>

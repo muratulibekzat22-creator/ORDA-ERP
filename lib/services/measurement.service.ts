@@ -16,6 +16,7 @@ import {
 import { createRequestHash } from "@/lib/idempotency";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
 import { prisma } from "@/lib/prisma";
+import { hasTrainingClearance } from "@/lib/services/training.service";
 
 export type MeasurementActor = { userId: number; role: Role; name: string };
 export class MeasurementError extends Error {}
@@ -781,6 +782,8 @@ async function editableMeasurement(
 export async function startMeasurement(actor: MeasurementActor, id: number) {
   if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
+    if (!(await hasTrainingClearance(tx, actor.userId)))
+      throw new MeasurementError("TRAINING_REQUIRED");
     const current = await editableMeasurement(tx, actor, id);
     if (current.status !== MeasurementStatus.ASSIGNED)
       throw new MeasurementError("INVALID_STATE");

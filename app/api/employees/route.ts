@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
 
 const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
 
@@ -38,7 +39,10 @@ export async function POST(request: Request) {
         if (!partner) throw new Error("PARTNER_NOT_FOUND");
         if (partner.userId) throw new Error("PARTNER_ALREADY_LINKED");
       }
-      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), passwordChangedAt: new Date(), mustChangePassword: false, phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
+      const created = await tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), passwordChangedAt: new Date(), mustChangePassword: false, phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
+      if (created.role === Role.MEASURER && created.active)
+        await ensureCurrentMeasurerTraining(tx, created.id);
+      return created;
     });
     return NextResponse.json(user, { status: 201 });
   } catch (error) {

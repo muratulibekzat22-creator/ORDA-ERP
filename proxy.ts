@@ -100,8 +100,15 @@ export async function proxy(request: NextRequest) {
     "calculator-config",
     "partner",
     "payroll",
+    "training",
     "change-password",
   ].includes(firstSegment);
+  if (
+    firstSegment === "training" &&
+    role !== "MEASURER" &&
+    role !== "DIRECTOR"
+  )
+    return redirect(new URL("/", request.url));
   if (
     firstSegment === "calculator-config" &&
     role !== "DIRECTOR" &&
@@ -118,10 +125,14 @@ export async function proxy(request: NextRequest) {
           : firstSegment;
   const allowed = permissions[role] ?? [];
   const selfPayroll = firstSegment === "payroll" && role !== "PARTNER";
+  const trainingWorkspace =
+    firstSegment === "training" &&
+    (role === "MEASURER" || role === "DIRECTOR");
   if (
     firstSegment !== "calculator-config" &&
     firstSegment !== "change-password" &&
     !selfPayroll &&
+    !trainingWorkspace &&
     protectedSegment &&
     !allowed.includes("*") &&
     !allowed.includes(required)

@@ -20,6 +20,7 @@ import {
   Banknote,
   Landmark,
   LockKeyhole,
+  GraduationCap,
   Warehouse,
   X,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const links = [
   ["/warehouse", "Склад", Warehouse],
   ["/finance", "Финансы", Wallet],
   ["/calendar", "Календарь", CalendarDays],
+  ["/training", "Обучение", GraduationCap],
   ["/employees", "Сотрудники", UserCog],
   ["/payroll", "Зарплаты", Banknote],
   ["/settings", "Настройки", Settings],
@@ -67,8 +69,11 @@ export default function RouteShell({
     "/payroll": "payroll",
     "/settings": "settings",
   };
-  const visible = (href: string) =>
-    href === "/" ||
+  const visible = (href: string) => {
+    if (role === "MEASURER")
+      return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
+    if (href === "/training") return role === "DIRECTOR";
+    return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
       role &&
@@ -82,6 +87,7 @@ export default function RouteShell({
       permissionByHref[href] &&
       hasDefaultPermission(role, permissionByHref[href]!),
     );
+  };
   const [open, setOpen] = useState(false);
   const standalone = pathname === "/login" || pathname === "/partner";
   useEffect(() => {
@@ -142,7 +148,11 @@ export default function RouteShell({
                   className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
                 >
                   <Icon size={20} />
-                  {href === "/payroll" && role !== "DIRECTOR" && role !== "ACCOUNTANT" ? "Моя зарплата" : title}
+                  {href === "/payroll" && role !== "DIRECTOR" && role !== "ACCOUNTANT"
+                    ? "Моя зарплата"
+                    : href === "/training" && role === "DIRECTOR"
+                      ? "Обучение сотрудников"
+                      : title}
                 </Link>
               ))}
             {(session?.user.role === "DIRECTOR" ||

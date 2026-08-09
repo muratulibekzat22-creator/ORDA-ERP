@@ -10,6 +10,7 @@ import {
   MessageCircle,
   Phone,
 } from "lucide-react";
+import TrainingSummaryCard from "@/components/training/TrainingSummaryCard";
 
 type Measurement = {
   id: number;
@@ -109,6 +110,7 @@ export default function MeasurerHome() {
           {error}
         </p>
       )}
+      <TrainingSummaryCard />
       <section
         aria-busy={loading}
         className="grid grid-cols-2 gap-3 lg:grid-cols-3"
