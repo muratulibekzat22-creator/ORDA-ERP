@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { ACCOUNT_FAILURE_LIMIT, AUTH_AUDIT_RETENTION_DAYS, IP_ABUSE_FAILURE_LIMIT } from "../lib/auth-security";
 
 const read = (path: string) => readFileSync(path, "utf8");
-const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx");
+const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), serverAuth = read("lib/server-auth.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), legacySidebar = read("components/layout/Sidebar.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx");
 
 assert.equal(ACCOUNT_FAILURE_LIMIT, 5);
 assert.equal(IP_ABUSE_FAILURE_LIMIT, Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 100));
@@ -14,6 +14,10 @@ for (const reason of ["INVALID_CREDENTIALS", "TEMPORARILY_LOCKED", "RATE_LIMITED
 assert(auth.includes('reason: invalidReason') && auth.includes('reason: "RATE_LIMITED"'), "blocked retries must not count as password failures");
 assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "director password reset does not clear the account/IP failure window");
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
+assert(serverAuth.includes("session.invalid") && serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
+assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
+for (const hidden of ['"/calculator"', '"/partners"', '"/production"', '"/warehouse"']) assert(shell.includes(hidden), `manager navigation leak remains: ${hidden}`);
+for (const hidden of ['"partners"', '"production"', '"warehouse"']) assert(legacySidebar.includes(hidden), `legacy manager navigation leak remains: ${hidden}`);
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");

@@ -68,9 +68,16 @@ export default function RouteShell({
     "/settings": "settings",
   };
   const visible = (href: string) =>
-    href === "/" || (href === "/payroll" && role !== "PARTNER") ||
+    href === "/" ||
+    (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
       role &&
+      !(
+        role === "MANAGER" &&
+        ["/calculator", "/partners", "/production", "/warehouse"].includes(
+          href,
+        )
+      ) &&
       !(role === "PARTNER" && href === "/finance") &&
       permissionByHref[href] &&
       hasDefaultPermission(role, permissionByHref[href]!),

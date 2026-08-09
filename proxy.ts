@@ -99,6 +99,7 @@ export async function proxy(request: NextRequest) {
     "calculator",
     "calculator-config",
     "partner",
+    "payroll",
     "change-password",
   ].includes(firstSegment);
   if (
@@ -116,9 +117,11 @@ export async function proxy(request: NextRequest) {
           ? "reports"
           : firstSegment;
   const allowed = permissions[role] ?? [];
+  const selfPayroll = firstSegment === "payroll" && role !== "PARTNER";
   if (
     firstSegment !== "calculator-config" &&
     firstSegment !== "change-password" &&
+    !selfPayroll &&
     protectedSegment &&
     !allowed.includes("*") &&
     !allowed.includes(required)

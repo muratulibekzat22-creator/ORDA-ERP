@@ -127,8 +127,13 @@ export default function Sidebar({
   const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", partners: "partners", production: "production", warehouse: "warehouse", payroll: "payroll", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
   const visible = (id: string) =>
     id === "dashboard" ||
+    (id === "payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
       role &&
+        !(
+          role === "MANAGER" &&
+          ["partners", "production", "warehouse"].includes(id)
+        ) &&
         !(role === "PARTNER" && id === "finance") &&
         permissionByPage[id] &&
         hasDefaultPermission(role, permissionByPage[id]!),
