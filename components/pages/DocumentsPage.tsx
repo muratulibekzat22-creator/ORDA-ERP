@@ -48,6 +48,7 @@ export default function DocumentsPage({ initialOrderId, initialClientId, embedde
   const selectedOrder = options.orders.find((item) => item.id === Number(form.orderId));
   const orderPayments = options.payments.filter((item) => item.orderId === Number(form.orderId));
   const selectedPayment = options.payments.find((item) => item.id === Number(paymentId));
+  const paymentReady = Boolean(paymentId) || (Number(paymentAmount) > 0 && Boolean(paymentDate) && Boolean(paymentMethod.trim()));
 
   function resetUpload(type: DocumentType, nextWorkflow: Workflow = "upload") {
     const orderId = initialOrderId ? String(initialOrderId) : "", order = options.orders.find((item) => item.id === initialOrderId);
@@ -114,7 +115,7 @@ export default function DocumentsPage({ initialOrderId, initialClientId, embedde
       <Field label="Номер (пусто = автоматически)"><input maxLength={80} value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className={control}/></Field>
       <Field label="Файл"><input required type="file" accept={workflow === "payment" ? ".pdf,.png,.jpg,.jpeg,.webp" : ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp"} onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="block min-h-11 w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-white"/></Field>
       <Field label="Комментарий"><input maxLength={2000} value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} className={control}/></Field>
-    </div><p className="text-xs text-slate-500">{workflow === "payment" ? "PDF, JPG, PNG или WebP до 15 МБ. Без выбранного Payment сохраняется только подтверждение — новая финансовая операция не создаётся." : "PDF, Word, Excel, PNG, JPEG или WebP до 15 МБ. Файл хранится в закрытом хранилище."}</p><button disabled={saving || (!form.clientId && !form.orderId)} className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button></form></div>}
+    </div><p className="text-xs text-slate-500">{workflow === "payment" ? "PDF, JPG, PNG или WebP до 15 МБ. Без выбранного Payment сохраняется только подтверждение — новая финансовая операция не создаётся." : "PDF, Word, Excel, PNG, JPEG или WebP до 15 МБ. Файл хранится в закрытом хранилище."}</p><button disabled={saving || !file || (!form.clientId && !form.orderId) || (workflow === "payment" && !paymentReady)} className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button></form></div>}
     {contractOrderId && <ContractComposer
       key={contractOrderId}
       orderId={contractOrderId}
