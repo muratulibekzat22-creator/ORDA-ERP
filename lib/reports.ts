@@ -1,4 +1,4 @@
-export type ReportPeriodPreset = "today" | "week" | "month" | "custom";
+export type ReportPeriodPreset = "today" | "week" | "month" | "quarter" | "year" | "custom";
 
 export type ReportRange = {
   preset: ReportPeriodPreset;
@@ -42,6 +42,18 @@ export type ReportsReadModel = {
   summary: ReportSummary;
   sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number };
   payments: { received: number; remaining: number };
+  finance?: {
+    sales: number;
+    customerReceived: number;
+    customerRemaining: number;
+    partnerAgreed: number;
+    partnerPaid: number;
+    partnerRemaining: number;
+    grossMargin: number;
+    payrollAccrued: number;
+    payrollPaid: number;
+    payrollPayable: number;
+  };
   funnel: Array<{ key: string; label: string; value: number; conversionFromPrevious: number | null }>;
   managers: ManagerReportRow[];
   trend: Array<{ date: string; salesAmount: number; received: number }>;
@@ -60,7 +72,7 @@ const formatLocalDate = (date: Date) => {
 
 export function resolveReportRange(params: URLSearchParams, now = new Date()): ReportRange {
   const raw = params.get("period") ?? "month";
-  if (!["today", "week", "month", "custom"].includes(raw)) throw new Error("INVALID_PERIOD");
+  if (!["today", "week", "month", "quarter", "year", "custom"].includes(raw)) throw new Error("INVALID_PERIOD");
   const preset = raw as ReportPeriodPreset;
   const today = formatLocalDate(now);
   let from = today, to = today;
@@ -73,6 +85,12 @@ export function resolveReportRange(params: URLSearchParams, now = new Date()): R
     from = formatLocalDate(monday);
   } else if (preset === "month") {
     from = `${today.slice(0, 7)}-01`;
+  } else if (preset === "quarter") {
+    const month = Number(today.slice(5, 7));
+    const quarterMonth = String(Math.floor((month - 1) / 3) * 3 + 1).padStart(2, "0");
+    from = `${today.slice(0, 4)}-${quarterMonth}-01`;
+  } else if (preset === "year") {
+    from = `${today.slice(0, 4)}-01-01`;
   } else if (preset === "custom") {
     from = params.get("dateFrom") ?? "";
     to = params.get("dateTo") ?? "";

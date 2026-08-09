@@ -36,6 +36,21 @@ type Payment = {
   amount: string;
   paymentDate: string;
   comment?: string | null;
+  reversalOfId?: number | null;
+  reversedAt?: string | null;
+  reversal?: { id: number } | null;
+};
+type Confirmation = {
+  id: number;
+  amount: string;
+  type: string;
+  claimedPaymentDate: string;
+  method?: string | null;
+  comment?: string | null;
+  status: "PENDING" | "CONFIRMED" | "REJECTED";
+  reviewComment?: string | null;
+  confirmedPaymentId?: number | null;
+  createdAt: string;
 };
 type Advance = {
   id: number;
@@ -59,13 +74,14 @@ type PayrollRow = {
   }>;
   accruals: Accrual[];
   payments: Payment[];
+  paymentConfirmations: Confirmation[];
   advanceRequests: Advance[];
-  totals: { accrued: number; paid: number; payable: number };
+  totals: { accrued: number; paid: number; pending: number; payable: number };
 };
 type Payload = {
   period: { id: number; year: number; month: number; status: string } | null;
   rows: PayrollRow[];
-  totals: { accrued: number; paid: number; payable: number };
+  totals: { accrued: number; paid: number; pending: number; payable: number };
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
@@ -77,6 +93,7 @@ type Form = {
   orderId: string;
   type: string;
   accrualId: string;
+  method: string;
 };
 
 const months = [
@@ -116,6 +133,9 @@ const labels: Record<string, string> = {
   ADVANCE: "Аванс",
   IMMEDIATE_BONUS: "Выплата бонуса",
   SALARY_PAYMENT: "Выплата зарплаты",
+  GUARANTEED_BONUS_PAYMENT: "Гарантированный бонус",
+  ORDER_BONUS_PAYMENT: "Бонус за заказ",
+  PREMIUM_PAYMENT: "Премия",
   FINAL_SETTLEMENT: "Окончательный расчёт",
   OTHER_PAYROLL_PAYMENT: "Другая выплата",
   EMPLOYEE_REFUND: "Возврат сотрудника",
@@ -123,6 +143,8 @@ const labels: Record<string, string> = {
   APPROVED: "Одобрен",
   REJECTED: "Отклонён",
   PAID: "Выплачен",
+  PENDING: "Ожидает подтверждения директора",
+  CONFIRMED: "Подтверждено директором",
   OPEN: "Открыт",
   REVIEW: "На проверке",
   CLOSED: "Закрыт",
@@ -150,6 +172,7 @@ const emptyForm = (): Form => ({
   orderId: "",
   type: "SALARY_PAYMENT",
   accrualId: "",
+  method: "bank_transfer",
 });
 
 export default function PayrollPage() {
@@ -162,7 +185,7 @@ export default function PayrollPage() {
   const [data, setData] = useState<Payload>({
     period: null,
     rows: [],
-    totals: { accrued: 0, paid: 0, payable: 0 },
+    totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
   });
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -172,6 +195,13 @@ export default function PayrollPage() {
     [target, setTarget] = useState<PayrollRow | null>(null);
   const [form, setForm] = useState<Form>(emptyForm),
     [advanceAmount, setAdvanceAmount] = useState("");
+  const [receipt, setReceipt] = useState({
+    amount: "",
+    type: "SALARY_PAYMENT",
+    paymentDate: new Date().toISOString().slice(0, 10),
+    method: "bank_transfer",
+    comment: "",
+  });
   const role = session?.user.role ?? "",
     director = role === "DIRECTOR",
     accountant = role === "ACCOUNTANT",
@@ -261,6 +291,7 @@ export default function PayrollPage() {
         amount,
         type: form.type,
         paymentDate: form.date,
+        method: form.method,
         comment: form.reason,
       };
     else if (operation === "reversal")
@@ -328,6 +359,54 @@ export default function PayrollPage() {
       { action: "pay-advance", id: item.id },
       "Выплата аванса зарегистрирована",
     );
+  const reviewConfirmation = async (
+    item: Confirmation,
+    decision: "CONFIRM" | "REJECT",
+    editAmount = false,
+  ) => {
+    const amount = editAmount
+      ? Number(window.prompt("Подтверждённая сумма", String(item.amount)))
+      : Number(item.amount);
+    if (decision === "CONFIRM" && (!Number.isFinite(amount) || amount <= 0))
+      return setError("Введите корректную сумму");
+    const comment = decision === "REJECT"
+      ? window.prompt("Причина отклонения", "Выплата не подтверждена")?.trim()
+      : item.comment ?? "";
+    if (decision === "REJECT" && !comment) return;
+    await run(
+      {
+        action: "review-payment-confirmation",
+        id: item.id,
+        decision,
+        amount: decision === "CONFIRM" ? amount : undefined,
+        paymentDate: item.claimedPaymentDate,
+        method: item.method,
+        comment,
+      },
+      decision === "CONFIRM" ? "Выплата подтверждена" : "Сообщение отклонено",
+    );
+  };
+  const reversePayrollPayment = async (item: Payment) => {
+    const reason = window.prompt("Обязательная причина сторно")?.trim();
+    if (!reason) return;
+    await run({ action: "reverse-payment", id: item.id, reason }, "Выплата сторнирована");
+  };
+  const reportReceipt = async () => {
+    if (!data.period || Number(receipt.amount) <= 0) return;
+    setError("");
+    const response = await fetch("/api/payroll/self", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ action: "report-payment", periodId: data.period.id, ...receipt, amount: Number(receipt.amount) }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) setError(errorLabels[result.error] ?? "Не удалось сообщить о получении");
+    else {
+      setReceipt((value) => ({ ...value, amount: "", comment: "" }));
+      setNotice("Сообщение отправлено директору. Выплата пока не подтверждена.");
+      await load();
+    }
+  };
   const requestAdvance = async () => {
     if (!data.period || Number(advanceAmount) <= 0) return;
     const response = await fetch("/api/payroll/self", {
@@ -377,6 +456,10 @@ export default function PayrollPage() {
       ),
     [data.rows],
   );
+  const pendingConfirmations = useMemo(
+    () => data.rows.flatMap((row) => row.paymentConfirmations.filter((item) => item.status === "PENDING").map((item) => ({ row, item }))),
+    [data.rows],
+  );
   const bonusTotal = useMemo(
     () =>
       data.rows
@@ -403,9 +486,10 @@ export default function PayrollPage() {
   );
   const stats: Array<[string, number, LucideIcon, string]> = [
     ["Фонд начислений", data.totals.accrued, CircleDollarSign, "text-blue-300"],
-    ["Выплачено", data.totals.paid, Check, "text-emerald-300"],
+    ["Подтверждено выплат", data.totals.paid, Check, "text-emerald-300"],
+    ["Ожидает подтверждения", data.totals.pending, Clock3, "text-orange-300"],
     ["К выплате", data.totals.payable, Banknote, "text-amber-300"],
-    ["Авансы", advanceTotal, Clock3, "text-violet-300"],
+    ["Авансы", advanceTotal, Receipt, "text-violet-300"],
     ["Бонусы", bonusTotal, Receipt, "text-cyan-300"],
   ];
 
@@ -477,13 +561,13 @@ export default function PayrollPage() {
             )}
             {director && data.period?.status === "REVIEW" && <><button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Вернуть в работу</button><button onClick={() => void transitionPeriod("CLOSED")} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300">Закрыть месяц</button></>}
             {director && data.period?.status === "CLOSED" && <button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 font-semibold text-blue-200">Открыть месяц снова</button>}
-            {adminView && data.period && !locked && (
+            {director && data.period && !locked && (
               <button
-                onClick={() => openOperation(accountant ? "payment" : "bonus")}
+                onClick={() => openOperation("payment")}
                 disabled={!data.rows.length}
                 className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-40"
               >
-                <Plus size={18} /> Операция
+                <Plus size={18} /> Выплатить
               </button>
             )}
           </div>
@@ -505,11 +589,11 @@ export default function PayrollPage() {
             </button>
           </div>
         )}
-        <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {stats.map(([label, value, Icon, color], index) => (
+        <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+          {stats.map(([label, value, Icon, color]) => (
             <article
               key={label}
-              className={`${index === 4 ? "col-span-2 lg:col-span-1" : ""} rounded-2xl border border-slate-800 bg-slate-900/70 p-4`}
+              className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900/70 p-4"
             >
               <div className="flex items-center justify-between">
                 <p className="text-xs text-slate-400 sm:text-sm">{label}</p>
@@ -521,6 +605,30 @@ export default function PayrollPage() {
             </article>
           ))}
         </section>
+        {director && pendingConfirmations.length > 0 && (
+          <section className="mt-5 rounded-2xl border border-orange-500/30 bg-orange-500/5 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Clock3 size={19} className="text-orange-300" />
+              <h2 className="font-semibold">Требуют подтверждения</h2>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {pendingConfirmations.map(({ row, item }) => (
+                <article key={item.id} className="min-w-0 rounded-xl bg-slate-900 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div><b>{row.user.name}</b><p className="text-sm text-slate-400">{labels[item.type] ?? item.type}</p></div>
+                    <strong className="text-orange-200">{currency(item.amount)}</strong>
+                  </div>
+                  <p className="mt-2 break-words text-sm text-slate-400">{dateLabel(item.claimedPaymentDate)}{item.comment ? ` · ${item.comment}` : ""}</p>
+                  {!locked && <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <button onClick={() => void reviewConfirmation(item, "CONFIRM")} className="min-h-11 rounded-lg bg-emerald-700 px-3 text-sm font-semibold">Подтвердить выплату</button>
+                    <button onClick={() => void reviewConfirmation(item, "CONFIRM", true)} className="min-h-11 rounded-lg bg-blue-700 px-3 text-sm font-semibold">Изменить сумму</button>
+                    <button onClick={() => void reviewConfirmation(item, "REJECT")} className="min-h-11 rounded-lg bg-red-900 px-3 text-sm font-semibold">Отклонить</button>
+                  </div>}
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
         {adminView && pending.length > 0 && (
           <section className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4">
             <div className="mb-3 flex items-center gap-2">
@@ -556,7 +664,7 @@ export default function PayrollPage() {
                         </button>
                       </>
                     )}
-                    {!locked && item.status === "APPROVED" && (
+                    {director && !locked && item.status === "APPROVED" && (
                       <button
                         onClick={() => void payAdvance(item)}
                         className="rounded-lg bg-blue-600 px-3 py-2 text-sm"
@@ -567,6 +675,20 @@ export default function PayrollPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+        {!adminView && data.period && !locked && (
+          <section className="mt-5 rounded-2xl border border-orange-500/30 bg-orange-500/5 p-4">
+            <h2 className="font-semibold">Сообщить о получении</h2>
+            <p className="mt-1 text-sm text-slate-400">Это создаст запрос со статусом «Ожидает подтверждения директора», а не финансовую выплату.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <input type="number" min="1" inputMode="decimal" value={receipt.amount} onChange={(e) => setReceipt({ ...receipt, amount: e.target.value })} placeholder="Сумма, ₸" className="control min-w-0" />
+              <select value={receipt.type} onChange={(e) => setReceipt({ ...receipt, type: e.target.value })} className="control min-w-0"><option value="SALARY_PAYMENT">Зарплата</option><option value="GUARANTEED_BONUS_PAYMENT">Гарантированный бонус</option><option value="ORDER_BONUS_PAYMENT">Бонус за заказ</option><option value="PREMIUM_PAYMENT">Премия</option><option value="ADVANCE">Аванс</option><option value="FINAL_SETTLEMENT">Окончательный расчёт</option><option value="OTHER_PAYROLL_PAYMENT">Другое</option></select>
+              <input type="date" value={receipt.paymentDate} onChange={(e) => setReceipt({ ...receipt, paymentDate: e.target.value })} className="control min-w-0" />
+              <select value={receipt.method} onChange={(e) => setReceipt({ ...receipt, method: e.target.value })} className="control min-w-0"><option value="cash">Наличные</option><option value="kaspi">Kaspi</option><option value="bank_transfer">Банковский перевод</option><option value="other">Другое</option></select>
+              <button onClick={() => void reportReceipt()} disabled={Number(receipt.amount) <= 0} className="min-h-11 rounded-xl bg-orange-700 px-4 font-semibold disabled:opacity-40">Отметить как полученное</button>
+              <input value={receipt.comment} onChange={(e) => setReceipt({ ...receipt, comment: e.target.value })} placeholder="Комментарий" className="control min-w-0 sm:col-span-2 lg:col-span-5" />
             </div>
           </section>
         )}
@@ -630,7 +752,8 @@ export default function PayrollPage() {
                         "Бонусы",
                         "Аванс",
                         "Начислено",
-                        "Выплачено",
+                        "Подтверждено выплат",
+                        "Ожидает подтверждения",
                         "К выплате",
                         "Статус",
                       ].map((title) => (
@@ -669,9 +792,10 @@ export default function PayrollPage() {
                         paid={row.totals.paid}
                       />
                     </div>
-                    <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                       <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Выплачено" value={row.totals.paid} />
+                      <Metric label="Подтверждено" value={row.totals.paid} />
+                      <Metric label="Ожидает" value={row.totals.pending} />
                       <Metric
                         label="К выплате"
                         value={row.totals.payable}
@@ -695,12 +819,12 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
-          accountant={accountant}
           closed={locked}
           onClose={() => setDetails(null)}
           onOperation={openOperation}
           onReview={reviewAdvance}
           onPayAdvance={payAdvance}
+          onReversePayment={reversePayrollPayment}
         />
       )}{" "}
       {operation && target && data.period && (
@@ -755,6 +879,9 @@ function PayrollTableRow({
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
       <td className="px-4 py-4 text-emerald-300">
         {currency(row.totals.paid)}
+      </td>
+      <td className="px-4 py-4 text-orange-300">
+        {currency(row.totals.pending)}
       </td>
       <td className="px-4 py-4 font-bold text-amber-300">
         {currency(row.totals.payable)}
@@ -818,16 +945,15 @@ function Action({ label, onClick }: { label: string; onClick: () => void }) {
 function EmployeeDrawer({
   row,
   director,
-  accountant,
   closed,
   onClose,
   onOperation,
   onReview,
   onPayAdvance,
+  onReversePayment,
 }: {
   row: PayrollRow;
   director: boolean;
-  accountant: boolean;
   closed: boolean;
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
@@ -836,6 +962,7 @@ function EmployeeDrawer({
     decision: "APPROVED" | "REJECTED",
   ) => Promise<unknown>;
   onPayAdvance: (item: Advance) => Promise<unknown>;
+  onReversePayment: (item: Payment) => Promise<unknown>;
 }) {
   const accrualTotal = (types: string[]) =>
     row.accruals
@@ -894,9 +1021,10 @@ function EmployeeDrawer({
             <X />
           </button>
         </div>
-        <div className="mt-5 grid grid-cols-3 gap-2">
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="Начислено" value={row.totals.accrued} />
-          <Metric label="Выплачено" value={row.totals.paid} />
+          <Metric label="Подтверждено выплат" value={row.totals.paid} />
+          <Metric label="Ожидает подтверждения" value={row.totals.pending} />
           <Metric label="К выплате" value={row.totals.payable} accent />
         </div>
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
@@ -937,12 +1065,11 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {(director || accountant) && !closed && (
+        {director && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {director && (
-                <>
+              <>
                   <Action
                     label="Изменить оклад"
                     onClick={() => onOperation("salary", row)}
@@ -967,8 +1094,7 @@ function EmployeeDrawer({
                     label="Сторно"
                     onClick={() => onOperation("reversal", row)}
                   />
-                </>
-              )}
+              </>
               <Action
                 label="Выплата"
                 onClick={() => onOperation("payment", row)}
@@ -1009,7 +1135,7 @@ function EmployeeDrawer({
                           </button>
                         </>
                       )}
-                      {item.status === "APPROVED" && (
+                      {director && item.status === "APPROVED" && (
                         <button
                           onClick={() => void onPayAdvance(item)}
                           className="rounded-lg bg-blue-600 px-3 py-2 text-sm"
@@ -1021,6 +1147,45 @@ function EmployeeDrawer({
                   )}
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+        {row.paymentConfirmations.length > 0 && (
+          <section className="mt-5">
+            <h3 className="font-semibold">Сообщения о получении</h3>
+            <div className="mt-2 space-y-2">
+              {row.paymentConfirmations.map((item) => (
+                <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <span>{labels[item.type] ?? item.type} · {dateLabel(item.claimedPaymentDate)}</span>
+                    <b>{currency(item.amount)}</b>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-400">{labels[item.status] ?? item.status}{item.comment ? ` · ${item.comment}` : ""}{item.reviewComment ? ` · ${item.reviewComment}` : ""}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        {row.payments.length > 0 && (
+          <section className="mt-5">
+            <h3 className="font-semibold">Подтверждённые выплаты</h3>
+            <div className="mt-2 space-y-2">
+              {row.payments.map((item) => {
+                const reversal = item.type === "EMPLOYEE_REFUND";
+                const reversed = Boolean(item.reversedAt || item.reversal);
+                return (
+                  <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div><p>{labels[item.type] ?? item.type}</p><p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.comment ? ` · ${item.comment}` : ""}</p></div>
+                      <b className={reversal ? "text-red-300" : "text-emerald-300"}>{reversal ? "−" : ""}{currency(item.amount)}</b>
+                    </div>
+                    {director && !closed && !reversal && !reversed && (
+                      <button onClick={() => void onReversePayment(item)} className="mt-2 min-h-10 rounded-lg border border-red-500/40 px-3 text-sm text-red-200">Сторнировать выплату</button>
+                    )}
+                    {reversed && <p className="mt-2 text-xs text-red-300">Выплата сторнирована</p>}
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
@@ -1175,11 +1340,22 @@ function OperationModal({
                 className="control"
               >
                 <option value="SALARY_PAYMENT">Зарплата</option>
+                <option value="GUARANTEED_BONUS_PAYMENT">Гарантированный бонус</option>
+                <option value="ORDER_BONUS_PAYMENT">Бонус за заказ</option>
+                <option value="PREMIUM_PAYMENT">Премия</option>
                 <option value="ADVANCE">Аванс</option>
-                <option value="IMMEDIATE_BONUS">Бонус</option>
                 <option value="FINAL_SETTLEMENT">Окончательный расчёт</option>
                 <option value="OTHER_PAYROLL_PAYMENT">Другая выплата</option>
-                <option value="EMPLOYEE_REFUND">Возврат сотрудника</option>
+              </select>
+            </Field>
+          )}
+          {operation === "payment" && (
+            <Field label="Способ выплаты">
+              <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control">
+                <option value="cash">Наличные</option>
+                <option value="kaspi">Kaspi</option>
+                <option value="bank_transfer">Банковский перевод</option>
+                <option value="other">Другое</option>
               </select>
             </Field>
           )}

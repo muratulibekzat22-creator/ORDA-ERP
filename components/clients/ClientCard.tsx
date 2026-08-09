@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -101,6 +102,7 @@ const date = (value: string) =>
   }).format(new Date(value));
 
 export default function ClientCard({ clientId }: { clientId: number }) {
+  const router = useRouter();
   const [client, setClient] = useState<ClientDetail | null>(null),
     [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
@@ -166,6 +168,22 @@ export default function ClientCard({ clientId }: { clientId: number }) {
         next instanceof Error ? next.message : "Не удалось сохранить карточку",
       );
     } finally {
+      setSaving(false);
+    }
+  }
+  async function removeClient() {
+    if (!client || !window.confirm("Удалить эту заявку безвозвратно? Восстановить её после удаления будет невозможно.")) return;
+    setSaving(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/clients/${client.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(payload.error ?? "Не удалось удалить заявку");
+      }
+      router.replace("/clients");
+    } catch (next) {
+      setError(next instanceof Error ? next.message : "Не удалось удалить заявку");
       setSaving(false);
     }
   }
@@ -329,6 +347,14 @@ export default function ClientCard({ clientId }: { clientId: number }) {
               <Save size={18} />
             )}
             Сохранить изменения
+          </button>
+          <button
+            onClick={() => void removeClient()}
+            disabled={saving}
+            className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-700 bg-red-950/40 px-5 font-semibold text-red-200 disabled:opacity-60"
+          >
+            <Trash2 size={18} />
+            Удалить заявку безвозвратно
           </button>
         </div>
       </div>

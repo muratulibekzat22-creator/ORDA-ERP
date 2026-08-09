@@ -15,6 +15,10 @@ const month = resolveReportRange(new URLSearchParams("period=month"), now);
 assert.equal(month.dateFrom, "2026-08-01");
 assert.equal(month.previousEnd.getTime() + 1, month.start.getTime());
 assert.equal(month.end.getTime() - month.start.getTime(), month.previousEnd.getTime() - month.previousStart.getTime());
+const quarter = resolveReportRange(new URLSearchParams("period=quarter"), now);
+assert.equal(quarter.dateFrom, "2026-07-01");
+const year = resolveReportRange(new URLSearchParams("period=year"), now);
+assert.equal(year.dateFrom, "2026-01-01");
 
 const custom = resolveReportRange(new URLSearchParams("period=custom&dateFrom=2026-07-10&dateTo=2026-07-12"), now);
 assert.equal(custom.start.toISOString(), "2026-07-09T19:00:00.000Z");

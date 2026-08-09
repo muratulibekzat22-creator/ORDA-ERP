@@ -24,7 +24,7 @@ async function main() {
     const user = await prisma.user.create({ data: { name: tag, email: `${tag}@test.local`, password: "not-used", role: Role.DIRECTOR } }); userId = user.id;
     const client = await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "TEST", manager: tag, amount: "1000", status: "New" } }); clientId = client.id;
     const partners = await Promise.all(["old", "new"].map((name) => prisma.partner.create({ data: { name: `${tag}-${name}` } }))); partnerIds.push(...partners.map((value) => value.id));
-    const order = await prisma.order.create({ data: { number: key("order"), clientId, partnerId: partners[0].id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", balance: "1000", partnerPrice: "400", partnerBalance: "400", companyProfit: "600", manager: tag, status: "New" } }); orderId = order.id;
+    const order = await prisma.order.create({ data: { number: key("order"), clientId, partnerId: partners[0].id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", balance: "1000", partnerPrice: "400", partnerAgreedAt: new Date(), partnerBalance: "400", companyProfit: "600", manager: tag, status: "New" } }); orderId = order.id;
     await Promise.all([
       createFinanceOperation({ type: "CLIENT_PAYMENT", orderId, amount: 100, method: "cash", idempotencyKey: key("payment-a"), requestHash: hash("payment-a") }),
       createFinanceOperation({ type: "CLIENT_PAYMENT", orderId, amount: 150, method: "cash", idempotencyKey: key("payment-b"), requestHash: hash("payment-b") }),

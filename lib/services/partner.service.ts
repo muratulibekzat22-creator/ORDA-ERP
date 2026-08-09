@@ -1,8 +1,40 @@
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation } from "@/lib/services/payment.service";
 
-export async function getPartners() {
+type PartnerOrderStatsSource = {
+  amount: unknown;
+  partnerPrice: unknown;
+  partnerAgreedAt: Date | null;
+  partnerPaid: unknown;
+  partnerBalance: unknown;
+  lifecycle: string;
+};
+
+function partnerStats(orders: PartnerOrderStatsSource[]) {
+  const financialOrders = orders.filter((order) => order.lifecycle !== "CANCELLED");
+  const agreedOrders = financialOrders.filter((order) => order.partnerAgreedAt !== null);
+  const partnerAgreed = agreedOrders.reduce((sum, order) => sum + Number(order.partnerPrice), 0);
+  const partnerPaid = agreedOrders.reduce((sum, order) => sum + Number(order.partnerPaid), 0);
+  const partnerBalance = agreedOrders.reduce((sum, order) => sum + Math.max(Number(order.partnerBalance), 0), 0);
+  const grossMargin = agreedOrders.reduce((sum, order) => sum + Number(order.amount) - Number(order.partnerPrice), 0);
+  return {
+    totalOrders: financialOrders.length,
+    activeOrders: financialOrders.filter((order) => order.lifecycle !== "COMPLETED").length,
+    partnerAgreed,
+    partnerPaid,
+    partnerBalance,
+    grossMargin,
+    // Compatibility aliases for existing consumers while the UI moves to canonical labels.
+    totalAmount: partnerAgreed,
+    companyProfit: grossMargin,
+  };
+}
+
+export async function getPartners(options: { includeArchived?: boolean } = {}) {
   const partners = await prisma.partner.findMany({
+    where: options.includeArchived
+      ? { isTest: false }
+      : { active: true, archived: false, isTest: false },
     include: {
       orders: {
         include: {
@@ -20,46 +52,14 @@ export async function getPartners() {
     },
   });
 
-  return partners.map((partner) => {
-    const totalOrders = partner.orders.length;
-
-    const totalAmount = partner.orders.reduce(
-      (sum, order) => sum + Number(order.amount),
-      0
-    );
-
-    const partnerPaid = partner.orders.reduce(
-      (sum, order) => sum + Number(order.partnerPaid),
-      0
-    );
-
-    const partnerBalance = partner.orders.reduce(
-      (sum, order) => sum + Number(order.partnerBalance),
-      0
-    );
-
-    const companyProfit = partner.orders.reduce(
-      (sum, order) => sum + Number(order.companyProfit),
-      0
-    );
-
-    return {
-      ...partner,
-      stats: {
-        totalOrders,
-        totalAmount,
-        partnerPaid,
-        partnerBalance,
-        companyProfit,
-      },
-    };
-  });
+  return partners.map((partner) => ({ ...partner, stats: partnerStats(partner.orders) }));
 }
 
 export async function getPartner(id: number) {
-  const partner = await prisma.partner.findUnique({
+  const partner = await prisma.partner.findFirst({
     where: {
       id,
+      isTest: false,
     },
     include: {
       orders: {
@@ -85,35 +85,9 @@ export async function getPartner(id: number) {
     return null;
   }
 
-  const totalAmount = partner.orders.reduce(
-    (sum, order) => sum + Number(order.amount),
-    0
-  );
-
-  const partnerPaid = partner.orders.reduce(
-    (sum, order) => sum + Number(order.partnerPaid),
-    0
-  );
-
-  const partnerBalance = partner.orders.reduce(
-    (sum, order) => sum + Number(order.partnerBalance),
-    0
-  );
-
-  const companyProfit = partner.orders.reduce(
-    (sum, order) => sum + Number(order.companyProfit),
-    0
-  );
-
   return {
     ...partner,
-    stats: {
-      totalOrders: partner.orders.length,
-      totalAmount,
-      partnerPaid,
-      partnerBalance,
-      companyProfit,
-    },
+    stats: partnerStats(partner.orders),
   };
 }
 
@@ -127,6 +101,8 @@ export async function createPartner(data: {
     data: {
       ...data,
       active: true,
+      archived: false,
+      isTest: false,
     },
   });
 }
@@ -145,7 +121,10 @@ export async function updatePartner(
     where: {
       id,
     },
-    data,
+    data: {
+      ...data,
+      ...(typeof data.active === "boolean" ? { archived: !data.active } : {}),
+    },
   });
 }
 
@@ -172,18 +151,18 @@ export async function assignPartnerToOrder(data: { orderId: number; partnerId: n
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
     const order = await tx.order.findUnique({ where: { id: data.orderId } });
-    const partner = await tx.partner.findFirst({ where: { id: data.partnerId, active: true } });
+    const partner = await tx.partner.findFirst({ where: { id: data.partnerId, active: true, archived: false, isTest: false } });
     if (!order || !partner) return null;
     const previousPayouts = await tx.payment.aggregate({ where: { orderId: order.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true }, _count: true });
     const newPartnerPayouts = await tx.payment.aggregate({ where: { orderId: order.id, partnerId: partner.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true } });
     const previousPaid = Number(previousPayouts._sum.amount ?? 0), paid = Number(newPartnerPayouts._sum.amount ?? 0);
     const samePartner = order.partnerId === partner.id;
-    if (samePartner && Number(order.partnerPrice) === data.partnerPrice) return order;
+    if (samePartner && order.partnerAgreedAt && Number(order.partnerPrice) === data.partnerPrice) return order;
     if (order.partnerId !== null && order.partnerId !== partner.id && previousPayouts._count > 0 && !data.directorConfirmed) throw new Error("DIRECTOR_CONFIRMATION_REQUIRED");
     const reason = data.reason?.trim() || "Partner assignment";
     if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
     const companyProfit = Number(order.amount) - data.partnerPrice;
-    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit) } });
+    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerAgreedAt: new Date(), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit) } });
     if (data.authorId) {
       await tx.partnerAssignmentHistory.create({ data: { orderId: order.id, previousPartnerId: order.partnerId, newPartnerId: partner.id, previousPayable: order.partnerPrice, newPayable: String(data.partnerPrice), paidAtChange: String(previousPaid), remainingAtChange: String(Math.max(Number(order.partnerPrice) - previousPaid, 0)), reason, authorId: data.authorId } });
       await tx.financeAuditEvent.create({ data: { orderId: order.id, action: order.partnerId === null ? "PARTNER_ASSIGNED" : samePartner ? "PARTNER_AGREED_AMOUNT_CHANGED" : "PARTNER_REASSIGNED", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });

@@ -38,7 +38,7 @@ async function salesProjection(scope: DashboardScope) {
     scope.role === Role.MANAGER
       ? { OR: [{ managerUserId: scope.userId }, { leadConversion: { managerId: scope.userId } }] }
       : {};
-  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse, activeUsers] = await Promise.all([
+  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse, activeUsers, payrollProfiles] = await Promise.all([
     prisma.client.findMany({
       where: { ...managerLeadWhere, active: true },
       select: {
@@ -83,8 +83,8 @@ async function salesProjection(scope: DashboardScope) {
     }),
     scope.role === Role.DIRECTOR
       ? prisma.order.findMany({
-          where: { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
-          select: { balance: true, partnerBalance: true },
+          where: { lifecycle: { not: OrderLifecycle.CANCELLED } },
+          select: { balance: true, partnerBalance: true, partnerAgreedAt: true },
         })
       : Promise.resolve([]),
     prisma.measurement.count({
@@ -104,6 +104,9 @@ async function salesProjection(scope: DashboardScope) {
         })
       : Promise.resolve(0),
     prisma.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
+    scope.role === Role.DIRECTOR
+      ? prisma.employeePayrollProfile.findMany({ where: { active: true, payrollEnabled: true, user: { active: true } }, select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } } })
+      : Promise.resolve([]),
   ]);
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
@@ -138,7 +141,7 @@ async function salesProjection(scope: DashboardScope) {
   const activeBalances = activeFinanceOrders.reduce(
     (sum, order) => ({
       client: sum.client + Math.max(Number(order.balance), 0),
-      partner: sum.partner + Math.max(Number(order.partnerBalance), 0),
+      partner: sum.partner + (order.partnerAgreedAt ? Math.max(Number(order.partnerBalance), 0) : 0),
     }),
     { client: 0, partner: 0 },
   );
@@ -150,6 +153,11 @@ async function salesProjection(scope: DashboardScope) {
     ...leadEvents.map((event) => ({ id: `lead-${event.id}`, title: event.toStatus, subject: event.client.name || event.client.phone, href: `/clients/${event.client.id}`, user: event.authorName, createdAt: event.createdAt })),
     ...orderEvents.filter((event) => !event.user || activeUserNames.has(event.user)).map((event) => ({ id: `order-${event.id}`, title: event.title, subject: event.order.number, href: `/orders/${event.order.id}`, user: event.user, createdAt: event.createdAt })),
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 10);
+  const payrollPayable = payrollProfiles.reduce((total, profile) => {
+    const accrued = profile.accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
+    const paid = profile.payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
+    return total + Math.max(accrued - paid, 0);
+  }, 0);
   return {
     role: scope.role,
     period: { start, end },
@@ -164,6 +172,7 @@ async function salesProjection(scope: DashboardScope) {
       receivedPrepayment: totals.received,
       balanceToReceive: scope.role === Role.DIRECTOR ? activeBalances.client : Math.max(totals.balance, 0),
       partnerBalancePayable: scope.role === Role.DIRECTOR ? activeBalances.partner : undefined,
+      payrollBalancePayable: scope.role === Role.DIRECTOR ? payrollPayable : undefined,
       conversion: percent(convertedLeads, periodLeads.length),
       activeOrders: workOrders.length,
       readyForInstallation: workOrders.filter((order) => order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION).length,
@@ -190,7 +199,7 @@ async function accountantProjection(scope: DashboardScope) {
     period ? prisma.payrollAccrual.findMany({ where: { periodId: period.id }, select: { amount: true, direction: true } }) : Promise.resolve([]),
     period ? prisma.payrollPayment.findMany({ where: { periodId: period.id }, select: { amount: true, type: true } }) : Promise.resolve([]),
     period ? prisma.payrollAdvanceRequest.count({ where: { periodId: period.id, status: { in: [AdvanceRequestStatus.REQUESTED, AdvanceRequestStatus.APPROVED] } } }) : Promise.resolve(0),
-    prisma.order.findMany({ where: { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }, select: { partnerBalance: true } }),
+    prisma.order.findMany({ where: { lifecycle: { not: OrderLifecycle.CANCELLED }, partnerAgreedAt: { not: null } }, select: { partnerBalance: true } }),
   ]);
   const accrued = accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
   const paid = payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);

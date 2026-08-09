@@ -35,6 +35,7 @@
     "test:training:contract": "tsx scripts/test-training-contract.ts",
     "test:finance-integrity": "tsx scripts/test-finance-integrity.ts",
     "test:partner-settlements": "tsx scripts/test-partner-settlements.ts",
+    "test:partner-finance": "tsx scripts/test-partner-finance-dashboard.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
     "test:order360": "tsx scripts/test-order360.ts",

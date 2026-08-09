@@ -43,6 +43,7 @@ function operationError(error: unknown) {
     PAYMENT_EXCEEDS_BALANCE: ["Оплата превышает остаток по заказу", 409],
     REFUND_EXCEEDS_PAID: ["Возврат превышает оплаченную сумму", 409],
     PARTNER_PAYMENT_EXCEEDS_BALANCE: ["Выплата превышает остаток по заказу", 409],
+    PARTNER_PRICE_REQUIRED: ["Сначала директор должен указать согласованную цену партнёра", 409],
     EXPENSE_USE_COMPANY_LEDGER: ["Расходы проводятся через журнал расходов компании", 409],
   };
   return messages[error.message] ?? null;
@@ -51,9 +52,9 @@ function operationError(error: unknown) {
 export async function GET(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role === Role.PARTNER)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT)
     return NextResponse.json(
-      { error: "Финансы цеха доступны в кабинете цеха" },
+      { error: "Недостаточно прав" },
       { status: 403 },
     );
   try {
@@ -63,7 +64,7 @@ export async function GET(request: Request) {
     const to = optionalDate(searchParams.get("to"));
     if (from === null || to === null) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
     const data = await getFinanceDashboard({
-      period: (searchParams.get("period") ?? "all") as "all" | "month" | "quarter" | "year",
+      period: (searchParams.get("period") ?? "all") as "all" | "today" | "week" | "month" | "quarter" | "year",
       manager: searchParams.get("manager") || undefined,
       partnerId: requestedPartnerId ?? undefined,
       paymentStatus: (searchParams.get("paymentStatus") ?? "all") as "all" | "debt" | "partial" | "paid",
@@ -82,7 +83,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role === Role.PARTNER) return NextResponse.json({ error: "Цех не может создавать финансовые операции" }, { status: 403 });
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request);
   if ("response" in idempotency) return idempotency.response;
   try {

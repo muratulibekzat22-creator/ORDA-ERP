@@ -39,15 +39,15 @@ type Measurement = {
   stepWidth?: number | null;
   stepHeight?: number | null;
   individualSteps?: Array<{
-    length: number;
-    width: number;
-    height?: number;
+    length?: number | null;
+    width?: number | null;
+    height?: number | null;
   }> | null;
   riserHeight?: number | null;
   winderCount: number;
   winders?: Array<{ length?: number; width?: number; comment?: string }> | null;
   platformsCount: number;
-  platforms?: Array<{ length: number; width: number }> | null;
+  platforms?: Array<{ length?: number | null; width?: number | null }> | null;
   railingLength?: number | null;
   railingComment?: string | null;
   objectNotes?: string | null;
@@ -174,7 +174,7 @@ const formOf = (row: Measurement): Form => ({
     row.individualSteps
       ?.map(
         (item) =>
-          `${item.length} x ${item.width}${item.height ? ` x ${item.height}` : ""}`,
+          `${item.length ?? ""} x ${item.width ?? ""}${item.height ? ` x ${item.height}` : ""}`,
       )
       .join("\n") ?? "",
   riserHeight: String(row.riserHeight ?? ""),
@@ -188,7 +188,7 @@ const formOf = (row: Measurement): Form => ({
       .join("\n") ?? "",
   platformsCount: String(row.platformsCount ?? 0),
   platforms:
-    row.platforms?.map((item) => `${item.length} x ${item.width}`).join("\n") ??
+    row.platforms?.map((item) => `${item.length ?? ""} x ${item.width ?? ""}`).join("\n") ??
     "",
   railingLength: String(row.railingLength ?? ""),
   railingComment: row.railingComment ?? "",
@@ -197,17 +197,22 @@ const formOf = (row: Measurement): Form => ({
 });
 
 function dimensions(value: string, withComment = false) {
+  const number = (part: string | undefined) => {
+    if (!part?.trim()) return undefined;
+    const parsed = Number(part);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  };
   return value
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
       const [size, note] = line.split(/\s+[—-]\s+/, 2),
-        numbers = size.split(/[xх×]/i).map(Number);
+        numbers = size.split(/[xх×]/i);
       return {
-        length: numbers[0],
-        width: numbers[1],
-        ...(numbers[2] ? { height: numbers[2] } : {}),
+        length: number(numbers[0]),
+        width: number(numbers[1]),
+        ...(number(numbers[2]) ? { height: number(numbers[2]) } : {}),
         ...(withComment && note ? { comment: note } : {}),
       };
     });
@@ -328,21 +333,25 @@ export default function MeasurementWorkspace() {
     setError("");
     setTrainingRequired(false);
     setNotice("");
-    const response = await fetch(`/api/measurements/${selected.id}`, {
+    try {
+      const response = await fetch(`/api/measurements/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      }),
-      result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      setError(result.error ?? "Не удалось выполнить действие");
-      setTrainingRequired(result.code === "TRAINING_REQUIRED");
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(result.error ?? "Не удалось выполнить действие");
+        setTrainingRequired(result.code === "TRAINING_REQUIRED");
+      } else {
+        setNotice(ok);
+        await load();
+      }
+    } catch {
+      setError("Нет связи с сервером. Проверьте интернет и повторите сохранение — введённые данные остаются в форме.");
+    } finally {
+      setBusy(false);
     }
-    else {
-      setNotice(ok);
-      await load();
-    }
-    setBusy(false);
   }
   async function upload(file?: File) {
     if (!selected || !file) return;

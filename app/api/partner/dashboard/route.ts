@@ -14,8 +14,8 @@ export async function GET() {
     );
   }
 
-  const partner = await prisma.partner.findUnique({
-    where: { userId: Number(auth.session!.user.id) },
+  const partner = await prisma.partner.findFirst({
+    where: { userId: Number(auth.session!.user.id), active: true, archived: false, isTest: false },
     select: { id: true },
   });
   if (!partner) {
@@ -27,7 +27,7 @@ export async function GET() {
 
   const [orders, recentPayments] = await Promise.all([
     prisma.order.findMany({
-      where: { partnerId: partner.id },
+      where: { partnerId: partner.id, partnerAgreedAt: { not: null }, lifecycle: { not: OrderLifecycle.CANCELLED } },
       select: {
         status: true,
         lifecycle: true,

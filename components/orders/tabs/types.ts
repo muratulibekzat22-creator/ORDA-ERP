@@ -51,7 +51,7 @@ export type OrderTabData = {
     cancelled: boolean;
     client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
     partner?: {
-      partnerId: number | null; partnerName: string | null; agreed: number; paid: number; remaining: number; overpayment: number; status: string;
+      partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; remaining: number; overpayment: number; status: string;
       payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
     };

@@ -81,6 +81,7 @@ function redactForRole<T extends Record<string, unknown>>(
   for (const field of [
     "companyProfit",
     "partnerPrice",
+    "partnerAgreedAt",
     "partnerPaid",
     "partnerBalance",
   ] as const)
@@ -166,6 +167,7 @@ export async function PATCH(request: Request, { params }: Context) {
       "balance",
       "partnerPaid",
       "partnerBalance",
+      "partnerAgreedAt",
       "companyProfit",
     ];
     if (financial.some((key) => key in body))

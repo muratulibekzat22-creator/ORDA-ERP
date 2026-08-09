@@ -14,8 +14,8 @@ const select = {
 } as const;
 
 async function own(userId: string) {
-  return prisma.partner.findUnique({
-    where: { userId: Number(userId) },
+  return prisma.partner.findFirst({
+    where: { userId: Number(userId), active: true, archived: false, isTest: false },
     select,
   });
 }

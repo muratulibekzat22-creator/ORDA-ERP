@@ -31,7 +31,7 @@ export default async function PartnerPage({
   );
 
   return (
-    <main className="space-y-8 p-8">
+    <main className="space-y-6 p-4 sm:p-6 md:space-y-8 md:p-8">
 
       <div className="flex items-center justify-between">
 
@@ -68,8 +68,8 @@ export default async function PartnerPage({
         />
 
         <Card
-          title="Сумма заказов"
-          value={`${partner.stats.totalAmount.toLocaleString()} ₸`}
+          title="Согласовано"
+          value={`${partner.stats.partnerAgreed.toLocaleString()} ₸`}
           color="text-green-400"
         />
 
@@ -113,8 +113,8 @@ export default async function PartnerPage({
             />
 
             {session?.user.role === Role.DIRECTOR && <Info
-              title="Прибыль ALTYN SAPA"
-              value={`${partner.stats.companyProfit.toLocaleString()} ₸`}
+              title="Валовая маржа заказов"
+              value={`${partner.stats.grossMargin.toLocaleString()} ₸`}
             />}
 
           </div>
@@ -140,7 +140,7 @@ export default async function PartnerPage({
                   className="rounded-xl bg-slate-900 p-4"
                 >
 
-                  <div className="flex justify-between">
+                  <div className="flex flex-wrap justify-between gap-3">
 
                     <div>
 
@@ -154,10 +154,14 @@ export default async function PartnerPage({
 
                     </div>
 
-                    <span className="text-green-400 font-bold">
-                      {Number(order.amount).toLocaleString()} ₸
-                    </span>
+                    <span className="font-bold text-white">{Number(order.amount).toLocaleString()} ₸</span>
 
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-400">
+                    <span>Цена партнёра: {order.partnerAgreedAt ? `${Number(order.partnerPrice).toLocaleString()} ₸` : "не указана"}</span>
+                    <span>Выплачено: {Number(order.partnerPaid).toLocaleString()} ₸</span>
+                    <span>Остаток: {order.partnerAgreedAt ? `${Math.max(Number(order.partnerBalance), 0).toLocaleString()} ₸` : "—"}</span>
+                    <span>Производство: {order.productions[0]?.stage ?? order.status}</span>
                   </div>
 
                 </div>
@@ -173,7 +177,7 @@ export default async function PartnerPage({
       <div className="grid gap-6 xl:grid-cols-2">
 
         <PartnerPaymentForm
-          orders={partner.orders.map((order) => ({
+          orders={partner.orders.filter((order) => order.partnerAgreedAt).map((order) => ({
             id: order.id,
             number: order.number,
             partnerBalance: Number(order.partnerBalance),

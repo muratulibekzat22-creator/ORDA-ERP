@@ -1,7 +1,8 @@
-import "dotenv/config";
+import "./require-test-database";
 import bcrypt from "bcrypt";
-import { Role } from "@prisma/client";
+import { Permission, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { defaultPermissions } from "@/lib/permissions";
 
 const accounts = [
   ["DIRECTOR TEST", "director.test@altynsapa.kz", Role.DIRECTOR, "ORDA_TEST_DIRECTOR_PASSWORD"],
@@ -16,10 +17,19 @@ const accounts = [
 async function main() {
   const missing = accounts.filter(([, , , variable]) => !process.env[variable]);
   if (missing.length) throw new Error(`Missing ${missing.length} test account password environment variables`);
+  for (const [role, permissions] of Object.entries(defaultPermissions) as Array<[Role, Permission[]]>) {
+    for (const permission of permissions) {
+      await prisma.rolePermission.upsert({
+        where: { role_permission: { role, permission } },
+        create: { role, permission },
+        update: {},
+      });
+    }
+  }
   const existingWorkshop = await prisma.partner.findFirst({ where: { email: { equals: "workshop.test@altynsapa.kz", mode: "insensitive" } } });
   const workshop = existingWorkshop
-    ? await prisma.partner.update({ where: { id: existingWorkshop.id }, data: { name: "ЦЕХ TEST", email: "workshop.test@altynsapa.kz", active: true } })
-    : await prisma.partner.create({ data: { name: "ЦЕХ TEST", email: "workshop.test@altynsapa.kz", active: true } });
+    ? await prisma.partner.update({ where: { id: existingWorkshop.id }, data: { name: "ЦЕХ TEST", email: "workshop.test@altynsapa.kz", active: true, archived: false, isTest: true } })
+    : await prisma.partner.create({ data: { name: "ЦЕХ TEST", email: "workshop.test@altynsapa.kz", active: true, isTest: true } });
   for (const [name, email, role, variable] of accounts) {
     const password = await bcrypt.hash(process.env[variable]!, 12);
     const user = await prisma.user.upsert({ where: { email }, create: { name, email, role, password, active: true }, update: { name, role, password, active: true } });

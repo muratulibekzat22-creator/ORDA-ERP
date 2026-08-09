@@ -24,7 +24,7 @@ async function main() {
     const otherLead = await prisma.client.create({ data: { name: `${tag}-other`, phone: `+8${Date.now()}`, city: "TEST", manager: other.name, managerUserId: other.id, amount: "2000", status: "New" } });
     clientIds.push(ownLead.id, otherLead.id);
     partnerId = (await prisma.partner.create({ data: { name: tag } })).id;
-    const ownOrder = await prisma.order.create({ data: { number: `${tag}-own`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", prepayment: "400", balance: "600", partnerId, partnerPrice: "500", partnerPaid: "100", partnerBalance: "400", companyProfit: "500", lifecycle: OrderLifecycle.CREATED, status: "New" } });
+    const ownOrder = await prisma.order.create({ data: { number: `${tag}-own`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", prepayment: "400", balance: "600", partnerId, partnerPrice: "500", partnerAgreedAt: new Date(), partnerPaid: "100", partnerBalance: "400", companyProfit: "500", lifecycle: OrderLifecycle.CREATED, status: "New" } });
     const cancelled = await prisma.order.create({ data: { number: `${tag}-cancelled`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "9000", balance: "9000", partnerId, partnerPrice: "5000", partnerBalance: "5000", lifecycle: OrderLifecycle.CANCELLED, status: "Cancelled" } });
     const foreignOrder = await prisma.order.create({ data: { number: `${tag}-foreign`, clientId: otherLead.id, manager: other.name, managerUserId: other.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "2000", balance: "2000", lifecycle: OrderLifecycle.CREATED, status: "New" } });
     orderIds.push(ownOrder.id, cancelled.id, foreignOrder.id);
@@ -40,6 +40,7 @@ async function main() {
     const scopedMetrics = scopedManager.metrics as Record<string, number | undefined>;
     const emptyMetrics = emptyManager.metrics as Record<string, number | undefined>;
     assert("managers" in director && "partnerBalancePayable" in director.metrics, "director projection is incomplete");
+    assert.equal(director.metrics.partnerBalancePayable, 400, "director partner payable is not based on the agreed partner price");
     assert.equal(scopedMetrics.newLeads, 1, "manager received another manager's leads");
     assert.equal(scopedMetrics.orders, 1, "cancelled or foreign order entered manager sales");
     assert.equal(scopedMetrics.totalSales, 1000, "manager sales are not based on real non-cancelled orders");
@@ -56,7 +57,7 @@ async function main() {
     assert(route.includes("if (!session?.user)") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Заявки", "Заказы", "Продажи", "Получено", "Остаток клиентов", "К выплате партнёрам", "Мои новые заявки", "Payroll к выплате", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    for (const label of ["Продажи", "Получено", "К получению от клиентов", "К выплате партнёрам", "К выплате сотрудникам", "Мои новые заявки", "Payroll к выплате", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
     for (const routeName of ["/clients", "/orders", "/calendar", "/warehouse", "/finance", "/payroll", "/production", "/partners", "/measurements"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
     const home = readFileSync("app/page.tsx", "utf8");
     assert(home.includes("getServerSession"), "home role projection is not server-side");

@@ -1,6 +1,7 @@
 import {
   AdvanceRequestStatus,
   BonusPaymentMode,
+  PayrollConfirmationStatus,
   PayrollAccrualType,
   PayrollDirection,
   PayrollPaymentType,
@@ -32,10 +33,6 @@ const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => 
 };
 const director = (actor: PayrollActor) => {
   if (actor.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
-};
-const finance = (actor: PayrollActor) => {
-  if (!(actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT))
-    throw new PayrollError("FORBIDDEN");
 };
 const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
 
@@ -372,6 +369,8 @@ type PaymentInput = {
   method?: string;
   comment?: string;
   relatedAccrualId?: number;
+  reversalOfId?: number;
+  reversalReason?: string;
   key: string;
   requestHash: string;
 };
@@ -399,6 +398,8 @@ async function createPaymentTx(
       method: input.method,
       comment: input.comment,
       relatedAccrualId: input.relatedAccrualId,
+      reversalOfId: input.reversalOfId,
+      reversalReason: input.reversalReason,
       paidById: actor.userId,
       idempotencyKey: input.key,
       requestHash: input.requestHash,
@@ -425,11 +426,207 @@ async function createPaymentTx(
   return payment;
 }
 export async function createPayment(input: PaymentInput, actor: PayrollActor) {
-  finance(actor);
-  return prisma.$transaction((tx) => createPaymentTx(tx, input, actor), {
-    ...transactionOptions,
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-  });
+  director(actor);
+  if (input.type === PayrollPaymentType.EMPLOYEE_REFUND)
+    throw new PayrollError("FORBIDDEN");
+  return prisma.$transaction(async (tx) => {
+    const payment = await createPaymentTx(tx, input, actor);
+    await tx.payrollAuditEvent.upsert({
+      where: { idempotencyKey: `${input.key}:audit` },
+      update: {},
+      create: {
+        action: "PAYROLL_PAYMENT_CREATED",
+        actorId: actor.userId,
+        periodId: input.periodId,
+        employeeId: input.employeeId,
+        after: { paymentId: payment.id, amount: Number(payment.amount), type: payment.type },
+        reason: input.comment?.trim() || "Фактическая выплата сотруднику",
+        idempotencyKey: `${input.key}:audit`,
+      },
+    });
+    return payment;
+  }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function requestPaymentConfirmation(
+  input: {
+    periodId: number;
+    amount: number;
+    type: PayrollPaymentType;
+    claimedPaymentDate: Date;
+    method?: string;
+    comment?: string;
+    key: string;
+    requestHash: string;
+  },
+  actor: PayrollActor,
+) {
+  if (actor.role === Role.PARTNER || input.type === PayrollPaymentType.EMPLOYEE_REFUND)
+    throw new PayrollError("FORBIDDEN");
+  if (Number.isNaN(input.claimedPaymentDate.getTime()))
+    throw new PayrollError("INVALID_DATE");
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.payrollPaymentConfirmation.findUnique({ where: { idempotencyKey: input.key } });
+    if (existing) {
+      if (!compareRequestHash(existing.requestHash, input.requestHash))
+        throw new PayrollError("IDEMPOTENCY_CONFLICT");
+      return existing;
+    }
+    await openPeriod(tx, input.periodId);
+    const employee = await tx.employeePayrollProfile.findUnique({ where: { userId: actor.userId } });
+    if (!employee?.active || !employee.payrollEnabled)
+      throw new PayrollError("EMPLOYEE_NOT_FOUND");
+    const confirmation = await tx.payrollPaymentConfirmation.create({
+      data: {
+        employeeId: employee.id,
+        periodId: input.periodId,
+        amount: money(input.amount),
+        type: input.type,
+        claimedPaymentDate: input.claimedPaymentDate,
+        method: input.method,
+        comment: input.comment,
+        createdById: actor.userId,
+        idempotencyKey: input.key,
+        requestHash: input.requestHash,
+      },
+    });
+    await audit(tx, {
+      action: "PAYMENT_CONFIRMATION_REQUESTED",
+      actor,
+      periodId: input.periodId,
+      employeeId: employee.id,
+      after: { confirmationId: confirmation.id, amount: Number(confirmation.amount), status: confirmation.status },
+      reason: input.comment?.trim() || "Сотрудник сообщил о получении денег",
+      idempotencyKey: `${input.key}:audit`,
+    });
+    return confirmation;
+  }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function reviewPaymentConfirmation(
+  id: number,
+  input: {
+    decision: "CONFIRM" | "REJECT";
+    amount?: number;
+    paymentDate?: Date;
+    method?: string;
+    comment?: string;
+    key: string;
+    requestHash: string;
+  },
+  actor: PayrollActor,
+) {
+  director(actor);
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${20_000_000 + id})`;
+    const confirmation = await tx.payrollPaymentConfirmation.findUnique({ where: { id } });
+    if (!confirmation) throw new PayrollError("CONFIRMATION_NOT_FOUND");
+    if (confirmation.status === PayrollConfirmationStatus.CONFIRMED && confirmation.confirmedPaymentId)
+      return { confirmation, payment: await tx.payrollPayment.findUniqueOrThrow({ where: { id: confirmation.confirmedPaymentId } }) };
+    if (confirmation.status !== PayrollConfirmationStatus.PENDING)
+      throw new PayrollError("CONFIRMATION_ALREADY_REVIEWED");
+    if (input.decision === "REJECT") {
+      const updated = await tx.payrollPaymentConfirmation.update({
+        where: { id },
+        data: { status: PayrollConfirmationStatus.REJECTED, reviewedById: actor.userId, reviewedAt: new Date(), reviewComment: input.comment?.trim() || null },
+      });
+      await audit(tx, {
+        action: "PAYMENT_CONFIRMATION_REJECTED",
+        actor,
+        periodId: confirmation.periodId,
+        employeeId: confirmation.employeeId,
+        before: { status: confirmation.status },
+        after: { status: updated.status },
+        reason: input.comment?.trim() || "Сообщение о получении отклонено директором",
+        idempotencyKey: `${input.key}:audit`,
+      });
+      return { confirmation: updated, payment: null };
+    }
+    const paymentDate = input.paymentDate ?? confirmation.claimedPaymentDate;
+    if (Number.isNaN(paymentDate.getTime())) throw new PayrollError("INVALID_DATE");
+    const amount = input.amount ?? Number(confirmation.amount);
+    const payment = await createPaymentTx(tx, {
+      employeeId: confirmation.employeeId,
+      periodId: confirmation.periodId,
+      amount,
+      type: confirmation.type,
+      paymentDate,
+      method: input.method ?? confirmation.method ?? undefined,
+      comment: input.comment?.trim() || confirmation.comment || undefined,
+      key: `payroll-confirmation:${confirmation.id}`,
+      requestHash: input.requestHash,
+    }, actor);
+    const updated = await tx.payrollPaymentConfirmation.update({
+      where: { id },
+      data: {
+        amount: payment.amount,
+        claimedPaymentDate: payment.paymentDate,
+        method: payment.method,
+        comment: payment.comment,
+        status: PayrollConfirmationStatus.CONFIRMED,
+        reviewedById: actor.userId,
+        reviewedAt: new Date(),
+        reviewComment: input.comment?.trim() || null,
+        confirmedPaymentId: payment.id,
+      },
+    });
+    await audit(tx, {
+      action: "PAYMENT_CONFIRMATION_CONFIRMED",
+      actor,
+      periodId: confirmation.periodId,
+      employeeId: confirmation.employeeId,
+      before: { status: confirmation.status, requestedAmount: Number(confirmation.amount) },
+      after: { status: updated.status, paymentId: payment.id, confirmedAmount: Number(payment.amount) },
+      reason: input.comment?.trim() || "Выплата подтверждена директором",
+      idempotencyKey: `${input.key}:audit`,
+    });
+    return { confirmation: updated, payment };
+  }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function reversePayment(
+  id: number,
+  input: { reason: string; key: string; requestHash: string },
+  actor: PayrollActor,
+) {
+  director(actor);
+  const reason = requiredReason(input.reason);
+  return prisma.$transaction(async (tx) => {
+    const replay = await tx.payrollPayment.findUnique({ where: { idempotencyKey: input.key } });
+    if (replay) {
+      if (!compareRequestHash(replay.requestHash, input.requestHash)) throw new PayrollError("IDEMPOTENCY_CONFLICT");
+      return replay;
+    }
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${30_000_000 + id})`;
+    const original = await tx.payrollPayment.findUnique({ where: { id }, include: { reversal: true } });
+    if (!original || original.reversalOfId) throw new PayrollError("PAYMENT_NOT_FOUND");
+    if (original.reversal || original.reversedAt) throw new PayrollError("PAYMENT_ALREADY_REVERSED");
+    const reversal = await createPaymentTx(tx, {
+      employeeId: original.employeeId,
+      periodId: original.periodId,
+      amount: Number(original.amount),
+      type: PayrollPaymentType.EMPLOYEE_REFUND,
+      paymentDate: new Date(),
+      method: original.method ?? undefined,
+      comment: `Сторно: ${reason}`,
+      reversalOfId: original.id,
+      reversalReason: reason,
+      key: input.key,
+      requestHash: input.requestHash,
+    }, actor);
+    await tx.payrollPayment.update({ where: { id: original.id }, data: { reversedAt: reversal.paymentDate } });
+    await audit(tx, {
+      action: "PAYROLL_PAYMENT_REVERSED",
+      actor,
+      periodId: original.periodId,
+      employeeId: original.employeeId,
+      before: { paymentId: original.id, amount: Number(original.amount), type: original.type },
+      after: { reversalId: reversal.id, amount: Number(reversal.amount) },
+      reason,
+      idempotencyKey: `${input.key}:audit`,
+    });
+    return reversal;
+  }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function requestAdvance(
@@ -532,7 +729,7 @@ export async function payAdvance(
   },
   actor: PayrollActor,
 ) {
-  finance(actor);
+  director(actor);
   return prisma.$transaction(
     async (tx) => {
       const request = await tx.payrollAdvanceRequest.findUnique({
@@ -657,12 +854,18 @@ export async function payrollSummary(
   if (selfOnly && !self) throw new PayrollError("EMPLOYEE_NOT_FOUND");
   const employeeId = selfOnly ? self!.id : requestedEmployeeId;
   const employees = await prisma.employeePayrollProfile.findMany({
-    where: { ...(employeeId ? { id: employeeId } : {}), payrollEnabled: true },
+    where: {
+      ...(employeeId ? { id: employeeId } : {}),
+      payrollEnabled: true,
+      active: true,
+      user: { active: true },
+    },
     include: {
       user: { select: { id: true, name: true, role: true, active: true } },
       salaryRates: { orderBy: { effectiveFrom: "desc" } },
       accruals: { where: { periodId }, orderBy: { createdAt: "desc" } },
       payments: { where: { periodId }, orderBy: { paymentDate: "desc" } },
+      paymentConfirmations: { where: { periodId }, orderBy: { createdAt: "desc" } },
       advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { user: { name: "asc" } },
@@ -676,7 +879,10 @@ export async function payrollSummary(
       (sum, row) => sum + signedPayment(row),
       0,
     );
-    return { ...employee, totals: { accrued, paid, payable: accrued - paid } };
+    const pending = employee.paymentConfirmations
+      .filter((row) => row.status === PayrollConfirmationStatus.PENDING)
+      .reduce((sum, row) => sum + Number(row.amount), 0);
+    return { ...employee, totals: { accrued, paid, pending, payable: accrued - paid } };
   });
   return {
     rows,
@@ -684,9 +890,10 @@ export async function payrollSummary(
       (sum, row) => ({
         accrued: sum.accrued + row.totals.accrued,
         paid: sum.paid + row.totals.paid,
+        pending: sum.pending + row.totals.pending,
         payable: sum.payable + row.totals.payable,
       }),
-      { accrued: 0, paid: 0, payable: 0 },
+      { accrued: 0, paid: 0, pending: 0, payable: 0 },
     ),
   };
 }

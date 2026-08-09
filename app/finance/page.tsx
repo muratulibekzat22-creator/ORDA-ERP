@@ -12,21 +12,28 @@ import {
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
 type Operation = {
-  id: number;
+  id: string;
   type: string;
   amount: number;
+  direction: "INCOME" | "EXPENSE";
   method: string;
   comment: string | null;
   author: string | null;
   operationDate: string;
   order: { id: number; number: string; client: { name: string } } | null;
   partner: { name: string } | null;
+  employee: string | null;
 };
 type Data = {
   rows: { id: number; number: string; client: string }[];
   partners: { id: number; name: string }[];
   operations: Operation[];
   operationTotals: { income: number; expense: number; net: number };
+  cards: { receipts: number; expenses: number; customerReceivable: number; partnerPayable: number; payrollPayable: number; grossMargin: number };
+  trend: Array<{ date: string; income: number; expense: number }>;
+  partnerTotals: { agreed: number; paid: number; remaining: number };
+  partnerBreakdown: Array<{ partnerId: number; partner: string; orders: number; agreed: number; paid: number; remaining: number }>;
+  alerts: { withoutPartner: number; withoutPartnerPrice: number; overdueCustomer: number; overduePartner: number };
 };
 
 const empty: Data = {
@@ -34,6 +41,11 @@ const empty: Data = {
   partners: [],
   operations: [],
   operationTotals: { income: 0, expense: 0, net: 0 },
+  cards: { receipts: 0, expenses: 0, customerReceivable: 0, partnerPayable: 0, payrollPayable: 0, grossMargin: 0 },
+  trend: [],
+  partnerTotals: { agreed: 0, paid: 0, remaining: 0 },
+  partnerBreakdown: [],
+  alerts: { withoutPartner: 0, withoutPartnerPrice: 0, overdueCustomer: 0, overduePartner: 0 },
 };
 const operationLabels: Record<string, string> = {
   CLIENT_PAYMENT: "Оплата клиента",
@@ -41,6 +53,8 @@ const operationLabels: Record<string, string> = {
   EXPENSE: "Расход",
   OTHER_INCOME: "Прочее поступление",
   PARTNER_PAYOUT: "Выплата цеху",
+  PAYROLL_PAYMENT: "Выплата сотруднику",
+  OTHER_EXPENSE: "Прочий расход",
   ADJUSTMENT: "Корректировка",
 };
 const methodLabels: Record<string, string> = {
@@ -50,7 +64,9 @@ const methodLabels: Record<string, string> = {
   card: "Карта",
   other: "Другое",
 };
-const outgoingTypes = new Set(["REFUND", "EXPENSE", "PARTNER_PAYOUT"]);
+const createOperationOptions = Object.entries(operationLabels).filter(
+  ([type]) => !["EXPENSE", "PARTNER_PAYOUT", "PAYROLL_PAYMENT", "OTHER_EXPENSE"].includes(type),
+);
 const money = (value: number) =>
   new Intl.NumberFormat("ru-RU", {
     style: "currency",
@@ -94,7 +110,7 @@ export default function FinancePage() {
     adjustmentDirection: "INCOME",
   });
   const { getKey, reset } = useIdempotencyKey();
-  const canCreate = Boolean(session && session.user.role !== "PARTNER");
+  const canCreate = session?.user.role === "DIRECTOR" || session?.user.role === "ACCOUNTANT";
 
   useEffect(() => {
     const timer = window.setTimeout(
@@ -115,6 +131,8 @@ export default function FinancePage() {
       to.setHours(23, 59, 59, 999);
       if (period === "week") from.setDate(from.getDate() - 6);
       if (period === "month") from.setDate(1);
+      if (period === "quarter") from.setMonth(Math.floor(from.getMonth() / 3) * 3, 1);
+      if (period === "year") from.setMonth(0, 1);
       if (period === "custom") {
         if (!customFrom || !customTo) {
           setLoading(false);
@@ -128,6 +146,7 @@ export default function FinancePage() {
         to.setHours(23, 59, 59, 999);
       }
       const params = new URLSearchParams({
+        period,
         from: localDateTime(from),
         to: localDateTime(to),
       });
@@ -192,9 +211,7 @@ export default function FinancePage() {
   const visible = useMemo(
     () =>
       data.operations.filter((item) => {
-        const outgoing =
-          outgoingTypes.has(item.type) ||
-          (item.type === "ADJUSTMENT" && item.comment?.includes("[EXPENSE]"));
+        const outgoing = item.direction === "EXPENSE";
         if (direction === "income" && outgoing) return false;
         if (direction === "expense" && !outgoing) return false;
         if (category && item.type !== category) return false;
@@ -205,6 +222,7 @@ export default function FinancePage() {
           item.order?.number,
           item.order?.client.name,
           item.partner?.name,
+          item.employee,
           item.author,
         ].some((value) =>
           value?.toLocaleLowerCase("ru").includes(debouncedSearch),
@@ -242,6 +260,8 @@ export default function FinancePage() {
           ["today", "Сегодня"],
           ["week", "Неделя"],
           ["month", "Месяц"],
+          ["quarter", "Квартал"],
+          ["year", "Год"],
           ["custom", "Произвольный период"],
         ].map(([value, label]) => (
           <button
@@ -285,7 +305,7 @@ export default function FinancePage() {
             <Select
               value={operation.type}
               onChange={(v) => set("type", v)}
-              options={Object.entries(operationLabels)}
+              options={createOperationOptions}
             />
           </Field>
           <Field label="Сумма">
@@ -392,23 +412,72 @@ export default function FinancePage() {
           </button>
         </div>
       )}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
         <Metric
           title="Поступления"
-          value={data.operationTotals.income}
+          value={data.cards.receipts}
           color="text-emerald-400"
         />
         <Metric
           title="Расходы"
-          value={data.operationTotals.expense}
+          value={data.cards.expenses}
           color="text-rose-400"
         />
         <Metric
-          title="Чистый денежный поток"
-          value={data.operationTotals.net}
-          color="text-blue-400"
+          title="К получению от клиентов"
+          value={data.cards.customerReceivable}
+          color="text-amber-300"
+        />
+        <Metric
+          title="К выплате партнёрам"
+          value={data.cards.partnerPayable}
+          color="text-orange-300"
+        />
+        <Metric
+          title="К выплате сотрудникам"
+          value={data.cards.payrollPayable}
+          color="text-violet-300"
+        />
+        <Metric
+          title="Валовая маржа заказов"
+          value={data.cards.grossMargin}
+          color="text-cyan-300"
         />
       </div>
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="min-w-0 rounded-2xl border border-slate-700 bg-[#101827] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold text-white">Динамика поступлений и расходов</h2>
+            <span className="text-sm text-slate-400">Денежный поток: {money(data.operationTotals.net)}</span>
+          </div>
+          {data.trend.length === 0 ? <p className="mt-4 text-sm text-slate-500">За период движений денег нет.</p> : <div className="mt-4 space-y-3">
+            {data.trend.map((item) => {
+              const max = Math.max(1, ...data.trend.flatMap((point) => [point.income, point.expense]));
+              return <div key={item.date} className="grid min-w-0 grid-cols-[5.5rem_1fr] gap-3 text-xs"><span className="text-slate-400">{new Date(`${item.date}T00:00:00`).toLocaleDateString("ru-RU")}</span><div className="space-y-1"><div className="h-2 rounded bg-slate-800"><div className="h-2 rounded bg-emerald-500" style={{ width: `${Math.max(item.income ? 2 : 0, item.income / max * 100)}%` }} /></div><div className="h-2 rounded bg-slate-800"><div className="h-2 rounded bg-rose-500" style={{ width: `${Math.max(item.expense ? 2 : 0, item.expense / max * 100)}%` }} /></div></div></div>;
+            })}
+          </div>}
+        </div>
+        <div className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
+          <h2 className="font-semibold text-white">Требуют внимания</h2>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            <AlertMetric label="Без партнёра" value={data.alerts.withoutPartner} />
+            <AlertMetric label="Без цены партнёра" value={data.alerts.withoutPartnerPrice} />
+            <AlertMetric label="Просрочено клиентом" value={data.alerts.overdueCustomer} />
+            <AlertMetric label="Просрочено партнёру" value={data.alerts.overduePartner} />
+          </div>
+        </div>
+      </section>
+      <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
+        <h2 className="font-semibold text-white">Расчёты с цехами</h2>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <Metric title="Согласовано" value={data.partnerTotals.agreed} color="text-white" />
+          <Metric title="Выплачено" value={data.partnerTotals.paid} color="text-emerald-300" />
+          <Metric title="Осталось" value={data.partnerTotals.remaining} color="text-amber-300" />
+        </div>
+        {data.partnerBreakdown.length > 0 && <div className="mt-4 grid gap-2">
+          {data.partnerBreakdown.map((item) => <Link key={item.partnerId} href={`/partners/${item.partnerId}`} className="grid min-w-0 gap-2 rounded-xl bg-slate-900 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] sm:items-center"><b className="truncate text-white">{item.partner}</b><span>{item.orders} зак.</span><span>{money(item.agreed)}</span><span className="text-emerald-300">{money(item.paid)}</span><span className="text-amber-300">{money(item.remaining)}</span></Link>)}
+        </div>}
+      </section>
       <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2 xl:grid-cols-4">
         <Field label="Движение">
           <Select
@@ -486,10 +555,7 @@ export default function FinancePage() {
 }
 
 function isOutgoing(item: Operation) {
-  return (
-    outgoingTypes.has(item.type) ||
-    (item.type === "ADJUSTMENT" && item.comment?.includes("[EXPENSE]"))
-  );
+  return item.direction === "EXPENSE";
 }
 function OperationLink({ item }: { item: Operation }) {
   return item.order ? (
@@ -500,7 +566,7 @@ function OperationLink({ item }: { item: Operation }) {
       Заказ №{item.order.number}
     </Link>
   ) : (
-    <span>{item.partner?.name ?? "Без связи"}</span>
+    <span>{item.employee ?? item.partner?.name ?? "Без связи"}</span>
   );
 }
 function OperationRow({ item }: { item: Operation }) {
@@ -609,6 +675,9 @@ function Metric({
       </p>
     </div>
   );
+}
+function AlertMetric({ label, value }: { label: string; value: number }) {
+  return <div className="min-w-0 rounded-xl bg-slate-900 p-3"><p className="text-slate-400">{label}</p><p className={`mt-1 text-xl font-bold ${value > 0 ? "text-amber-300" : "text-emerald-300"}`}>{value}</p></div>;
 }
 function Skeleton() {
   return (

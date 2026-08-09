@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 
@@ -114,8 +114,9 @@ export async function createFinanceOperation(input: CreateOperationInput) {
       const order = input.orderId ? await lockOrder(tx, input.orderId) : null;
       if (input.orderId && !order) return null;
       const partnerId = input.partnerId ?? (affectsPartner ? order?.partnerId ?? undefined : undefined);
-      if (partnerId && !await tx.partner.findUnique({ where: { id: partnerId }, select: { id: true } })) throw new Error("PARTNER_NOT_FOUND");
+      if (partnerId && !await tx.partner.findFirst({ where: { id: partnerId, active: true, archived: false, isTest: false }, select: { id: true } })) throw new Error("PARTNER_NOT_FOUND");
       if (affectsPartner && (!order?.partnerId || order.partnerId !== partnerId)) throw new Error("ORDER_PARTNER_REQUIRED");
+      if (affectsPartner && !order?.partnerAgreedAt) throw new Error("PARTNER_PRICE_REQUIRED");
 
       if (order && type === "CLIENT_PAYMENT") {
         if (input.amount > Number(order.balance)) throw new Error("PAYMENT_EXCEEDS_BALANCE");
@@ -224,34 +225,148 @@ export async function deletePayment(id: number) {
   throw new Error("POSTED_OPERATION_IMMUTABLE");
 }
 
-export type FinanceFilters = { period?: "all" | "month" | "quarter" | "year"; manager?: string; partnerId?: number; paymentStatus?: "all" | "debt" | "partial" | "paid"; type?: string; orderId?: number; from?: Date; to?: Date };
+export type FinanceFilters = { period?: "all" | "today" | "week" | "month" | "quarter" | "year"; manager?: string; partnerId?: number; paymentStatus?: "all" | "debt" | "partial" | "paid"; type?: string; orderId?: number; from?: Date; to?: Date };
 
-function periodStart(period: FinanceFilters["period"]) {
-  const now = new Date(); const start = new Date(now);
-  if (period === "month") start.setMonth(now.getMonth() - 1);
-  if (period === "quarter") start.setMonth(now.getMonth() - 3);
-  if (period === "year") start.setFullYear(now.getFullYear() - 1);
-  return start;
+function financeRange(period: FinanceFilters["period"], from?: Date, to?: Date) {
+  if (from || to) return { from, to };
+  if (!period || period === "all") return {};
+  const end = new Date();
+  const start = new Date(end);
+  start.setHours(0, 0, 0, 0);
+  if (period === "week") start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  if (period === "month") start.setDate(1);
+  if (period === "quarter") start.setMonth(Math.floor(start.getMonth() / 3) * 3, 1);
+  if (period === "year") start.setMonth(0, 1);
+  return { from: start, to: end };
 }
 
+const operationInRange = (date: Date, from?: Date, to?: Date) => (!from || date >= from) && (!to || date <= to);
+
 export async function getFinanceDashboard(filters: FinanceFilters = {}) {
-  const startDate = periodStart(filters.period);
-  const orderWhere = { ...(filters.period && filters.period !== "all" ? { createdAt: { gte: startDate } } : {}), ...(filters.manager ? { manager: filters.manager } : {}), ...(filters.partnerId ? { partnerId: filters.partnerId } : {}) };
-  const [orders, operations] = await Promise.all([
+  const selectedRange = financeRange(filters.period, filters.from, filters.to);
+  const orderWhere: Prisma.OrderWhereInput = {
+    lifecycle: { not: "CANCELLED" },
+    ...(filters.manager ? { manager: filters.manager } : {}),
+    ...(filters.partnerId ? { partnerId: filters.partnerId } : {}),
+    ...(filters.orderId ? { id: filters.orderId } : {}),
+  };
+  const operationDate = selectedRange.from || selectedRange.to
+    ? { ...(selectedRange.from ? { gte: selectedRange.from } : {}), ...(selectedRange.to ? { lte: selectedRange.to } : {}) }
+    : undefined;
+  const [orders, paymentOperations, ledgerEntries, payrollProfiles, managers, partners] = await Promise.all([
     prisma.order.findMany({ where: orderWhere, include: { client: true, partner: true, payments: true }, orderBy: { createdAt: "desc" } }),
-    getPayments({ type: filters.type, orderId: filters.orderId, partnerId: filters.partnerId, from: filters.from ?? (filters.period && filters.period !== "all" ? startDate : undefined), to: filters.to }),
+    getPayments({ type: filters.type, orderId: filters.orderId, partnerId: filters.partnerId, from: selectedRange.from, to: selectedRange.to }),
+    prisma.companyLedgerEntry.findMany({
+      where: {
+        ...(operationDate ? { operationDate } : {}),
+        ...(filters.orderId ? { orderId: filters.orderId } : filters.manager ? { order: { manager: filters.manager } } : filters.partnerId ? { order: { partnerId: filters.partnerId } } : {}),
+        OR: [{ payrollPaymentId: { not: null } }, { payrollAccrualId: null }],
+      },
+      include: {
+        order: { select: { id: true, number: true, client: { select: { name: true } } } },
+        author: { select: { name: true } },
+        payrollPayment: { include: { employee: { include: { user: { select: { name: true } } } } } },
+      },
+      orderBy: [{ operationDate: "desc" }, { id: "desc" }],
+    }),
+    prisma.employeePayrollProfile.findMany({
+      where: { active: true, payrollEnabled: true, user: { active: true } },
+      select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } },
+    }),
+    prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { name: true }, orderBy: { name: "asc" } }),
+    prisma.partner.findMany({ where: { active: true, archived: false, isTest: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
+
   const rows = orders.map((order) => {
-    const paid = order.payments.reduce((sum, item) => { const kind = operationKind(item.type); return sum + (kind === "CLIENT_PAYMENT" ? Number(item.amount) : kind === "REFUND" ? -Number(item.amount) : 0); }, 0);
+    const received = order.payments.reduce((sum, item) => { const kind = operationKind(item.type); return sum + (kind === "CLIENT_PAYMENT" ? Number(item.amount) : kind === "REFUND" ? -Number(item.amount) : 0); }, 0);
     const partnerPaid = order.payments.reduce((sum, item) => sum + (item.partnerId === order.partnerId && operationKind(item.type) === payoutType ? Number(item.amount) : item.partnerId === order.partnerId && item.type === "PARTNER_PAYOUT_REVERSAL" ? -Number(item.amount) : 0), 0);
-    const amount = Number(order.amount), partnerPrice = Number(order.partnerPrice);
-    const rawBalance = amount - paid, rawPartnerBalance = partnerPrice - partnerPaid;
-    const balance = Math.max(rawBalance, 0), partnerBalance = Math.max(rawPartnerBalance, 0);
-    return { id: order.id, number: order.number, client: order.client.name, partner: order.partner?.name ?? "—", manager: order.manager, createdAt: order.createdAt, amount, prepayment: paid, balance, clientOverpayment: Math.max(-rawBalance, 0), partnerPrice, partnerPaid, partnerBalance, partnerOverpayment: Math.max(-rawPartnerBalance, 0), companyProfit: amount - partnerPrice, paymentStatus: rawBalance <= 0 ? "paid" : paid > 0 ? "partial" : "debt" };
+    const amount = Number(order.amount), priceSet = order.partnerAgreedAt !== null;
+    const partnerPrice = priceSet ? Number(order.partnerPrice) : null;
+    const rawBalance = amount - received, rawPartnerBalance = partnerPrice === null ? 0 : partnerPrice - partnerPaid;
+    return {
+      id: order.id, number: order.number, client: order.client.name, partner: order.partner?.name ?? "—", manager: order.manager,
+      createdAt: order.createdAt, partnerAgreedAt: order.partnerAgreedAt, promisedAt: order.promisedAt, partnerPlannedReadyAt: order.partnerPlannedReadyAt,
+      amount, prepayment: received, balance: Math.max(rawBalance, 0), clientOverpayment: Math.max(-rawBalance, 0),
+      priceSet, partnerPrice, partnerPaid: priceSet ? partnerPaid : 0, partnerBalance: priceSet ? Math.max(rawPartnerBalance, 0) : 0,
+      partnerOverpayment: priceSet ? Math.max(-rawPartnerBalance, 0) : 0,
+      grossMargin: partnerPrice === null ? null : amount - partnerPrice,
+      paymentStatus: rawBalance <= 0 ? "paid" : received > 0 ? "partial" : "debt",
+    };
   });
   const filteredRows = filters.paymentStatus && filters.paymentStatus !== "all" ? rows.filter((row) => row.paymentStatus === filters.paymentStatus) : rows;
-  const totals = filteredRows.reduce((sum, row) => ({ turnover: sum.turnover + row.amount, received: sum.received + row.prepayment, clientBalance: sum.clientBalance + row.balance, partnerPaid: sum.partnerPaid + row.partnerPaid, partnerBalance: sum.partnerBalance + row.partnerBalance, profit: sum.profit + row.companyProfit }), { turnover: 0, received: 0, clientBalance: 0, partnerPaid: 0, partnerBalance: 0, profit: 0 });
-  const operationTotals = operations.reduce((sum, item) => { const kind = operationKind(item.type); const sign = kind === "EXPENSE" || kind === "REFUND" || kind === payoutType || (kind === "ADJUSTMENT" && item.comment?.includes("[EXPENSE]")) ? -1 : 1; if (sign > 0) sum.income += Number(item.amount); else sum.expense += Number(item.amount); return sum; }, { income: 0, expense: 0 });
-  const [managers, partners] = await Promise.all([prisma.order.findMany({ distinct: ["manager"], select: { manager: true }, orderBy: { manager: "asc" } }), prisma.partner.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } })]);
-  return { rows: filteredRows, totals, operations, operationTotals: { ...operationTotals, net: operationTotals.income - operationTotals.expense }, managers: managers.map((item) => item.manager), partners };
+
+  const normalizedPayments = paymentOperations.filter((item) => !filters.manager || item.order?.manager === filters.manager).map((item) => {
+    const kind = operationKind(item.type);
+    const outgoing = kind === "REFUND" || kind === payoutType || (kind === "ADJUSTMENT" && item.comment?.includes("[EXPENSE]"));
+    return {
+      id: `payment-${item.id}`, sourceId: item.id, source: "PAYMENT" as const, type: item.type, amount: Number(item.amount), direction: outgoing ? "EXPENSE" as const : "INCOME" as const,
+      method: item.method, comment: item.comment, author: item.author, operationDate: item.operationDate,
+      order: item.order ? { id: item.order.id, number: item.order.number, client: { name: item.order.client.name } } : null,
+      partner: item.partner ? { name: item.partner.name } : item.order?.partner ? { name: item.order.partner.name } : null,
+      employee: null,
+    };
+  });
+  const normalizedLedger = ledgerEntries.map((item) => ({
+    id: `ledger-${item.id}`, sourceId: item.id, source: "COMPANY_LEDGER" as const,
+    type: item.payrollPaymentId ? "PAYROLL_PAYMENT" : item.direction === "INCOME" ? "OTHER_INCOME" : "OTHER_EXPENSE",
+    amount: Number(item.amount), direction: item.direction === "INCOME" ? "INCOME" as const : "EXPENSE" as const,
+    method: item.payrollPayment?.method ?? "ledger", comment: item.comment, author: item.author?.name ?? null, operationDate: item.operationDate,
+    order: item.order, partner: null, employee: item.payrollPayment?.employee.user.name ?? null,
+  }));
+  const operations = [...normalizedPayments, ...normalizedLedger]
+    .filter((item) => !filters.type || item.type === filters.type)
+    .sort((a, b) => b.operationDate.getTime() - a.operationDate.getTime());
+  const operationTotals = operations.reduce((sum, item) => {
+    if (item.direction === "INCOME") sum.income += item.amount;
+    else sum.expense += item.amount;
+    return sum;
+  }, { income: 0, expense: 0 });
+
+  const payrollPayable = payrollProfiles.reduce((total, profile) => {
+    const accrued = profile.accruals.reduce((sum, item) => sum + Number(item.amount) * (item.direction === "INCREASE" ? 1 : -1), 0);
+    const paid = profile.payments.reduce((sum, item) => sum + Number(item.amount) * (item.type === "EMPLOYEE_REFUND" ? -1 : 1), 0);
+    return total + Math.max(accrued - paid, 0);
+  }, 0);
+  const totals = filteredRows.reduce((sum, row) => ({
+    turnover: sum.turnover + row.amount, received: sum.received + row.prepayment, clientBalance: sum.clientBalance + row.balance,
+    partnerAgreed: sum.partnerAgreed + (row.partnerPrice ?? 0), partnerPaid: sum.partnerPaid + row.partnerPaid,
+    partnerBalance: sum.partnerBalance + row.partnerBalance, profit: sum.profit + (row.grossMargin ?? 0),
+  }), { turnover: 0, received: 0, clientBalance: 0, partnerAgreed: 0, partnerPaid: 0, partnerBalance: 0, profit: 0 });
+  const grossMargin = filteredRows
+    .filter((row) => row.grossMargin !== null && operationInRange(row.createdAt, selectedRange.from, selectedRange.to))
+    .reduce((sum, row) => sum + (row.grossMargin ?? 0), 0);
+  const cards = { receipts: operationTotals.income, expenses: operationTotals.expense, customerReceivable: totals.clientBalance, partnerPayable: totals.partnerBalance, payrollPayable, grossMargin };
+  const partnerAgreedPeriod = filteredRows.filter((row) => row.partnerAgreedAt && operationInRange(row.partnerAgreedAt, selectedRange.from, selectedRange.to)).reduce((sum, row) => sum + (row.partnerPrice ?? 0), 0);
+  const partnerPaidPeriod = normalizedPayments.reduce((sum, item) => item.type === "PARTNER_PAYOUT" ? sum + item.amount : item.type === "PARTNER_PAYOUT_REVERSAL" ? sum - item.amount : sum, 0);
+
+  const trendMap = new Map<string, { date: string; income: number; expense: number }>();
+  operations.forEach((item) => {
+    const date = item.operationDate.toISOString().slice(0, 10);
+    const row = trendMap.get(date) ?? { date, income: 0, expense: 0 };
+    row[item.direction === "INCOME" ? "income" : "expense"] += item.amount;
+    trendMap.set(date, row);
+  });
+  const partnerMap = new Map<number, { partnerId: number; partner: string; orders: number; agreed: number; paid: number; remaining: number }>();
+  filteredRows.forEach((row) => {
+    const order = orders.find((item) => item.id === row.id);
+    if (!order?.partnerId || !order.partner || !row.priceSet) return;
+    const value = partnerMap.get(order.partnerId) ?? { partnerId: order.partnerId, partner: order.partner.name, orders: 0, agreed: 0, paid: 0, remaining: 0 };
+    value.orders += 1; value.agreed += row.partnerPrice ?? 0; value.paid += row.partnerPaid; value.remaining += row.partnerBalance;
+    partnerMap.set(order.partnerId, value);
+  });
+  const now = new Date();
+  const alerts = {
+    withoutPartner: filteredRows.filter((row) => !orders.find((item) => item.id === row.id)?.partnerId).length,
+    withoutPartnerPrice: filteredRows.filter((row) => Boolean(orders.find((item) => item.id === row.id)?.partnerId) && !row.priceSet).length,
+    overdueCustomer: filteredRows.filter((row) => row.promisedAt && row.promisedAt < now && row.balance > 0).length,
+    overduePartner: filteredRows.filter((row) => row.partnerPlannedReadyAt && row.partnerPlannedReadyAt < now && row.partnerBalance > 0).length,
+  };
+  return {
+    rows: filteredRows, totals, cards, operations,
+    operationTotals: { ...operationTotals, net: operationTotals.income - operationTotals.expense },
+    trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    partnerTotals: { agreed: partnerAgreedPeriod, paid: partnerPaidPeriod, remaining: totals.partnerBalance },
+    partnerBreakdown: [...partnerMap.values()].sort((a, b) => b.remaining - a.remaining),
+    alerts, managers: managers.map((item) => item.name), partners,
+  };
 }

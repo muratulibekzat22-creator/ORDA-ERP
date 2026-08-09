@@ -1,7 +1,8 @@
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
+import { productionLog } from "@/lib/observability";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
@@ -49,7 +50,7 @@ export async function GET() {
       : null;
     const orders = await getOrders(
       partner
-        ? { partnerId: partner.id }
+        ? { partnerId: partner.id, partnerAgreedAt: { not: null }, lifecycle: { not: "CANCELLED" } }
         : role === Role.MANAGER
           ? { OR: [{ managerUserId: userId }, { managerUserId: null, manager: auth.session!.user.name ?? "" }, { leadConversion: { managerId: userId } }] }
           : role === Role.PRODUCTION
@@ -64,7 +65,7 @@ export async function GET() {
       return NextResponse.json(orders.map((order) => {
         const result = { ...order } as Record<string, unknown>;
         delete result.companyProfit;
-        if (role !== Role.PARTNER) for (const field of ["partnerPrice", "partnerPaid", "partnerBalance"]) delete result[field];
+        if (role !== Role.PARTNER) for (const field of ["partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"]) delete result[field];
         if (([Role.PRODUCTION, Role.INSTALLER, Role.MEASURER, Role.PARTNER] as Role[]).includes(role))
           for (const field of ["amount", "prepayment", "balance"]) delete result[field];
         return result;
@@ -130,7 +131,7 @@ export async function POST(request: Request) {
         where: { id: managerUserId, active: true, role: enhanced ? Role.MANAGER : { in: [Role.MANAGER, Role.DIRECTOR] } },
         select: { id: true, name: true },
       }) : null,
-      partnerId ? prisma.partner.findUnique({ where: { id: partnerId }, select: { id: true } }) : null,
+      partnerId ? prisma.partner.findFirst({ where: { id: partnerId, active: true, archived: false, isTest: false }, select: { id: true } }) : null,
     ]);
     if (!managerUser) return NextResponse.json({ error: "Ответственный менеджер не найден" }, { status: 400 });
     if (partnerId && !partner) return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 });
@@ -163,22 +164,27 @@ export async function POST(request: Request) {
       amount,
       prepayment,
       partnerPrice,
+      partnerPriceSet: role === Role.DIRECTOR && Boolean(partnerId) && Object.hasOwn(body, "partnerPrice"),
       partnerPaid,
       manager: managerUser.name,
       managerUserId: managerUser.id,
     };
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
+    const requestHashPayload = {
+      ...payload,
+      orderReceivedAt: body.orderReceivedAt == null || body.orderReceivedAt === "" ? null : orderReceivedAt,
+    };
     const result = await createOrder({
       ...payload,
       actorRole: role,
       enforceClientOwnership: enhanced,
       idempotencyKey: idempotency.key,
-      requestHash: createRequestHash(payload),
+      requestHash: createRequestHash(requestHashPayload),
     });
     const responseOrder = { ...result.order } as Record<string, unknown>;
     if (role !== Role.DIRECTOR)
-      for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) delete responseOrder[field];
+      for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"]) delete responseOrder[field];
     return NextResponse.json(responseOrder, { status: result.created ? 201 : 200 });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
@@ -191,6 +197,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Этот телефон уже связан с клиентом другого менеджера", code: error.message }, { status: 409 });
     if (error instanceof Error && ["INVALID_CLIENT_PHONE", "CLIENT_REQUIRED", "MANAGER_REQUIRED"].includes(error.message))
       return NextResponse.json({ error: "Некорректные данные клиента или менеджера" }, { status: 400 });
+    const adapterCause = error && typeof error === "object" && "cause" in error
+      ? (error as { cause?: { kind?: unknown } }).cause
+      : undefined;
+    productionLog("error", "orders.create_failed", {
+      requestId: request.headers.get("x-request-id") ?? undefined,
+      route: new URL(request.url).pathname,
+      method: request.method,
+      reason: error instanceof Prisma.PrismaClientKnownRequestError
+        ? error.code
+        : typeof adapterCause?.kind === "string" ? adapterCause.kind : undefined,
+      error,
+    });
     return NextResponse.json({ error: "Ошибка создания заказа" }, { status: 500 });
   }
 }

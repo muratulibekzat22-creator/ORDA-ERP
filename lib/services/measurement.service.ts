@@ -35,12 +35,16 @@ export type MeasurementDraft = {
   stepLength?: number | null;
   stepWidth?: number | null;
   stepHeight?: number | null;
-  individualSteps?: Array<{ length: number; width: number; height?: number }>;
+  individualSteps?: Array<{
+    length: number | null;
+    width: number | null;
+    height?: number | null;
+  }>;
   riserHeight?: number | null;
   winderCount: number;
   winders?: Array<{ length?: number; width?: number; comment?: string }>;
   platformsCount: number;
-  platforms?: Array<{ length: number; width: number }>;
+  platforms?: Array<{ length: number | null; width: number | null }>;
   railingLength: number;
   railingComment?: string | null;
   objectNotes?: string | null;
@@ -242,9 +246,9 @@ export function parseMeasurementDraft(
           throw new MeasurementError("INVALID_DIMENSIONS");
         const item = row as Record<string, unknown>;
         return {
-          length: positive(item.length)!,
-          width: positive(item.width)!,
-          ...(item.height ? { height: positive(item.height)! } : {}),
+          length: positive(item.length, !strict),
+          width: positive(item.width, !strict),
+          ...(item.height != null && item.height !== "" ? { height: positive(item.height, true) } : {}),
         };
       })
     : undefined;
@@ -254,7 +258,7 @@ export function parseMeasurementDraft(
         if (!row || typeof row !== "object" || Array.isArray(row))
           throw new MeasurementError("INVALID_DIMENSIONS");
         const item = row as Record<string, unknown>;
-        return { length: positive(item.length)!, width: positive(item.width)! };
+        return { length: positive(item.length, !strict), width: positive(item.width, !strict) };
       })
     : undefined;
   const winderCount = nonNegativeInteger(body.winderCount ?? 0);

@@ -171,36 +171,28 @@ export async function POST(request: Request, { params }: Context) {
         },
         include: { lines: { orderBy: { position: "asc" } } },
       });
+      const orderFinance = await tx.order.findUniqueOrThrow({
+        where: { id },
+        select: { prepayment: true, partnerPaid: true, partnerPrice: true, partnerAgreedAt: true },
+      });
+      const canonicalPartnerPrice = orderFinance.partnerAgreedAt
+        ? Number(orderFinance.partnerPrice)
+        : calculation.workshopCost;
       await tx.order.update({
         where: { id },
         data: {
           material: calculation.material,
           amount: calculation.clientPrice,
-          partnerPrice: calculation.workshopCost,
-          companyProfit: calculation.grossProfit,
+          partnerPrice: canonicalPartnerPrice,
+          companyProfit: calculation.clientPrice - canonicalPartnerPrice,
           balance: {
             set:
               calculation.clientPrice -
-              Number(
-                (
-                  await tx.order.findUniqueOrThrow({
-                    where: { id },
-                    select: { prepayment: true },
-                  })
-                ).prepayment,
-              ),
+              Number(orderFinance.prepayment),
           },
           partnerBalance: {
             set:
-              calculation.workshopCost -
-              Number(
-                (
-                  await tx.order.findUniqueOrThrow({
-                    where: { id },
-                    select: { partnerPaid: true },
-                  })
-                ).partnerPaid,
-              ),
+              canonicalPartnerPrice - Number(orderFinance.partnerPaid),
           },
         },
       });

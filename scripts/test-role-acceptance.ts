@@ -69,8 +69,8 @@ includesAll(
     'role !== Role.DIRECTOR && role !== Role.MANAGER',
     '"partnerPrice" in body',
     '"partnerPaid" in body',
-    '"companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"',
-    '? { partnerId: partner.id }',
+    '"companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"',
+    '? { partnerId: partner.id, partnerAgreedAt: { not: null }',
   ],
   "orders API",
 );
@@ -131,9 +131,9 @@ assert.match(
 
 const finance = read("app/api/finance/route.ts");
 const partnerFinanceGuard = finance.indexOf(
-  "Финансы цеха доступны в кабинете цеха",
+  "auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT",
 );
-assert.ok(partnerFinanceGuard > 0, "partner ledger guard is missing");
+assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(
   partnerFinanceGuard < finance.indexOf("const data = await getFinanceDashboard"),
   "partner ledger guard must run before the general finance query",

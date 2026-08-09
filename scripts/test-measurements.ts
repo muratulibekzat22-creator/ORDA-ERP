@@ -13,6 +13,7 @@ import {
   listMeasurements,
   markReadyForContract,
   MeasurementError,
+  parseMeasurementDraft,
   saveMeasurementDraft,
   scheduleMeasurement,
   rescheduleMeasurement,
@@ -141,6 +142,22 @@ async function main() {
     assert.equal((await listMeasurements(actorB)).some((row) => row.id === scheduled.measurement.id), false, "Measurer B cannot see A measurement");
     assert.equal((await listMeasurements(otherManagerActor)).some((row) => row.id === scheduled.measurement.id), false, "Another manager cannot see the lead measurement");
     await assert.rejects(() => saveMeasurementDraft(actorB, scheduled.measurement.id, draft), (error) => error instanceof MeasurementError && error.message === "NOT_FOUND");
+    const partialDraft = parseMeasurementDraft({
+      stepsCount: 3,
+      sameSize: false,
+      individualSteps: [{ length: 900, width: 300 }, {}, {}],
+      winderCount: 1,
+      winders: [{}],
+      platformsCount: 1,
+      platforms: [{}],
+      railingLength: undefined,
+    }, false);
+    assert.equal(partialDraft.individualSteps?.[1].length, null, "Blank step dimension must remain editable in a draft");
+    assert.equal(partialDraft.platforms?.[0].width, null, "Blank platform dimension must remain editable in a draft");
+    assert.throws(() => parseMeasurementDraft({ ...partialDraft }, true), (error) => error instanceof MeasurementError && error.message === "INVALID_DIMENSIONS");
+    const savedDraft = await saveMeasurementDraft(actorA, scheduled.measurement.id, partialDraft);
+    assert.equal(savedDraft.status, "IN_PROGRESS", "Saving the first draft must start the measurement lifecycle");
+    assert.equal((savedDraft.individualSteps as Array<{ length: number | null }>)[1].length, null, "Partial measurement draft was not persisted");
     await prisma.measurementAttachment.create({ data: { measurementId: scheduled.measurement.id, type: MeasurementPhotoType.SHEET, uploadedById: measurerA.id, fileName: "sheet.jpg", pathname: `${tag}/sheet.jpg`, contentType: "image/jpeg", size: 1024 } });
     const completed = await completeMeasurement(actorA, scheduled.measurement.id, draft);
     assert.equal(completed.status, "COMPLETED");

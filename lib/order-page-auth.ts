@@ -28,7 +28,7 @@ export async function getAuthorizedOrder(id: number) {
     if (
       !partner ||
       !(await prisma.order.findFirst({
-        where: { id, partnerId: partner.id },
+        where: { id, partnerId: partner.id, partnerAgreedAt: { not: null }, lifecycle: { not: "CANCELLED" } },
         select: { id: true },
       }))
     )
@@ -67,6 +67,7 @@ export async function getAuthorizedOrder(id: number) {
   return {
     ...order,
     partnerPrice: undefined,
+    partnerAgreedAt: undefined,
     companyProfit: undefined,
     partnerPaid: undefined,
     partnerBalance: undefined,

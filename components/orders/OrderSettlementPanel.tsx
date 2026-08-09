@@ -52,7 +52,7 @@ export default function OrderSettlementPanel({ order }: { order: Pick<OrderTabDa
   const client = order.settlement?.client, partner = order.settlement?.partner;
   if (!client && !partner) return null;
   return <section id="settlements" className="scroll-mt-24 rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
-    <h2 className="text-lg font-semibold text-white">Расчёты по заказу</h2>
+    <h2 className="text-lg font-semibold text-white">Финансы заказа</h2>
     <p className="mt-1 text-sm text-slate-400">Оплаты клиента и расчёты с цехом ведутся независимо.</p>
     {error && <p role="alert" className="mt-3 rounded-xl bg-red-950/50 p-3 text-sm text-red-300">{error}</p>}
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -63,7 +63,7 @@ export default function OrderSettlementPanel({ order }: { order: Pick<OrderTabDa
       {partner && <div className="min-w-0 rounded-xl border border-slate-700 p-4">
         <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold text-white">Цех / партнёр</h3><span className="text-sm text-blue-300">{statuses[partner.status] ?? partner.status}</span></div>
         <p className="mt-1 break-words text-sm text-slate-300">{partner.partnerName ?? "Не назначен"}</p>
-        <dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-slate-500">Согласовано</dt><dd className="font-semibold text-white">{money(partner.agreed)}</dd></div><div><dt className="text-slate-500">Выплачено</dt><dd className="font-semibold text-emerald-300">{money(partner.paid)}</dd></div><div><dt className="text-slate-500">Остаток</dt><dd className="font-semibold text-amber-300">{money(partner.remaining)}</dd></div>{partner.overpayment > 0 && <div><dt className="text-slate-500">Переплата</dt><dd className="font-semibold text-violet-300">{money(partner.overpayment)}</dd></div>}</dl>
+        <dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-slate-500">Цена партнёра</dt><dd className="font-semibold text-white">{partner.priceSet && partner.agreed !== null ? money(partner.agreed) : "Цена партнёра не указана"}</dd></div><div><dt className="text-slate-500">Выплачено партнёру</dt><dd className="font-semibold text-emerald-300">{money(partner.paid)}</dd></div><div><dt className="text-slate-500">Осталось выплатить</dt><dd className="font-semibold text-amber-300">{money(partner.remaining)}</dd></div>{role === "DIRECTOR" && <div><dt className="text-slate-500">Валовая маржа</dt><dd className="font-semibold text-cyan-300">{partner.priceSet && partner.agreed !== null && client ? money(client.total - partner.agreed) : "—"}</dd></div>}{partner.overpayment > 0 && <div><dt className="text-slate-500">Переплата</dt><dd className="font-semibold text-violet-300">{money(partner.overpayment)}</dd></div>}</dl>
       </div>}
     </div>
     {role === "DIRECTOR" && <form onSubmit={assign} className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2">
@@ -73,8 +73,8 @@ export default function OrderSettlementPanel({ order }: { order: Pick<OrderTabDa
       <input required value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Причина / комментарий" className="min-h-11 min-w-0 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white sm:col-span-2" />
       <button disabled={busy} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50 sm:col-span-2">Сохранить условия</button>
     </form>}
-    {partner?.partnerId && ["DIRECTOR", "ACCOUNTANT"].includes(role) && <form onSubmit={payout} className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2">
-      <h3 className="sm:col-span-2 font-semibold text-white">Зафиксировать выплату цеху</h3>
+    {partner?.partnerId && partner.priceSet && ["DIRECTOR", "ACCOUNTANT"].includes(role) && <form onSubmit={payout} className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2">
+      <h3 className="sm:col-span-2 font-semibold text-white">Выплатить партнёру</h3>
       <input required type="number" min="0.01" step="0.01" max={partner.remaining} value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Сумма выплаты" className="min-h-11 min-w-0 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" />
       <input required type="date" value={operationDate} onChange={(event) => setOperationDate(event.target.value)} className="min-h-11 min-w-0 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" />
       <select value={method} onChange={(event) => setMethod(event.target.value)} className="min-h-11 min-w-0 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"><option value="cash">Наличные</option><option value="kaspi">Kaspi</option><option value="bank_transfer">Банковский перевод</option><option value="other">Другое</option></select>

@@ -17,6 +17,7 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
       prepayment: true,
       balance: true,
       partnerPrice: true,
+      partnerAgreedAt: true,
       companyProfit: true,
       partnerPaid: true,
       partnerBalance: true,
@@ -159,6 +160,7 @@ type CreateOrderInput = {
   amount: number;
   prepayment: number;
   partnerPrice: number;
+  partnerPriceSet?: boolean;
   partnerPaid: number;
   manager: string;
   managerUserId?: number;
@@ -177,8 +179,16 @@ function money(value: number) {
   return value.toFixed(2);
 }
 
+function isTransactionWriteConflict(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") return true;
+  if (!error || typeof error !== "object" || !("cause" in error)) return false;
+  const cause = (error as { cause?: { kind?: unknown } }).cause;
+  return cause?.kind === "TransactionWriteConflict";
+}
+
 export async function createOrder(data: CreateOrderInput) {
   if (data.partnerPaid > 0 && !data.partnerId) throw new Error("PARTNER_REQUIRED_FOR_INITIAL_PAYOUT");
+  if (data.partnerPaid > 0 && !data.partnerPriceSet) throw new Error("PARTNER_PRICE_REQUIRED");
   if (!data.clientId && !data.client) throw new Error("CLIENT_REQUIRED");
   if (data.actorRole === Role.MANAGER && !data.managerUserId) throw new Error("MANAGER_REQUIRED");
   const eventKey = data.idempotencyKey
@@ -292,6 +302,7 @@ export async function createOrder(data: CreateOrderInput) {
             prepayment: money(data.prepayment),
             balance: money(balance),
             partnerPrice: money(data.partnerPrice),
+            partnerAgreedAt: data.partnerId && data.partnerPriceSet ? new Date() : null,
             partnerPaid: money(data.partnerPaid),
             partnerBalance: money(partnerBalance),
             companyProfit: money(companyProfit),
@@ -328,7 +339,10 @@ export async function createOrder(data: CreateOrderInput) {
     } catch (error) {
       if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
         throw error;
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") continue;
+      if (isTransactionWriteConflict(error)) {
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+        continue;
+      }
       if (!isPrismaUniqueConflict(error)) throw error;
       if (eventKey && data.requestHash) {
         const existingEvent = await prisma.orderEvent.findUnique({

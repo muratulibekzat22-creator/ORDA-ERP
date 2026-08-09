@@ -33,10 +33,28 @@ export async function PATCH(request: Request, { params }: Context) {
 
 export async function DELETE(_: Request, { params }: Context) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const role = auth.session!.user.role as Role;
+  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = idOf((await params).id); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const client = await prisma.client.findUnique({ where: { id }, select: { _count: { select: { orders: true, attachments: true } } } });
-  if (!client) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
-  if (client._count.orders || client._count.attachments) return NextResponse.json({ error: "Нельзя удалить связанную заявку" }, { status: 409 });
-  await prisma.client.delete({ where: { id } }); return new NextResponse(null, { status: 204 });
+  const client = await prisma.client.findUnique({ where: { id }, select: {
+    managerUserId: true,
+    leadConversion: { select: { id: true } },
+    _count: { select: { orders: true, attachments: true, calendarTasks: true, measurements: true, documents: true } },
+  } });
+  if (!client || !canAccessLead(role, Number(auth.session!.user.id), client)) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+  const linkedRecords = Object.values(client._count).reduce((sum, count) => sum + count, 0) + (client.leadConversion ? 1 : 0);
+  if (linkedRecords) return NextResponse.json({ error: "Заявка уже связана с заказом, замером, документом, календарём или файлами и не может быть удалена без потери рабочих данных", code: "CLIENT_HAS_BUSINESS_RECORDS" }, { status: 409 });
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Calculations and proposals are part of the lead draft itself. Remove them
+      // in dependency order so a newly registered lead can really be deleted.
+      await tx.priceApprovalRequest.deleteMany({ where: { clientId: id } });
+      await tx.commercialProposal.deleteMany({ where: { clientId: id } });
+      await tx.leadCalculation.deleteMany({ where: { clientId: id } });
+      await tx.client.delete({ where: { id } });
+    });
+    return new NextResponse(null, { status: 204 });
+  } catch {
+    return NextResponse.json({ error: "Заявка содержит связанные рабочие данные и не может быть удалена", code: "CLIENT_HAS_BUSINESS_RECORDS" }, { status: 409 });
+  }
 }

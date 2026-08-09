@@ -9,6 +9,7 @@ import bcrypt from "bcrypt";
 import { CalendarTaskPriority, CalendarTaskType, Permission, Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
+import { defaultPermissions } from "@/lib/permissions";
 
 const port = Number(process.env.SECURITY_TEST_PORT ?? 3219);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("SECURITY_TEST_PORT is invalid");
@@ -35,9 +36,11 @@ const execFileAsync = promisify(execFile);
 const httpAgent = new Agent({ connections: 32, pipelining: 1, keepAliveTimeout: 1_000, keepAliveMaxTimeout: 1_000 });
 let prisma!: PrismaClient;
 let readinessTimer: NodeJS.Timeout | undefined;
+let serverDiagnostics = "";
 let confirmedSessions = 0;
 let partnerMatrixCompleted = false;
 const temporaryRolePermissions: Permission[] = [];
+const temporarySeededRolePermissions: Array<{ role: Role; permission: Permission }> = [];
 let calculatorTariffBackup: Array<{ code: string; salePrice: number; internalPrice: number }> = [];
 
 function apiFetch(input: string | URL, init: RequestInit = {}) {
@@ -171,9 +174,9 @@ async function expectStatus(pathname: string, status: number, cookie: string, in
     ...init,
     headers: { ...init.headers, Cookie: cookie },
   });
-  assert(response.status === status, `${pathname}: expected ${status}, received ${response.status}`);
   const body = await response.arrayBuffer();
-  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  assert(response.status === status, `${pathname}: expected ${status}, received ${response.status}; server=${serverDiagnostics.slice(-2_000).replaceAll(/\s+/gu, " ").trim()}`);
+  return new Response(response.status === 204 ? null : body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 async function expectStatuses(pathname: string, statuses: number[], cookie: string, init: RequestInit = {}) {
@@ -235,6 +238,17 @@ async function main() {
   try {
     ({ prisma } = await import("@/lib/prisma"));
     const { createPayment } = await import("@/lib/services/payment.service");
+    const { ensureRolePermissions } = await import("@/lib/services/permission.service");
+    await ensureRolePermissions();
+    for (const [role, permissions] of Object.entries(defaultPermissions) as Array<[Role, Permission[]]>) {
+      for (const permission of permissions) {
+        const existing = await prisma.rolePermission.findUnique({ where: { role_permission: { role, permission } } });
+        if (!existing) {
+          await prisma.rolePermission.create({ data: { role, permission } });
+          temporarySeededRolePermissions.push({ role, permission });
+        }
+      }
+    }
     const hash = await bcrypt.hash(password, 10);
     const [firstUser, secondUser] = await Promise.all(
       ["first", "second"].map(async (name) => {
@@ -254,10 +268,10 @@ async function main() {
     });
     const [firstOrder, secondOrder] = await Promise.all([
       prisma.order.create({
-        data: { number: `${tag}-first`, clientId: client.id, partnerId: firstPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100", prepayment: "0", balance: "100", partnerPrice: "40", partnerPaid: "0", partnerBalance: "40", companyProfit: "60", manager: tag, status: "Монтаж" },
+        data: { number: `${tag}-first`, clientId: client.id, partnerId: firstPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100", prepayment: "0", balance: "100", partnerPrice: "40", partnerAgreedAt: new Date(), partnerPaid: "0", partnerBalance: "40", companyProfit: "60", manager: tag, status: "Монтаж" },
       }),
       prisma.order.create({
-        data: { number: `${tag}-second`, clientId: client.id, partnerId: secondPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100", prepayment: "0", balance: "100", partnerPrice: "40", partnerPaid: "0", partnerBalance: "40", companyProfit: "60", manager: tag, status: "Монтаж" },
+        data: { number: `${tag}-second`, clientId: client.id, partnerId: secondPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100", prepayment: "0", balance: "100", partnerPrice: "40", partnerAgreedAt: new Date(), partnerPaid: "0", partnerBalance: "40", companyProfit: "60", manager: tag, status: "Монтаж" },
       }),
     ]);
 
@@ -345,7 +359,10 @@ async function main() {
     generatedMaterialIds.push(costMaterial.id);
     await prisma.materialMovement.createMany({ data: [firstOrder.id, firstProductionOrder.id, firstInstallerOrder.id].map((orderId, index) => ({ materialId: costMaterial.id, orderId, type: "consume", quantity: index + 1, price: "37.50", amount: String((index + 1) * 37.5), stockDelta: -(index + 1) })) });
 
-    server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: "ignore", detached: false, env: createSanitizedTestServerEnv({ TEST_DATABASE_PROBE_TOKEN: databaseProbeToken }) });
+    server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"], detached: false, env: createSanitizedTestServerEnv({ TEST_DATABASE_PROBE_TOKEN: databaseProbeToken }) });
+    const rememberServerOutput = (chunk: Buffer) => { serverDiagnostics = `${serverDiagnostics}${chunk.toString("utf8")}`.slice(-8_000); };
+    server.stdout?.on("data", rememberServerOutput);
+    server.stderr?.on("data", rememberServerOutput);
     await waitForServer();
     const health = await apiFetch(`${baseUrl}/api/health`);
     const healthPayload = await health.json() as Record<string, unknown>;
@@ -701,7 +718,7 @@ async function main() {
     const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in repeatedManagerCalculation), "idempotent calculation replay leaks internal costs");
     const managerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, managerCookie)).json() as Record<string, unknown>;
-    for (const field of ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
+    for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
     const managerOrderCalculations = managerOrderDetail.calculations as Array<Record<string, unknown>>;
     assert(Array.isArray(managerOrderCalculations) && managerOrderCalculations.length > 0, "manager order detail is missing client calculation");
     for (const field of ["workshopCost", "baseWorkshopCost", "workshopRate", "workshopAdjustment", "grossDifference", "materialCost", "installationCost", "deliveryCost", "otherDirectCosts", "totalCost", "grossProfit"]) assert(!(field in managerOrderCalculations[0]), `manager nested calculation leaks ${field}`);
@@ -771,32 +788,67 @@ async function main() {
     });
     await expectStatus(`/orders/${firstOrder.id}/offer`, 200, firstCookie);
     await expectStatus(`/orders/${secondOrder.id}/offer`, 404, firstCookie);
-    const attachmentBody = new FormData();
-    attachmentBody.set("orderId", String(firstOrder.id));
-    attachmentBody.set("documentId", String(createdDocument.id));
-    attachmentBody.set("file", new File(["%PDF-1.7\nprivate attachment"], `${tag}.pdf`, { type: "application/pdf" }));
-    const attachmentKey = `${tag}-attachment`;
-    const createdAttachment = await (await expectStatus("/api/attachments", 201, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: attachmentBody })).json() as { id: number; fileName: string };
-    const repeatedAttachment = await (await expectStatus("/api/attachments", 200, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: attachmentBody })).json() as { id: number };
-    assert(repeatedAttachment.id === createdAttachment.id, "attachment repeat created a duplicate");
-    const conflictBody = new FormData(); conflictBody.set("orderId", String(firstOrder.id)); conflictBody.set("file", new File(["%PDF-1.7\nchanged"], `${tag}.pdf`, { type: "application/pdf" }));
-    await expectStatus("/api/attachments", 409, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: conflictBody });
     const invalidBody = new FormData(); invalidBody.set("orderId", String(firstOrder.id)); invalidBody.set("file", new File(["unsafe"], `${tag}.html`, { type: "text/html" }));
     await expectStatus("/api/attachments", 400, managerCookie, { method: "POST", headers: { "Idempotency-Key": `${tag}-unsafe` }, body: invalidBody });
-    const ownAttachments = await (await expectStatus(`/api/attachments?orderId=${firstOrder.id}`, 200, firstCookie)).json() as Array<{ id: number }>;
-    assert(ownAttachments.some((item) => item.id === createdAttachment.id), "partner cannot list own attachment");
-    await expectStatus(`/api/attachments?orderId=${firstOrder.id}`, 404, secondCookie);
-    const attachmentDownload = await expectStatus(`/api/attachments/${createdAttachment.id}`, 200, firstCookie);
-    assert(await attachmentDownload.text() === "%PDF-1.7\nprivate attachment", "private attachment content is invalid");
-    await expectStatus(`/api/attachments/${createdAttachment.id}`, 404, secondCookie);
-    await expectStatus(`/api/attachments?id=${createdAttachment.id}`, 403, firstCookie, { method: "DELETE" });
-    await expectStatus(`/api/attachments?id=${createdAttachment.id}`, 200, managerCookie, { method: "DELETE" });
-    console.log("document and private attachment API security checks passed");
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      const attachmentBody = new FormData();
+      attachmentBody.set("orderId", String(firstOrder.id));
+      attachmentBody.set("documentId", String(createdDocument.id));
+      attachmentBody.set("file", new File(["%PDF-1.7\nprivate attachment"], `${tag}.pdf`, { type: "application/pdf" }));
+      const attachmentKey = `${tag}-attachment`;
+      const createdAttachment = await (await expectStatus("/api/attachments", 201, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: attachmentBody })).json() as { id: number; fileName: string };
+      const repeatedAttachment = await (await expectStatus("/api/attachments", 200, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: attachmentBody })).json() as { id: number };
+      assert(repeatedAttachment.id === createdAttachment.id, "attachment repeat created a duplicate");
+      const conflictBody = new FormData(); conflictBody.set("orderId", String(firstOrder.id)); conflictBody.set("file", new File(["%PDF-1.7\nchanged"], `${tag}.pdf`, { type: "application/pdf" }));
+      await expectStatus("/api/attachments", 409, managerCookie, { method: "POST", headers: { "Idempotency-Key": attachmentKey }, body: conflictBody });
+      const ownAttachments = await (await expectStatus(`/api/attachments?orderId=${firstOrder.id}`, 200, firstCookie)).json() as Array<{ id: number }>;
+      assert(ownAttachments.some((item) => item.id === createdAttachment.id), "partner cannot list own attachment");
+      await expectStatus(`/api/attachments?orderId=${firstOrder.id}`, 404, secondCookie);
+      const attachmentDownload = await expectStatus(`/api/attachments/${createdAttachment.id}`, 200, firstCookie);
+      assert(await attachmentDownload.text() === "%PDF-1.7\nprivate attachment", "private attachment content is invalid");
+      await expectStatus(`/api/attachments/${createdAttachment.id}`, 404, secondCookie);
+      await expectStatus(`/api/attachments?id=${createdAttachment.id}`, 403, firstCookie, { method: "DELETE" });
+      await expectStatus(`/api/attachments?id=${createdAttachment.id}`, 200, managerCookie, { method: "DELETE" });
+      console.log("document and private attachment API security checks passed");
+    } else {
+      console.log("private attachment Blob integration skipped: test BLOB_READ_WRITE_TOKEN is absent; MIME rejection passed");
+    }
     const managerClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, managerCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(managerClients.data) && managerClients.pagination.total > 0 && managerClients.data.some((item) => item.id === client.id), "manager clients payload is invalid");
+    await expectStatus(`/api/clients/${client.id}`, 409, managerCookie, { method: "DELETE" });
+    const removableClient = await prisma.client.create({ data: { name: `${tag}-removable`, phone: `+7${Date.now()}99`, city: "E2E", manager: manager.name, managerUserId: manager.id, amount: "0", status: "New" } });
+    const removableCalculation = await prisma.leadCalculation.create({ data: {
+      clientId: removableClient.id,
+      material: "E2E",
+      baseClientPrice: "100",
+      clientPrice: "100",
+      internalCost: "40",
+      snapshot: { source: "api-security" },
+      authorId: manager.id,
+      authorName: manager.name,
+    } });
+    const removableProposal = await prisma.commercialProposal.create({ data: {
+      clientId: removableClient.id,
+      calculationId: removableCalculation.id,
+      number: `${tag}-removable-proposal`,
+      snapshot: { source: "api-security" },
+      validUntil: new Date(Date.now() + 86_400_000),
+      executionTerm: "E2E",
+      paymentTerms: "E2E",
+      warranty: "E2E",
+      managerContact: manager.email,
+      createdById: manager.id,
+      createdByName: manager.name,
+    } });
+    const foreignManagerCookie = await session(sharedUsers[0].email);
+    await expectStatus(`/api/clients/${removableClient.id}`, 404, foreignManagerCookie, { method: "DELETE" });
+    await expectStatus(`/api/clients/${removableClient.id}`, 204, managerCookie, { method: "DELETE" });
+    assert(await prisma.client.count({ where: { id: removableClient.id } }) === 0, "manager could not permanently delete an own unlinked lead");
+    assert(await prisma.leadCalculation.count({ where: { id: removableCalculation.id } }) === 0, "lead calculation was orphaned after permanent deletion");
+    assert(await prisma.commercialProposal.count({ where: { id: removableProposal.id } }) === 0, "commercial proposal was orphaned after permanent deletion");
     const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(managerOrders) && managerOrders.some((order) => order.id === firstOrder.id), "manager orders payload is invalid");
-    assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
+    assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
     const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers?: Array<{ managerUserId: number }> };
     assert(!/companyProfit|partnerPrice|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
     assert(!managerDashboard.managers || managerDashboard.managers.every((row) => row.managerUserId === manager.id), "manager dashboard contains another manager's indicators");
@@ -915,6 +967,9 @@ async function main() {
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
       if (generatedMaterialIds.length) { await prisma.inventoryCogsEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.inventoryValuationEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } }); }
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
+      for (const row of temporarySeededRolePermissions) {
+        await prisma.rolePermission.deleteMany({ where: { role: row.role, permission: row.permission } });
+      }
       if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
       console.log("cleanup completed");
       }

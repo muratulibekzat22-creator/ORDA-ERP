@@ -5,23 +5,29 @@ import {
   AdvanceRequestStatus,
   BonusPaymentMode,
   PayrollAccrualType,
+  PayrollPaymentType,
   PayrollPeriodStatus,
   Role,
 } from "@prisma/client";
 import { createRequestHash } from "../lib/idempotency";
 import { prisma } from "../lib/prisma";
+import { getFinanceDashboard } from "../lib/services/payment.service";
 import {
   changeAllowance,
   changeSalary,
   closePeriod,
   createAccrual,
+  createPayment,
   ensurePeriod,
   payAdvance,
   payrollSummary,
   PayrollError,
   requestAdvance,
+  requestPaymentConfirmation,
   reviewAdvance,
+  reviewPaymentConfirmation,
   reverseAccrual,
+  reversePayment,
   transitionPeriod,
   upsertPayrollProfile,
 } from "../lib/services/payroll.service";
@@ -140,7 +146,8 @@ async function main() {
     const period = await ensurePeriod(periodYear, 8);
     const nextPeriod = await ensurePeriod(periodYear, 9);
     const formulaPeriod = await ensurePeriod(periodYear, 10);
-    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id);
+    const confirmationPeriod = await ensurePeriod(periodYear, 11);
+    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id, confirmationPeriod.id);
     const client = await prisma.client.create({
       data: {
         name: tag,
@@ -247,12 +254,12 @@ async function main() {
     const advancePayment = await payAdvance(
       advance.id,
       { key: key("advance-payment"), requestHash: "advance-payment" },
-      accountantActor,
+      directorActor,
     );
     const replay = await payAdvance(
       advance.id,
       { key: key("advance-payment"), requestHash: "advance-payment" },
-      accountantActor,
+      directorActor,
     );
     assert.equal(replay.id, advancePayment.id, "payment idempotency");
     const rejected = await requestAdvance(
@@ -273,14 +280,52 @@ async function main() {
     assert.deepEqual(summary.totals, {
       accrued: 270000,
       paid: 90000,
+      pending: 0,
       payable: 180000,
     });
     await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("formula-salary"), requestHash: "formula-salary" }, directorActor);
     await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.PREMIUM, amount: 30000, reason: "Премия", key: key("formula-premium"), requestHash: "formula-premium" }, directorActor);
     const formulaAdvance = await requestAdvance({ periodId: formulaPeriod.id, amount: 50000, comment: "Аванс", key: key("formula-advance"), requestHash: "formula-advance" }, managerActor);
     await reviewAdvance(formulaAdvance.id, { status: AdvanceRequestStatus.APPROVED, approvedAmount: 50000, comment: "Одобрено" }, directorActor);
-    await payAdvance(formulaAdvance.id, { key: key("formula-advance-payment"), requestHash: "formula-advance-payment" }, accountantActor);
-    assert.deepEqual((await payrollSummary(formulaPeriod.id, directorActor)).totals, { accrued: 230000, paid: 50000, payable: 180000 }, "salary 200k + premium 30k - advance 50k");
+    await payAdvance(formulaAdvance.id, { key: key("formula-advance-payment"), requestHash: "formula-advance-payment" }, directorActor);
+    assert.deepEqual((await payrollSummary(formulaPeriod.id, directorActor)).totals, { accrued: 230000, paid: 50000, pending: 0, payable: 180000 }, "salary 200k + premium 30k - advance 50k");
+    await expectCode(
+      () => payAdvance(formulaAdvance.id, { key: key("accountant-advance-payment"), requestHash: "accountant-advance-payment" }, accountantActor),
+      "FORBIDDEN",
+    );
+    await createAccrual({ employeeId: profile.id, periodId: confirmationPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 100000, reason: "Оклад", key: key("confirmation-salary"), requestHash: "confirmation-salary" }, directorActor);
+    const confirmationPayload = { periodId: confirmationPeriod.id, amount: 30000, type: PayrollPaymentType.SALARY_PAYMENT, claimedPaymentDate: new Date("2026-11-15"), method: "bank_transfer", comment: "Получено" };
+    const confirmation = await requestPaymentConfirmation({ ...confirmationPayload, key: key("confirmation-request"), requestHash: createRequestHash(confirmationPayload) }, managerActor);
+    let confirmationSummary = await payrollSummary(confirmationPeriod.id, directorActor);
+    assert.deepEqual(confirmationSummary.totals, { accrued: 100000, paid: 0, pending: 30000, payable: 100000 }, "pending confirmation must not become paid");
+    assert.equal(await prisma.companyLedgerEntry.count({ where: { payrollPayment: { periodId: confirmationPeriod.id } } }), 0, "pending confirmation created cash outflow");
+    const confirmationRejected = await requestPaymentConfirmation({ ...confirmationPayload, amount: 10000, key: key("confirmation-reject"), requestHash: "confirmation-reject" }, managerActor);
+    await reviewPaymentConfirmation(confirmationRejected.id, { decision: "REJECT", comment: "Не подтверждено", key: key("confirmation-rejected-review"), requestHash: "confirmation-rejected-review" }, directorActor);
+    assert.equal(await prisma.payrollPayment.count({ where: { periodId: confirmationPeriod.id } }), 0, "rejected confirmation created payment");
+    await expectCode(
+      () => reviewPaymentConfirmation(confirmation.id, { decision: "CONFIRM", key: key("accountant-confirm"), requestHash: "accountant-confirm" }, accountantActor),
+      "FORBIDDEN",
+    );
+    const confirmed = await reviewPaymentConfirmation(confirmation.id, { decision: "CONFIRM", key: key("director-confirm"), requestHash: "director-confirm" }, directorActor);
+    const confirmedReplay = await reviewPaymentConfirmation(confirmation.id, { decision: "CONFIRM", key: key("director-confirm-replay"), requestHash: "director-confirm-replay" }, directorActor);
+    assert.equal(confirmed.payment?.id, confirmedReplay.payment?.id, "double confirmation duplicated payment");
+    assert.equal(await prisma.payrollPayment.count({ where: { periodId: confirmationPeriod.id } }), 1, "confirmation payment count");
+    confirmationSummary = await payrollSummary(confirmationPeriod.id, directorActor);
+    assert.deepEqual(confirmationSummary.totals, { accrued: 100000, paid: 30000, pending: 0, payable: 70000 }, "confirmed payment totals");
+    const confirmationCash = await prisma.companyLedgerEntry.aggregate({ where: { payrollPayment: { periodId: confirmationPeriod.id }, direction: "EXPENSE" }, _sum: { amount: true } });
+    assert.equal(Number(confirmationCash._sum.amount ?? 0), 30000, "confirmed payment cash outflow");
+    const confirmationFinance = await getFinanceDashboard({ from: new Date("2026-11-15T00:00:00.000Z"), to: new Date("2026-11-15T23:59:59.999Z") });
+    assert.equal(confirmationFinance.operations.filter((item) => item.type === "PAYROLL_PAYMENT").length, 1, "Payroll payment missing from canonical Finance journal");
+    assert.equal(confirmationFinance.cards.expenses, 30000, "Finance did not include confirmed Payroll cash outflow");
+    await expectCode(
+      () => createPayment({ employeeId: profile.id, periodId: confirmationPeriod.id, amount: 1, type: PayrollPaymentType.SALARY_PAYMENT, paymentDate: new Date(), key: key("accountant-direct-payment"), requestHash: "accountant-direct-payment" }, accountantActor),
+      "FORBIDDEN",
+    );
+    const reversal = await reversePayment(confirmed.payment!.id, { reason: "Ошибочная выплата", key: key("payment-reversal"), requestHash: "payment-reversal" }, directorActor);
+    const reversalReplay = await reversePayment(confirmed.payment!.id, { reason: "Ошибочная выплата", key: key("payment-reversal"), requestHash: "payment-reversal" }, directorActor);
+    assert.equal(reversal.id, reversalReplay.id, "payment reversal idempotency");
+    assert.deepEqual((await payrollSummary(confirmationPeriod.id, directorActor)).totals, { accrued: 100000, paid: 0, pending: 0, payable: 100000 }, "reversal totals");
+    assert.equal(await prisma.payrollAuditEvent.count({ where: { employeeId: profile.id, action: "PAYROLL_PAYMENT_REVERSED" } }), 1, "payment reversal audit");
     const employeeAuditActions = new Set((await prisma.payrollAuditEvent.findMany({ where: { employeeId: profile.id }, select: { action: true } })).map((event) => event.action));
     for (const action of ["SALARY_CHANGED", "ALLOWANCE_CHANGED", "PREMIUM_ACCRUED", "ADVANCE_APPROVED"])
       assert(employeeAuditActions.has(action), `payroll audit missing: ${action}`);
@@ -337,13 +382,20 @@ async function main() {
               : -Number(row.amount)),
           0,
         ),
-      500000,
+      600000,
       "payroll P&L expense duplicated",
     );
     assert.equal(
       ledger
         .filter((row) => !row.affectsProfit)
-        .reduce((sum, row) => sum + Number(row.amount), 0),
+        .reduce(
+          (sum, row) =>
+            sum +
+            (row.direction === "EXPENSE"
+              ? Number(row.amount)
+              : -Number(row.amount)),
+          0,
+        ),
       140000,
       "cash payroll total",
     );
@@ -453,8 +505,8 @@ async function main() {
     });
     assert.equal(
       (await payrollSummary(period.id, directorActor, profile.id)).rows.length,
-      1,
-      "deactivation removed payroll history",
+      0,
+      "inactive employee leaked into payroll dashboard",
     );
     console.log(
       "payroll profile, approvals, formula, RBAC, period lock and finance checks passed",
@@ -475,6 +527,9 @@ async function main() {
         select: { id: true },
       });
       await prisma.payrollAdvanceRequest.deleteMany({
+        where: { employeeId: { in: employeeIds } },
+      });
+      await prisma.payrollPaymentConfirmation.deleteMany({
         where: { employeeId: { in: employeeIds } },
       });
       await prisma.payrollAuditEvent.deleteMany({

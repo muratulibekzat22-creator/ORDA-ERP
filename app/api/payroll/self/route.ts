@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { PayrollPaymentType, Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -8,6 +8,7 @@ import {
   payrollSummary,
   PayrollError,
   requestAdvance,
+  requestPaymentConfirmation,
 } from "@/lib/services/payroll.service";
 
 async function authSelf() {
@@ -53,7 +54,7 @@ export async function GET(request: Request) {
       return NextResponse.json({
         period: null,
         rows: [],
-        totals: { accrued: 0, paid: 0, payable: 0 },
+        totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
       });
     return NextResponse.json({
       period,
@@ -71,6 +72,26 @@ export async function POST(request: Request) {
   if ("response" in key) return key.response;
   try {
     const body = (await request.json()) as Record<string, unknown>;
+    if (body.action === "report-payment") {
+      const type = Object.values(PayrollPaymentType).includes(body.type as PayrollPaymentType)
+        ? body.type as PayrollPaymentType
+        : PayrollPaymentType.SALARY_PAYMENT;
+      return NextResponse.json(
+        await requestPaymentConfirmation(
+          {
+            periodId: Number(body.periodId),
+            amount: Number(body.amount),
+            type,
+            claimedPaymentDate: new Date(String(body.paymentDate ?? new Date().toISOString())),
+            method: typeof body.method === "string" ? body.method : undefined,
+            comment: typeof body.comment === "string" ? body.comment : undefined,
+            key: key.key,
+            requestHash: createRequestHash(body),
+          },
+          actor(auth.session!),
+        ),
+      );
+    }
     return NextResponse.json(
       await requestAdvance(
         {

@@ -20,8 +20,10 @@ import {
   payAdvance,
   payrollSummary,
   PayrollError,
+  reviewPaymentConfirmation,
   reviewAdvance,
   reverseAccrual,
+  reversePayment,
   transitionPeriod,
   upsertPayrollProfile,
 } from "@/lib/services/payroll.service";
@@ -66,7 +68,7 @@ export async function GET(request: Request) {
       return NextResponse.json({
         period: null,
         rows: [],
-        totals: { accrued: 0, paid: 0, payable: 0 },
+        totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
         unconfigured,
       });
     return NextResponse.json({
@@ -177,6 +179,30 @@ export async function POST(request: Request) {
             key: keyResult.key,
             requestHash: hash,
           },
+          identity,
+        ),
+      );
+    if (action === "review-payment-confirmation")
+      return NextResponse.json(
+        await reviewPaymentConfirmation(
+          Number(body.id),
+          {
+            decision: body.decision === "REJECT" ? "REJECT" : "CONFIRM",
+            amount: body.amount == null ? undefined : Number(body.amount),
+            paymentDate: body.paymentDate == null ? undefined : new Date(String(body.paymentDate)),
+            method: typeof body.method === "string" ? body.method : undefined,
+            comment: typeof body.comment === "string" ? body.comment : undefined,
+            key: keyResult.key,
+            requestHash: hash,
+          },
+          identity,
+        ),
+      );
+    if (action === "reverse-payment")
+      return NextResponse.json(
+        await reversePayment(
+          Number(body.id),
+          { reason: String(body.reason ?? ""), key: keyResult.key, requestHash: hash },
           identity,
         ),
       );
