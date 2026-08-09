@@ -29,13 +29,16 @@ export function dashboardPeriodRange(period = "month", now = new Date()) {
 
 async function salesProjection(scope: DashboardScope) {
   const { start, end } = dashboardPeriodRange(scope.period);
+  const now = new Date();
+  const { start: todayStart } = dashboardPeriodRange("today", now);
+  const tomorrow = new Date(todayStart.getTime() + 86_400_000);
   const managerLeadWhere: Prisma.ClientWhereInput =
     scope.role === Role.MANAGER ? { managerUserId: scope.userId } : {};
   const managerOrderWhere: Prisma.OrderWhereInput =
     scope.role === Role.MANAGER
       ? { OR: [{ managerUserId: scope.userId }, { leadConversion: { managerId: scope.userId } }] }
       : {};
-  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks] = await Promise.all([
+  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse] = await Promise.all([
     prisma.client.findMany({
       where: { ...managerLeadWhere, active: true },
       select: {
@@ -78,6 +81,28 @@ async function salesProjection(scope: DashboardScope) {
       where: { ...(scope.role === Role.MANAGER ? { assigneeId: scope.userId } : {}), status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } },
       select: { dueAt: true },
     }),
+    scope.role === Role.DIRECTOR
+      ? prisma.order.findMany({
+          where: { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+          select: { balance: true, partnerBalance: true },
+        })
+      : Promise.resolve([]),
+    prisma.measurement.count({
+      where: {
+        visitDate: { gte: todayStart, lt: tomorrow },
+        ...(scope.role === Role.MANAGER ? { client: managerLeadWhere } : {}),
+      },
+    }),
+    scope.role === Role.MANAGER
+      ? prisma.commercialProposal.count({
+          where: {
+            client: managerLeadWhere,
+            sentAt: { not: null },
+            acceptedAt: null,
+            status: { notIn: ["ACCEPTED", "REJECTED", "Принято", "Отклонено"] },
+          },
+        })
+      : Promise.resolve(0),
   ]);
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
@@ -107,9 +132,13 @@ async function salesProjection(scope: DashboardScope) {
       conversion: percent(converted, group.leads.length),
     };
   });
-  const now = new Date();
-  const { start: todayStart } = dashboardPeriodRange("today", now);
-  const tomorrow = new Date(todayStart.getTime() + 86_400_000);
+  const activeBalances = activeFinanceOrders.reduce(
+    (sum, order) => ({
+      client: sum.client + Math.max(Number(order.balance), 0),
+      partner: sum.partner + Math.max(Number(order.partnerBalance), 0),
+    }),
+    { client: 0, partner: 0 },
+  );
   const deadline = (order: (typeof workOrders)[number]) =>
     order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION || order.lifecycle === OrderLifecycle.INSTALLATION
       ? order.installation?.scheduledAt ?? order.productionDeadline
@@ -130,7 +159,8 @@ async function salesProjection(scope: DashboardScope) {
       orders: orders.length,
       totalSales: totals.sales,
       receivedPrepayment: totals.received,
-      balanceToReceive: totals.balance,
+      balanceToReceive: scope.role === Role.DIRECTOR ? activeBalances.client : Math.max(totals.balance, 0),
+      partnerBalancePayable: scope.role === Role.DIRECTOR ? activeBalances.partner : undefined,
       conversion: percent(convertedLeads, periodLeads.length),
       activeOrders: workOrders.length,
       readyForInstallation: workOrders.filter((order) => order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION).length,
@@ -139,6 +169,8 @@ async function salesProjection(scope: DashboardScope) {
       lowStock: materials.filter((item) => item.stock <= item.minimumStock).length,
       tasksToday: tasks.filter((task) => task.dueAt >= todayStart && task.dueAt < tomorrow).length,
       overdueTasks: tasks.filter((task) => task.dueAt < now).length,
+      measurementsToday,
+      proposalsNeedResponse,
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
     activities,
@@ -149,12 +181,13 @@ async function accountantProjection(scope: DashboardScope) {
   const { start, end } = dashboardPeriodRange(scope.period);
   const almaty = new Date(end.getTime() + 5 * 60 * 60 * 1000);
   const period = await prisma.payrollPeriod.findUnique({ where: { year_month: { year: almaty.getUTCFullYear(), month: almaty.getUTCMonth() + 1 } } });
-  const [ledger, recent, accruals, payments, pendingAdvances] = await Promise.all([
+  const [ledger, recent, accruals, payments, pendingAdvances, partnerBalances] = await Promise.all([
     prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, select: { direction: true, amount: true } }),
     prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, orderBy: { operationDate: "desc" }, take: 12, select: { id: true, type: true, category: true, direction: true, amount: true, operationDate: true, comment: true } }),
     period ? prisma.payrollAccrual.findMany({ where: { periodId: period.id }, select: { amount: true, direction: true } }) : Promise.resolve([]),
     period ? prisma.payrollPayment.findMany({ where: { periodId: period.id }, select: { amount: true, type: true } }) : Promise.resolve([]),
     period ? prisma.payrollAdvanceRequest.count({ where: { periodId: period.id, status: { in: [AdvanceRequestStatus.REQUESTED, AdvanceRequestStatus.APPROVED] } } }) : Promise.resolve(0),
+    prisma.order.findMany({ where: { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }, select: { partnerBalance: true } }),
   ]);
   const accrued = accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
   const paid = payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
@@ -167,6 +200,7 @@ async function accountantProjection(scope: DashboardScope) {
       payrollPayable: accrued - paid,
       pendingPayrollPayments: pendingAdvances,
       attentionOperations: pendingAdvances,
+      partnerPayable: partnerBalances.reduce((sum, order) => sum + Math.max(Number(order.partnerBalance), 0), 0),
     },
     recentFinance: recent,
   };
@@ -174,14 +208,17 @@ async function accountantProjection(scope: DashboardScope) {
 
 async function productionProjection(scope: DashboardScope) {
   const now = new Date();
-  const [jobs, materials] = await Promise.all([
+  const { start: todayStart } = dashboardPeriodRange("today", now);
+  const tomorrow = new Date(todayStart.getTime() + 86_400_000);
+  const [jobs, materials, tasksToday] = await Promise.all([
     prisma.production.findMany({
       where: { completedAt: null, OR: [{ masterUserId: scope.userId }, { masterUserId: null }] },
       orderBy: [{ priority: "desc" }, { plannedEndAt: "asc" }],
       take: 30,
-      select: { id: true, stage: true, percent: true, plannedEndAt: true, masterUserId: true, order: { select: { id: true, number: true, client: { select: { name: true, city: true } } } } },
+      select: { id: true, stage: true, percent: true, priority: true, plannedEndAt: true, masterUserId: true, order: { select: { id: true, number: true, client: { select: { name: true, city: true } } } } },
     }),
     prisma.material.findMany({ where: { active: true }, select: { stock: true, minimumStock: true } }),
+    prisma.calendarTask.count({ where: { assigneeId: scope.userId, dueAt: { gte: todayStart, lt: tomorrow }, status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } } }),
   ]);
   const preparationStages = ["Подготовка", "Каркас", "Дерево", "Комплектация"];
   return {
@@ -193,6 +230,9 @@ async function productionProjection(scope: DashboardScope) {
       overdue: jobs.filter((job) => Boolean(job.plannedEndAt && job.plannedEndAt < now)).length,
       availableTasks: jobs.length,
       missingMaterials: materials.filter((item) => item.stock <= item.minimumStock).length,
+      readyMaterials: materials.filter((item) => item.stock > item.minimumStock).length,
+      tasksToday,
+      attentionOrders: jobs.filter((job) => job.priority > 0 || Boolean(job.plannedEndAt && job.plannedEndAt < now)).length,
     },
     jobs: jobs.map((job) => ({ ...job, href: `/orders/${job.order.id}` })),
   };
@@ -216,6 +256,7 @@ async function installerProjection(scope: DashboardScope) {
       overdue: installations.filter((item) => item.scheduledAt < todayStart).length,
       assigned: installations.length,
     },
+    nextInstallation: installations[0] ? { ...installations[0], href: `/orders/${installations[0].order.id}` } : null,
     installations: installations.map((item) => ({ ...item, href: `/orders/${item.order.id}` })),
   };
 }

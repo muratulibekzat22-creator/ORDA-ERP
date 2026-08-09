@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { OrderLifecycle, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
@@ -30,6 +30,7 @@ export async function GET() {
       where: { partnerId: partner.id },
       select: {
         status: true,
+        lifecycle: true,
         partnerPrice: true,
         partnerPaid: true,
         partnerBalance: true,
@@ -57,13 +58,14 @@ export async function GET() {
     (accumulator, order) => ({
       price: accumulator.price + Number(order.partnerPrice),
       paid: accumulator.paid + Number(order.partnerPaid),
-      balance: accumulator.balance + Number(order.partnerBalance),
+      balance: accumulator.balance + Math.max(Number(order.partnerBalance), 0),
     }),
     { price: 0, paid: 0, balance: 0 },
   );
 
   return NextResponse.json({
-    activeOrders: orders.filter((order) => order.status !== "Сдано").length,
+    activeOrders: orders.filter((order) => order.lifecycle !== OrderLifecycle.COMPLETED && order.lifecycle !== OrderLifecycle.CANCELLED).length,
+    completedOrders: orders.filter((order) => order.lifecycle === OrderLifecycle.COMPLETED).length,
     totals,
     statuses: orders.reduce<Record<string, number>>((accumulator, order) => {
       accumulator[order.status] = (accumulator[order.status] ?? 0) + 1;

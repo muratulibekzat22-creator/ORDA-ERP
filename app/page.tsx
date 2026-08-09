@@ -1,17 +1,18 @@
-"use client";
+import { Role } from "@prisma/client";
+import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
 
-import { useEffect } from "react";
-import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import DirectorCockpit from "@/components/dashboard/DirectorCockpit";
+import DashboardPage from "@/components/dashboard/page";
+import MeasurerHome from "@/components/measurements/MeasurerHome";
 
-import Dashboard from "@/components/dashboard/Dashboard";
-import { roleHome } from "@/lib/role-home";
-import { type Role } from "@/lib/roles";
-
-export default function Home() {
-  const router = useRouter();
-  const { data: session, status } = useSession();
-  useEffect(() => { if (status === "authenticated") { const destination = roleHome[session.user.role as Role]; if (destination) router.replace(destination); } }, [router, session, status]);
-  if (status === "loading" || status === "authenticated" && roleHome[session.user.role as Role]) return <div role="status" className="grid min-h-[50vh] place-items-center text-slate-300">Открываем рабочий раздел…</div>;
-  return <Dashboard/>;
+export default async function Home() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) redirect("/login");
+  const role = session.user.role as Role;
+  if (role === Role.PARTNER) redirect("/partner");
+  if (role === Role.MEASURER) return <MeasurerHome />;
+  if (role === Role.DIRECTOR || role === Role.MANAGER || role === Role.ACCOUNTANT || role === Role.PRODUCTION || role === Role.INSTALLER) return <DirectorCockpit />;
+  return <DashboardPage />;
 }

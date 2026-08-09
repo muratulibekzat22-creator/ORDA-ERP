@@ -66,16 +66,23 @@ const when = (value: string) =>
 
 export default function MeasurerHome() {
   const [data, setData] = useState<Workspace>(empty);
+  const [payable, setPayable] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
-    const response = await fetch("/api/measurements?workspace=1", {
-      cache: "no-store",
-    });
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty", year: "numeric", month: "2-digit" }).formatToParts(new Date());
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const [response, payrollResponse] = await Promise.all([
+      fetch("/api/measurements?workspace=1", { cache: "no-store" }),
+      fetch(`/api/payroll/self?year=${year}&month=${month}`, { cache: "no-store" }),
+    ]);
     const body = await response.json().catch(() => ({}));
+    const payroll = await payrollResponse.json().catch(() => ({})) as { totals?: { payable?: number } };
     if (!response.ok)
       setError(body.error ?? "Не удалось загрузить рабочий день");
     else setData(body);
+    if (payrollResponse.ok) setPayable(Number(payroll.totals?.payable ?? 0));
     setLoading(false);
   }, []);
   useEffect(() => {
@@ -115,6 +122,7 @@ export default function MeasurerHome() {
         <Kpi title="Успешных заказов" value={data.kpi.monthOrders} />
         <Kpi title="Конверсия в заказ" value={`${data.kpi.conversion}%`} />
         <Kpi title="Бонусов начислено" value={money(data.kpi.monthBonus)} />
+        <Kpi title="Моя зарплата · к выплате" value={money(payable)} />
       </section>
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-6">
         <div className="flex items-center justify-between gap-3">

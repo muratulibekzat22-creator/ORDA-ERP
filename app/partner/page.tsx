@@ -5,6 +5,7 @@ import { useCallback } from "react";
 import { ORDER_STATUSES } from "@/lib/orders/lifecycle";
 type Dashboard = {
   activeOrders: number;
+  completedOrders: number;
   totals: { price: number; paid: number; balance: number };
   statuses: Record<string, number>;
   recentPayments: Array<{
@@ -79,12 +80,13 @@ export default function PartnerPage() {
       </header>
       {error && <p className="text-red-400">{error}</p>}
       {d && (
-        <div className="grid gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
             ["Активные", d.activeOrders],
             ["Сумма", money(d.totals.price)],
             ["Выплачено", money(d.totals.paid)],
             ["Остаток", money(d.totals.balance)],
+            ["Завершённые заказы", d.completedOrders],
           ].map(([k, v]) => (
             <div key={String(k)} className="rounded-xl bg-slate-900 p-4">
               <p className="text-slate-400">{k}</p>

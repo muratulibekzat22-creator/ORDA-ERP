@@ -18,7 +18,7 @@ for (const text of ["Показать пароль", "autoComplete=\"username\""
 assert(layout.includes('interactiveWidget: "resizes-content"') && layout.includes("NetworkStatus"), "mobile viewport/offline support missing");
 assert(css.includes("min-height: 44px") && shell.includes('document.body.style.overflow = "hidden"'), "touch target or drawer scroll lock missing");
 for (const kind of ["OVERDUE", "TODAY", "NEW", "PROPOSAL_WITHOUT_FOLLOW_UP", "APPROVED_PRICE"]) assert(manager.includes(kind), `manager queue kind missing: ${kind}`);
-for (const metric of ["newLeads", "activeLeads", "proposalsSent", "measurementsScheduled", "orders", "totalSales", "receivedPrepayment", "balanceToReceive", "conversion", "overdueNextActions"]) assert(cockpit.includes(metric), `dashboard metric missing: ${metric}`);
+for (const metric of ["newLeads", "activeLeads", "orders", "totalSales", "receivedPrepayment", "balanceToReceive", "partnerBalancePayable", "tasksToday", "measurementsToday", "proposalsNeedResponse", "overdueNextActions"]) assert(cockpit.includes(metric), `dashboard metric missing: ${metric}`);
 const viewports = [320, 360, 375, 390, 393, 412, 430, 768, 1280];
 for (const viewport of viewports) assert(viewport >= 320, `unsupported viewport ${viewport}`);
 for (const route of ["/login", "/", "/clients", "/calculator", "/orders", "/production", "/price-approvals", "/partner"]) assert(route.startsWith("/"));
