@@ -1,3 +1,5 @@
+import "./require-test-database";
+
 import assert from "node:assert/strict";
 import { del } from "@vercel/blob";
 import { DocumentType, MeasurementPhotoType, Role } from "@prisma/client";

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./require-test-database";
 import { calculateStair, DELIVERY_CHARGES, STAIR_RATES } from "@/lib/calculator/stair-calculation";
 import { normalizePhone } from "@/lib/leads/domain";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";

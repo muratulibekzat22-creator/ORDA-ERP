@@ -38,7 +38,7 @@ async function salesProjection(scope: DashboardScope) {
     scope.role === Role.MANAGER
       ? { OR: [{ managerUserId: scope.userId }, { leadConversion: { managerId: scope.userId } }] }
       : {};
-  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse] = await Promise.all([
+  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse, activeUsers] = await Promise.all([
     prisma.client.findMany({
       where: { ...managerLeadWhere, active: true },
       select: {
@@ -48,7 +48,7 @@ async function salesProjection(scope: DashboardScope) {
         stage: true,
         managerUserId: true,
         manager: true,
-        managerUser: { select: { name: true } },
+        managerUser: { select: { name: true, active: true, role: true } },
         leadStatusHistory: { select: { toStage: true } },
         nextActions: { where: { completedAt: null }, select: { nextActionAt: true } },
         leadConversion: { select: { orderId: true } },
@@ -59,7 +59,7 @@ async function salesProjection(scope: DashboardScope) {
       select: { id: true, amount: true, prepayment: true, balance: true, managerUserId: true, leadConversion: { select: { managerId: true } } },
     }),
     prisma.leadStatusHistory.findMany({
-      where: { client: managerLeadWhere, createdAt: { gte: start, lte: end } },
+      where: { client: { ...managerLeadWhere, active: true }, createdAt: { gte: start, lte: end }, OR: [{ authorId: null }, { changedBy: { active: true } }] },
       orderBy: { createdAt: "desc" },
       take: 10,
       select: { id: true, toStatus: true, authorName: true, createdAt: true, client: { select: { id: true, name: true, phone: true } } },
@@ -103,6 +103,7 @@ async function salesProjection(scope: DashboardScope) {
           },
         })
       : Promise.resolve(0),
+    prisma.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
   ]);
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
@@ -119,7 +120,9 @@ async function salesProjection(scope: DashboardScope) {
     group.leads.push(lead);
     managerGroups.set(id, group);
   }
-  const managers = [...managerGroups.values()].map((group) => {
+  const activeManagerIds = new Set(activeUsers.filter((user) => user.role === Role.MANAGER).map((user) => user.id));
+  const activeUserNames = new Set(activeUsers.map((user) => user.name));
+  const managers = [...managerGroups.values()].filter((group) => activeManagerIds.has(group.managerUserId)).map((group) => {
     const converted = group.leads.filter((lead) => lead.leadConversion).length;
     const managerOrders = orders.filter((order) => (order.managerUserId ?? order.leadConversion?.managerId) === group.managerUserId);
     return {
@@ -145,7 +148,7 @@ async function salesProjection(scope: DashboardScope) {
       : order.productionDeadline ?? order.installation?.scheduledAt;
   const activities = [
     ...leadEvents.map((event) => ({ id: `lead-${event.id}`, title: event.toStatus, subject: event.client.name || event.client.phone, href: `/clients/${event.client.id}`, user: event.authorName, createdAt: event.createdAt })),
-    ...orderEvents.map((event) => ({ id: `order-${event.id}`, title: event.title, subject: event.order.number, href: `/orders/${event.order.id}`, user: event.user, createdAt: event.createdAt })),
+    ...orderEvents.filter((event) => !event.user || activeUserNames.has(event.user)).map((event) => ({ id: `order-${event.id}`, title: event.title, subject: event.order.number, href: `/orders/${event.order.id}`, user: event.user, createdAt: event.createdAt })),
   ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 10);
   return {
     role: scope.role,

@@ -1,7 +1,12 @@
-import "dotenv/config";
+import { testDatabaseFingerprint } from "./require-test-database";
 import { Role } from "@prisma/client";
 
-const baseUrl = process.env.ORDA_TEST_BASE_URL ?? "https://orda-erp-staging.vercel.app";
+const configuredBaseUrl = process.env.ORDA_TEST_BASE_URL;
+if (!configuredBaseUrl || !/^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/u.test(configuredBaseUrl)) throw new Error("Role login mutation test requires an explicit loopback ORDA_TEST_BASE_URL");
+const baseUrl: string = configuredBaseUrl;
+const configuredProbeToken = process.env.TEST_DATABASE_PROBE_TOKEN;
+if (!configuredProbeToken) throw new Error("Role login mutation test requires TEST_DATABASE_PROBE_TOKEN");
+const databaseProbeToken: string = configuredProbeToken;
 const accounts = [
   [Role.DIRECTOR, "director.test@altynsapa.kz", "ORDA_TEST_DIRECTOR_PASSWORD"],
   [Role.MANAGER, "manager.test@altynsapa.kz", "ORDA_TEST_MANAGER_PASSWORD"],
@@ -23,6 +28,9 @@ async function login(email: string, password: string) {
 async function status(path: string, cookie: string) { return (await fetch(`${baseUrl}${path}`, { headers: { Cookie: cookie }, redirect: "manual" })).status; }
 
 async function main() {
+  const probe = await fetch(`${baseUrl}/api/internal/test-database-identity`, { headers: { "x-test-database-probe-token": databaseProbeToken } });
+  const identity = probe.ok ? await probe.json() as { fingerprint?: string } : null;
+  check(identity?.fingerprint === testDatabaseFingerprint, "Role login server database identity does not match TEST_DATABASE_URL");
   const missing = accounts.filter(([, , variable]) => !process.env[variable]); check(!missing.length, "Test account password variables are missing");
   let directorCookie = "";
   for (const [role, email, variable] of accounts) {

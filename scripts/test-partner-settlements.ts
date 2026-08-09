@@ -1,3 +1,5 @@
+import "./require-test-database";
+
 import crypto from "crypto";
 import path from "path";
 import dotenv from "dotenv";

@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./require-test-database";
 
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation, createPayment } from "@/lib/services/payment.service";

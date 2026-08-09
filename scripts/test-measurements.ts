@@ -1,3 +1,5 @@
+import "./require-test-database";
+
 import assert from "node:assert/strict";
 import { MeasurementPhotoType, PayrollAccrualType, Role } from "@prisma/client";
 import { parseBusinessDateTime } from "@/lib/calendar-time";

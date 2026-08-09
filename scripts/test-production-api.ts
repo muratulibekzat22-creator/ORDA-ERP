@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./require-test-database";
 
 import assert from "node:assert/strict";
 import { Role } from "@prisma/client";

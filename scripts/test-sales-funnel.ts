@@ -1,3 +1,5 @@
+import "./require-test-database";
+
 import assert from "node:assert/strict";
 import { LeadLostReason, LeadNextActionType, LeadSource, LeadStage, Role } from "@prisma/client";
 import { getAnalytics } from "../lib/services/analytics.service";

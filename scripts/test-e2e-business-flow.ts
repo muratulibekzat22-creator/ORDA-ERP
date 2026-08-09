@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./require-test-database";
 
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";

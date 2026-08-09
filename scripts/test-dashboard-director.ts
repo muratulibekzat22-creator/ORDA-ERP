@@ -1,3 +1,5 @@
+import "./require-test-database";
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { OrderLifecycle, Role } from "@prisma/client";

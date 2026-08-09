@@ -1,3 +1,5 @@
+import "./require-test-database";
+
 import assert from "node:assert/strict";
 import { OrderBlockerSeverity, OrderLifecycle, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";

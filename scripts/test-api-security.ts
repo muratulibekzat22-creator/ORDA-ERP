@@ -1,21 +1,15 @@
+import { createSanitizedTestServerEnv, testDatabaseFingerprint } from "./require-test-database";
+
 import { execFile, spawn, type ChildProcess } from "child_process";
 import { promisify } from "util";
 import path from "path";
-import fs from "fs";
 import net from "net";
 import crypto from "crypto";
-import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import { CalendarTaskPriority, CalendarTaskType, Permission, Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
 
-const testEnvironmentPath = path.join(process.cwd(), ".env.test.local");
-const rawTestEnvironment = fs.existsSync(testEnvironmentPath) ? fs.readFileSync(testEnvironmentPath, "utf8").trim() : "";
-const testEnvironment = fs.existsSync(testEnvironmentPath) ? dotenv.config({ path: testEnvironmentPath, quiet: true }).parsed : undefined;
-const testDatabaseUrl = process.env.TEST_DATABASE_URL ?? testEnvironment?.TEST_DATABASE_URL ?? (rawTestEnvironment.startsWith("postgresql://") ? rawTestEnvironment : undefined);
-if (!testDatabaseUrl) throw new Error("TEST_DATABASE_URL is missing from the environment and .env.test.local");
-process.env.DATABASE_URL = testDatabaseUrl;
 const port = Number(process.env.SECURITY_TEST_PORT ?? 3219);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("SECURITY_TEST_PORT is invalid");
 process.env.NEXTAUTH_URL = `http://127.0.0.1:${port}`;
@@ -23,6 +17,7 @@ process.env.NEXTAUTH_SECRET ||= crypto.randomBytes(32).toString("hex");
 process.env.AUTH_ACCOUNT_IP_FAILURE_LIMIT = "8";
 process.env.AUTH_IP_ABUSE_FAILURE_LIMIT = "14";
 delete process.env.VERCEL;
+const databaseProbeToken = crypto.randomBytes(32).toString("hex");
 
 const baseUrl = `http://127.0.0.1:${port}`;
 const tag = `api-security-${Date.now()}`;
@@ -59,7 +54,12 @@ async function waitForServer() {
       const response = await apiFetch(`${baseUrl}/api/auth/csrf`);
       const ready = response.ok;
       await response.arrayBuffer();
-      if (ready) return;
+      if (ready) {
+        const probe = await apiFetch(`${baseUrl}/api/internal/test-database-identity`, { headers: { "x-test-database-probe-token": databaseProbeToken } });
+        const identity = probe.ok ? await probe.json() as { fingerprint?: string } : null;
+        assert(identity?.fingerprint === testDatabaseFingerprint, "Next test server database identity does not match TEST_DATABASE_URL");
+        return;
+      }
     } catch {
       // Server is starting.
     }
@@ -345,7 +345,7 @@ async function main() {
     generatedMaterialIds.push(costMaterial.id);
     await prisma.materialMovement.createMany({ data: [firstOrder.id, firstProductionOrder.id, firstInstallerOrder.id].map((orderId, index) => ({ materialId: costMaterial.id, orderId, type: "consume", quantity: index + 1, price: "37.50", amount: String((index + 1) * 37.5), stockDelta: -(index + 1) })) });
 
-    server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: "ignore", detached: false });
+    server = spawn(process.execPath, [path.join(process.cwd(), "node_modules", "next", "dist", "bin", "next"), "start", "-H", "127.0.0.1", "-p", String(port)], { cwd: process.cwd(), stdio: "ignore", detached: false, env: createSanitizedTestServerEnv({ TEST_DATABASE_PROBE_TOKEN: databaseProbeToken }) });
     await waitForServer();
     const health = await apiFetch(`${baseUrl}/api/health`);
     const healthPayload = await health.json() as Record<string, unknown>;
