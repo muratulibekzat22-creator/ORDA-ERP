@@ -28,7 +28,7 @@ async function main() {
       password: passwordHash,
       role: Role.DIRECTOR,
       active: true,
-      mustChangePassword: true,
+      mustChangePassword: false,
     },
   });
 }

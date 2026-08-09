@@ -732,6 +732,14 @@ async function main() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: `${tag}-partner-without-link`, email: `${tag}-partner-without-link@test.local`, password, role: Role.PARTNER }),
     });
+    const directorResetPassword = `${password}-director-reset`;
+    const resetBody = { newPassword: directorResetPassword, confirmPassword: directorResetPassword };
+    await expectStatus(`/api/employees/${temporaryUser.id}/password`, 403, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resetBody) });
+    await expectStatus(`/api/employees/${temporaryUser.id}/password`, 403, firstMeasurerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resetBody) });
+    await expectStatus(`/api/employees/${temporaryUser.id}/password`, 200, directorCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resetBody) });
+    assert(!(await loginAttempt(temporaryUser.email, changedPassword)).includes("session-token"), "old password remained valid after director reset");
+    await session(temporaryUser.email, {}, directorResetPassword);
+    assert((await prisma.user.findUniqueOrThrow({ where: { id: temporaryUser.id } })).mustChangePassword === false, "director reset enabled forced password change");
     await expectStatus(`/api/employees/${director.id}`, 409, directorCookie, { method: "DELETE" });
     console.log("settings and employee security checks passed");
     const documentBody = { orderId: firstOrder.id, type: "OFFER", number: `${tag}-offer`, documentDate: "2026-08-05" };

@@ -47,6 +47,8 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname !== "/change-password"
   )
     return redirect(new URL("/change-password", request.url));
+  if (!token.mustChangePassword && request.nextUrl.pathname === "/change-password")
+    return redirect(new URL("/", request.url));
 
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {

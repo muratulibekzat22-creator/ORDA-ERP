@@ -38,7 +38,7 @@ export async function POST(request: Request) {
         if (!partner) throw new Error("PARTNER_NOT_FOUND");
         if (partner.userId) throw new Error("PARTNER_ALREADY_LINKED");
       }
-      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), passwordChangedAt: new Date(), mustChangePassword: true, phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
+      return tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), passwordChangedAt: new Date(), mustChangePassword: false, phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
     });
     return NextResponse.json(user, { status: 201 });
   } catch (error) {

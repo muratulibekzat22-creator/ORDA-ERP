@@ -38,6 +38,8 @@ export default function EmployeesPage() {
     [employeeFilter, setEmployeeFilter] = useState<EmployeeFilter>("active"),
     [form, setForm] = useState(blank),
     [edit, setEdit] = useState<User | null>(null),
+    [passwordUser, setPasswordUser] = useState<User | null>(null),
+    [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" }),
     [error, setError] = useState("");
   const load = async (filter: EmployeeFilter) => {
     const [u, p] = await Promise.all([
@@ -71,7 +73,13 @@ export default function EmployeesPage() {
       {
         method: edit ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(edit ? {
+          name: form.name,
+          phone: form.phone,
+          role: form.role,
+          active: form.active,
+          partnerId: form.partnerId ? Number(form.partnerId) : undefined,
+        } : {
           ...form,
           partnerId: form.partnerId ? Number(form.partnerId) : undefined,
         }),
@@ -96,6 +104,19 @@ export default function EmployeesPage() {
         ((await r.json()) as { error?: string }).error ?? "Ошибка",
       );
     await load(employeeFilter);
+  };
+  const resetPassword = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!passwordUser) return;
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) return setError("Пароли не совпадают");
+    const response = await fetch(`/api/employees/${passwordUser.id}/password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(passwordForm),
+    });
+    if (!response.ok) return setError(((await response.json()) as { error?: string }).error ?? "Не удалось изменить пароль");
+    setPasswordUser(null);
+    setPasswordForm({ newPassword: "", confirmPassword: "" });
   };
   return (
     <section className="flex-1 overflow-auto p-4 md:p-8">
@@ -131,14 +152,14 @@ export default function EmployeesPage() {
           onChange={(e) => setForm({ ...form, email: e.target.value })}
           placeholder="Email"
         />
-        <input
+        {!edit && <input
           aria-label={edit ? "Новый пароль (необязательно)" : "Пароль"}
           required={!edit}
           type="password"
           value={form.password}
           onChange={(e) => setForm({ ...form, password: e.target.value })}
           placeholder="Пароль"
-        />
+        />}
         <input
           aria-label="Телефон сотрудника"
           type="tel"
@@ -213,7 +234,7 @@ export default function EmployeesPage() {
           </button>
         ))}
       </div>
-      <div className="mt-5 space-y-3 md:hidden">{!users.length ? <p className="rounded-2xl bg-[#101827] p-8 text-center text-slate-400">Сотрудники пока не добавлены.</p> : users.map((user) => <article key={user.id} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-white">{user.name}</h2><p className="truncate text-sm text-slate-400">{user.email}</p><p className="text-sm text-slate-400">{user.phone ?? "Телефон не указан"}</p></div><span className={`rounded-full px-3 py-1 text-xs ${user.active ? "bg-green-700 text-white" : "bg-slate-700 text-slate-300"}`}>{user.active ? "Активен" : "Неактивен"}</span></div><p className="mt-3 text-sm text-slate-300">{roleNames[user.role]}{user.partnerProfile ? ` · ${user.partnerProfile.name}` : ""}</p><p className="mt-2 text-xs text-slate-500">Последний вход: {user.lastLogin ? new Date(user.lastLogin).toLocaleString("ru-RU") : "ещё не входил"}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" className="min-h-11 rounded-lg bg-slate-700 px-3 text-white" onClick={() => { setEdit(user); setForm({ name: user.name, email: user.email, password: "", phone: user.phone ?? "", role: user.role, partnerId: user.partnerProfile ? String(user.partnerProfile.id) : "", active: user.active }); }}>Изменить</button><button type="button" className="min-h-11 rounded-lg bg-amber-700 px-3 text-white" onClick={() => void patch(user, { active: !user.active })}>{user.active ? "Отключить" : "Включить"}</button></div></article>)}</div>
+      <div className="mt-5 space-y-3 md:hidden">{!users.length ? <p className="rounded-2xl bg-[#101827] p-8 text-center text-slate-400">Сотрудники пока не добавлены.</p> : users.map((user) => <article key={user.id} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold text-white">{user.name}</h2><p className="truncate text-sm text-slate-400">{user.email}</p><p className="text-sm text-slate-400">{user.phone ?? "Телефон не указан"}</p></div><span className={`rounded-full px-3 py-1 text-xs ${user.active ? "bg-green-700 text-white" : "bg-slate-700 text-slate-300"}`}>{user.active ? "Активен" : "Неактивен"}</span></div><p className="mt-3 text-sm text-slate-300">{roleNames[user.role]}{user.partnerProfile ? ` · ${user.partnerProfile.name}` : ""}</p><p className="mt-2 text-xs text-slate-500">Последний вход: {user.lastLogin ? new Date(user.lastLogin).toLocaleString("ru-RU") : "ещё не входил"}</p><div className="mt-4 grid grid-cols-2 gap-2"><button type="button" className="min-h-11 rounded-lg bg-slate-700 px-3 text-white" onClick={() => { setEdit(user); setForm({ name: user.name, email: user.email, password: "", phone: user.phone ?? "", role: user.role, partnerId: user.partnerProfile ? String(user.partnerProfile.id) : "", active: user.active }); }}>Изменить</button><button type="button" className="min-h-11 rounded-lg bg-blue-700 px-3 text-white" onClick={() => setPasswordUser(user)}>Изменить пароль</button><button type="button" className="col-span-2 min-h-11 rounded-lg bg-amber-700 px-3 text-white" onClick={() => void patch(user, { active: !user.active })}>{user.active ? "Отключить" : "Включить"}</button></div></article>)}</div>
       <div className="mt-5 hidden overflow-auto rounded-2xl bg-[#101827] md:block">
         <table className="w-full min-w-[1050px] text-left text-slate-300 [&_td]:border-t [&_td]:border-slate-800 [&_td]:p-4">
           <thead>
@@ -269,6 +290,9 @@ export default function EmployeesPage() {
                   >
                     {user.active ? "Отключить" : "Включить"}
                   </button>
+                  <button type="button" className="rounded-lg bg-blue-700 px-3 py-2 text-white" onClick={() => setPasswordUser(user)}>
+                    Изменить пароль
+                  </button>
                   <button
                     className="rounded-lg bg-red-800 px-3 py-2 text-white"
                     onClick={async () => {
@@ -293,6 +317,14 @@ export default function EmployeesPage() {
           </tbody>
         </table>
       </div>
+      {passwordUser && <div role="dialog" aria-modal="true" aria-labelledby="password-dialog-title" className="fixed inset-0 z-50 grid place-items-end bg-black/70 sm:place-items-center sm:p-4">
+        <form onSubmit={resetPassword} className="w-full max-w-md space-y-4 rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:rounded-2xl">
+          <div><h2 id="password-dialog-title" className="text-xl font-semibold text-white">Изменить пароль</h2><p className="mt-1 text-sm text-slate-400">{passwordUser.name}. Старый пароль не отображается.</p></div>
+          <label className="block text-sm text-slate-300">Новый пароль<input autoFocus required minLength={12} maxLength={128} type="password" className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" value={passwordForm.newPassword} onChange={(event) => setPasswordForm({...passwordForm,newPassword:event.target.value})}/></label>
+          <label className="block text-sm text-slate-300">Повторить пароль<input required minLength={12} maxLength={128} type="password" className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" value={passwordForm.confirmPassword} onChange={(event) => setPasswordForm({...passwordForm,confirmPassword:event.target.value})}/></label>
+          <div className="grid grid-cols-2 gap-2"><button type="button" className="min-h-12 rounded-xl bg-slate-700 text-white" onClick={() => { setPasswordUser(null); setPasswordForm({newPassword:"",confirmPassword:""}); }}>Отмена</button><button className="min-h-12 rounded-xl bg-blue-600 font-semibold text-white">Сохранить</button></div>
+        </form>
+      </div>}
     </section>
   );
 }

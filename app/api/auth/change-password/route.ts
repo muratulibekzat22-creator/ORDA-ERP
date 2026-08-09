@@ -9,6 +9,7 @@ export async function POST(request: Request) {
   if (!session?.user?.id || session.invalid) return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
   try {
     const body = await request.json() as Record<string, unknown>;
+    if (!session.user.mustChangePassword) return NextResponse.json({ error: "Самостоятельное изменение пароля отключено" }, { status: 403 });
     const currentPassword = typeof body.currentPassword === "string" ? body.currentPassword : "";
     const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
     if (newPassword.length < 12 || newPassword.length > 128 || currentPassword === newPassword)
