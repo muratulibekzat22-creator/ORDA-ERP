@@ -616,6 +616,12 @@ async function main() {
     });
     assert.equal(
       (await payrollSummary(period.id, directorActor, profile.id)).rows.length,
+      1,
+      "disabling ORDA login removed the employee from payroll",
+    );
+    await prisma.employeePayrollProfile.update({ where: { id: profile.id }, data: { active: false } });
+    assert.equal(
+      (await payrollSummary(period.id, directorActor, profile.id)).rows.length,
       0,
       "inactive employee leaked into payroll dashboard",
     );

@@ -46,8 +46,8 @@ const measurement = readFileSync("lib/services/measurement.service.ts", "utf8");
 const workspace = readFileSync("components/training/TrainingWorkspace.tsx", "utf8");
 const shell = readFileSync("components/layout/RouteShell.tsx", "utf8");
 const proxy = readFileSync("proxy.ts", "utf8");
-const employeeCreate = readFileSync("app/api/employees/route.ts", "utf8");
 const employeeUpdate = readFileSync("app/api/employees/[id]/route.ts", "utf8");
+const employeeService = readFileSync("lib/services/employee.service.ts", "utf8");
 const nextConfig = readFileSync("next.config.ts", "utf8");
 
 assert(service.includes("select: { id: true, position: true, question: true, options: true }"), "quiz read projection can expose answers");
@@ -65,6 +65,6 @@ assert(
 assert(workspace.includes("overflow-x-hidden") && workspace.includes("aspect-video"));
 assert(shell.includes('"/training"') && shell.includes('role === "MEASURER"'));
 assert(proxy.includes('firstSegment === "training"'));
-assert(employeeCreate.includes("ensureCurrentMeasurerTraining") && employeeUpdate.includes("ensureCurrentMeasurerTraining"));
+assert(employeeService.includes("ensureCurrentMeasurerTraining") && employeeUpdate.includes("ensureCurrentMeasurerTraining"));
 
 console.log("training security, progress and mobile contracts passed");

@@ -39,6 +39,7 @@
     "test:partner-finance": "tsx scripts/test-partner-finance-dashboard.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
+    "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",
     "test:order360": "tsx scripts/test-order360.ts",
     "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts",
     "test:calendar": "tsx scripts/test-calendar.ts",

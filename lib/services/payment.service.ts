@@ -270,7 +270,7 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
       orderBy: [{ operationDate: "desc" }, { id: "desc" }],
     }),
     prisma.employeePayrollProfile.findMany({
-      where: { active: true, payrollEnabled: true, user: { active: true } },
+      where: { active: true, payrollEnabled: true },
       select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } },
     }),
     prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { name: true }, orderBy: { name: "asc" } }),
@@ -319,7 +319,7 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
     type: item.payrollPaymentId ? "PAYROLL_PAYMENT" : item.direction === "INCOME" ? "OTHER_INCOME" : "OTHER_EXPENSE",
     amount: Number(item.amount), direction: item.direction === "INCOME" ? "INCOME" as const : "EXPENSE" as const,
     method: item.payrollPayment?.method ?? "ledger", comment: item.comment, author: item.author?.name ?? null, operationDate: item.operationDate,
-    order: item.order, partner: null, employee: item.payrollPayment?.employee.user.name ?? null,
+    order: item.order, partner: null, employee: item.payrollPayment ? item.payrollPayment.employee.user?.name ?? item.payrollPayment.employee.name : null,
   }));
   const operations = [...normalizedPayments, ...normalizedLedger]
     .filter((item) => !filters.type || item.type === filters.type)

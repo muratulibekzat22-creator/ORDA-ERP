@@ -10,6 +10,7 @@ export type OrderListItem = {
   productions: Array<{ stage: string; master: string; plannedEndAt?: string | null }>;
   installation?: { scheduledAt?: string | null; installer?: { name: string } | null; installerUser?: { name: string } | null } | null;
   blockers: Array<{ title: string; severity: string }>;
+  documents: Array<{ id: number }>;
 };
 
 const money = (value?: string) => value == null ? "—" : `${Number(value).toLocaleString("ru-RU")} ₸`;

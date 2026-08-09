@@ -45,7 +45,7 @@ export default function ProjectProduction({ orderId, production }: Props) {
   const [currentProduction, setCurrentProduction] = useState(production);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [masters, setMasters] = useState<Array<{ id:number; name:string; role:string; active:boolean }>>([]);
+  const [masters, setMasters] = useState<Array<{ id:number; userId:number | null; name:string; role:string | null; active:boolean; accountActive:boolean }>>([]);
   const [form, setForm] = useState({
     stage: production?.stage ?? "Подготовка",
     percent: String(production?.percent ?? 0),
@@ -54,7 +54,7 @@ export default function ProjectProduction({ orderId, production }: Props) {
     finishDate: toDateInput(production?.finishDate ?? null),
     comment: production?.comment ?? "",
   });
-  useEffect(() => { void fetch("/api/employees").then(async response => response.ok ? response.json() as Promise<Array<{ id:number; name:string; role:string; active:boolean }>> : []).then(users => setMasters(users.filter(user => user.active && ["PRODUCTION", "INSTALLER", "DIRECTOR"].includes(user.role)))); }, []);
+  useEffect(() => { void fetch("/api/employees").then(async response => response.ok ? response.json() as Promise<Array<{ id:number; userId:number | null; name:string; role:string | null; active:boolean; accountActive:boolean }>> : []).then(users => setMasters(users.filter(user => user.active && user.accountActive && user.userId && ["PRODUCTION", "INSTALLER", "DIRECTOR"].includes(user.role ?? "")))); }, []);
 
   function updateForm(name: keyof typeof form, value: string) {
     setForm((previous) => ({ ...previous, [name]: value }));

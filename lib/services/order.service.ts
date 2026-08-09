@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
@@ -47,6 +47,14 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
         take: 1,
         orderBy: { createdAt: "desc" },
         select: { title: true, severity: true },
+      },
+      documents: {
+        where: {
+          type: DocumentType.CONTRACT,
+          status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] },
+        },
+        take: 1,
+        select: { id: true },
       },
     },
     orderBy: {

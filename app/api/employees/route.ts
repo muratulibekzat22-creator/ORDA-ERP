@@ -1,12 +1,8 @@
-import bcrypt from "bcrypt";
 import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
-import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
-
-const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
+import { createEmployee, EmployeeError, listEmployees } from "@/lib/services/employee.service";
 
 export async function GET(request: Request) {
   const auth = await requirePermission("employees");
@@ -15,9 +11,8 @@ export async function GET(request: Request) {
   if (!(["active", "inactive", "all"] as const).includes(status as "active" | "inactive" | "all")) {
     return NextResponse.json({ error: "Некорректный фильтр статуса" }, { status: 400 });
   }
-  const active = status === "all" ? undefined : status === "active";
   return NextResponse.json(
-    await prisma.user.findMany({ where: active === undefined ? undefined : { active }, select, orderBy: { createdAt: "desc" } }),
+    await listEmployees(status as "active" | "inactive" | "all"),
     { headers: { "Cache-Control": "private, no-store, max-age=0" } },
   );
 }
@@ -25,30 +20,40 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
+  if (auth.session!.user.role !== Role.DIRECTOR)
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
-    const role = body.role as Role;
-    const partnerId = Number(body.partnerId);
     const name = typeof body.name === "string" ? body.name.trim() : "";
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body.password === "string" ? body.password : "";
-    if (!name || !email || !email.includes("@") || password.length < 12 || !Object.values(Role).includes(role) || (body.active !== undefined && typeof body.active !== "boolean") || (role === Role.PARTNER && (!Number.isInteger(partnerId) || partnerId <= 0))) return NextResponse.json({ error: "Проверьте обязательные поля. Пароль должен содержать не менее 12 символов" }, { status: 400 });
-    const user = await prisma.$transaction(async (tx) => {
-      if (role === Role.PARTNER) {
-        const partner = await tx.partner.findUnique({ where: { id: partnerId }, select: { userId: true } });
-        if (!partner) throw new Error("PARTNER_NOT_FOUND");
-        if (partner.userId) throw new Error("PARTNER_ALREADY_LINKED");
-      }
-      const created = await tx.user.create({ data: { name, email, password: await bcrypt.hash(password, 12), passwordChangedAt: new Date(), mustChangePassword: false, phone: typeof body.phone === "string" ? body.phone.trim() || null : null, role, active: typeof body.active === "boolean" ? body.active : true, partnerProfile: role === Role.PARTNER ? { connect: { id: partnerId } } : undefined }, select });
-      if (created.role === Role.MEASURER && created.active)
-        await ensureCurrentMeasurerTraining(tx, created.id);
-      return created;
-    });
-    return NextResponse.json(user, { status: 201 });
+    const hasOrdaAccess = body.hasOrdaAccess === undefined ? true : body.hasOrdaAccess === true;
+    const role = Object.values(Role).includes(body.role as Role) ? body.role as Role : undefined;
+    const employee = await createEmployee({
+      name,
+      position: typeof body.position === "string" && body.position.trim()
+        ? body.position
+        : role ?? "Сотрудник",
+      phone: typeof body.phone === "string" ? body.phone : undefined,
+      email: typeof body.email === "string" ? body.email : undefined,
+      active: typeof body.active === "boolean" ? body.active : true,
+      hasOrdaAccess,
+      role,
+      password: typeof body.password === "string" ? body.password : undefined,
+    }, Number(auth.session!.user.id));
+    return NextResponse.json(employee, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
-    if (code === "PARTNER_NOT_FOUND") return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 });
-    if (code === "PARTNER_ALREADY_LINKED" || error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return NextResponse.json({ error: "Пользователь или партнёр уже существует" }, { status: 409 });
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")
+      return NextResponse.json({ error: "Аккаунт с таким email уже существует" }, { status: 409 });
+    if (error instanceof EmployeeError) {
+      const message = code === "EMPLOYEE_FIELDS_REQUIRED"
+        ? "Укажите ФИО и должность"
+        : code === "ACCESS_FIELDS_REQUIRED"
+          ? "Для доступа в ORDA укажите email, роль и пароль не короче 12 символов"
+          : code === "INVALID_EMAIL"
+            ? "Некорректный email"
+            : "Некорректная роль сотрудника";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
     return NextResponse.json({ error: "Не удалось создать сотрудника" }, { status: 500 });
   }
 }

@@ -999,8 +999,12 @@ model CompanyLedgerEntry {
 
 model EmployeePayrollProfile {
   id                     Int                          @id @default(autoincrement())
-  userId                 Int                          @unique
-  user                   User                         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  userId                 Int?                         @unique
+  user                   User?                        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name                   String                       @default("")
+  position               String                       @default("")
+  phone                  String?
+  email                  String?
   hiredAt                DateTime
   terminatedAt           DateTime?
   payrollEnabled         Boolean                      @default(true)

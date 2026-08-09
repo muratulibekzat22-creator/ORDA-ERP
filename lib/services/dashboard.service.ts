@@ -1,7 +1,10 @@
 import {
   AdvanceRequestStatus,
   CalendarTaskStatus,
+  DocumentStatus,
+  DocumentType,
   LeadStage,
+  MeasurementStatus,
   OrderLifecycle,
   PayrollDirection,
   PayrollPaymentType,
@@ -78,18 +81,19 @@ async function salesProjection(scope: DashboardScope) {
       ? prisma.material.findMany({ where: { active: true }, select: { stock: true, minimumStock: true } })
       : Promise.resolve([]),
     prisma.calendarTask.findMany({
-      where: { ...(scope.role === Role.MANAGER ? { assigneeId: scope.userId } : {}), status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } },
+      where: { ...(scope.role === Role.MANAGER ? { assigneeId: scope.userId } : { assignee: { active: true } }), status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } },
       select: { dueAt: true },
     }),
     scope.role === Role.DIRECTOR
       ? prisma.order.findMany({
           where: { lifecycle: { not: OrderLifecycle.CANCELLED } },
-          select: { balance: true, partnerId: true, partnerBalance: true, partnerAgreedAt: true },
+          select: { id: true, balance: true, partnerId: true, partnerBalance: true, partnerAgreedAt: true, documents: { where: { type: DocumentType.CONTRACT, status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] } }, select: { id: true }, take: 1 } },
         })
       : Promise.resolve([]),
     prisma.measurement.count({
       where: {
         visitDate: { gte: todayStart, lt: tomorrow },
+        status: { not: MeasurementStatus.CANCELLED },
         ...(scope.role === Role.MANAGER ? { client: managerLeadWhere } : {}),
       },
     }),
@@ -105,7 +109,65 @@ async function salesProjection(scope: DashboardScope) {
       : Promise.resolve(0),
     prisma.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
     scope.role === Role.DIRECTOR
-      ? prisma.employeePayrollProfile.findMany({ where: { active: true, payrollEnabled: true, user: { active: true } }, select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } } })
+      ? prisma.employeePayrollProfile.findMany({ where: { active: true, payrollEnabled: true }, select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } } })
+      : Promise.resolve([]),
+  ]);
+  const { start: monthStart } = dashboardPeriodRange("month", now);
+  const [measurementQueue, periodProposalCount, periodPayments, monthlyExpenses, activeEmployeeCount, productionJobs, activityPayments, activityMeasurements, activityContracts] = await Promise.all([
+    prisma.measurement.findMany({
+      where: {
+        status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] },
+        ...(scope.role === Role.MANAGER ? { client: managerLeadWhere } : {}),
+      },
+      select: { visitDate: true, status: true },
+    }),
+    prisma.commercialProposal.count({
+      where: {
+        client: managerLeadWhere,
+        sentAt: { gte: start, lte: end },
+      },
+    }),
+    prisma.payment.groupBy({
+      by: ["type"],
+      where: {
+        operationDate: { gte: start, lte: end },
+        type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] },
+        order: { ...managerOrderWhere, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      },
+      _sum: { amount: true },
+    }),
+    scope.role === Role.DIRECTOR
+      ? prisma.companyLedgerEntry.aggregate({ where: { direction: "EXPENSE", operationDate: { gte: monthStart, lte: now } }, _sum: { amount: true } })
+      : Promise.resolve({ _sum: { amount: null } }),
+    scope.role === Role.DIRECTOR
+      ? prisma.employeePayrollProfile.count({ where: { active: true } })
+      : Promise.resolve(0),
+    scope.role === Role.DIRECTOR
+      ? prisma.production.findMany({ where: { completedAt: null }, select: { stage: true, plannedEndAt: true } })
+      : Promise.resolve([]),
+    scope.role === Role.DIRECTOR
+      ? prisma.payment.findMany({
+          where: { operationDate: { gte: start, lte: end }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "PARTNER_PAYOUT"] }, order: { lifecycle: { not: OrderLifecycle.CANCELLED } } },
+          orderBy: { operationDate: "desc" },
+          take: 10,
+          select: { id: true, type: true, author: true, operationDate: true, order: { select: { id: true, number: true } } },
+        })
+      : Promise.resolve([]),
+    scope.role === Role.DIRECTOR
+      ? prisma.measurement.findMany({
+          where: { completedAt: { gte: start, lte: end }, status: { in: [MeasurementStatus.COMPLETED, MeasurementStatus.HANDED_TO_MANAGER] } },
+          orderBy: { completedAt: "desc" },
+          take: 10,
+          select: { id: true, completedAt: true, measurer: true, client: { select: { id: true, name: true } } },
+        })
+      : Promise.resolve([]),
+    scope.role === Role.DIRECTOR
+      ? prisma.document.findMany({
+          where: { type: DocumentType.CONTRACT, createdAt: { gte: start, lte: end }, status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] } },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+          select: { id: true, number: true, createdAt: true, author: { select: { name: true, active: true } }, order: { select: { id: true, number: true } } },
+        })
       : Promise.resolve([]),
   ]);
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
@@ -116,7 +178,13 @@ async function salesProjection(scope: DashboardScope) {
     (sum, order) => ({ sales: sum.sales + Number(order.amount), received: sum.received + Number(order.prepayment), balance: sum.balance + Number(order.balance) }),
     { sales: 0, received: 0, balance: 0 },
   );
+  const receivedFromClients = periodPayments.reduce((sum, row) => {
+    const amount = Number(row._sum.amount ?? 0);
+    return sum + (row.type === "REFUND" ? -amount : amount);
+  }, 0);
   const managerGroups = new Map<number, { managerUserId: number; manager: string; leads: typeof leads }>();
+  for (const manager of activeUsers.filter((user) => user.role === Role.MANAGER))
+    managerGroups.set(manager.id, { managerUserId: manager.id, manager: manager.name, leads: [] });
   for (const lead of periodLeads) {
     const id = lead.managerUserId ?? 0;
     const group = managerGroups.get(id) ?? { managerUserId: id, manager: lead.managerUser?.name ?? lead.manager, leads: [] };
@@ -149,10 +217,15 @@ async function salesProjection(scope: DashboardScope) {
     order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION || order.lifecycle === OrderLifecycle.INSTALLATION
       ? order.installation?.scheduledAt ?? order.productionDeadline
       : order.productionDeadline ?? order.installation?.scheduledAt;
+  const technicalEvent = (value: string | null | undefined) =>
+    /api-security|contract manager|\btest\b|\bdemo\b|\brbac\b|acceptance/i.test(value ?? "");
   const activities = [
     ...leadEvents.map((event) => ({ id: `lead-${event.id}`, title: event.toStatus, subject: event.client.name || event.client.phone, href: `/clients/${event.client.id}`, user: event.authorName, createdAt: event.createdAt })),
     ...orderEvents.filter((event) => !event.user || activeUserNames.has(event.user)).map((event) => ({ id: `order-${event.id}`, title: event.title, subject: event.order.number, href: `/orders/${event.order.id}`, user: event.user, createdAt: event.createdAt })),
-  ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 10);
+    ...activityPayments.filter((event) => !event.author || activeUserNames.has(event.author)).map((event) => ({ id: `payment-${event.id}`, title: event.type === "PARTNER_PAYOUT" ? "Выплата партнёру" : "Платёж получен", subject: event.order?.number ?? "Финансовая операция", href: event.order ? `/orders/${event.order.id}#settlements` : "/finance", user: event.author, createdAt: event.operationDate })),
+    ...activityMeasurements.filter((event) => !event.measurer || activeUserNames.has(event.measurer)).map((event) => ({ id: `measurement-${event.id}`, title: "Замер выполнен", subject: event.client.name, href: `/measurements/${event.id}`, user: event.measurer, createdAt: event.completedAt ?? now })),
+    ...activityContracts.filter((event) => event.author?.active !== false).map((event) => ({ id: `contract-${event.id}`, title: "Договор сформирован", subject: event.number || event.order?.number || "Договор", href: event.order ? `/orders/${event.order.id}` : "/documents", user: event.author?.name ?? null, createdAt: event.createdAt })),
+  ].filter((event) => !technicalEvent(event.title) && !technicalEvent(event.subject) && !technicalEvent(event.user)).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 10);
   const payrollPayable = payrollProfiles.reduce((total, profile) => {
     const accrued = profile.accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
     const paid = profile.payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
@@ -165,11 +238,11 @@ async function salesProjection(scope: DashboardScope) {
       newLeads: periodLeads.length,
       activeLeads: leads.filter((lead) => lead.stage !== LeadStage.WON && lead.stage !== LeadStage.LOST).length,
       overdueNextActions: leads.reduce((count, lead) => count + lead.nextActions.filter((action) => action.nextActionAt < end).length, 0),
-      proposalsSent: periodLeads.filter((lead) => reached(lead, LeadStage.PROPOSAL_SENT)).length,
+      proposalsSent: periodProposalCount,
       measurementsScheduled: periodLeads.filter((lead) => reached(lead, LeadStage.MEASUREMENT_SCHEDULED)).length,
       orders: orders.length,
       totalSales: totals.sales,
-      receivedPrepayment: totals.received,
+      receivedPrepayment: receivedFromClients,
       balanceToReceive: scope.role === Role.DIRECTOR ? activeBalances.client : Math.max(totals.balance, 0),
       partnerBalancePayable: scope.role === Role.DIRECTOR ? activeBalances.partner : undefined,
       ordersWithoutPartner: scope.role === Role.DIRECTOR ? activeFinanceOrders.filter((order) => !order.partnerId).length : undefined,
@@ -183,7 +256,20 @@ async function salesProjection(scope: DashboardScope) {
       tasksToday: tasks.filter((task) => task.dueAt >= todayStart && task.dueAt < tomorrow).length,
       overdueTasks: tasks.filter((task) => task.dueAt < now).length,
       measurementsToday,
+      measurementsUpcoming: measurementQueue.filter((item) => item.visitDate >= tomorrow).length,
+      measurementsOverdue: measurementQueue.filter((item) => item.visitDate < todayStart).length,
       proposalsNeedResponse,
+      ...(scope.role === Role.DIRECTOR ? {
+        expensesForMonth: Number(monthlyExpenses._sum.amount ?? 0),
+        activeEmployees: activeEmployeeCount,
+        clientsWithBalance: activeFinanceOrders.filter((order) => Number(order.balance) > 0).length,
+        partnerPayableOrders: activeFinanceOrders.filter((order) => order.partnerAgreedAt && Number(order.partnerBalance) > 0).length,
+        ordersWithoutContract: activeFinanceOrders.filter((order) => order.documents.length === 0).length,
+        productionPreparation: productionJobs.filter((job) => ["Подготовка", "Каркас", "Дерево", "Комплектация"].includes(job.stage)).length,
+        productionPainting: productionJobs.filter((job) => job.stage === "Покраска").length,
+        productionReady: productionJobs.filter((job) => job.stage === "Готово к монтажу").length,
+        productionOverdue: productionJobs.filter((job) => Boolean(job.plannedEndAt && job.plannedEndAt < now)).length,
+      } : {}),
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
     activities,

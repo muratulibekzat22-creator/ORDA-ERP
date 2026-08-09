@@ -39,6 +39,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       } else if (role && user.role === Role.PARTNER) await tx.partner.updateMany({ where: { userId: id }, data: { userId: null } });
       const accessChanged = (typeof body.active === "boolean" && body.active !== user.active) || (role !== undefined && role !== user.role);
       const result = await tx.user.update({ where: { id }, data: { ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}), ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}), ...(typeof body.active === "boolean" ? { active: body.active } : {}), ...(role ? { role } : {}), ...(accessChanged ? { sessionVersion: { increment: 1 } } : {}) }, select });
+      await tx.employeePayrollProfile.updateMany({
+        where: { userId: id },
+        data: {
+          ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
+          ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}),
+          ...(role ? { position: role } : {}),
+        },
+      });
       if (result.role === Role.MEASURER && result.active)
         await ensureCurrentMeasurerTraining(tx, result.id);
       return result;
@@ -61,8 +69,28 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id } });
       if (!user) throw new Error("NOT_FOUND");
-      if (await tx.employeePayrollProfile.count({ where: { userId: id } })) throw new Error("PAYROLL_HISTORY");
+      const profile = await tx.employeePayrollProfile.findUnique({
+        where: { userId: id },
+        select: {
+          id: true,
+          _count: {
+            select: {
+              salaryRates: true,
+              accruals: true,
+              payments: true,
+              paymentConfirmations: true,
+              advanceRequests: true,
+            },
+          },
+        },
+      });
+      if (profile && Object.values(profile._count).some((count) => count > 0))
+        throw new Error("PAYROLL_HISTORY");
       await ensureDirectorRemains(user.role === Role.DIRECTOR && user.active, tx);
+      if (profile) {
+        await tx.payrollAuditEvent.deleteMany({ where: { employeeId: profile.id } });
+        await tx.employeePayrollProfile.delete({ where: { id: profile.id } });
+      }
       await tx.user.delete({ where: { id } });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true });

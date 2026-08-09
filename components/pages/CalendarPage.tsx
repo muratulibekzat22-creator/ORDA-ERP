@@ -108,7 +108,7 @@ function display(value: string, options: Intl.DateTimeFormatOptions) {
   }).format(new Date(value));
 }
 
-export default function CalendarPage() {
+export default function CalendarPage({ initialState = "active" }: { initialState?: string }) {
   const { data: session } = useSession();
   const [mode, setMode] = useState<Mode>("today"),
     [anchor, setAnchor] = useState(new Date()),
@@ -119,7 +119,7 @@ export default function CalendarPage() {
       orders: [],
     }),
     [assignee, setAssignee] = useState(""),
-    [state, setState] = useState("active"),
+    [state, setState] = useState(["active", "overdue", "completed", "all"].includes(initialState) ? initialState : "active"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),

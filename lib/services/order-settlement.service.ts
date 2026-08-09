@@ -5,7 +5,7 @@ type Assignment = { id: number; previousPartnerId?: number | null; newPartnerId:
 type PayrollAccrual = {
   id: number; periodId: number; type: string; amount: Money; direction: string; measurementId?: number | null;
   createdAt: Date | string; reversedBy?: { id: number } | null;
-  employee: { id: number; userId: number; user: { name: string } };
+  employee: { id: number; userId: number | null; name: string; user: { name: string } | null };
   payments?: Array<{ id: number; amount: Money; paymentDate: Date | string; reversalOfId?: number | null; reversedAt?: Date | string | null }>;
 };
 type Worker = { id: number; name: string; payrollProfile?: { id: number } | null };
@@ -32,7 +32,7 @@ export function buildOrderSettlement(order: SettlementSource) {
     const rows = accruals.map((row) => {
       const paid = (row.payments ?? []).filter((payment) => !payment.reversalOfId && !payment.reversedAt).reduce((sum, payment) => sum + Number(payment.amount), 0);
       const amount = Number(row.amount), remaining = Math.max(amount - paid, 0);
-      return { id: row.id, periodId: row.periodId, employeeId: row.employee.id, userId: row.employee.userId, employeeName: row.employee.user.name, type: row.type, amount, paid, remaining, status: status(paid, amount), measurementId: row.measurementId ?? null, createdAt: row.createdAt };
+      return { id: row.id, periodId: row.periodId, employeeId: row.employee.id, userId: row.employee.userId, employeeName: row.employee.user?.name ?? row.employee.name, type: row.type, amount, paid, remaining, status: status(paid, amount), measurementId: row.measurementId ?? null, createdAt: row.createdAt };
     });
     const accrued = rows.reduce((sum, row) => sum + row.amount, 0), paid = rows.reduce((sum, row) => sum + row.paid, 0);
     return {

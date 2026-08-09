@@ -112,12 +112,20 @@ export async function upsertPayrollProfile(
       where: { userId: input.userId },
       create: {
         userId: input.userId,
+        name: user.name,
+        position: user.role,
+        phone: user.phone,
+        email: user.email,
         hiredAt: input.hiredAt,
         baseSalary: salary,
         defaultGuaranteedBonus: guaranteed,
         comment: input.comment,
       },
       update: {
+        name: user.name,
+        position: user.role,
+        phone: user.phone,
+        email: user.email,
         payrollEnabled: true,
         active: true,
         defaultGuaranteedBonus: guaranteed,
@@ -405,6 +413,9 @@ async function createPaymentTx(
     return existing;
   }
   await openPeriod(tx, input.periodId);
+  const employee = await tx.employeePayrollProfile.findUnique({ where: { id: input.employeeId } });
+  if (!employee?.payrollEnabled || !employee.active)
+    throw new PayrollError("EMPLOYEE_NOT_FOUND");
   if (input.relatedAccrualId) {
     const accrual = await tx.payrollAccrual.findFirst({
       where: {
@@ -893,7 +904,6 @@ export async function payrollSummary(
       ...(employeeId ? { id: employeeId } : {}),
       payrollEnabled: true,
       active: true,
-      user: { active: true },
     },
     include: {
       user: { select: { id: true, name: true, role: true, active: true } },
@@ -903,7 +913,7 @@ export async function payrollSummary(
       paymentConfirmations: { where: { periodId }, orderBy: { createdAt: "desc" } },
       advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
     },
-    orderBy: { user: { name: "asc" } },
+    orderBy: { name: "asc" },
   }), prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: { paydayDayOfMonth: true } })]);
   const rows = employees.map((employee) => {
     const accrued = employee.accruals.reduce(
@@ -954,8 +964,13 @@ export async function payrollSummary(
           status: payable <= 0 ? "PAID" : bonusPaid > 0 ? "PARTIALLY_PAID" : "ACCRUED",
         };
       });
+    const identity = employee.user
+      ? employee.user
+      : { id: 0, name: employee.name || "Сотрудник", role: employee.position || "EMPLOYEE", active: false };
     return {
       ...employee,
+      user: identity,
+      hasOrdaAccess: Boolean(employee.userId),
       currentSalary: Number(activeRate?.amount ?? employee.baseSalary),
       salaryEffectiveFrom: activeRate?.effectiveFrom ?? employee.hiredAt,
       breakdown: {

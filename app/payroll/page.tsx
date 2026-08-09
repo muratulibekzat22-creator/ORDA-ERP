@@ -62,7 +62,9 @@ type Advance = {
 };
 type PayrollRow = {
   id: number;
-  userId: number;
+  userId: number | null;
+  position: string;
+  hasOrdaAccess: boolean;
   baseSalary: string;
   defaultGuaranteedBonus: string;
   user: { id: number; name: string; role: string; active: boolean };
@@ -93,7 +95,7 @@ type Payload = {
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
-  "salary" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "reversal";
+  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "reversal";
 type Form = {
   amount: string;
   reason: string;
@@ -161,6 +163,8 @@ const currency = (value: number | string) =>
   `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`;
 const dateLabel = (value: string) =>
   new Date(value).toLocaleDateString("ru-RU");
+const employeePosition = (row: PayrollRow) =>
+  row.position || roleNames[row.user.role] || row.user.role || "Сотрудник";
 const errorLabels: Record<string, string> = {
   FORBIDDEN: "Недостаточно прав для этой операции",
   PERIOD_CLOSED: "Закрытый месяц нельзя изменять",
@@ -270,9 +274,12 @@ export default function PayrollPage() {
     return true;
   };
   const openOperation = (next: Operation, row?: PayrollRow) => {
+    const employee = row ?? details ?? data.rows[0] ?? null;
     setOperation(next);
-    setTarget(row ?? details ?? data.rows[0] ?? null);
-    setForm(emptyForm());
+    setTarget(employee);
+    setForm(next === "salaryAccrual" && employee
+      ? { ...emptyForm(), amount: String(employee.currentSalary), reason: "Оклад за расчётный период" }
+      : emptyForm());
   };
   const submitOperation = async () => {
     if (!target || !operation || !data.period) return;
@@ -321,14 +328,18 @@ export default function PayrollPage() {
         reason:
           form.reason ||
           labels[
-            operation === "premium"
+            operation === "salaryAccrual"
+              ? "BASE_SALARY"
+              : operation === "premium"
               ? "PREMIUM"
               : operation === "deduction"
                 ? "DEDUCTION"
                 : "EXTRA_BONUS"
           ],
         type:
-          operation === "premium"
+          operation === "salaryAccrual"
+            ? "BASE_SALARY"
+            : operation === "premium"
             ? "PREMIUM"
             : operation === "deduction"
               ? "DEDUCTION"
@@ -739,6 +750,7 @@ export default function PayrollPage() {
                         "Должность",
                         "Оклад",
                         "Бонусы",
+                        "Премии",
                         "Аванс",
                         "Начислено",
                         "Подтверждено выплат",
@@ -773,7 +785,7 @@ export default function PayrollPage() {
                       <div>
                         <b>{row.user.name}</b>
                         <p className="text-sm text-slate-400">
-                          {roleNames[row.user.role] ?? row.user.role}
+                          {employeePosition(row)}
                         </p>
                       </div>
                       <Status
@@ -808,6 +820,7 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
+          accountant={accountant}
           closed={locked}
           onClose={() => setDetails(null)}
           onOperation={openOperation}
@@ -844,9 +857,11 @@ function PayrollTableRow({
             "GUARANTEED_ORDER_BONUS",
             "ORDER_BONUS",
             "EXTRA_BONUS",
-            "PREMIUM",
           ].includes(x.type) && x.direction === "INCREASE",
       )
+      .reduce((s, x) => s + Number(x.amount), 0),
+    premiums = row.accruals
+      .filter((x) => x.type === "PREMIUM" && x.direction === "INCREASE")
       .reduce((s, x) => s + Number(x.amount), 0),
     advances = row.payments
       .filter((x) => x.type === "ADVANCE")
@@ -860,10 +875,11 @@ function PayrollTableRow({
     >
       <td className="px-4 py-4 font-semibold">{row.user.name}</td>
       <td className="px-4 py-4 text-slate-400">
-        {roleNames[row.user.role] ?? row.user.role}
+        {employeePosition(row)}
       </td>
       <td className="px-4 py-4">{currency(row.currentSalary)}</td>
       <td className="px-4 py-4">{currency(bonuses)}</td>
+      <td className="px-4 py-4">{currency(premiums)}</td>
       <td className="px-4 py-4">{currency(advances)}</td>
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
       <td className="px-4 py-4 text-emerald-300">
@@ -934,6 +950,7 @@ function Action({ label, onClick }: { label: string; onClick: () => void }) {
 function EmployeeDrawer({
   row,
   director,
+  accountant,
   closed,
   onClose,
   onOperation,
@@ -943,6 +960,7 @@ function EmployeeDrawer({
 }: {
   row: PayrollRow;
   director: boolean;
+  accountant: boolean;
   closed: boolean;
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
@@ -996,7 +1014,7 @@ function EmployeeDrawer({
             <div>
               <h2 className="text-xl font-bold">{row.user.name}</h2>
               <p className="text-sm text-slate-400">
-                {roleNames[row.user.role] ?? row.user.role} · Оклад{" "}
+                {employeePosition(row)} · Оклад{" "}
                  {currency(row.currentSalary)} · действует с {dateLabel(row.salaryEffectiveFrom)}
               </p>
               <p className="text-sm text-slate-400">Гарантированный бонус: {currency(row.defaultGuaranteedBonus)}</p>
@@ -1054,14 +1072,18 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {director && !closed && (
+        {(director || accountant) && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <>
+              {director && <>
                   <Action
                     label="Изменить оклад"
                     onClick={() => onOperation("salary", row)}
+                  />
+                  <Action
+                    label="Начислить оклад"
+                    onClick={() => onOperation("salaryAccrual", row)}
                   />
                   <Action
                     label="Гарантированный бонус"
@@ -1083,9 +1105,9 @@ function EmployeeDrawer({
                     label="Сторно"
                     onClick={() => onOperation("reversal", row)}
                   />
-              </>
+              </>}
               <Action
-                label="Выплата"
+                label="Добавить выплату / аванс"
                 onClick={() => onOperation("payment", row)}
               />
             </div>
@@ -1267,6 +1289,7 @@ function OperationModal({
 }) {
   const titles: Record<Operation, string> = {
       salary: "Назначить новый оклад",
+      salaryAccrual: "Начислить оклад за период",
       allowance: "Изменить гарантированный бонус",
       bonus: "Добавить бонус",
       premium: "Назначить премию",

@@ -130,7 +130,7 @@ export type EmployeeSettlement = {
     id: number;
     periodId: number;
     employeeId: number;
-    userId: number;
+    userId: number | null;
     employeeName: string;
     type: string;
     amount: number;
