@@ -84,7 +84,7 @@ async function salesProjection(scope: DashboardScope) {
     scope.role === Role.DIRECTOR
       ? prisma.order.findMany({
           where: { lifecycle: { not: OrderLifecycle.CANCELLED } },
-          select: { balance: true, partnerBalance: true, partnerAgreedAt: true },
+          select: { balance: true, partnerId: true, partnerBalance: true, partnerAgreedAt: true },
         })
       : Promise.resolve([]),
     prisma.measurement.count({
@@ -172,6 +172,7 @@ async function salesProjection(scope: DashboardScope) {
       receivedPrepayment: totals.received,
       balanceToReceive: scope.role === Role.DIRECTOR ? activeBalances.client : Math.max(totals.balance, 0),
       partnerBalancePayable: scope.role === Role.DIRECTOR ? activeBalances.partner : undefined,
+      ordersWithoutPartner: scope.role === Role.DIRECTOR ? activeFinanceOrders.filter((order) => !order.partnerId).length : undefined,
       payrollBalancePayable: scope.role === Role.DIRECTOR ? payrollPayable : undefined,
       conversion: percent(convertedLeads, periodLeads.length),
       activeOrders: workOrders.length,

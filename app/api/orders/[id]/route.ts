@@ -22,9 +22,11 @@ type Context = { params: Promise<{ id: string }> };
 const include = {
   client: true,
   partner: true,
-  measurements: true,
+  managerUser: { include: { payrollProfile: { select: { id: true } } } },
+  measurements: { include: { measurerUser: { include: { payrollProfile: { select: { id: true } } } } } },
   payments: { include: { partner: true }, orderBy: [{ operationDate: "desc" as const }, { id: "desc" as const }] },
   partnerAssignmentHistory: { include: { author: { select: { name: true } } }, orderBy: { createdAt: "desc" as const } },
+  payrollAccruals: { include: { employee: { include: { user: { select: { name: true } } } }, payments: true, reversedBy: { select: { id: true } } }, orderBy: { createdAt: "desc" as const } },
   productions: true,
   documents: true,
   calculations: { orderBy: { createdAt: "desc" as const } },
@@ -67,6 +69,8 @@ function redactForRole<T extends Record<string, unknown>>(
     delete result.payments;
     delete result.partnerAssignmentHistory;
     delete result.calculations;
+    delete result.payrollAccruals;
+    delete result.managerUser;
     if (result.settlement && typeof result.settlement === "object") {
       const settlement = result.settlement as Record<string, unknown>;
       delete settlement.client;
@@ -88,7 +92,19 @@ function redactForRole<T extends Record<string, unknown>>(
     delete result[field];
   delete result.payments;
   delete result.partnerAssignmentHistory;
-  if (result.settlement && typeof result.settlement === "object") delete (result.settlement as Record<string, unknown>).partner;
+  delete result.payrollAccruals;
+  delete result.managerUser;
+  if (Array.isArray(result.measurements)) result.measurements = result.measurements.map((value) => {
+    const measurement = { ...(value as Record<string, unknown>) };
+    delete measurement.measurerUser;
+    return measurement;
+  });
+  if (result.settlement && typeof result.settlement === "object") {
+    const settlement = result.settlement as Record<string, unknown>;
+    delete settlement.partner;
+    delete settlement.manager;
+    delete settlement.measurer;
+  }
   if (role === Role.PRODUCTION || role === Role.INSTALLER || role === Role.MEASURER) {
     delete result.amount;
     delete result.prepayment;
@@ -201,11 +217,15 @@ export async function PATCH(request: Request, { params }: Context) {
         );
       const partnerId = Number(body.partnerId),
         partnerPrice = Number(body.partnerPrice);
+      const partnerAgreedAt = body.partnerAgreedAt ? new Date(String(body.partnerAgreedAt)) : new Date();
+      const partnerReason = text(body.reason, 1000);
       if (
         !Number.isInteger(partnerId) ||
         partnerId <= 0 ||
         !Number.isFinite(partnerPrice) ||
-        partnerPrice < 0
+        partnerPrice < 0 ||
+        Number.isNaN(partnerAgreedAt.getTime()) ||
+        !partnerReason
       )
         return NextResponse.json(
           { error: "Некорректные данные цеха" },
@@ -215,9 +235,10 @@ export async function PATCH(request: Request, { params }: Context) {
         orderId: id,
         partnerId,
         partnerPrice,
+        partnerAgreedAt,
         manager: auth.session!.user.name ?? undefined,
         authorId: Number(auth.session!.user.id),
-        reason: text(body.reason, 1000) ?? "Назначение производственного партнёра",
+        reason: partnerReason,
         directorConfirmed: role === Role.DIRECTOR && body.directorConfirmed === true,
       });
       return updated

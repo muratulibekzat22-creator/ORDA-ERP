@@ -27,6 +27,8 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
       version: true,
       status: true,
       productionDeadline: true,
+      promisedAt: true,
+      partnerPlannedReadyAt: true,
       completedAt: true,
       createdAt: true,
       updatedAt: true,
@@ -61,9 +63,11 @@ export async function getOrder(id: number) {
     include: {
       client: true,
       partner: true,
-      measurements: true,
+      managerUser: { include: { payrollProfile: { select: { id: true } } } },
+      measurements: { include: { measurerUser: { include: { payrollProfile: { select: { id: true } } } } } },
       payments: { include: { partner: true }, orderBy: [{ operationDate: "desc" }, { id: "desc" }] },
       partnerAssignmentHistory: { include: { author: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
+      payrollAccruals: { include: { employee: { include: { user: { select: { name: true } } } }, payments: true, reversedBy: { select: { id: true } } }, orderBy: { createdAt: "desc" } },
       productions: true,
       documents: true,
       calculations: {

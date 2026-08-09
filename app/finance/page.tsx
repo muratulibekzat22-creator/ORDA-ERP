@@ -25,7 +25,7 @@ type Operation = {
   employee: string | null;
 };
 type Data = {
-  rows: { id: number; number: string; client: string }[];
+  rows: Array<{ id: number; number: string; client: string; amount: number; balance: number; partner: string; partnerPrice: number | null; partnerPaid: number; partnerBalance: number; managerBonusPayable: number; measurerBonusPayable: number }>;
   partners: { id: number; name: string }[];
   operations: Operation[];
   operationTotals: { income: number; expense: number; net: number };
@@ -460,10 +460,10 @@ export default function FinancePage() {
         <div className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
           <h2 className="font-semibold text-white">Требуют внимания</h2>
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <AlertMetric label="Без партнёра" value={data.alerts.withoutPartner} />
-            <AlertMetric label="Без цены партнёра" value={data.alerts.withoutPartnerPrice} />
-            <AlertMetric label="Просрочено клиентом" value={data.alerts.overdueCustomer} />
-            <AlertMetric label="Просрочено партнёру" value={data.alerts.overduePartner} />
+            <AlertMetric href="/orders?settlement=without-partner" label="Без партнёра" value={data.alerts.withoutPartner} />
+            <AlertMetric href="/orders?settlement=without-partner-price" label="Без цены партнёра" value={data.alerts.withoutPartnerPrice} />
+            <AlertMetric href="/orders?settlement=overdue-client" label="Просрочено клиентом" value={data.alerts.overdueCustomer} />
+            <AlertMetric href="/orders?settlement=overdue-partner" label="Просрочено партнёру" value={data.alerts.overduePartner} />
           </div>
         </div>
       </section>
@@ -477,6 +477,10 @@ export default function FinancePage() {
         {data.partnerBreakdown.length > 0 && <div className="mt-4 grid gap-2">
           {data.partnerBreakdown.map((item) => <Link key={item.partnerId} href={`/partners/${item.partnerId}`} className="grid min-w-0 gap-2 rounded-xl bg-slate-900 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] sm:items-center"><b className="truncate text-white">{item.partner}</b><span>{item.orders} зак.</span><span>{money(item.agreed)}</span><span className="text-emerald-300">{money(item.paid)}</span><span className="text-amber-300">{money(item.remaining)}</span></Link>)}
         </div>}
+      </section>
+      <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold text-white">Расчёты по заказам</h2><p className="mt-1 text-sm text-slate-400">Остатки клиента, цеха и бонусов сотрудников в одном read model.</p></div></div>
+        {data.rows.length ? <><div className="mt-4 grid gap-3 md:hidden">{data.rows.map((row) => <Link key={row.id} href={`/orders/${row.id}#settlements`} className="rounded-xl bg-slate-900 p-4"><div className="flex justify-between gap-2"><b className="text-white">{row.number}</b><span className="text-slate-300">{row.client}</span></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400"><span>Остаток клиента<br/><b className="text-amber-300">{money(row.balance)}</b></span><span>Остаток цеха<br/><b className="text-orange-300">{money(row.partnerBalance)}</b></span><span>Бонус менеджера<br/><b className="text-violet-300">{money(row.managerBonusPayable)}</b></span><span>Бонус замерщика<br/><b className="text-cyan-300">{money(row.measurerBonusPayable)}</b></span></div></Link>)}</div><div className="mt-4 hidden overflow-x-auto md:block"><table className="w-full min-w-[1000px] text-sm"><thead className="text-left text-slate-400"><tr>{["Заказ", "Клиент", "Сумма", "Остаток клиента", "Цех", "Стоимость цеха", "Остаток цеха", "Менеджеру", "Замерщику"].map((title) => <th key={title} className="px-3 py-2">{title}</th>)}</tr></thead><tbody>{data.rows.map((row) => <tr key={row.id} className="border-t border-slate-800"><td className="px-3 py-3"><Link href={`/orders/${row.id}#settlements`} className="font-semibold text-blue-300">{row.number}</Link></td><td className="px-3 py-3">{row.client}</td><td className="px-3 py-3">{money(row.amount)}</td><td className="px-3 py-3 text-amber-300">{money(row.balance)}</td><td className="px-3 py-3">{row.partner}</td><td className="px-3 py-3">{row.partnerPrice == null ? "—" : money(row.partnerPrice)}</td><td className="px-3 py-3 text-orange-300">{money(row.partnerBalance)}</td><td className="px-3 py-3 text-violet-300">{money(row.managerBonusPayable)}</td><td className="px-3 py-3 text-cyan-300">{money(row.measurerBonusPayable)}</td></tr>)}</tbody></table></div></> : <p className="mt-4 text-sm text-slate-500">Заказов за выбранный срез нет.</p>}
       </section>
       <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2 xl:grid-cols-4">
         <Field label="Движение">
@@ -676,8 +680,8 @@ function Metric({
     </div>
   );
 }
-function AlertMetric({ label, value }: { label: string; value: number }) {
-  return <div className="min-w-0 rounded-xl bg-slate-900 p-3"><p className="text-slate-400">{label}</p><p className={`mt-1 text-xl font-bold ${value > 0 ? "text-amber-300" : "text-emerald-300"}`}>{value}</p></div>;
+function AlertMetric({ label, value, href }: { label: string; value: number; href: string }) {
+  return <Link href={href} className="min-w-0 rounded-xl bg-slate-900 p-3 transition hover:ring-1 hover:ring-blue-500"><p className="text-slate-400">{label}</p><p className={`mt-1 text-xl font-bold ${value > 0 ? "text-amber-300" : "text-emerald-300"}`}>{value}</p></Link>;
 }
 function Skeleton() {
   return (

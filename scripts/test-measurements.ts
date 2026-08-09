@@ -1,10 +1,10 @@
 import "./require-test-database";
 
 import assert from "node:assert/strict";
-import { MeasurementPhotoType, PayrollAccrualType, Role } from "@prisma/client";
+import { MeasurementPhotoType, PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
 import { parseBusinessDateTime } from "@/lib/calendar-time";
 import { prisma } from "@/lib/prisma";
-import { payrollSummary } from "@/lib/services/payroll.service";
+import { createPayment, payrollSummary } from "@/lib/services/payroll.service";
 import {
   completeMeasurement,
   ensureMeasurerBonusForOrder,
@@ -55,7 +55,11 @@ async function cleanupStaleRuns() {
   const profileIds = profiles.map((row) => row.id);
   const accruals = await prisma.payrollAccrual.findMany({ where: { OR: [{ measurementId: { in: measurementIds } }, { orderId: { in: orderIds } }, { employeeId: { in: profileIds } }] }, select: { id: true } });
   const accrualIds = accruals.map((row) => row.id);
-  if (accrualIds.length) { await prisma.companyLedgerEntry.deleteMany({ where: { payrollAccrualId: { in: accrualIds } } }); await prisma.payrollAccrual.deleteMany({ where: { id: { in: accrualIds } } }); }
+  const payments = await prisma.payrollPayment.findMany({ where: { employeeId: { in: profileIds } }, select: { id: true } });
+  const paymentIds = payments.map((row) => row.id);
+  if (accrualIds.length || paymentIds.length) await prisma.companyLedgerEntry.deleteMany({ where: { OR: [{ payrollAccrualId: { in: accrualIds.length ? accrualIds : [-1] } }, { payrollPaymentId: { in: paymentIds.length ? paymentIds : [-1] } }] } });
+  if (paymentIds.length) await prisma.payrollPayment.deleteMany({ where: { id: { in: paymentIds } } });
+  if (accrualIds.length) await prisma.payrollAccrual.deleteMany({ where: { id: { in: accrualIds } } });
   if (profileIds.length) { await prisma.payrollAuditEvent.deleteMany({ where: { employeeId: { in: profileIds } } }); await prisma.employeeSalaryRate.deleteMany({ where: { employeeId: { in: profileIds } } }); }
   if (measurementIds.length) { await prisma.measurementAudit.deleteMany({ where: { measurementId: { in: measurementIds } } }); await prisma.measurementAttachment.deleteMany({ where: { measurementId: { in: measurementIds } } }); await prisma.measurement.deleteMany({ where: { id: { in: measurementIds } } }); }
   const tasks = await prisma.calendarTask.findMany({ where: { OR: [{ clientId: { in: clientIds } }, { creatorId: { in: userIds } }, { assigneeId: { in: userIds } }] }, select: { id: true } });
@@ -72,8 +76,11 @@ async function cleanup() {
   const measurementIds = ids.measurements;
   const accruals = await prisma.payrollAccrual.findMany({ where: { measurementId: { in: measurementIds } }, select: { id: true } }).catch(() => []);
   const accrualIds = accruals.map((row) => row.id);
+  const payments = ids.profiles.length ? await prisma.payrollPayment.findMany({ where: { employeeId: { in: ids.profiles } }, select: { id: true } }) : [];
+  const paymentIds = payments.map((row) => row.id);
   if (accrualIds.length) {
-    await prisma.companyLedgerEntry.deleteMany({ where: { payrollAccrualId: { in: accrualIds } } });
+    await prisma.companyLedgerEntry.deleteMany({ where: { OR: [{ payrollAccrualId: { in: accrualIds } }, { payrollPaymentId: { in: paymentIds.length ? paymentIds : [-1] } }] } });
+    if (paymentIds.length) await prisma.payrollPayment.deleteMany({ where: { id: { in: paymentIds } } });
     await prisma.payrollAccrual.deleteMany({ where: { id: { in: accrualIds } } });
   }
   if (ids.profiles.length) await prisma.payrollAuditEvent.deleteMany({ where: { employeeId: { in: ids.profiles } } });
@@ -109,12 +116,14 @@ async function main() {
     const otherManager = await prisma.user.create({ data: { name: `${tag}-other-manager`, email: `${tag}-other-manager@test.local`, password: "test", role: Role.MANAGER } });
     const measurerA = await prisma.user.create({ data: { name: `${tag}-a`, email: `${tag}-a@test.local`, password: "test", role: Role.MEASURER } });
     const measurerB = await prisma.user.create({ data: { name: `${tag}-b`, email: `${tag}-b@test.local`, password: "test", role: Role.MEASURER } });
-    ids.users.push(manager.id, otherManager.id, measurerA.id, measurerB.id);
+    const accountant = await prisma.user.create({ data: { name: `${tag}-accountant`, email: `${tag}-accountant@test.local`, password: "test", role: Role.ACCOUNTANT } });
+    ids.users.push(manager.id, otherManager.id, measurerA.id, measurerB.id, accountant.id);
     console.log("measurement test: actors created");
     const managerActor: MeasurementActor = { userId: manager.id, role: Role.MANAGER, name: manager.name };
     const otherManagerActor: MeasurementActor = { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name };
     const actorA: MeasurementActor = { userId: measurerA.id, role: Role.MEASURER, name: measurerA.name };
     const actorB: MeasurementActor = { userId: measurerB.id, role: Role.MEASURER, name: measurerB.name };
+    const accountantActor = { userId: accountant.id, role: Role.ACCOUNTANT, name: accountant.name };
     const client = await prisma.client.create({ data: { name: `${tag}-client`, phone: "+77010000001", whatsapp: "+77010000001", city: "Алматы", address: "ул. Абая, 10", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
     const noOrderClient = await prisma.client.create({ data: { name: `${tag}-no-order`, phone: "+77010000002", city: "Алматы", address: "ул. Толе би, 20", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
     ids.clients.push(client.id, noOrderClient.id);
@@ -209,10 +218,15 @@ async function main() {
     const profileB = await prisma.employeePayrollProfile.create({ data: { userId: measurerB.id, hiredAt: new Date(), baseSalary: 0, defaultGuaranteedBonus: 0 } });
     ids.profiles.push(profileA.id, profileB.id);
     const period = await prisma.payrollPeriod.findFirstOrThrow({ where: { accruals: { some: { id: bonuses[0].id } } } });
+    await createPayment({ employeeId: profileA.id, periodId: period.id, amount: 10_000, type: PayrollPaymentType.ORDER_BONUS_PAYMENT, paymentDate: new Date(), relatedAccrualId: bonuses[0].id, key: `${tag}-measurer-bonus-partial`, requestHash: "measurer-bonus-partial" }, accountantActor);
+    const partialBonus = await payrollSummary(period.id, actorA);
+    assert.equal(partialBonus.rows[0].bonusAccruals.find((row) => row.id === bonuses[0].id)?.status, "PARTIALLY_PAID", "Measurer bonus partial payment status");
+    await createPayment({ employeeId: profileA.id, periodId: period.id, amount: 10_000, type: PayrollPaymentType.ORDER_BONUS_PAYMENT, paymentDate: new Date(), relatedAccrualId: bonuses[0].id, key: `${tag}-measurer-bonus-paid`, requestHash: "measurer-bonus-paid" }, accountantActor);
     const self = await payrollSummary(period.id, actorA, profileB.id);
     console.log("measurement test: self payroll scope verified");
     assert.deepEqual(self.rows.map((row) => row.userId), [measurerA.id], "Self payroll ignores spoofed employeeId");
     assert.equal(self.rows[0].accruals.some((row) => row.type === PayrollAccrualType.MEASUREMENT_BONUS), true);
+    assert.equal(self.rows[0].bonusAccruals.find((row) => row.id === bonuses[0].id)?.status, "PAID", "Measurer bonus paid status");
 
     const auditActions = await prisma.measurementAudit.findMany({ where: { measurementId: scheduled.measurement.id }, select: { action: true } });
     for (const action of ["SCHEDULED", "COMPLETED", "HANDED_TO_MANAGER", "READY_FOR_CONTRACT", "OFFICE_INVITATION", "BONUS_ACCRUED"]) assert.ok(auditActions.some((row) => row.action === action), `missing audit ${action}`);

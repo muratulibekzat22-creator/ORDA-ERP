@@ -50,11 +50,16 @@ export async function GET(request: Request) {
         },
       },
     });
+    const settings = await prisma.systemSettings.upsert({
+      where: { id: 1 }, create: { id: 1 }, update: {}, select: { paydayDayOfMonth: true },
+    });
     if (!period)
       return NextResponse.json({
         period: null,
         rows: [],
         totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
+        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+        settings,
       });
     return NextResponse.json({
       period,

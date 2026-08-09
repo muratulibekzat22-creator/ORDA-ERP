@@ -1,4 +1,5 @@
 import "./require-test-database";
+import { readFileSync } from "node:fs";
 import { calculateStair, DELIVERY_CHARGES, STAIR_RATES } from "@/lib/calculator/stair-calculation";
 import { normalizePhone } from "@/lib/leads/domain";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
@@ -9,6 +10,11 @@ if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.T
 const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
 
 async function main() {
+  const proposalApi = readFileSync("app/api/clients/[id]/proposals/route.ts", "utf8");
+  const proposalUi = readFileSync("components/clients/LeadProposalWorkspace.tsx", "utf8");
+  for (const contract of ["3 * 86400000", "productionLeadDays", "warrantyMonths", "Сосна", "Карагач", "Дуб ламель", "[\"Сосна\", 6]", "[\"Карагач\", 12]", "[\"Дуб ламель\", 60]"])
+    assert(proposalApi.includes(contract), `proposal validity/settings contract is missing ${contract}`);
+  assert(proposalUi.includes("Срок действия истёк") && proposalUi.includes("Действительно до"), "proposal expiry state is missing");
   assert(normalizePhone("8 777 123-45-67") === "+77771234567", "Kazakhstan phone normalization failed");
   assert(normalizePhone("7771234567") === "+77771234567", "ten digit phone normalization failed");
   assert(normalizePhone("123") === "", "invalid phone accepted");
@@ -35,7 +41,7 @@ async function main() {
   for (const secret of ["purchaseCost", "margin", "internalCoefficient", "unitCost", "grossProfit"]) assert(!publicValue.includes(secret), `public DTO leaks ${secret}`);
   const sequenceValues = await Promise.all(Array.from({ length: 50 }, () => prisma.$queryRaw<Array<{ value: bigint }>>`SELECT nextval('commercial_proposal_number_seq') AS value`));
   assert(new Set(sequenceValues.map((row) => row[0].value.toString())).size === 50, "proposal sequence is not concurrency safe");
-  const pdf = await buildProposalPdf({ number: "100000", createdAt: new Date().toISOString(), validUntil: new Date(Date.now() + 86400000).toISOString(), company: { name: "ALTYN SAPA COMPANY", phone: "+77085750881" }, client: { phone: "+77771234567", city: "Алматы" }, variants: [{ material: "Сосна", total: 100000, composition: [], includedServices: { measurement: false, delivery: false, installation: false } }], purchaseCost: 1, margin: 1 });
+  const pdf = await buildProposalPdf({ number: "100000", createdAt: new Date().toISOString(), validUntil: new Date(Date.now() + 3 * 86400000).toISOString(), introduction: "Предлагаем изготовление лестницы по индивидуальным размерам объекта.", company: { name: "ALTYN SAPA COMPANY", phone: "+77085750881" }, client: { phone: "+77771234567", city: "Алматы" }, variants: [{ material: "Сосна", total: 100000, composition: [], executionTerm: "40–50 календарных дней", warranty: "12 месяцев", includedServices: { measurement: false, delivery: false, installation: false } }], purchaseCost: 1, margin: 1 });
   assert(pdf.subarray(0, 5).toString("ascii") === "%PDF-" && pdf.length > 5_000, "real PDF was not generated");
   assert(!pdf.toString("utf8").includes("purchaseCost") && !pdf.toString("utf8").includes("margin"), "PDF leaks internal fields");
   console.log("proposal pipeline phone, flags, redaction, sequence and PDF checks passed");

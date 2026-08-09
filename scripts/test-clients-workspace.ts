@@ -16,6 +16,8 @@ const managersApi = read("app/api/client-managers/route.ts");
 const measurementPanel = read("components/measurements/LeadMeasurementPanel.tsx");
 const measurementWorkspace = read("components/measurements/MeasurementWorkspace.tsx");
 const measurementsApi = read("app/api/measurements/route.ts");
+const forceDeleteApi = read("app/api/clients/[id]/force-delete/route.ts");
+const forceDeleteService = read("lib/services/client-force-delete.service.ts");
 
 for (const contract of ["deliveryOption", "OPTION_1", "OPTION_2", "deliveryCharge"])
   if (!modal.includes(contract)) throw new Error(`Missing inline delivery contract: ${contract}`);
@@ -120,4 +122,11 @@ for (const marker of ["+ Назначить замер", "выбран авто�
   if (!measurementPanel.includes(marker) && !measurementWorkspace.includes(marker)) throw new Error(`Manager measurement UI misses ${marker}`);
 if (!measurementsApi.includes("role: Role.MEASURER, active: true")) throw new Error("Measurement selector must only use active MEASURER users");
 if (!card.includes("#measurement-scheduling")) throw new Error("Client card must expose measurement scheduling action");
+for (const marker of ["Удалить навсегда", "УДАЛИТЬ", "Причина"])
+  if (!card.includes(marker)) throw new Error(`Director force-delete UI misses ${marker}`);
+for (const marker of ["previewClientForceDelete", "forceDeleteClient"])
+  if (!forceDeleteApi.includes(marker)) throw new Error(`Force-delete API misses ${marker}`);
+if (!forceDeleteService.includes("Role.DIRECTOR")) throw new Error("Force-delete service is not Director-only");
+for (const blocker of ["PAYMENTS", "PARTNER_PAYOUTS", "PAYROLL_PAYMENTS", "FINANCE_LEDGER"])
+  if (!forceDeleteService.includes(blocker)) throw new Error(`Force-delete financial blocker misses ${blocker}`);
 console.log("clients workspace checks passed");

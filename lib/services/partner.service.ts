@@ -147,7 +147,7 @@ export async function payPartner(data: { orderId: number; amount: number; method
   return result?.payment ?? null;
 }
 
-export async function assignPartnerToOrder(data: { orderId: number; partnerId: number; partnerPrice: number; manager?: string; authorId?: number; reason?: string; directorConfirmed?: boolean }) {
+export async function assignPartnerToOrder(data: { orderId: number; partnerId: number; partnerPrice: number; partnerAgreedAt?: Date; manager?: string; authorId?: number; reason?: string; directorConfirmed?: boolean }) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
     const order = await tx.order.findUnique({ where: { id: data.orderId } });
@@ -157,15 +157,17 @@ export async function assignPartnerToOrder(data: { orderId: number; partnerId: n
     const newPartnerPayouts = await tx.payment.aggregate({ where: { orderId: order.id, partnerId: partner.id, type: "PARTNER_PAYOUT" }, _sum: { amount: true } });
     const previousPaid = Number(previousPayouts._sum.amount ?? 0), paid = Number(newPartnerPayouts._sum.amount ?? 0);
     const samePartner = order.partnerId === partner.id;
-    if (samePartner && order.partnerAgreedAt && Number(order.partnerPrice) === data.partnerPrice) return order;
+    const agreedAt = data.partnerAgreedAt ?? new Date();
+    if (Number.isNaN(agreedAt.getTime())) throw new Error("INVALID_PARTNER_AGREEMENT_DATE");
+    if (samePartner && order.partnerAgreedAt && Number(order.partnerPrice) === data.partnerPrice && order.partnerAgreedAt.getTime() === agreedAt.getTime()) return order;
     if (order.partnerId !== null && order.partnerId !== partner.id && previousPayouts._count > 0 && !data.directorConfirmed) throw new Error("DIRECTOR_CONFIRMATION_REQUIRED");
     const reason = data.reason?.trim() || "Partner assignment";
     if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
     const companyProfit = Number(order.amount) - data.partnerPrice;
-    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerAgreedAt: new Date(), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit) } });
+    const updated = await tx.order.update({ where: { id: order.id }, data: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerAgreedAt: agreedAt, partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid), companyProfit: String(companyProfit) } });
     if (data.authorId) {
       await tx.partnerAssignmentHistory.create({ data: { orderId: order.id, previousPartnerId: order.partnerId, newPartnerId: partner.id, previousPayable: order.partnerPrice, newPayable: String(data.partnerPrice), paidAtChange: String(previousPaid), remainingAtChange: String(Math.max(Number(order.partnerPrice) - previousPaid, 0)), reason, authorId: data.authorId } });
-      await tx.financeAuditEvent.create({ data: { orderId: order.id, action: order.partnerId === null ? "PARTNER_ASSIGNED" : samePartner ? "PARTNER_AGREED_AMOUNT_CHANGED" : "PARTNER_REASSIGNED", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });
+      await tx.financeAuditEvent.create({ data: { orderId: order.id, action: order.partnerId === null ? "PARTNER_ASSIGNED" : samePartner ? "PARTNER_AGREED_AMOUNT_CHANGED" : "PARTNER_REASSIGNED", entityType: "Order", entityId: order.id, before: { partnerId: order.partnerId, partnerPrice: String(order.partnerPrice), partnerAgreedAt: order.partnerAgreedAt?.toISOString() ?? null, partnerPaid: String(order.partnerPaid), partnerBalance: String(order.partnerBalance) }, after: { partnerId: partner.id, partnerPrice: String(data.partnerPrice), partnerAgreedAt: agreedAt.toISOString(), partnerPaid: String(paid), partnerBalance: String(data.partnerPrice - paid) }, reason, authorId: data.authorId } });
     }
     const production = await tx.production.findFirst({ where: { orderId: order.id }, orderBy: { createdAt: "desc" } });
     if (production) await tx.production.update({ where: { id: production.id }, data: { stage: "Дерево" } });

@@ -344,6 +344,7 @@ export default function SettingsPage() {
                 ["measurerOrderBonus", "Бонус замерщику за оформленный заказ, ₸"],
                 ["productionLeadDays", "Срок производства, дней"],
                 ["installationLeadDays", "Срок монтажа, дней"],
+                ["paydayDayOfMonth", "День выплаты зарплаты (1–28)"],
                 ["nextDocumentNumber", "Следующий номер документа"],
               ].map(([key, label]) => (
                 <Input

@@ -60,6 +60,9 @@ export async function GET(request: Request) {
     const period = await prisma.payrollPeriod.findUnique({
       where: { year_month: { year, month } },
     });
+    const settings = await prisma.systemSettings.upsert({
+      where: { id: 1 }, create: { id: 1 }, update: {}, select: { paydayDayOfMonth: true },
+    });
     const identity = actor(auth.session!);
     const unconfigured = identity.role === Role.DIRECTOR
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
@@ -69,6 +72,8 @@ export async function GET(request: Request) {
         period: null,
         rows: [],
         totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
+        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+        settings,
         unconfigured,
       });
     return NextResponse.json({

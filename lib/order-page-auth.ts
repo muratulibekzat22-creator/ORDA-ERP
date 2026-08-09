@@ -51,12 +51,19 @@ export async function getAuthorizedOrder(id: number) {
 
   if (role === Role.PARTNER) return {
     ...order,
+    managerUser: undefined,
     amount: undefined,
     prepayment: undefined,
     balance: undefined,
     companyProfit: undefined,
     payments: [],
     partnerAssignmentHistory: [],
+    payrollAccruals: [],
+    measurements: order.measurements.map((measurement) => {
+      const safe = { ...measurement } as Partial<typeof measurement>;
+      delete safe.measurerUser;
+      return safe;
+    }),
     settlement: { partner: { ...order.settlement.partner, payouts: order.settlement.partner.payouts.filter((payment) => payment.partnerId === order.partnerId), assignments: [] } },
     calculations: [],
   } as unknown as typeof order;
@@ -66,6 +73,7 @@ export async function getAuthorizedOrder(id: number) {
   // manager's browser, even when the interface does not render them.
   return {
     ...order,
+    managerUser: undefined,
     partnerPrice: undefined,
     partnerAgreedAt: undefined,
     companyProfit: undefined,
@@ -73,6 +81,12 @@ export async function getAuthorizedOrder(id: number) {
     partnerBalance: undefined,
     payments: [],
     partnerAssignmentHistory: [],
+    payrollAccruals: [],
+    measurements: order.measurements.map((measurement) => {
+      const safe = { ...measurement } as Partial<typeof measurement>;
+      delete safe.measurerUser;
+      return safe;
+    }),
     settlement: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
       ? undefined
       : { client: order.settlement.client },

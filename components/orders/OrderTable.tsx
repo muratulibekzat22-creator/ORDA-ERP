@@ -4,7 +4,7 @@ import { ORDER_STAGE_LABELS, isOrderOverdue, orderDeadline, projectOrderStage } 
 export type OrderListItem = {
   id: number; number: string; lifecycle: string; amount?: string; prepayment?: string; balance?: string; manager: string;
   partnerPrice?: string; partnerAgreedAt?: string | null; partnerPaid?: string; partnerBalance?: string; companyProfit?: string;
-  productionDeadline?: string | null;
+  material: string; productionDeadline?: string | null; promisedAt?: string | null; partnerPlannedReadyAt?: string | null;
   client: { name: string; phone: string; city: string };
   partner?: { id: number; name: string } | null;
   productions: Array<{ stage: string; master: string; plannedEndAt?: string | null }>;

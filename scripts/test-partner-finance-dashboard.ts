@@ -2,6 +2,7 @@ import "./require-test-database";
 
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import { Role } from "@prisma/client";
 
 import { prisma } from "../lib/prisma";
@@ -21,6 +22,12 @@ const paid = [800_000, 400_000, 100_000, 50_000, 100_000, 200_000];
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
 async function main() {
+  const financeUi = readFileSync("app/finance/page.tsx", "utf8");
+  const financeService = readFileSync("lib/services/payment.service.ts", "utf8");
+  for (const field of ["Остаток клиента", "Остаток цеха", "Менеджеру", "Замерщику"])
+    assert(financeUi.includes(field), `Order settlements read model is missing ${field}`);
+  for (const field of ["managerBonusPayable", "measurerBonusPayable"])
+    assert(financeService.includes(field), `Finance aggregation is missing ${field}`);
   const ids = { users: [] as number[], clients: [] as number[], orders: [] as number[], partners: [] as number[] };
   try {
     const [director, manager] = await Promise.all([

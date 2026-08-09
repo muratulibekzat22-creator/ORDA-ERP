@@ -71,17 +71,25 @@ type PayrollRow = {
     amount: string;
     effectiveFrom: string;
     effectiveTo?: string | null;
+    comment?: string | null;
+    approvedBy?: { id: number; name: string };
   }>;
+  currentSalary: number;
+  salaryEffectiveFrom: string;
   accruals: Accrual[];
   payments: Payment[];
   paymentConfirmations: Confirmation[];
   advanceRequests: Advance[];
   totals: { accrued: number; paid: number; pending: number; payable: number };
+  breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
+  bonusAccruals: Array<{ id: number; orderId?: number | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
 };
 type Payload = {
   period: { id: number; year: number; month: number; status: string } | null;
   rows: PayrollRow[];
   totals: { accrued: number; paid: number; pending: number; payable: number };
+  breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
+  settings: { paydayDayOfMonth: number };
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
@@ -186,6 +194,8 @@ export default function PayrollPage() {
     period: null,
     rows: [],
     totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
+    breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+    settings: { paydayDayOfMonth: 1 },
   });
   const [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -293,6 +303,7 @@ export default function PayrollPage() {
         paymentDate: form.date,
         method: form.method,
         comment: form.reason,
+        relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
       };
     else if (operation === "reversal")
       body = {
@@ -460,37 +471,14 @@ export default function PayrollPage() {
     () => data.rows.flatMap((row) => row.paymentConfirmations.filter((item) => item.status === "PENDING").map((item) => ({ row, item }))),
     [data.rows],
   );
-  const bonusTotal = useMemo(
-    () =>
-      data.rows
-        .flatMap((row) => row.accruals)
-        .filter(
-          (item) =>
-            [
-              "GUARANTEED_ORDER_BONUS",
-              "ORDER_BONUS",
-              "EXTRA_BONUS",
-              "PREMIUM",
-            ].includes(item.type) && item.direction === "INCREASE",
-        )
-        .reduce((sum, item) => sum + Number(item.amount), 0),
-    [data.rows],
-  );
-  const advanceTotal = useMemo(
-    () =>
-      data.rows
-        .flatMap((row) => row.payments)
-        .filter((item) => item.type === "ADVANCE")
-        .reduce((sum, item) => sum + Number(item.amount), 0),
-    [data.rows],
-  );
   const stats: Array<[string, number, LucideIcon, string]> = [
-    ["Фонд начислений", data.totals.accrued, CircleDollarSign, "text-blue-300"],
-    ["Подтверждено выплат", data.totals.paid, Check, "text-emerald-300"],
-    ["Ожидает подтверждения", data.totals.pending, Clock3, "text-orange-300"],
-    ["К выплате", data.totals.payable, Banknote, "text-amber-300"],
-    ["Авансы", advanceTotal, Receipt, "text-violet-300"],
-    ["Бонусы", bonusTotal, Receipt, "text-cyan-300"],
+    ["Оклад начислено", data.breakdown.salaryAccrued, CircleDollarSign, "text-blue-300"],
+    ["Бонусы начислено", data.breakdown.bonusesAccrued, Receipt, "text-cyan-300"],
+    ["Премии", data.breakdown.premiumsAccrued, Receipt, "text-violet-300"],
+    ["Авансы выплачено", data.breakdown.advancesPaid, Check, "text-orange-300"],
+    ["Всего начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
+    ["Всего выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
+    ["К выплате", data.breakdown.payable, Banknote, "text-amber-300"],
   ];
 
   if (sessionStatus === "loading")
@@ -509,6 +497,7 @@ export default function PayrollPage() {
             <p className="mt-1 text-sm text-slate-400">
               Начисления, выплаты и остаток без смешивания денежных событий.
             </p>
+            <p className="mt-1 text-sm text-blue-300">Плановый день выплаты: {data.settings.paydayDayOfMonth}-е число. Расчётный месяц и фактическая дата выплаты учитываются отдельно.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -873,7 +862,7 @@ function PayrollTableRow({
       <td className="px-4 py-4 text-slate-400">
         {roleNames[row.user.role] ?? row.user.role}
       </td>
-      <td className="px-4 py-4">{currency(row.baseSalary)}</td>
+      <td className="px-4 py-4">{currency(row.currentSalary)}</td>
       <td className="px-4 py-4">{currency(bonuses)}</td>
       <td className="px-4 py-4">{currency(advances)}</td>
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
@@ -1008,7 +997,7 @@ function EmployeeDrawer({
               <h2 className="text-xl font-bold">{row.user.name}</h2>
               <p className="text-sm text-slate-400">
                 {roleNames[row.user.role] ?? row.user.role} · Оклад{" "}
-                {currency(row.baseSalary)}
+                 {currency(row.currentSalary)} · действует с {dateLabel(row.salaryEffectiveFrom)}
               </p>
               <p className="text-sm text-slate-400">Гарантированный бонус: {currency(row.defaultGuaranteedBonus)}</p>
             </div>
@@ -1150,6 +1139,14 @@ function EmployeeDrawer({
             </div>
           </section>
         )}
+        {row.bonusAccruals.length > 0 && (
+          <section className="mt-5">
+            <h3 className="font-semibold">Бонусы</h3>
+            <div className="mt-2 space-y-2">
+              {row.bonusAccruals.map((item) => <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span>{labels[item.type] ?? item.type}{item.orderId ? ` · заказ ${item.orderId}` : ""}</span><b>{currency(item.amount)}</b></div><div className="mt-1 flex flex-wrap justify-between gap-2 text-slate-400"><span>{item.status === "PAID" ? "Выплачено" : item.status === "PARTIALLY_PAID" ? "Частично выплачено" : "Начислено"}</span><span>Выплачено {currency(item.paid)} · к выплате {currency(item.payable)}</span></div></div>)}
+            </div>
+          </section>
+        )}
         {row.paymentConfirmations.length > 0 && (
           <section className="mt-5">
             <h3 className="font-semibold">Сообщения о получении</h3>
@@ -1240,6 +1237,7 @@ function EmployeeDrawer({
                     {rate.effectiveTo
                       ? ` — ${dateLabel(rate.effectiveTo)}`
                       : " — сейчас"}
+                    <small className="block text-slate-500">{rate.approvedBy?.name ?? "Система"}{rate.comment ? ` · ${rate.comment}` : ""}</small>
                   </span>
                   <b>{currency(rate.amount)}</b>
                 </div>
@@ -1356,6 +1354,14 @@ function OperationModal({
                 <option value="kaspi">Kaspi</option>
                 <option value="bank_transfer">Банковский перевод</option>
                 <option value="other">Другое</option>
+              </select>
+            </Field>
+          )}
+          {operation === "payment" && row.bonusAccruals.some((item) => item.payable > 0) && (
+            <Field label="Начисление бонуса (необязательно)">
+              <select value={form.accrualId} onChange={(e) => { const item = row.bonusAccruals.find((value) => value.id === Number(e.target.value)); setForm({ ...form, accrualId: e.target.value, amount: item ? String(item.payable) : form.amount, type: item ? "ORDER_BONUS_PAYMENT" : form.type }); }} className="control">
+                <option value="">Общая выплата без привязки</option>
+                {row.bonusAccruals.filter((item) => item.payable > 0).map((item) => <option key={item.id} value={item.id}>{labels[item.type] ?? item.type}{item.orderId ? ` · заказ ${item.orderId}` : ""} · {currency(item.payable)}</option>)}
               </select>
             </Field>
           )}

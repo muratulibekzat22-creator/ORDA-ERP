@@ -20,6 +20,7 @@ type Proposal = {
   status: string;
   sentAt?: string | null;
   createdAt: string;
+  validUntil: string;
   snapshot: {
     client?: { name?: string; phone?: string };
     variants?: Variant[];
@@ -40,20 +41,27 @@ export default function LeadProposalWorkspace({
     [proposals, setProposals] = useState<Proposal[]>([]),
     [optionIds, setOptionIds] = useState<number[]>([]),
     [message, setMessage] = useState(""),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [currentTime, setCurrentTime] = useState(0);
   const load = useCallback(async () => {
     const [a, b] = await Promise.all([
       fetch(`/api/clients/${clientId}/calculations`, { cache: "no-store" }),
       fetch(`/api/clients/${clientId}/proposals`, { cache: "no-store" }),
     ]);
     if (a.ok) setCalculations(await a.json());
-    if (b.ok) setProposals(await b.json());
+    if (b.ok) {
+      setProposals(await b.json());
+      setCurrentTime(Date.now());
+    }
   }, [clientId]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
   const latest = proposals[0];
+  const latestExpired = latest
+    ? new Date(latest.validUntil).getTime() < currentTime
+    : false;
   const latestThree = useMemo(() => {
     const found = new Map<string, Calculation>();
     for (const row of calculations)
@@ -73,7 +81,7 @@ export default function LeadProposalWorkspace({
       body: JSON.stringify({
         calculationIds: ids,
         previousProposalId,
-        validDays: 14,
+        validDays: 3,
       }),
     });
     const body = await response.json();
@@ -198,6 +206,12 @@ export default function LeadProposalWorkspace({
                 Версия {latest.version} ·{" "}
                 {new Date(latest.createdAt).toLocaleDateString("ru-RU")} ·{" "}
                 {latest.status}
+              </p>
+              <p
+                className={`mt-1 text-sm ${latestExpired ? "font-semibold text-rose-300" : "text-emerald-300"}`}
+              >
+                {latestExpired ? "Срок действия истёк" : "Действительно до"}: {" "}
+                {new Date(latest.validUntil).toLocaleDateString("ru-RU")}
               </p>
             </div>
           </div>

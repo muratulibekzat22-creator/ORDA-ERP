@@ -7,6 +7,7 @@ import {
   readIdempotencyKey,
 } from "@/lib/idempotency";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
+import { warrantyLabel } from "@/lib/contracts/domain";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 
@@ -93,10 +94,10 @@ export async function POST(request: Request, context: Context) {
       clientId,
       calculationIds: [...requestedIds].sort(),
       previousProposalId: body.previousProposalId ?? null,
-      validDays: body.validDays ?? 14,
-      executionTerm: body.executionTerm ?? null,
+      validDays: 3,
+      executionTerm: "FROM_SETTINGS",
       paymentTerms: body.paymentTerms ?? null,
-      warranty: body.warranty ?? null,
+      warranty: "FROM_MATERIALS",
     });
     const existing = await prisma.commercialProposal.findUnique({
       where: { idempotencyKey: idempotency.key },
@@ -108,13 +109,40 @@ export async function POST(request: Request, context: Context) {
             proposalView(existing as unknown as Record<string, unknown>),
           )
         : idempotencyConflict();
-    const [client, calculations, settings] = await Promise.all([
+    const [client, calculations, settings, system, materials] = await Promise.all([
       ownedClient(clientId, role, userId),
       prisma.leadCalculation.findMany({
         where: { id: { in: requestedIds }, clientId },
       }),
       prisma.companySettings.findUnique({ where: { id: 1 } }),
+      prisma.systemSettings.findUnique({ where: { id: 1 } }),
+      prisma.material.findMany({
+        where: {
+          active: true,
+          name: { in: ["Сосна", "Карагач", "Дуб ламель"] },
+        },
+        select: { name: true, warrantyMonths: true },
+      }),
     ]);
+    const productionDays = system?.productionLeadDays || 40;
+    const executionTerm =
+      productionDays === 40
+        ? "40–50 календарных дней"
+        : `${productionDays} календарных дней`;
+    const materialSettings = new Map(
+      materials.map((item) => [item.name, item.warrantyMonths]),
+    );
+    const defaultWarrantyMonths = new Map([
+      ["Сосна", 6],
+      ["Карагач", 12],
+      ["Дуб ламель", 60],
+    ]);
+    const warrantyByMaterial = new Map(
+      [...defaultWarrantyMonths].map(([name, defaultMonths]) => [
+        name,
+        warrantyLabel(materialSettings.get(name) ?? defaultMonths),
+      ]),
+    );
     const byMaterial = new Map(
       calculations.map((item) => [item.material, item]),
     );
@@ -142,10 +170,8 @@ export async function POST(request: Request, context: Context) {
         material: item.material,
         total: Number(item.clientPrice),
         composition: calculation.lines ?? [],
-        executionTerm: String(
-          body.executionTerm ?? "Срок уточняется после замера",
-        ),
-        warranty: String(body.warranty ?? "Гарантия согласно договору"),
+        executionTerm,
+        warranty: warrantyByMaterial.get(item.material) ?? "согласно договору",
         includedServices: {
           measurement:
             calculation.includeMeasurement ??
@@ -190,16 +216,14 @@ export async function POST(request: Request, context: Context) {
               city: client.city,
             },
             variants,
+            introduction:
+              "Предлагаем изготовление лестницы по индивидуальным размерам объекта. Выберите подходящий материал — итоговая стоимость, срок и гарантия указаны для каждого варианта.",
             delivery: { option: deliveryOption, amount: deliveryCharge },
             paymentTerms: String(
               body.paymentTerms ??
                 "Условия оплаты согласовываются при оформлении заказа",
             ),
-            validUntil: new Date(
-              now.getTime() +
-                Math.min(90, Math.max(1, Number(body.validDays) || 14)) *
-                  86400000,
-            ).toISOString(),
+            validUntil: new Date(now.getTime() + 3 * 86400000).toISOString(),
             createdAt: now.toISOString(),
             number: rootNumber,
             version,
@@ -216,16 +240,12 @@ export async function POST(request: Request, context: Context) {
             snapshot,
             total,
             validUntil: new Date(snapshot.validUntil),
-            executionTerm: String(
-              body.executionTerm ?? "Срок уточняется после замера",
-            ).slice(0, 200),
+            executionTerm: executionTerm.slice(0, 200),
             paymentTerms: String(
               body.paymentTerms ??
                 "Условия оплаты согласовываются при оформлении заказа",
             ).slice(0, 500),
-            warranty: String(
-              body.warranty ?? "Гарантия согласно договору",
-            ).slice(0, 300),
+            warranty: variants.map((item) => `${item.material}: ${item.warranty}`).join("; ").slice(0, 300),
             managerContact: settings?.phone || "+7 708 575 0881",
             createdById: userId,
             createdByName: auth.session!.user.name ?? client.manager,

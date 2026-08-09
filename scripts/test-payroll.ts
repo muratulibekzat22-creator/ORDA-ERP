@@ -119,6 +119,17 @@ async function main() {
     );
     assert.equal(Number(profile.baseSalary), 200000);
     assert.equal(Number(profile.defaultGuaranteedBonus), 20000);
+    await expectCode(
+      () =>
+        changeSalary(
+          profile.id,
+          205000,
+          new Date("2026-05-01"),
+          "",
+          directorActor,
+        ),
+      "REASON_REQUIRED",
+    );
     await changeSalary(profile.id, 210000, new Date("2026-06-01"), "Индексация", directorActor);
     await changeSalary(profile.id, 200000, new Date("2026-07-01"), "Тестовая ставка", directorActor);
     await changeAllowance(profile.id, 20000, "Гарантированный бонус", directorActor);
@@ -147,7 +158,8 @@ async function main() {
     const nextPeriod = await ensurePeriod(periodYear, 9);
     const formulaPeriod = await ensurePeriod(periodYear, 10);
     const confirmationPeriod = await ensurePeriod(periodYear, 11);
-    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id, confirmationPeriod.id);
+    const bonusStatusPeriod = await ensurePeriod(periodYear, 12);
+    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id, confirmationPeriod.id, bonusStatusPeriod.id);
     const client = await prisma.client.create({
       data: {
         name: tag,
@@ -174,6 +186,21 @@ async function main() {
     });
     ids.order = order.id;
     const base = { employeeId: profile.id, periodId: period.id };
+    await expectCode(
+      () =>
+        createAccrual(
+          {
+            ...base,
+            type: PayrollAccrualType.MEASUREMENT_BONUS,
+            amount: 1,
+            reason: "Manual measurement bonus",
+            key: key("manual-measurement-bonus"),
+            requestHash: "manual-measurement-bonus",
+          },
+          directorActor,
+        ),
+      "MEASUREMENT_BONUS_AUTOMATIC_ONLY",
+    );
     await createAccrual(
       {
         ...base,
@@ -283,6 +310,18 @@ async function main() {
       pending: 0,
       payable: 180000,
     });
+    assert.deepEqual(summary.breakdown, {
+      salaryAccrued: 200000,
+      bonusesAccrued: 50000,
+      premiumsAccrued: 20000,
+      advancesPaid: 70000,
+      totalAccrued: 270000,
+      totalPaid: 90000,
+      payable: 180000,
+    });
+    assert.equal(summary.settings.paydayDayOfMonth, 1);
+    assert(summary.rows[0].bonusAccruals.some((item) => item.id === guaranteed.accrual.id && item.status === "PAID"));
+    assert(summary.rows[0].bonusAccruals.some((item) => item.id === orderBonus.accrual.id && item.status === "ACCRUED"));
     await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("formula-salary"), requestHash: "formula-salary" }, directorActor);
     await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.PREMIUM, amount: 30000, reason: "Премия", key: key("formula-premium"), requestHash: "formula-premium" }, directorActor);
     const formulaAdvance = await requestAdvance({ periodId: formulaPeriod.id, amount: 50000, comment: "Аванс", key: key("formula-advance"), requestHash: "formula-advance" }, managerActor);
@@ -318,7 +357,7 @@ async function main() {
     assert.equal(confirmationFinance.operations.filter((item) => item.type === "PAYROLL_PAYMENT").length, 1, "Payroll payment missing from canonical Finance journal");
     assert.equal(confirmationFinance.cards.expenses, 30000, "Finance did not include confirmed Payroll cash outflow");
     await expectCode(
-      () => createPayment({ employeeId: profile.id, periodId: confirmationPeriod.id, amount: 1, type: PayrollPaymentType.SALARY_PAYMENT, paymentDate: new Date(), key: key("accountant-direct-payment"), requestHash: "accountant-direct-payment" }, accountantActor),
+      () => createPayment({ employeeId: profile.id, periodId: confirmationPeriod.id, amount: 1, type: PayrollPaymentType.SALARY_PAYMENT, paymentDate: new Date(), key: key("manager-direct-payment"), requestHash: "manager-direct-payment" }, managerActor),
       "FORBIDDEN",
     );
     const reversal = await reversePayment(confirmed.payment!.id, { reason: "Ошибочная выплата", key: key("payment-reversal"), requestHash: "payment-reversal" }, directorActor);
@@ -398,6 +437,78 @@ async function main() {
         ),
       140000,
       "cash payroll total",
+    );
+    const trackedBonus = await createAccrual(
+      {
+        employeeId: profile.id,
+        periodId: bonusStatusPeriod.id,
+        type: PayrollAccrualType.ORDER_BONUS,
+        amount: 30000,
+        orderId: order.id,
+        reason: "Tracked order bonus",
+        key: key("tracked-order-bonus"),
+        requestHash: "tracked-order-bonus",
+      },
+      directorActor,
+    );
+    await createPayment(
+      {
+        employeeId: profile.id,
+        periodId: bonusStatusPeriod.id,
+        amount: 10000,
+        type: PayrollPaymentType.ORDER_BONUS_PAYMENT,
+        paymentDate: new Date(),
+        relatedAccrualId: trackedBonus.accrual.id,
+        key: key("tracked-order-bonus-partial"),
+        requestHash: "tracked-order-bonus-partial",
+      },
+      accountantActor,
+    );
+    let bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
+    assert.equal(
+      bonusStatusSummary.rows[0].bonusAccruals.find(
+        (item) => item.id === trackedBonus.accrual.id,
+      )?.status,
+      "PARTIALLY_PAID",
+    );
+    await assert.rejects(
+      () =>
+        createPayment(
+          {
+            employeeId: profile.id,
+            periodId: bonusStatusPeriod.id,
+            amount: 20001,
+            type: PayrollPaymentType.ORDER_BONUS_PAYMENT,
+            paymentDate: new Date(),
+            relatedAccrualId: trackedBonus.accrual.id,
+            key: key("tracked-order-bonus-overpay"),
+            requestHash: "tracked-order-bonus-overpay",
+          },
+          directorActor,
+        ),
+      (error) =>
+        error instanceof PayrollError &&
+        error.message === "PAYMENT_EXCEEDS_ACCRUAL",
+    );
+    await createPayment(
+      {
+        employeeId: profile.id,
+        periodId: bonusStatusPeriod.id,
+        amount: 20000,
+        type: PayrollPaymentType.ORDER_BONUS_PAYMENT,
+        paymentDate: new Date(),
+        relatedAccrualId: trackedBonus.accrual.id,
+        key: key("tracked-order-bonus-paid"),
+        requestHash: "tracked-order-bonus-paid",
+      },
+      directorActor,
+    );
+    bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
+    assert.equal(
+      bonusStatusSummary.rows[0].bonusAccruals.find(
+        (item) => item.id === trackedBonus.accrual.id,
+      )?.status,
+      "PAID",
     );
     await transitionPeriod(period.id, PayrollPeriodStatus.REVIEW, "Проверка", key("review"), directorActor);
     await expectCode(

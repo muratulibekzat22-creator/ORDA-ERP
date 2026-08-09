@@ -62,7 +62,7 @@ async function main() {
     const partner = await prisma.partner.create({ data: { name: tag } });
     partnerId = partner.id;
 
-    const orderInput = { clientId: client.id, partnerId: partner.id, address: "test", staircase: "test", material: "test", amount: 1000, prepayment: 100, partnerPrice: 400, partnerPaid: 50, manager: "test", idempotencyKey: key("order"), requestHash: hash("order") };
+    const orderInput = { clientId: client.id, partnerId: partner.id, address: "test", staircase: "test", material: "test", amount: 1000, prepayment: 100, partnerPrice: 400, partnerPriceSet: true, partnerPaid: 50, manager: "test", idempotencyKey: key("order"), requestHash: hash("order") };
     const createdOrder = (await createOrder(orderInput)).order;
     orderId = createdOrder.id;
     const repeatedOrder = await createOrder(orderInput);

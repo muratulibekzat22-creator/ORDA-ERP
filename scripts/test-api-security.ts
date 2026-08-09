@@ -718,7 +718,9 @@ async function main() {
     const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in repeatedManagerCalculation), "idempotent calculation replay leaks internal costs");
     const managerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, managerCookie)).json() as Record<string, unknown>;
-    for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
+    for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance", "managerUser", "payrollAccruals"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
+    const managerSettlement = managerOrderDetail.settlement as Record<string, unknown> | undefined;
+    assert(!managerSettlement || (!("manager" in managerSettlement) && !("measurer" in managerSettlement) && !("partner" in managerSettlement)), "manager order detail leaks internal settlement blocks");
     const managerOrderCalculations = managerOrderDetail.calculations as Array<Record<string, unknown>>;
     assert(Array.isArray(managerOrderCalculations) && managerOrderCalculations.length > 0, "manager order detail is missing client calculation");
     for (const field of ["workshopCost", "baseWorkshopCost", "workshopRate", "workshopAdjustment", "grossDifference", "materialCost", "installationCost", "deliveryCost", "otherDirectCosts", "totalCost", "grossProfit"]) assert(!(field in managerOrderCalculations[0]), `manager nested calculation leaks ${field}`);
@@ -869,6 +871,9 @@ async function main() {
     assert(Number(directorDashboard.metrics.orders) === expectedDashboardOrders.length && Number(directorDashboard.metrics.totalSales) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) && Number(directorDashboard.metrics.receivedPrepayment) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.prepayment), 0) && Number(directorDashboard.metrics.balanceToReceive) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.balance), 0), "director dashboard order totals are incorrect");
     const directorClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(directorClients.data) && directorClients.pagination.total > 0 && directorClients.data.some((item) => item.id === client.id), "director clients payload is invalid");
+    await expectStatus(`/api/clients/${client.id}/force-delete`, 403, managerCookie);
+    const deletionPreview = await (await expectStatus(`/api/clients/${client.id}/force-delete`, 200, directorCookie)).json() as { blocked: boolean; blockers: string[] };
+    assert(deletionPreview.blocked && deletionPreview.blockers.length > 0, "Director force-delete preview did not block a client with payments");
     const directorMeasurements = await (await expectStatus("/api/measurements", 200, directorCookie)).json() as Array<{ id: number; order: { id: number } }>;
     assert(Array.isArray(directorMeasurements) && directorMeasurements.some((measurement) => measurement.id === firstMeasurement.id && measurement.order.id === firstMeasurerOrder.id), "director measurements payload is invalid");
     const directorPartners = await (await expectStatus("/api/partners", 200, directorCookie)).json() as Array<{ id: number; stats: { totalOrders: number } }>;

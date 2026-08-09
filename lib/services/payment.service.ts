@@ -254,7 +254,7 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
     ? { ...(selectedRange.from ? { gte: selectedRange.from } : {}), ...(selectedRange.to ? { lte: selectedRange.to } : {}) }
     : undefined;
   const [orders, paymentOperations, ledgerEntries, payrollProfiles, managers, partners] = await Promise.all([
-    prisma.order.findMany({ where: orderWhere, include: { client: true, partner: true, payments: true }, orderBy: { createdAt: "desc" } }),
+    prisma.order.findMany({ where: orderWhere, include: { client: true, partner: true, payments: true, payrollAccruals: { where: { direction: "INCREASE" }, include: { payments: true, reversedBy: { select: { id: true } } } } }, orderBy: { createdAt: "desc" } }),
     getPayments({ type: filters.type, orderId: filters.orderId, partnerId: filters.partnerId, from: selectedRange.from, to: selectedRange.to }),
     prisma.companyLedgerEntry.findMany({
       where: {
@@ -283,6 +283,12 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
     const amount = Number(order.amount), priceSet = order.partnerAgreedAt !== null;
     const partnerPrice = priceSet ? Number(order.partnerPrice) : null;
     const rawBalance = amount - received, rawPartnerBalance = partnerPrice === null ? 0 : partnerPrice - partnerPaid;
+    const payrollRemaining = (types: string[]) => order.payrollAccruals
+      .filter((accrual) => types.includes(accrual.type) && !accrual.reversedBy)
+      .reduce((sum, accrual) => {
+        const paid = accrual.payments.filter((payment) => !payment.reversalOfId && !payment.reversedAt).reduce((value, payment) => value + Number(payment.amount), 0);
+        return sum + Math.max(Number(accrual.amount) - paid, 0);
+      }, 0);
     return {
       id: order.id, number: order.number, client: order.client.name, partner: order.partner?.name ?? "—", manager: order.manager,
       createdAt: order.createdAt, partnerAgreedAt: order.partnerAgreedAt, promisedAt: order.promisedAt, partnerPlannedReadyAt: order.partnerPlannedReadyAt,
@@ -290,6 +296,8 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
       priceSet, partnerPrice, partnerPaid: priceSet ? partnerPaid : 0, partnerBalance: priceSet ? Math.max(rawPartnerBalance, 0) : 0,
       partnerOverpayment: priceSet ? Math.max(-rawPartnerBalance, 0) : 0,
       grossMargin: partnerPrice === null ? null : amount - partnerPrice,
+      managerBonusPayable: payrollRemaining(["GUARANTEED_ORDER_BONUS", "ORDER_BONUS", "EXTRA_BONUS"]),
+      measurerBonusPayable: payrollRemaining(["MEASUREMENT_BONUS"]),
       paymentStatus: rawBalance <= 0 ? "paid" : received > 0 ? "partial" : "debt",
     };
   });

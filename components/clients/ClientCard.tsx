@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -103,11 +104,15 @@ const date = (value: string) =>
 
 export default function ClientCard({ clientId }: { clientId: number }) {
   const router = useRouter();
+  const { data: session } = useSession();
   const [client, setClient] = useState<ClientDetail | null>(null),
     [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
+  const [deletePreview, setDeletePreview] = useState<{ impact: Record<string, number>; blocked: boolean; blockers: string[] } | null>(null),
+    [deleteConfirmation, setDeleteConfirmation] = useState(""),
+    [deleteReason, setDeleteReason] = useState("");
   const [interaction, setInteraction] = useState(""),
     fileRef = useRef<HTMLInputElement>(null);
   const load = useCallback(async () => {
@@ -171,21 +176,25 @@ export default function ClientCard({ clientId }: { clientId: number }) {
       setSaving(false);
     }
   }
-  async function removeClient() {
-    if (!client || !window.confirm("Удалить эту заявку безвозвратно? Восстановить её после удаления будет невозможно.")) return;
-    setSaving(true);
-    setError("");
+  async function openForceDelete() {
+    setSaving(true); setError("");
     try {
-      const response = await fetch(`/api/clients/${client.id}`, { method: "DELETE" });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error ?? "Не удалось удалить заявку");
-      }
+      const response = await fetch(`/api/clients/${clientId}/force-delete`, { cache: "no-store" });
+      const payload = await response.json() as { impact?: Record<string, number>; blocked?: boolean; blockers?: string[]; error?: string };
+      if (!response.ok || !payload.impact) throw new Error(payload.error ?? "Не удалось проверить связанные данные");
+      setDeletePreview({ impact: payload.impact, blocked: Boolean(payload.blocked), blockers: payload.blockers ?? [] });
+    } catch (next) { setError(next instanceof Error ? next.message : "Не удалось проверить связанные данные"); }
+    finally { setSaving(false); }
+  }
+  async function forceDelete() {
+    if (!client || !deletePreview || deletePreview.blocked) return;
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/clients/${client.id}/force-delete`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: deleteConfirmation, reason: deleteReason }) });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Не удалось удалить заявку");
       router.replace("/clients");
-    } catch (next) {
-      setError(next instanceof Error ? next.message : "Не удалось удалить заявку");
-      setSaving(false);
-    }
+    } catch (next) { setError(next instanceof Error ? next.message : "Не удалось удалить заявку"); setSaving(false); }
   }
   async function addInteraction() {
     const comment = interaction.trim();
@@ -348,14 +357,14 @@ export default function ClientCard({ clientId }: { clientId: number }) {
             )}
             Сохранить изменения
           </button>
-          <button
-            onClick={() => void removeClient()}
-            disabled={saving}
-            className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-700 bg-red-950/40 px-5 font-semibold text-red-200 disabled:opacity-60"
+          <a
+            href="#lead-workflow"
+            className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-amber-700 bg-amber-950/30 px-5 font-semibold text-amber-200"
           >
             <Trash2 size={18} />
-            Удалить заявку безвозвратно
-          </button>
+            Отменить / архивировать заявку
+          </a>
+          {session?.user.role === "DIRECTOR" && <button onClick={() => void openForceDelete()} disabled={saving} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-600 bg-red-950/70 px-5 font-semibold text-red-100 disabled:opacity-60"><Trash2 size={18}/>Удалить навсегда…</button>}
         </div>
       </div>
       {error && (
@@ -374,6 +383,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           {success}
         </p>
       )}
+      {deletePreview && <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-xl rounded-2xl border border-red-800 bg-slate-950 p-5"><h2 className="text-xl font-bold text-white">Контролируемое удаление</h2><p className="mt-2 text-sm text-slate-400">Будут удалены только перечисленные связанные записи. Действие фиксируется в неизменяемом аудите.</p><div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">{Object.entries(deletePreview.impact).filter(([, value]) => value > 0).map(([key, value]) => <div key={key} className="rounded-lg bg-slate-900 p-2"><span className="block break-all text-xs text-slate-500">{key}</span><b className="text-white">{value}</b></div>)}</div>{deletePreview.blocked ? <div className="mt-4 rounded-xl border border-red-700 bg-red-950/50 p-3 text-sm text-red-200"><b>Удаление заблокировано.</b><p className="mt-1">Есть платежи, выплаты, записи финансового ledger или складские движения. Используйте аннулирование и сторно.</p><p className="mt-2 break-all text-xs text-red-300">{deletePreview.blockers.join(" · ")}</p></div> : <div className="mt-4 space-y-3"><label className="grid gap-1 text-sm text-slate-300"><span>Причина</span><textarea value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} rows={3} className={inputClass}/></label><label className="grid gap-1 text-sm text-slate-300"><span>Введите УДАЛИТЬ</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} className={inputClass}/></label></div>}<div className="mt-5 flex justify-end gap-2"><button onClick={() => { setDeletePreview(null); setDeleteConfirmation(""); setDeleteReason(""); }} className="min-h-11 rounded-xl px-4 text-slate-300">Отмена</button>{!deletePreview.blocked && <button onClick={() => void forceDelete()} disabled={saving || deleteConfirmation !== "УДАЛИТЬ" || deleteReason.trim().length < 5} className="min-h-11 rounded-xl bg-red-700 px-4 font-semibold text-white disabled:opacity-40">Удалить навсегда</button>}</div></div></div>}
       <LeadWorkflow
         client={client}
         saving={saving}
@@ -873,7 +883,7 @@ function LeadWorkflow({
     }
   }
   return (
-    <section className="rounded-2xl border border-blue-800/60 bg-blue-950/20 p-4 md:p-6">
+    <section id="lead-workflow" className="scroll-mt-24 rounded-2xl border border-blue-800/60 bg-blue-950/20 p-4 md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-white">

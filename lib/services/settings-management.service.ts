@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "whatsapp", "email", "bankDetails", "directorName", "directorFullName", "iik", "bank", "bik", "logoUrl"] as const;
 const systemStringFields = ["currency", "timezone", "dateFormat", "offerPrefix", "contractPrefix", "actPrefix", "invoicePrefix"] as const;
-const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "measurerOrderBonus", "productionLeadDays", "installationLeadDays", "nextDocumentNumber", "nextContractNumber"] as const;
+const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "measurerOrderBonus", "productionLeadDays", "installationLeadDays", "paydayDayOfMonth", "nextDocumentNumber", "nextContractNumber"] as const;
 const calculatorFields = ["pinePrice", "elmPrice", "oakPrice", "woodRailing", "glassRailing", "brassRailing", "ledPrice", "paintingPrice", "installationPrice"] as const;
 
 type RecordValue = Record<string, unknown>;
@@ -56,10 +56,13 @@ export async function patchSettingsManagement(payload: unknown) {
   if (company && "email" in company && typeof company.email === "string" && company.email && (!company.email.includes("@") || company.email.length > 254)) throw new Error("INVALID_SETTINGS");
   if (system && "currency" in system && system.currency !== "KZT") throw new Error("INVALID_SETTINGS");
   if (system && "timezone" in system && system.timezone !== "Asia/Almaty") throw new Error("INVALID_SETTINGS");
+  const systemNumbers = system ? nonNegativeIntegers(system, systemNumberFields) : {};
+  if ("paydayDayOfMonth" in systemNumbers && (systemNumbers.paydayDayOfMonth < 1 || systemNumbers.paydayDayOfMonth > 28))
+    throw new Error("INVALID_SETTINGS");
 
   const [nextCompany, nextSystem, nextCalculator] = await prisma.$transaction(async (tx) => Promise.all([
     company ? tx.companySettings.upsert({ where: { id: 1 }, create: { id: 1, ...strings(company, companyFields) }, update: strings(company, companyFields) as Prisma.CompanySettingsUpdateInput }) : tx.companySettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    system ? tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1, ...strings(system, systemStringFields), ...nonNegativeIntegers(system, systemNumberFields) }, update: { ...strings(system, systemStringFields), ...nonNegativeIntegers(system, systemNumberFields) } as Prisma.SystemSettingsUpdateInput }) : tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
+    system ? tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1, ...strings(system, systemStringFields), ...systemNumbers }, update: { ...strings(system, systemStringFields), ...systemNumbers } as Prisma.SystemSettingsUpdateInput }) : tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
     calculator ? tx.settings.upsert({ where: { id: 1 }, create: { id: 1, ...nonNegativeIntegers(calculator, calculatorFields) }, update: nonNegativeIntegers(calculator, calculatorFields) }) : tx.settings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
   ]));
   const rolePermissions = body.rolePermissions === undefined ? await getPermissionMatrix() : await replacePermissionMatrix(body.rolePermissions);

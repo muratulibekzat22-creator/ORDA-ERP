@@ -26,7 +26,8 @@ async function main() {
     partnerId = (await prisma.partner.create({ data: { name: tag } })).id;
     orderId = (await prisma.order.create({ data: { number: tag, clientId, address: "TEST", staircase: "Straight", material: "Oak", amount: "3000000", balance: "3000000", manager: tag, status: "New" } })).id;
     await createFinanceOperation({ type: "CLIENT_PAYMENT", orderId, amount: 2_000_000, method: "bank_transfer", idempotencyKey: `${tag}-client`, requestHash: hash("client") });
-    await assignPartnerToOrder({ orderId, partnerId, partnerPrice: 1_500_000, authorId: userId, manager: tag, reason: "Signed partner agreement" });
+    const agreedAt = new Date("2026-08-09T00:00:00.000Z");
+    await assignPartnerToOrder({ orderId, partnerId, partnerPrice: 1_500_000, partnerAgreedAt: agreedAt, authorId: userId, manager: tag, reason: "Signed partner agreement" });
     for (const [index, amount] of [300_000, 200_000, 300_000].entries()) await createFinanceOperation({ type: "PARTNER_PAYOUT", orderId, amount, method: "bank_transfer", author: tag, authorId: userId, idempotencyKey: `${tag}-payout-${index}`, requestHash: hash(`payout-${index}`) });
     const replay = await createFinanceOperation({ type: "PARTNER_PAYOUT", orderId, amount: 300_000, method: "bank_transfer", author: tag, authorId: userId, idempotencyKey: `${tag}-payout-2`, requestHash: hash("payout-2") });
     ensure(replay?.created === false, "idempotent payout replay created a duplicate");
@@ -36,6 +37,13 @@ async function main() {
     ensure(settlement.partner.agreed === 1_500_000 && settlement.partner.paid === 800_000 && settlement.partner.remaining === 700_000, "partner settlement is incorrect");
     ensure(settlement.partner.payouts.length === 3, "partner payout history is not immutable/idempotent");
     ensure(await prisma.financeAuditEvent.count({ where: { orderId, action: "PARTNER_PAYOUT_CREATED" } }) === 3, "partner payout audit is incomplete");
+    const changedAt = new Date("2026-08-10T00:00:00.000Z");
+    await assignPartnerToOrder({ orderId, partnerId, partnerPrice: 1_600_000, partnerAgreedAt: changedAt, authorId: userId, manager: tag, reason: "Workshop changed agreed amount" });
+    const changed = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    ensure(Number(changed.partnerPrice) === 1_600_000 && changed.partnerAgreedAt?.getTime() === changedAt.getTime(), "workshop agreement amount/date was not updated");
+    const audit = await prisma.financeAuditEvent.findFirst({ where: { orderId, action: "PARTNER_AGREED_AMOUNT_CHANGED" }, orderBy: { createdAt: "desc" } });
+    ensure(Boolean(audit?.before) && Boolean(audit?.after) && audit?.reason === "Workshop changed agreed amount", "workshop agreement immutable before/after/reason audit is incomplete");
+    ensure(await prisma.partnerAssignmentHistory.count({ where: { orderId } }) === 2, "workshop agreement history is incomplete");
     console.log("PARTNER SETTLEMENT SUMMARY: client=3m/2m/1m; partner=1.5m/800k/700k; payouts=300k+200k+300k; idempotency=passed");
   } finally {
     if (orderId) { await prisma.financeAuditEvent.deleteMany({ where: { orderId } }); await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId } }); await prisma.orderEvent.deleteMany({ where: { orderId } }); await prisma.production.deleteMany({ where: { orderId } }); await prisma.payment.deleteMany({ where: { orderId } }); await prisma.order.deleteMany({ where: { id: orderId } }); }

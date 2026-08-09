@@ -55,6 +55,8 @@ export type OrderTabData = {
       payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
     };
+    manager?: EmployeeSettlement;
+    measurer?: EmployeeSettlement;
   };
   measurements: Array<{
     id: number;
@@ -113,5 +115,29 @@ export type OrderTabData = {
       comment: string | null;
       enabled: boolean;
     }>;
+  }>;
+};
+
+export type EmployeeSettlement = {
+  userId: number | null;
+  employeeId: number | null;
+  name: string | null;
+  accrued: number;
+  paid: number;
+  remaining: number;
+  status: string;
+  accruals: Array<{
+    id: number;
+    periodId: number;
+    employeeId: number;
+    userId: number;
+    employeeName: string;
+    type: string;
+    amount: number;
+    paid: number;
+    remaining: number;
+    status: string;
+    measurementId: number | null;
+    createdAt: Date | string;
   }>;
 };

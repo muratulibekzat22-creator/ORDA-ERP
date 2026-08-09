@@ -27,6 +27,7 @@
     "seed:test-accounts": "tsx scripts/seed-test-accounts.ts",
     "test:production:logins": "tsx scripts/test-production-role-logins.ts",
     "test:clients": "tsx scripts/test-clients-workspace.ts",
+    "test:client-force-delete": "tsx scripts/test-client-force-delete.ts",
     "test:sales-funnel": "tsx scripts/test-sales-funnel.ts",
     "test:commercial-boundary": "tsx scripts/test-commercial-boundary.ts",
     "test:role-acceptance": "tsx scripts/test-role-acceptance.ts",

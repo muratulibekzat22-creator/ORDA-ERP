@@ -351,6 +351,7 @@ model User {
   archivedDocuments            Document[]                   @relation("DocumentArchivedBy")
   uploadedDocumentVersions     DocumentVersion[]            @relation("DocumentVersionUploader")
   documentAuditEvents          DocumentAudit[]              @relation("DocumentAuditActor")
+  clientDeletionAudits         ClientDeletionAudit[]        @relation("ClientDeletionAuditActor")
   trainingAssignments          TrainingAssignment[]         @relation("TrainingAssignmentUser")
   trainingOverrides            TrainingAssignment[]         @relation("TrainingAssignmentOverrideBy")
   trainingAuditEvents          TrainingAudit[]              @relation("TrainingAuditActor")
@@ -640,6 +641,20 @@ model ClientAttachment {
   createdAt    DateTime @default(now())
 
   @@index([clientId, createdAt])
+}
+
+model ClientDeletionAudit {
+  id              Int      @id @default(autoincrement())
+  deletedClientId Int
+  clientSnapshot  Json
+  impact          Json
+  reason          String
+  actorId         Int
+  actor           User     @relation("ClientDeletionAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  deletedAt       DateTime @default(now())
+
+  @@index([deletedClientId, deletedAt])
+  @@index([actorId, deletedAt])
 }
 
 model Partner {
@@ -1386,6 +1401,7 @@ model SystemSettings {
   measurerOrderBonus   Int    @default(20000)
   productionLeadDays   Int    @default(40)
   installationLeadDays Int    @default(7)
+  paydayDayOfMonth     Int    @default(1)
   nextDocumentNumber   Int    @default(1)
   nextContractNumber   Int    @default(1)
   offerPrefix          String @default("КП")
