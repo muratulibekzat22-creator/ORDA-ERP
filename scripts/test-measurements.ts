@@ -15,6 +15,7 @@ import {
   MeasurementError,
   saveMeasurementDraft,
   scheduleMeasurement,
+  rescheduleMeasurement,
   type MeasurementActor,
   type MeasurementDraft,
 } from "@/lib/services/measurement.service";
@@ -123,6 +124,19 @@ async function main() {
     ids.measurements.push(scheduled.measurement.id);
     assert.match(scheduled.whatsappText, /10 августа 2026[\s\S]*14:00/);
     assert.match(scheduled.whatsappText, new RegExp(measurerA.name));
+    assert.match(scheduled.whatsappText, new RegExp(manager.name));
+    assert.match(scheduled.whatsappText, /Телефон: \+77010000001/);
+    const firstTaskId = scheduled.measurement.calendarTaskId;
+    assert.ok(firstTaskId);
+    const rescheduledAt = parseBusinessDateTime("2026-08-10T15:00")!;
+    await rescheduleMeasurement(managerActor, scheduled.measurement.id, { visitDate: rescheduledAt, measurerUserId: measurerA.id, address: "ул. Абая, 10" });
+    const [syncedMeasurement, syncedTask] = await Promise.all([
+      prisma.measurement.findUniqueOrThrow({ where: { id: scheduled.measurement.id } }),
+      prisma.calendarTask.findUniqueOrThrow({ where: { id: firstTaskId } }),
+    ]);
+    assert.equal(syncedMeasurement.visitDate.toISOString(), rescheduledAt.toISOString());
+    assert.equal(syncedTask.dueAt.toISOString(), rescheduledAt.toISOString());
+    assert.equal(await prisma.calendarTask.count({ where: { clientId: client.id, type: "MEASUREMENT" } }), 1, "Reschedule must update the canonical task without duplicates");
     assert.equal((await listMeasurements(actorA)).some((row) => row.id === scheduled.measurement.id), true, "Measurer A sees assigned measurement");
     assert.equal((await listMeasurements(actorB)).some((row) => row.id === scheduled.measurement.id), false, "Measurer B cannot see A measurement");
     assert.equal((await listMeasurements(otherManagerActor)).some((row) => row.id === scheduled.measurement.id), false, "Another manager cannot see the lead measurement");

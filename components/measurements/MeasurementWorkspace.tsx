@@ -91,6 +91,8 @@ type Payload = {
     bonus: number;
   }>;
 };
+type ScheduleClient = { id: number; name: string; phone: string; whatsapp: string; city: string; address: string };
+type ActiveMeasurer = { id: number; name: string };
 type Form = {
   stepsCount: string;
   sameSize: boolean;
@@ -242,9 +244,15 @@ export default function MeasurementWorkspace() {
     [inviteComment, setInviteComment] = useState("");
   const [creating, setCreating] = useState(false), [createOpen, setCreateOpen] = useState(false),
     [createForm, setCreateForm] = useState({ clientName: "", phone: "", city: "", visitDate: "", address: "", mapLink: "", comment: "" });
+  const [scheduleOpen, setScheduleOpen] = useState(false),
+    [scheduleClients, setScheduleClients] = useState<ScheduleClient[]>([]),
+    [scheduleMeasurers, setScheduleMeasurers] = useState<ActiveMeasurer[]>([]),
+    [whatsappText, setWhatsappText] = useState(""),
+    [scheduleForm, setScheduleForm] = useState({ clientId: "", measurerUserId: "", visitDate: "", city: "", address: "", mapLink: "", comment: "" });
   const photoRef = useRef<HTMLInputElement>(null),
     [photoType, setPhotoType] = useState("SHEET");
   const measurer = session?.user.role === "MEASURER";
+  const canSchedule = session?.user.role === "MANAGER" || session?.user.role === "DIRECTOR";
   const load = useCallback(async () => {
     const response = await fetch("/api/measurements?workspace=1", {
         cache: "no-store",
@@ -362,6 +370,36 @@ export default function MeasurementWorkspace() {
     else { setNotice(body.existingClient ? "Клиент уже существует — новый замер привязан к нему" : "Новый клиент и замер созданы"); setCreateOpen(false); setCreateForm({ clientName: "", phone: "", city: "", visitDate: "", address: "", mapLink: "", comment: "" }); await load(); }
     setCreating(false);
   }
+  async function openSchedule() {
+    const next = !scheduleOpen;
+    if (!next) return setScheduleOpen(false);
+    if (scheduleClients.length || scheduleMeasurers.length) return setScheduleOpen(true);
+    setError("");
+    const [clientsResponse, metaResponse] = await Promise.all([
+      fetch("/api/clients?active=true&limit=100", { cache: "no-store" }),
+      fetch("/api/measurements?meta=1", { cache: "no-store" }),
+    ]);
+    const clientsBody = await clientsResponse.json().catch(() => ({}));
+    const metaBody = await metaResponse.json().catch(() => ({}));
+    if (!clientsResponse.ok || !metaResponse.ok) return setError(clientsBody.error ?? metaBody.error ?? "Не удалось загрузить форму назначения");
+    const clients = (clientsBody.data ?? []) as ScheduleClient[], active = (metaBody.measurers ?? []) as ActiveMeasurer[];
+    setScheduleClients(clients); setScheduleMeasurers(active);
+    const first = clients[0];
+    setScheduleForm((current) => ({ ...current, clientId: first ? String(first.id) : "", city: first?.city ?? "", address: first?.address ?? "", measurerUserId: active.length === 1 ? String(active[0].id) : "" }));
+    setScheduleOpen(true);
+  }
+  function chooseScheduleClient(clientId: string) {
+    const client = scheduleClients.find((row) => String(row.id) === clientId);
+    setScheduleForm((current) => ({ ...current, clientId, city: client?.city ?? "", address: client?.address ?? "" }));
+  }
+  async function scheduleMeasurement(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true); setError(""); setWhatsappText("");
+    const response = await fetch("/api/measurements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...scheduleForm, clientId: Number(scheduleForm.clientId), measurerUserId: Number(scheduleForm.measurerUserId) }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
+    else { setNotice("Замер назначен и появился в календаре замерщика"); setWhatsappText(body.whatsappText ?? ""); setScheduleOpen(false); await load(); }
+    setBusy(false);
+  }
   return (
     <main className="space-y-5 p-4 pb-24 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -380,7 +418,21 @@ export default function MeasurementWorkspace() {
             <Banknote size={17} />
             Моя зарплата
           </Link></div>)}
+        {canSchedule && <button type="button" onClick={() => void openSchedule()} className="flex min-h-11 items-center gap-2 rounded-xl bg-amber-500 px-4 text-sm font-semibold text-slate-950"><Plus size={17}/>Назначить замер</button>}
       </header>
+      {canSchedule && scheduleOpen && <form onSubmit={scheduleMeasurement} className="grid gap-3 rounded-2xl border border-amber-800 bg-[#101827] p-4 sm:grid-cols-2 lg:grid-cols-3">
+        <h2 className="text-lg font-semibold text-white sm:col-span-2 lg:col-span-3">Назначить замер по заявке</h2>
+        <Field label="Клиент / заявка"><select required className={input} value={scheduleForm.clientId} onChange={(event) => chooseScheduleClient(event.target.value)}><option value="">Выберите заявку</option>{scheduleClients.map((client) => <option key={client.id} value={client.id}>{client.name || "Без имени"} · {client.phone}</option>)}</select></Field>
+        {scheduleMeasurers.length === 0 ? <p role="alert" className="rounded-xl bg-red-950/50 p-3 text-red-300">Нет активного замерщика</p> : scheduleMeasurers.length === 1 ? <div className="text-sm text-slate-300">Замерщик<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{scheduleMeasurers[0].name} · выбран автоматически</b></div> : <Field label="Замерщик"><select required className={input} value={scheduleForm.measurerUserId} onChange={(event) => setScheduleForm({...scheduleForm, measurerUserId:event.target.value})}><option value="">Выберите</option>{scheduleMeasurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}
+        <Field label="Дата замера"><input required type="date" className={input} value={scheduleForm.visitDate.split("T")[0] ?? ""} onChange={(event) => setScheduleForm({...scheduleForm,visitDate:event.target.value ? `${event.target.value}T${scheduleForm.visitDate.split("T")[1] || "09:00"}` : ""})}/></Field>
+        <Field label="Время"><input required type="time" className={input} value={scheduleForm.visitDate.split("T")[1] ?? ""} onChange={(event) => setScheduleForm({...scheduleForm,visitDate:scheduleForm.visitDate.split("T")[0] ? `${scheduleForm.visitDate.split("T")[0]}T${event.target.value}` : ""})}/></Field>
+        <Field label="Город"><input className={input} value={scheduleForm.city} onChange={(event) => setScheduleForm({...scheduleForm,city:event.target.value})}/></Field>
+        <Field label="Адрес"><input className={input} value={scheduleForm.address} onChange={(event) => setScheduleForm({...scheduleForm,address:event.target.value})}/></Field>
+        <Field label="Ссылка на карту"><input type="url" className={input} value={scheduleForm.mapLink} onChange={(event) => setScheduleForm({...scheduleForm,mapLink:event.target.value})}/></Field>
+        <Field label="Комментарий менеджера"><input className={input} value={scheduleForm.comment} onChange={(event) => setScheduleForm({...scheduleForm,comment:event.target.value})}/></Field>
+        <button disabled={busy || !scheduleForm.clientId || !scheduleForm.measurerUserId || !scheduleForm.visitDate || (!scheduleForm.address.trim() && !scheduleForm.mapLink.trim())} className="min-h-12 rounded-xl bg-amber-500 px-4 font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2 lg:col-span-3">Назначить замер</button>
+      </form>}
+      {whatsappText && <section className="rounded-2xl border border-green-900 bg-green-950/20 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><b className="text-green-200">WhatsApp-текст (копирование)</b><button type="button" onClick={() => void navigator.clipboard.writeText(whatsappText).then(() => setNotice("Текст скопирован"))} className="min-h-11 rounded-xl bg-green-700 px-4 text-sm font-semibold">Копировать</button></div><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-200">{whatsappText}</pre></section>}
       {measurer && createOpen && <form onSubmit={createOwnMeasurement} className="grid gap-3 rounded-2xl border border-blue-900 bg-[#101827] p-4 sm:grid-cols-2">
         <h2 className="text-lg font-semibold text-white sm:col-span-2">Новый замер</h2>
         {([ ["clientName", "Имя клиента (необязательно)", "text"], ["phone", "Телефон / WhatsApp", "tel"], ["city", "Город", "text"], ["visitDate", "Дата и время", "datetime-local"], ["address", "Адрес", "text"], ["mapLink", "Ссылка на карту (необязательно)", "url"], ["comment", "Комментарий", "text"] ] as const).map(([key,label,type]) => <Field key={key} label={label}><input required={["phone","city","visitDate","address"].includes(key)} type={type} className={input} value={createForm[key]} onChange={(event) => setCreateForm({...createForm,[key]:event.target.value})}/></Field>)}

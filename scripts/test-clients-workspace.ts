@@ -13,6 +13,9 @@ const modal = read("components/clients/ClientModal.tsx");
 const proposalWorkspace = read("components/clients/LeadProposalWorkspace.tsx");
 const proposalApi = read("app/api/clients/[id]/proposals/route.ts");
 const managersApi = read("app/api/client-managers/route.ts");
+const measurementPanel = read("components/measurements/LeadMeasurementPanel.tsx");
+const measurementWorkspace = read("components/measurements/MeasurementWorkspace.tsx");
+const measurementsApi = read("app/api/measurements/route.ts");
 
 for (const contract of ["deliveryOption", "OPTION_1", "OPTION_2", "deliveryCharge"])
   if (!modal.includes(contract)) throw new Error(`Missing inline delivery contract: ${contract}`);
@@ -113,4 +116,8 @@ for (const protectedKey of [
 ])
   if (!read("lib/lead-calculation-view.ts").includes(protectedKey))
     throw new Error(`Manager redaction misses ${protectedKey}`);
+for (const marker of ["+ Назначить замер", "выбран автоматически", "Нет активного замерщика", "Дата замера", "Время"])
+  if (!measurementPanel.includes(marker) && !measurementWorkspace.includes(marker)) throw new Error(`Manager measurement UI misses ${marker}`);
+if (!measurementsApi.includes("role: Role.MEASURER, active: true")) throw new Error("Measurement selector must only use active MEASURER users");
+if (!card.includes("#measurement-scheduling")) throw new Error("Client card must expose measurement scheduling action");
 console.log("clients workspace checks passed");

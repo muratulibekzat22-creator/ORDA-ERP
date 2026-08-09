@@ -325,11 +325,13 @@ function draftData(input: MeasurementDraft): Prisma.MeasurementUpdateInput {
 
 export function measurementWhatsAppText(input: {
   clientName: string;
+  clientPhone: string;
   visitDate: Date;
   city: string;
   address: string;
   mapLink?: string | null;
   measurerName: string;
+  managerName: string;
   comment?: string | null;
 }) {
   const when = new Intl.DateTimeFormat("ru-RU", {
@@ -338,13 +340,15 @@ export function measurementWhatsAppText(input: {
     timeStyle: "short",
   }).format(input.visitDate);
   return [
-    "Назначен замер лестницы",
+    "📐 Новый замер",
     `Клиент: ${input.clientName}`,
+    `Телефон: ${input.clientPhone}`,
     `Дата и время: ${when}`,
     `Город: ${input.city || "не указан"}`,
     `Адрес: ${input.address || "по ссылке"}`,
     input.mapLink ? `Локация: ${input.mapLink}` : "",
     `Замерщик: ${input.measurerName}`,
+    `Менеджер: ${input.managerName}`,
     input.comment ? `Комментарий: ${input.comment}` : "",
   ]
     .filter(Boolean)
@@ -736,11 +740,13 @@ export async function scheduleMeasurement(
         measurement,
         whatsappText: measurementWhatsAppText({
           clientName: client.name,
+          clientPhone: client.whatsapp || client.phone,
           visitDate: input.visitDate,
           city,
           address,
           mapLink,
           measurerName: measurer.name,
+          managerName: client.manager,
           comment: trim(input.comment),
         }),
       };

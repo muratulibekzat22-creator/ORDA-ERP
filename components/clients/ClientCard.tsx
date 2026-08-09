@@ -315,6 +315,9 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           >
             Рассчитать и сформировать КП
           </Link>
+          <a href="#measurement-scheduling" className="col-span-2 flex min-h-12 items-center justify-center rounded-xl bg-amber-500 px-5 font-semibold text-slate-950">
+            + Назначить замер
+          </a>
           <button
             onClick={() => void save()}
             disabled={saving}
@@ -354,6 +357,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
       />
       <LeadMeasurementPanel
         clientId={client.id}
+        clientName={client.name}
         initialCity={client.city}
         initialAddress={client.address}
         clientPhone={client.phone}

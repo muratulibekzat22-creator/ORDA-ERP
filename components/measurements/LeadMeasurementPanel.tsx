@@ -52,12 +52,14 @@ const statusNames: Record<string, string> = {
 
 export default function LeadMeasurementPanel({
   clientId,
+  clientName,
   initialCity,
   initialAddress,
   clientPhone,
   clientWhatsapp,
 }: {
   clientId: number;
+  clientName: string;
   initialCity: string;
   initialAddress: string;
   clientPhone: string;
@@ -68,7 +70,9 @@ export default function LeadMeasurementPanel({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
-    [whatsappText, setWhatsappText] = useState("");
+    [whatsappText, setWhatsappText] = useState(""),
+    [scheduleOpen, setScheduleOpen] = useState(false),
+    [measurersLoaded, setMeasurersLoaded] = useState(false);
   const [form, setForm] = useState({
     measurerUserId: "",
     visitDate: "",
@@ -86,12 +90,33 @@ export default function LeadMeasurementPanel({
       fetch("/api/measurements?meta=1", { cache: "no-store" }),
     ]);
     if (list.ok) setItems(await list.json());
-    if (meta.ok) setMeasurers((await meta.json()).measurers ?? []);
+    if (meta.ok) {
+      const active = ((await meta.json()).measurers ?? []) as Measurer[];
+      setMeasurers(active);
+      setMeasurersLoaded(true);
+      setForm((current) => ({
+        ...current,
+        measurerUserId: active.length === 1
+          ? String(active[0].id)
+          : active.some((row) => String(row.id) === current.measurerUserId) ? current.measurerUserId : "",
+      }));
+    } else {
+      setMeasurersLoaded(true);
+      setError("Не удалось загрузить активных замерщиков");
+    }
   }, [clientId]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  useEffect(() => {
+    const openFromHash = () => {
+      if (window.location.hash === "#measurement-scheduling") setScheduleOpen(true);
+    };
+    openFromHash();
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
+  }, []);
 
   async function schedule() {
     setBusy(true);
@@ -113,6 +138,7 @@ export default function LeadMeasurementPanel({
       setNotice("Замер назначен и добавлен в календарь замерщика");
       setWhatsappText(body.whatsappText ?? "");
       setForm((value) => ({ ...value, visitDate: "", comment: "" }));
+      setScheduleOpen(false);
       await load();
     }
     setBusy(false);
@@ -138,8 +164,9 @@ export default function LeadMeasurementPanel({
   }
 
   return (
-    <section className="rounded-2xl border border-amber-700/50 bg-amber-950/10 p-4 md:p-6">
-      <div className="flex items-start gap-3">
+    <section id="measurement-scheduling" className="scroll-mt-20 rounded-2xl border border-amber-700/50 bg-amber-950/10 p-4 md:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
         <CalendarPlus className="mt-1 shrink-0 text-amber-300" />
         <div>
           <h2 className="text-xl font-semibold text-white">Замеры</h2>
@@ -148,6 +175,10 @@ export default function LeadMeasurementPanel({
             заказ.
           </p>
         </div>
+        </div>
+        <button type="button" onClick={() => setScheduleOpen((value) => !value)} className="min-h-11 rounded-xl bg-amber-500 px-4 font-semibold text-slate-950">
+          + Назначить замер
+        </button>
       </div>
       {error && (
         <p
@@ -165,7 +196,14 @@ export default function LeadMeasurementPanel({
           {notice}
         </p>
       )}
-      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {scheduleOpen && <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+      <div className="mb-4 grid gap-2 rounded-xl bg-slate-900 p-3 text-sm text-slate-300 sm:grid-cols-3">
+        <span><b className="block text-white">{clientName || "Имя не указано"}</b>Клиент</span>
+        <span><b className="block text-white">{clientWhatsapp || clientPhone}</b>Телефон / WhatsApp</span>
+        <span><b className="block text-white">{form.city || "Город не указан"}</b>Город</span>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {!measurersLoaded ? <p className="rounded-xl bg-slate-900 p-3 text-slate-400">Загрузка замерщиков…</p> : measurers.length === 0 ? <p role="alert" className="rounded-xl bg-red-950/50 p-3 text-red-300">Нет активного замерщика</p> : measurers.length === 1 ? <div className="text-sm text-slate-300">Замерщик<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{measurers[0].name} · выбран автоматически</b></div> :
         <label className="text-sm text-slate-300">
           Замерщик
           <select
@@ -183,17 +221,19 @@ export default function LeadMeasurementPanel({
             ))}
           </select>
         </label>
+        }
         <label className="text-sm text-slate-300">
-          Дата и время
+          Дата замера
           <input
             className={`${input} mt-1`}
-            type="datetime-local"
-            value={form.visitDate}
+            type="date"
+            value={form.visitDate.split("T")[0] ?? ""}
             onChange={(event) =>
-              setForm({ ...form, visitDate: event.target.value })
+              setForm({ ...form, visitDate: event.target.value ? `${event.target.value}T${form.visitDate.split("T")[1] || "09:00"}` : "" })
             }
           />
         </label>
+        <label className="text-sm text-slate-300">Время<input className={`${input} mt-1`} type="time" value={form.visitDate.split("T")[1] ?? ""} onChange={(event) => setForm({ ...form, visitDate: form.visitDate.split("T")[0] ? `${form.visitDate.split("T")[0]}T${event.target.value}` : "" })}/></label>
         <label className="text-sm text-slate-300">
           Город
           <input
@@ -247,6 +287,7 @@ export default function LeadMeasurementPanel({
       >
         Назначить замер
       </button>
+      </div>}
       {whatsappText && (
         <div className="mt-4 rounded-xl border border-green-800 bg-green-950/20 p-4">
           <div className="flex items-center justify-between gap-3">

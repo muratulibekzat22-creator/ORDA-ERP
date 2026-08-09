@@ -43,7 +43,13 @@ export async function POST(request: Request) {
     }
     const orderId = positiveId(body.orderId);
     const order = !body.clientId && orderId ? await prisma.order.findUnique({ where: { id: orderId }, select: { clientId: true } }) : null;
-    const clientId = positiveId(body.clientId) ?? order?.clientId ?? null, measurerUserId = positiveId(body.measurerUserId);
+    const clientId = positiveId(body.clientId) ?? order?.clientId ?? null;
+    let measurerUserId = positiveId(body.measurerUserId);
+    if (!measurerUserId) {
+      const activeMeasurers = await prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true }, take: 2 });
+      if (activeMeasurers.length === 0) return NextResponse.json({ error: "Нет активного замерщика" }, { status: 409 });
+      if (activeMeasurers.length === 1) measurerUserId = activeMeasurers[0].id;
+    }
     const visitDate = parseBusinessDateTime(body.visitDate) ?? (typeof body.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.visitDate) ? parseBusinessDateTime(`${body.visitDate}T09:00`) : null);
     if (!clientId || !measurerUserId || !visitDate) return NextResponse.json({ error: "Укажите заявку, замерщика, дату и время" }, { status: 400 });
     const result = await scheduleMeasurement(actor, {
