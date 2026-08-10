@@ -447,6 +447,7 @@ model Client {
   @@index([managerUserId, stage])
   @@index([sourceCode, createdAt])
   @@index([deletedAt, managerUserId])
+  @@index([active, deletedAt, updatedAt])
 }
 
 model LeadActivity {
@@ -796,6 +797,8 @@ model Order {
   @@index([deletedAt, lifecycle])
   @@index([orderReceivedAt])
   @@index([partnerId, partnerAgreedAt])
+  @@index([deletedAt, createdAt, id])
+  @@index([managerUserId, deletedAt, createdAt])
 }
 
 model CalendarTask {
@@ -1038,6 +1041,7 @@ model CompanyLedgerEntry {
   @@index([clientId])
   @@index([partnerId])
   @@index([employeeId])
+  @@index([direction, operationDate, id])
 }
 
 model FinanceCategory {
@@ -1315,6 +1319,7 @@ model Document {
   @@index([paymentId])
   @@index([status, documentDate])
   @@index([authorId, documentDate])
+  @@index([documentDate, id])
 }
 
 model DocumentVersion {
@@ -1780,6 +1785,9 @@ model Measurement {
   @@index([clientId, status, visitDate])
   @@index([orderId])
   @@index([clientOutcome, outcomeAt])
+  @@index([status, visitDate])
+  @@index([measurerUserId, status, visitDate])
+  @@index([completedAt])
 }
 
 model MeasurementAttachment {
@@ -1944,6 +1952,11 @@ model Payment {
 
   createdAt DateTime   @default(now())
   documents Document[]
+
+  @@index([operationDate])
+  @@index([operationDate, id])
+  @@index([orderId, operationDate])
+  @@index([partnerId, operationDate])
 }
 
 model CommercialAdjustment {
@@ -2033,6 +2046,8 @@ model Production {
   updatedAt DateTime @updatedAt
 
   @@index([archivedAt, stage])
+  @@index([archivedAt, priority, createdAt, id])
+  @@index([orderId])
 }
 
 model ProductionStageHistory {
@@ -2102,4 +2117,7 @@ model OrderEvent {
   requestHash    String?
 
   createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([orderId, createdAt])
 }

@@ -19,22 +19,27 @@ export default function ProductionPage() {
   const [editor, setEditor] = useState<ProductionKanbanItem | "new" | null>(null);
   const [editorSaving, setEditorSaving] = useState(false);
   const [filters, setFilters] = useState<ProductionKanbanFilter>(EMPTY_PRODUCTION_FILTERS);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
-  const loadProductions = useCallback(async () => {
-    const response = await fetch("/api/production", { cache: "no-store" });
-    const payload = await response.json() as ProductionKanbanItem[] | { error?: string };
-    if (!response.ok) throw new Error("error" in payload && payload.error ? payload.error : "Не удалось загрузить производство");
-    setProductions(payload as ProductionKanbanItem[]);
+  const loadProductions = useCallback(async (targetPage = 1, append = false) => {
+    const response = await fetch(`/api/production?page=${targetPage}&limit=100`, { cache: "no-store" });
+    const payload = await response.json() as { data?: ProductionKanbanItem[]; pagination?: { page: number; totalPages: number }; error?: string };
+    if (!response.ok || !Array.isArray(payload.data)) throw new Error(payload.error ?? "Не удалось загрузить производство");
+    setProductions((current) => append ? [...current, ...payload.data!] : payload.data!);
+    setPage(payload.pagination?.page ?? targetPage);
+    setTotalPages(payload.pagination?.totalPages ?? 1);
   }, []);
 
   useEffect(() => {
     let active = true;
     void Promise.all([
       fetch("/api/auth/session").then((response) => response.json()),
-      fetch("/api/production", { cache: "no-store" }).then(async (response) => {
-        const payload = await response.json() as ProductionKanbanItem[] | { error?: string };
-        if (!response.ok) throw new Error("error" in payload && payload.error ? payload.error : "Не удалось загрузить производство");
-        return payload as ProductionKanbanItem[];
+      fetch("/api/production?page=1&limit=100", { cache: "no-store" }).then(async (response) => {
+        const payload = await response.json() as { data?: ProductionKanbanItem[]; pagination?: { totalPages: number }; error?: string };
+        if (!response.ok || !Array.isArray(payload.data)) throw new Error(payload.error ?? "Не удалось загрузить производство");
+        setTotalPages(payload.pagination?.totalPages ?? 1);
+        return payload.data;
       }),
     ])
       .then(async ([session, productionItems]) => {
@@ -122,6 +127,7 @@ export default function ProductionPage() {
       {error && <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300">{error}</p>}
       {!productions.length ? <div className="rounded-2xl border border-dashed border-slate-700 py-16 text-center text-slate-400">Производственных задач пока нет</div> : <ProductionKanban columns={columns} savingIds={savingIds} onDropCard={moveCard} onEdit={canManage ? (item) => setEditor(item) : undefined} role={role} />}
       <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">Фото и файлы будут подключены после выбора файлового хранилища.</div>
+      {page < totalPages && <button type="button" disabled={loading} onClick={() => void loadProductions(page + 1, true)} className="mx-auto min-h-11 rounded-xl bg-slate-800 px-6 text-white disabled:opacity-40">Показать ещё</button>}
       {editor && <ProductionEditor item={editor === "new" ? null : editor} options={options} saving={editorSaving} onClose={() => setEditor(null)} onSave={saveEditor} />}
     </section>
   );

@@ -58,6 +58,7 @@ export async function POST(
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: form,
+        signal: AbortSignal.timeout(15_000),
       },
     );
     if (!mediaResponse.ok)
@@ -89,6 +90,7 @@ export async function POST(
             caption: `Коммерческое предложение №${proposal.rootNumber ?? proposal.number}`,
           },
         }),
+        signal: AbortSignal.timeout(15_000),
       },
     );
     if (!sendResponse.ok)

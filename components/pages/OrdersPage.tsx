@@ -291,26 +291,68 @@ export default function OrdersPage({
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [query, setQuery] = useState(""),
+    [serverQuery, setServerQuery] = useState(""),
     [filter, setFilter] = useState<Filter>(initial),
     [visibleCount, setVisibleCount] = useState(30),
-    [view, setView] = useState<"active" | "deleted">("active");
+    [view, setView] = useState<"active" | "deleted">("active"),
+    [page, setPage] = useState(1),
+    [totalPages, setTotalPages] = useState(1),
+    [totalOrders, setTotalOrders] = useState(0),
+    [filterTotals, setFilterTotals] = useState<Partial<Record<Filter, number>>>({});
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
-  const load = useCallback(async () => {
+  const internalSettlement = ["DIRECTOR", "ACCOUNTANT"].includes(
+    session?.user.role ?? "",
+  );
+  const requestFilter: Filter =
+    session?.user &&
+    settlementFilters.includes(filter as SettlementFilter) &&
+    !internalSettlement
+      ? "all"
+      : filter;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setServerQuery(deferredQuery), 300);
+    return () => window.clearTimeout(timer);
+  }, [deferredQuery]);
+  const load = useCallback(async (targetPage = 1, append = false) => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(
-          view === "deleted" ? "/api/orders?deletedOnly=true" : "/api/orders",
-        ),
+      const params = new URLSearchParams({
+        page: String(targetPage),
+        limit: "50",
+      });
+      if (view === "deleted") params.set("deletedOnly", "true");
+      if (serverQuery) params.set("query", serverQuery);
+      if (requestFilter !== "all") params.set("filter", requestFilter);
+      const response = await fetch(`/api/orders?${params}`),
         payload = (await response.json()) as
-          OrderListItem[] | { error?: string };
-      if (!response.ok || !Array.isArray(payload))
+          | OrderListItem[]
+          | {
+              data?: OrderListItem[];
+              pagination?: {
+                page: number;
+                total: number;
+                totalPages: number;
+              };
+              error?: string;
+            };
+      if (!response.ok || Array.isArray(payload) || !Array.isArray(payload.data))
         throw new Error(
           !Array.isArray(payload)
             ? payload.error
             : "Не удалось загрузить заказы",
         );
-      setOrders(payload);
+      setOrders((current) =>
+        append ? [...current, ...payload.data!] : payload.data!,
+      );
+      setPage(payload.pagination?.page ?? targetPage);
+      setTotalPages(payload.pagination?.totalPages ?? 1);
+      setTotalOrders(payload.pagination?.total ?? payload.data.length);
+      if (!serverQuery)
+        setFilterTotals((current) => ({
+          ...current,
+          [requestFilter]: payload.pagination?.total ?? payload.data!.length,
+        }));
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Не удалось загрузить заказы",
@@ -318,22 +360,14 @@ export default function OrdersPage({
     } finally {
       setLoading(false);
     }
-  }, [view]);
+  }, [requestFilter, serverQuery, view]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
-  const internalSettlement = ["DIRECTOR", "ACCOUNTANT"].includes(
-    session?.user.role ?? "",
-  );
   const director = session?.user.role === "DIRECTOR";
   const canManage = ["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "");
-  const activeFilter: Filter =
-    session?.user &&
-    settlementFilters.includes(filter as SettlementFilter) &&
-    !internalSettlement
-      ? "all"
-      : filter;
+  const activeFilter = requestFilter;
   const counts = useMemo(() => {
     const result = Object.fromEntries(
       ORDER_STAGE_KEYS.map((key) => [key, 0]),
@@ -346,7 +380,8 @@ export default function OrdersPage({
     }
     return {
       ...result,
-      all: orders.length,
+      ...filterTotals,
+      all: filterTotals.all ?? Math.max(totalOrders, orders.length),
       overdue,
       ...Object.fromEntries(
         settlementFilters.map((key) => [
@@ -355,7 +390,7 @@ export default function OrdersPage({
         ]),
       ),
     } as Record<Filter, number>;
-  }, [orders]);
+  }, [filterTotals, orders, totalOrders]);
   const filtered = useMemo(
     () =>
       orders
@@ -547,9 +582,14 @@ export default function OrdersPage({
               }
             />
           )}{" "}
-          {visibleCount < filtered.length && (
+          {(visibleCount < filtered.length || page < totalPages) && (
             <button
-              onClick={() => setVisibleCount((value) => value + 30)}
+              onClick={() => {
+                if (visibleCount < filtered.length)
+                  setVisibleCount((value) => value + 30);
+                else void load(page + 1, true);
+              }}
+              disabled={loading}
               className="mx-auto block min-h-11 rounded-xl bg-slate-800 px-6 text-white"
             >
               Показать ещё

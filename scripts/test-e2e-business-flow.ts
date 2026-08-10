@@ -30,7 +30,7 @@ async function main() {
     const client = await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "E2E", manager: `${tag}-MANAGER`, amount: "0", status: "Новый" } }); ids.client = client.id;
 
     step = "create generated order";
-    const generatedOrder = (await createOrder({ clientId: client.id, partnerId: partner.id, address: "E2E generated", staircase: "Straight", material: "Oak", amount: 100, prepayment: 10, partnerPrice: 40, partnerPaid: 5, manager: `${tag}-MANAGER`, idempotencyKey: `${tag}:generated-order`, requestHash: "generated-order" })).order;
+    const generatedOrder = (await createOrder({ clientId: client.id, partnerId: partner.id, address: "E2E generated", staircase: "Straight", material: "Oak", amount: 100, prepayment: 10, partnerPrice: 40, partnerPriceSet: true, partnerPaid: 5, manager: `${tag}-MANAGER`, idempotencyKey: `${tag}:generated-order`, requestHash: "generated-order" })).order;
     assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(generatedOrder.number) && Number(generatedOrder.balance) === 90 && Number(generatedOrder.partnerBalance) === 35 && Number(generatedOrder.companyProfit) === 60, step);
     await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: generatedOrder.id } });
     await prisma.orderEvent.deleteMany({ where: { orderId: generatedOrder.id } });

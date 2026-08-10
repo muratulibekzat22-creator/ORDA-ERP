@@ -21,9 +21,13 @@ export async function GET(request: Request) {
   const authorId = params.has("authorId") ? positiveId(params.get("authorId")) : undefined;
   const type = params.get("type") || undefined, status = params.get("status") || undefined;
   const from = date(params.get("from")), to = date(params.get("to"));
+  const page = params.has("page") ? Number(params.get("page")) : null;
+  const limit = params.has("limit") ? Number(params.get("limit")) : 50;
+  if ((page !== null && (!Number.isInteger(page) || page < 1)) || !Number.isInteger(limit) || limit < 1 || limit > 100) return NextResponse.json({ error: "Invalid pagination" }, { status: 400 });
   if (orderId === null || clientId === null || authorId === null || (type && !documentTypes.has(type as DocumentType)) || (status && !documentStatuses.has(status as DocumentStatus)) || (from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) return NextResponse.json({ error: "Некорректные параметры" }, { status: 400 });
   try {
-    return NextResponse.json(await getDocuments(actor(auth.session!), { orderId, clientId, authorId, type: type as DocumentType | undefined, status: status as DocumentStatus | undefined, query: params.get("q") ?? undefined, from, to, includeArchived: params.get("includeArchived") === "1" }));
+    const documents = await getDocuments(actor(auth.session!), { orderId, clientId, authorId, type: type as DocumentType | undefined, status: status as DocumentStatus | undefined, query: params.get("q") ?? undefined, from, to, includeArchived: params.get("includeArchived") === "1", ...(page === null ? {} : { skip: (page - 1) * limit, take: limit + 1 }) });
+    return NextResponse.json(page === null ? documents : { data: documents.slice(0, limit), pagination: { page, limit, hasMore: documents.length > limit } });
   } catch { return NextResponse.json({ error: "Ошибка получения документов" }, { status: 500 }); }
 }
 

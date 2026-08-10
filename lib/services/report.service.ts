@@ -34,10 +34,27 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
   const internalFinance = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
-  const [balanceOrders, payrollAccruals, payrollPayments] = await Promise.all([
-    prisma.order.findMany({ where: activeOrder, select: { amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, payments: { select: { amount: true, type: true, partnerId: true } } } }),
-    internalFinance ? prisma.payrollAccrual.findMany({ where: { employee: { active: true, payrollEnabled: true, user: { active: true } } }, select: { amount: true, direction: true, createdAt: true } }) : Promise.resolve([]),
-    internalFinance ? prisma.payrollPayment.findMany({ where: { employee: { active: true, payrollEnabled: true, user: { active: true } } }, select: { amount: true, type: true, paymentDate: true } }) : Promise.resolve([]),
+  type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
+  const [customerBalance, partnerBalance, payrollTotals] = await Promise.all([
+    prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
+    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null } }, _sum: { partnerBalance: true } }),
+    internalFinance ? prisma.$queryRaw<PayrollTotalsRow[]>`
+      SELECT 'accrual'::text AS kind,
+        COALESCE(SUM(CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END), 0) AS total,
+        COALESCE(SUM(CASE WHEN accrual."createdAt" >= ${period.start} AND accrual."createdAt" <= ${period.end} THEN CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END ELSE 0 END), 0) AS period_total
+      FROM "PayrollAccrual" accrual
+      JOIN "EmployeePayrollProfile" employee ON employee.id = accrual."employeeId"
+      JOIN "User" account ON account.id = employee."userId"
+      WHERE employee.active = true AND employee."payrollEnabled" = true AND account.active = true
+      UNION ALL
+      SELECT 'payment'::text AS kind,
+        COALESCE(SUM(CASE WHEN payment.type = 'EMPLOYEE_REFUND'::"PayrollPaymentType" THEN -payment.amount ELSE payment.amount END), 0) AS total,
+        COALESCE(SUM(CASE WHEN payment."paymentDate" >= ${period.start} AND payment."paymentDate" <= ${period.end} THEN CASE WHEN payment.type = 'EMPLOYEE_REFUND'::"PayrollPaymentType" THEN -payment.amount ELSE payment.amount END ELSE 0 END), 0) AS period_total
+      FROM "PayrollPayment" payment
+      JOIN "EmployeePayrollProfile" employee ON employee.id = payment."employeeId"
+      JOIN "User" account ON account.id = employee."userId"
+      WHERE employee.active = true AND employee."payrollEnabled" = true AND account.active = true`
+    : Promise.resolve([]),
   ]);
   const received = payments.reduce((sum, item) => sum + paymentEffect(item.type, item.amount), 0);
   const previousReceived = previousPayments.reduce((sum, item) => sum + paymentEffect(item.type, item.amount), 0);
@@ -55,19 +72,14 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   orders.forEach((item) => { const key = day(item.createdAt); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.salesAmount += money(item.amount); trendMap.set(key, value); });
   payments.forEach((item) => { const key = day(item.operationDate); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.received += paymentEffect(item.type, item.amount); trendMap.set(key, value); });
   const grossMargin = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.amount) - money(item.partnerPrice), 0);
-  const currentCustomerRemaining = balanceOrders.reduce((sum, item) => {
-    const paid = item.payments.reduce((total, payment) => total + paymentEffect(payment.type, payment.amount), 0);
-    return sum + Math.max(money(item.amount) - paid, 0);
-  }, 0);
-  const currentPartnerRemaining = balanceOrders.reduce((sum, item) => {
-    if (!item.partnerId || !item.partnerAgreedAt) return sum;
-    const paid = item.payments.reduce((total, payment) => payment.partnerId === item.partnerId ? total + (payment.type === "PARTNER_PAYOUT" ? money(payment.amount) : payment.type === "PARTNER_PAYOUT_REVERSAL" ? -money(payment.amount) : 0) : total, 0);
-    return sum + Math.max(money(item.partnerPrice) - paid, 0);
-  }, 0);
-  const payrollAccruedAll = payrollAccruals.reduce((sum, item) => sum + money(item.amount) * (item.direction === "INCREASE" ? 1 : -1), 0);
-  const payrollPaidAll = payrollPayments.reduce((sum, item) => sum + money(item.amount) * (item.type === "EMPLOYEE_REFUND" ? -1 : 1), 0);
-  const payrollAccrued = payrollAccruals.filter((item) => item.createdAt >= period.start && item.createdAt <= period.end).reduce((sum, item) => sum + money(item.amount) * (item.direction === "INCREASE" ? 1 : -1), 0);
-  const payrollPaid = payrollPayments.filter((item) => item.paymentDate >= period.start && item.paymentDate <= period.end).reduce((sum, item) => sum + money(item.amount) * (item.type === "EMPLOYEE_REFUND" ? -1 : 1), 0);
+  const currentCustomerRemaining = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
+  const currentPartnerRemaining = Math.max(Number(partnerBalance._sum.partnerBalance ?? 0), 0);
+  const payrollAccruedRow = payrollTotals.find((row) => row.kind === "accrual");
+  const payrollPaidRow = payrollTotals.find((row) => row.kind === "payment");
+  const payrollAccruedAll = Number(payrollAccruedRow?.total ?? 0);
+  const payrollPaidAll = Number(payrollPaidRow?.total ?? 0);
+  const payrollAccrued = Number(payrollAccruedRow?.period_total ?? 0);
+  const payrollPaid = Number(payrollPaidRow?.period_total ?? 0);
   const partnerAgreed = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.partnerPrice), 0);
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
   return {

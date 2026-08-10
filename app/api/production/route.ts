@@ -2,10 +2,12 @@ import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
+import { logRequestFailure } from "@/lib/observability";
 import { isProductionStage } from "@/lib/production/stage-policy";
 import { requirePermission } from "@/lib/server-auth";
 import {
   createProductionCommand,
+  countProductions,
   deleteProductionCommand,
   getProduction,
   getProductionOptions,
@@ -93,9 +95,17 @@ export async function GET(request: Request) {
       if (!production) return NextResponse.json({ error: "Производство не найдено" }, { status: 404 });
       return NextResponse.json(production);
     }
-    return NextResponse.json(await getProductions(actor));
+    const page = params.has("page") ? Number(params.get("page")) : null;
+    const limit = params.has("limit") ? Number(params.get("limit")) : 50;
+    if ((page !== null && (!Number.isInteger(page) || page < 1)) || !Number.isInteger(limit) || limit < 1 || limit > 100)
+      return NextResponse.json({ error: "Invalid pagination" }, { status: 400 });
+    const [items, total] = await Promise.all([
+      getProductions(actor, { skip: page === null ? 0 : (page - 1) * limit, take: page === null ? 100 : limit }),
+      page === null ? Promise.resolve(null) : countProductions(actor),
+    ]);
+    return NextResponse.json(page === null ? items : { data: items, pagination: { page, limit, total, totalPages: Math.ceil((total ?? 0) / limit) } });
   } catch (error) {
-    console.error(error);
+    logRequestFailure("production.list.failed", request, error);
     return NextResponse.json({ error: "Ошибка загрузки производства" }, { status: 500 });
   }
 }
@@ -128,7 +138,7 @@ export async function POST(request: Request) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
     const response = serviceError(error);
     if (response) return response;
-    console.error(error);
+    logRequestFailure("production.create.failed", request, error);
     return NextResponse.json({ error: "Ошибка создания производства" }, { status: 500 });
   }
 }
@@ -161,7 +171,7 @@ export async function PATCH(request: Request) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
     const response = serviceError(error);
     if (response) return response;
-    console.error(error);
+    logRequestFailure("production.update.failed", request, error);
     return NextResponse.json({ error: "Ошибка обновления производства" }, { status: 500 });
   }
 }
@@ -178,7 +188,7 @@ export async function DELETE(request: Request) {
   } catch (error) {
     const response = serviceError(error);
     if (response) return response;
-    console.error(error);
+    logRequestFailure("production.delete.failed", request, error);
     return NextResponse.json({ error: "Ошибка удаления производства" }, { status: 500 });
   }
 }

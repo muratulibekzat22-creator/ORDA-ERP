@@ -58,6 +58,7 @@ type Journal = {
     partners: Option[];
     employees: Option[];
   };
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
 type Form = {
   direction: Direction;
@@ -81,6 +82,7 @@ const emptyJournal: Journal = {
   timeline: [],
   categories: [],
   options: { orders: [], clients: [], partners: [], employees: [] },
+  pagination: { page: 1, pageSize: 50, total: 0, totalPages: 0 },
 };
 const localDate = () => {
   const date = new Date();
@@ -136,6 +138,7 @@ export default function FinanceJournalPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
   const [manageCategories, setManageCategories] = useState(false);
   const { getKey, reset } = useIdempotencyKey();
 
@@ -144,7 +147,11 @@ export default function FinanceJournalPage() {
     setError("");
     const params = new URLSearchParams({
       period: period === "custom" ? "all" : period,
+      page: String(page),
+      pageSize: "50",
     });
+    if (tab === "income") params.set("direction", "INCOME");
+    if (tab === "expense") params.set("direction", "EXPENSE");
     if (period === "custom" && from)
       params.set("from", `${from}T00:00:00`);
     if (period === "custom" && to)
@@ -167,7 +174,7 @@ export default function FinanceJournalPage() {
     } finally {
       setLoading(false);
     }
-  }, [from, period, to]);
+  }, [from, page, period, tab, to]);
 
   useEffect(() => {
     // Initial and filter-driven API synchronization belongs in this effect.
@@ -366,7 +373,7 @@ export default function FinanceJournalPage() {
           <button
             type="button"
             key={value}
-            onClick={() => setPeriod(value)}
+            onClick={() => { setPage(1); setPeriod(value); }}
             className={`min-h-10 shrink-0 rounded-xl px-4 text-sm ${period === value ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`}
           >
             {label}
@@ -379,7 +386,7 @@ export default function FinanceJournalPage() {
             <input
               type="date"
               value={from}
-              onChange={(event) => setFrom(event.target.value)}
+              onChange={(event) => { setPage(1); setFrom(event.target.value); }}
               className="input"
             />
           </Field>
@@ -387,7 +394,7 @@ export default function FinanceJournalPage() {
             <input
               type="date"
               value={to}
-              onChange={(event) => setTo(event.target.value)}
+              onChange={(event) => { setPage(1); setTo(event.target.value); }}
               className="input"
             />
           </Field>
@@ -565,28 +572,28 @@ export default function FinanceJournalPage() {
       <div className="flex gap-2 overflow-x-auto">
         <button
           type="button"
-          onClick={() => setTab("all")}
+          onClick={() => { setPage(1); setTab("all"); }}
           className={tabClass(tab === "all")}
         >
           Все
         </button>
         <button
           type="button"
-          onClick={() => setTab("income")}
+          onClick={() => { setPage(1); setTab("income"); }}
           className={tabClass(tab === "income")}
         >
           Доходы
         </button>
         <button
           type="button"
-          onClick={() => setTab("expense")}
+          onClick={() => { setPage(1); setTab("expense"); }}
           className={tabClass(tab === "expense")}
         >
           Расходы
         </button>
         <button
           type="button"
-          onClick={() => setTab("analysis")}
+          onClick={() => { setPage(1); setTab("analysis"); }}
           className={tabClass(tab === "analysis")}
         >
           Аналитика
@@ -611,8 +618,9 @@ export default function FinanceJournalPage() {
               За период операций нет.
             </p>
           ) : (
-            <div className="space-y-2">
-              {visible.map((item) => (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {visible.map((item) => (
                 <article
                   key={item.id}
                   className={`rounded-2xl border p-4 ${item.voided ? "border-slate-800 opacity-60" : "border-slate-700 bg-[#101827]"}`}
@@ -669,7 +677,34 @@ export default function FinanceJournalPage() {
                     )}
                   </div>
                 </article>
-              ))}
+                ))}
+              </div>
+              {journal.pagination.totalPages > 1 && (
+                <nav
+                  aria-label="Страницы финансового журнала"
+                  className="flex flex-wrap items-center justify-center gap-3"
+                >
+                  <button
+                    type="button"
+                    disabled={page <= 1 || loading}
+                    onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    className="min-h-11 rounded-xl bg-slate-800 px-4 text-white disabled:opacity-40"
+                  >
+                    Назад
+                  </button>
+                  <span className="text-sm text-slate-400">
+                    {journal.pagination.page} / {journal.pagination.totalPages} · {journal.pagination.total} операций
+                  </span>
+                  <button
+                    type="button"
+                    disabled={page >= journal.pagination.totalPages || loading}
+                    onClick={() => setPage((value) => value + 1)}
+                    className="min-h-11 rounded-xl bg-slate-800 px-4 text-white disabled:opacity-40"
+                  >
+                    Далее
+                  </button>
+                </nav>
+              )}
             </div>
           )}
         </>

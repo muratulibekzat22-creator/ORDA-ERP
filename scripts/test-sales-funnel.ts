@@ -47,12 +47,12 @@ try {
 
   const analytics = await getAnalytics({ period: "all", role: Role.MANAGER, managerUserId: manager.id });
   assert(analytics.sales.newLeads >= 2);
-  assert(analytics.sales.won >= 1);
-  assert.equal(analytics.sales.conversion, 50);
-  assert(analytics.managers.some((row) => row.managerUserId === manager.id && row.won >= 1));
+  assert.equal(analytics.sales.won, 0, "a lead stage without a real Order must not count as a sale");
+  assert.equal(analytics.sales.conversion, 0);
+  assert(analytics.managers.some((row) => row.managerUserId === manager.id && row.won === 0));
   const history = await prisma.leadStatusHistory.findMany({ where: { clientId: wonLead.id }, orderBy: { createdAt: "asc" } });
   assert(history.some((item) => item.toStage === LeadStage.WON && item.authorId === manager.id));
-  console.log("sales funnel, mandatory next action, ownership and lead analytics checks passed");
+  console.log("sales funnel, mandatory next action, ownership and real-order analytics checks passed");
 } finally {
   if (ids.length) await prisma.client.deleteMany({ where: { id: { in: ids } } });
   if (userIds.length) await prisma.user.deleteMany({ where: { id: { in: userIds } } });

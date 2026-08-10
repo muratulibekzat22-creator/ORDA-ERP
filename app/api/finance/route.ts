@@ -70,6 +70,16 @@ export async function GET(request: Request) {
     const to = optionalDate(searchParams.get("to"));
     if (from === null || to === null) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
     const period = searchParams.get("period") ?? "month";
+    const requestedPage = Number(searchParams.get("page") ?? "1");
+    const requestedPageSize = Number(searchParams.get("pageSize") ?? "50");
+    if (
+      !Number.isInteger(requestedPage) ||
+      requestedPage < 1 ||
+      !Number.isInteger(requestedPageSize) ||
+      requestedPageSize < 10 ||
+      requestedPageSize > 100
+    )
+      return NextResponse.json({ error: "Некорректная пагинация" }, { status: 400 });
     const [data, journal] = await Promise.all([
       getFinanceDashboard({
         period: (["today", "week", "month", "quarter", "year"].includes(
@@ -113,6 +123,8 @@ export async function GET(request: Request) {
           searchParams.get("direction") === "EXPENSE"
             ? (searchParams.get("direction") as FinanceDirection)
             : undefined,
+        page: requestedPage,
+        pageSize: requestedPageSize,
       }),
     ]);
     return NextResponse.json({ ...data, journal });

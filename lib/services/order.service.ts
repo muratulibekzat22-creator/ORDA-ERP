@@ -5,7 +5,7 @@ import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 
 export async function getOrders(
   where: import("@prisma/client").Prisma.OrderWhereInput = {},
-  options: { includeDeleted?: boolean } = {},
+  options: { includeDeleted?: boolean; skip?: number; take?: number } = {},
 ) {
   const effectiveWhere: Prisma.OrderWhereInput =
     options.includeDeleted || Object.hasOwn(where, "deletedAt")
@@ -82,6 +82,8 @@ export async function getOrders(
     orderBy: {
       createdAt: "desc",
     },
+    skip: Math.max(0, options.skip ?? 0),
+    take: Math.min(100, Math.max(1, options.take ?? 100)),
   });
   return orders.map(({ _count, ...order }) => ({
     ...order,
@@ -91,6 +93,10 @@ export async function getOrders(
       _count.financeAuditEvents > 0 ||
       _count.payrollAccruals > 0,
   }));
+}
+
+export function countOrders(where: Prisma.OrderWhereInput = {}) {
+  return prisma.order.count({ where });
 }
 
 export async function getOrder(id: number) {

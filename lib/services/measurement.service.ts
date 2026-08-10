@@ -535,53 +535,147 @@ export async function measurementWorkspace(
   if (actor.role === Role.DIRECTOR && filters.managerUserId)
     workspaceWhere.client = { managerUserId: filters.managerUserId };
 
-  const measurements = await prisma.measurement.findMany({
-    where: workspaceWhere,
-    include: measurementInclude,
-    orderBy: [{ visitDate: "asc" }, { id: "asc" }],
-    take: 300,
-  });
-  const todayCount = await prisma.measurement.count({
-    where: {
-      AND: [scope],
-      visitDate: { gte: today.start, lt: today.end },
-      status: { not: MeasurementStatus.CANCELLED },
-    },
-  });
-  const upcoming = await prisma.measurement.count({
-    where: {
-      AND: [scope],
-      visitDate: { gt: now },
-      status: { in: active },
-    },
-  });
-  const overdue = await prisma.measurement.count({
-    where: { AND: [scope], visitDate: { lt: now }, status: { in: active } },
-  });
-  const handed = await prisma.measurement.count({
-    where: { AND: [scope], handedAt: { gte: month.start, lt: month.end } },
-  });
-  const monthCompleted = await prisma.measurement.count({
-    where: { AND: [scope], completedAt: { gte: month.start, lt: month.end } },
-  });
-  const monthAssigned = await prisma.measurement.count({
-    where: {
-      AND: [scope],
-      visitDate: { gte: month.start, lt: month.end },
-      status: { not: MeasurementStatus.CANCELLED },
-    },
-  });
-  const monthOrders = await prisma.measurement.count({
-    where: {
-      AND: [scope],
-      completedAt: { gte: month.start, lt: month.end },
-      order: { is: { deletedAt: null, lifecycle: { not: "CANCELLED" } } },
-    },
-  });
-  const settings = await prisma.systemSettings.findUnique({
-    where: { id: 1 },
-    select: { measurerOrderBonus: true },
-  });
+  type MeasurementSummaryRow = {
+    kind: "NEXT" | "OVERDUE";
+    id: number;
+    visit_date: Date;
+    status: MeasurementStatus;
+    city: string;
+    address: string;
+    map_link: string | null;
+    client_id: number;
+    client_name: string;
+    client_phone: string;
+    client_whatsapp: string;
+    manager_id: number | null;
+    manager_name: string | null;
+  };
+  const summaryScopeSql = actor.role === Role.DIRECTOR
+    ? Prisma.sql`TRUE`
+    : actor.role === Role.MEASURER
+      ? Prisma.sql`m."measurerUserId" = ${actor.userId}`
+      : Prisma.sql`(
+          c."managerUserId" = ${actor.userId}
+          OR (c."managerUserId" IS NULL AND c.manager = ${actor.name})
+        )`;
+
+  const [
+    measurements,
+    todayCount,
+    upcoming,
+    overdue,
+    handed,
+    monthCompleted,
+    monthAssigned,
+    monthOrders,
+    settings,
+    measurementSummaries,
+  ] = await Promise.all([
+    prisma.measurement.findMany({
+      where: workspaceWhere,
+      include: measurementInclude,
+      orderBy: [{ visitDate: "asc" }, { id: "asc" }],
+      take: 300,
+    }),
+    prisma.measurement.count({
+      where: {
+        AND: [scope],
+        visitDate: { gte: today.start, lt: today.end },
+        status: { not: MeasurementStatus.CANCELLED },
+      },
+    }),
+    prisma.measurement.count({
+      where: {
+        AND: [scope],
+        visitDate: { gt: now },
+        status: { in: active },
+      },
+    }),
+    prisma.measurement.count({
+      where: { AND: [scope], visitDate: { lt: now }, status: { in: active } },
+    }),
+    prisma.measurement.count({
+      where: { AND: [scope], handedAt: { gte: month.start, lt: month.end } },
+    }),
+    prisma.measurement.count({
+      where: { AND: [scope], completedAt: { gte: month.start, lt: month.end } },
+    }),
+    prisma.measurement.count({
+      where: {
+        AND: [scope],
+        visitDate: { gte: month.start, lt: month.end },
+        status: { not: MeasurementStatus.CANCELLED },
+      },
+    }),
+    prisma.measurement.count({
+      where: {
+        AND: [scope],
+        completedAt: { gte: month.start, lt: month.end },
+        order: { is: { deletedAt: null, lifecycle: { not: "CANCELLED" } } },
+      },
+    }),
+    prisma.systemSettings.findUnique({
+      where: { id: 1 },
+      select: { measurerOrderBonus: true },
+    }),
+    prisma.$queryRaw<MeasurementSummaryRow[]>(Prisma.sql`
+      (
+        SELECT
+          'NEXT'::text AS kind,
+          m.id,
+          m."visitDate" AS visit_date,
+          m.status,
+          m.city,
+          m.address,
+          m."mapLink" AS map_link,
+          c.id AS client_id,
+          c.name AS client_name,
+          c.phone AS client_phone,
+          c.whatsapp AS client_whatsapp,
+          manager.id AS manager_id,
+          manager.name AS manager_name
+        FROM "Measurement" m
+        JOIN "Client" c ON c.id = m."clientId"
+        LEFT JOIN "User" manager ON manager.id = c."managerUserId"
+        WHERE ${summaryScopeSql}
+          AND m."visitDate" >= ${now}
+          AND m.status IN (
+            'ASSIGNED'::"MeasurementStatus",
+            'IN_PROGRESS'::"MeasurementStatus"
+          )
+        ORDER BY m."visitDate" ASC, m.id ASC
+        LIMIT 1
+      )
+      UNION ALL
+      (
+        SELECT
+          'OVERDUE'::text AS kind,
+          m.id,
+          m."visitDate" AS visit_date,
+          m.status,
+          m.city,
+          m.address,
+          m."mapLink" AS map_link,
+          c.id AS client_id,
+          c.name AS client_name,
+          c.phone AS client_phone,
+          c.whatsapp AS client_whatsapp,
+          manager.id AS manager_id,
+          manager.name AS manager_name
+        FROM "Measurement" m
+        JOIN "Client" c ON c.id = m."clientId"
+        LEFT JOIN "User" manager ON manager.id = c."managerUserId"
+        WHERE ${summaryScopeSql}
+          AND m."visitDate" < ${now}
+          AND m.status IN (
+            'ASSIGNED'::"MeasurementStatus",
+            'IN_PROGRESS'::"MeasurementStatus"
+          )
+        ORDER BY m."visitDate" ASC, m.id ASC
+        LIMIT 1
+      )
+    `),
+  ]);
   let monthBonus = 0,
     payable = 0;
   if (actor.role === Role.MEASURER) {
@@ -626,88 +720,121 @@ export async function measurementWorkspace(
       payable = accrued - paid;
     }
   }
-  const nextMeasurement =
-    measurements.find(
-      (row) => row.visitDate >= now && active.includes(row.status),
-    ) ?? null;
-  const needsClosingMeasurement =
-    measurements.find(
-      (row) => row.visitDate < now && active.includes(row.status),
-    ) ?? null;
   const conversion =
     monthCompleted > 0
       ? Math.round((monthOrders / monthCompleted) * 1000) / 10
       : 0;
-  const directorBonuses =
-    actor.role === Role.DIRECTOR
-      ? await prisma.payrollAccrual.findMany({
-          where: {
-            type: PayrollAccrualType.MEASUREMENT_BONUS,
-            createdAt: { gte: month.start, lt: month.end },
-            measurementId: { not: null },
+  const measurementSummaryView = (row: MeasurementSummaryRow | undefined) =>
+    row
+      ? {
+          id: row.id,
+          visitDate: row.visit_date,
+          status: row.status,
+          city: row.city,
+          address: row.address,
+          mapLink: row.map_link,
+          client: {
+            id: row.client_id,
+            name: row.client_name,
+            phone: row.client_phone,
+            whatsapp: row.client_whatsapp,
+            managerUser: row.manager_id
+              ? { id: row.manager_id, name: row.manager_name ?? "" }
+              : null,
           },
-          select: {
-            amount: true,
-            measurement: { select: { measurerUserId: true } },
+          operational: {
+            needsClosing: row.visit_date < now,
+            overdueMs: Math.max(0, now.getTime() - row.visit_date.getTime()),
           },
-        })
-      : [];
-  const measurerStats =
-    actor.role === Role.DIRECTOR
-      ? (
-          await prisma.user.findMany({
-            where: { role: Role.MEASURER, active: true },
-            select: { id: true, name: true },
-            orderBy: { name: "asc" },
-          })
-        ).map((user) => {
-          const own = measurements.filter(
-            (row) => row.measurerUserId === user.id,
-          );
-          const assigned = own.filter(
-            (row) =>
-              row.visitDate >= month.start &&
-              row.visitDate < month.end &&
-              row.status !== MeasurementStatus.CANCELLED,
-          ).length;
-          const completed = own.filter(
-            (row) =>
-              row.completedAt &&
-              row.completedAt >= month.start &&
-              row.completedAt < month.end,
-          ).length;
-          const orders = own.filter(
-            (row) =>
-              row.completedAt &&
-              row.completedAt >= month.start &&
-              row.completedAt < month.end &&
-              row.order,
-          ).length;
-          const bonus = directorBonuses
-            .filter((row) => row.measurement?.measurerUserId === user.id)
-            .reduce((sum, row) => sum + Number(row.amount), 0);
-          return {
-            id: user.id,
-            name: user.name,
-            assigned,
-            completed,
-            orders,
-            conversion:
-              completed > 0 ? Math.round((orders / completed) * 1000) / 10 : 0,
-            bonus,
-          };
-        })
-      : [];
+        }
+      : null;
+  const measurerStats = actor.role === Role.DIRECTOR
+    ? await prisma.$queryRaw<
+        Array<{
+          id: number;
+          name: string;
+          assigned: bigint;
+          completed: bigint;
+          orders: bigint;
+          bonus: Prisma.Decimal;
+        }>
+      >(Prisma.sql`
+        WITH measurement_stats AS (
+          SELECT
+            m."measurerUserId" AS id,
+            COUNT(*) FILTER (
+              WHERE m."visitDate" >= ${month.start}
+                AND m."visitDate" < ${month.end}
+                AND m.status <> 'CANCELLED'::"MeasurementStatus"
+            ) AS assigned,
+            COUNT(*) FILTER (
+              WHERE m."completedAt" >= ${month.start}
+                AND m."completedAt" < ${month.end}
+            ) AS completed,
+            COUNT(*) FILTER (
+              WHERE m."completedAt" >= ${month.start}
+                AND m."completedAt" < ${month.end}
+                AND o.id IS NOT NULL
+                AND o."deletedAt" IS NULL
+                AND o.lifecycle <> 'CANCELLED'::"OrderLifecycle"
+            ) AS orders
+          FROM "Measurement" m
+          LEFT JOIN "Order" o ON o.id = m."orderId"
+          WHERE m."measurerUserId" IS NOT NULL
+          GROUP BY m."measurerUserId"
+        ), bonus_stats AS (
+          SELECT
+            m."measurerUserId" AS id,
+            COALESCE(SUM(
+              CASE WHEN pa.direction = 'INCREASE'::"PayrollDirection"
+                THEN pa.amount ELSE -pa.amount END
+            ), 0) AS bonus
+          FROM "PayrollAccrual" pa
+          JOIN "Measurement" m ON m.id = pa."measurementId"
+          WHERE pa.type = 'MEASUREMENT_BONUS'::"PayrollAccrualType"
+            AND pa."createdAt" >= ${month.start}
+            AND pa."createdAt" < ${month.end}
+            AND m."measurerUserId" IS NOT NULL
+          GROUP BY m."measurerUserId"
+        )
+        SELECT
+          u.id,
+          u.name,
+          COALESCE(ms.assigned, 0)::bigint AS assigned,
+          COALESCE(ms.completed, 0)::bigint AS completed,
+          COALESCE(ms.orders, 0)::bigint AS orders,
+          COALESCE(bs.bonus, 0) AS bonus
+        FROM "User" u
+        LEFT JOIN measurement_stats ms ON ms.id = u.id
+        LEFT JOIN bonus_stats bs ON bs.id = u.id
+        WHERE u.role = 'MEASURER'::"Role" AND u.active = true
+        ORDER BY u.name ASC
+      `).then((rows) => rows.map((row) => {
+        const assigned = Number(row.assigned);
+        const completed = Number(row.completed);
+        const orders = Number(row.orders);
+        return {
+          id: row.id,
+          name: row.name,
+          assigned,
+          completed,
+          orders,
+          conversion:
+            completed > 0 ? Math.round((orders / completed) * 1000) / 10 : 0,
+          bonus: Number(row.bonus),
+        };
+      }))
+    : [];
   return {
     measurements: measurements.map((measurement) =>
       measurementOperationalView(measurement, now),
     ),
-    nextMeasurement: nextMeasurement
-      ? measurementOperationalView(nextMeasurement, now)
-      : null,
-    needsClosingMeasurement: needsClosingMeasurement
-      ? measurementOperationalView(needsClosingMeasurement, now)
-      : null,
+    nextMeasurement: measurementSummaryView(
+      measurementSummaries.find((row) => row.kind === "NEXT"),
+    ),
+    needsClosingMeasurement: measurementSummaryView(
+      measurementSummaries.find((row) => row.kind === "OVERDUE"),
+    ),
     measurerStats,
     kpi: {
       today: todayCount,

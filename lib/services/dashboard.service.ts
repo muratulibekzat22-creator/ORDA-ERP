@@ -41,9 +41,22 @@ async function salesProjection(scope: DashboardScope) {
     scope.role === Role.MANAGER
       ? { OR: [{ managerUserId: scope.userId }, { leadConversion: { managerId: scope.userId } }] }
       : {};
-  const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse, activeUsers, payrollProfiles] = await Promise.all([
+  const taskScope: Prisma.CalendarTaskWhereInput = {
+    AND: [
+      scope.role === Role.MANAGER ? { assigneeId: scope.userId } : { assignee: { active: true } },
+      { OR: [{ orderId: null }, { order: { deletedAt: null } }, { measurement: { client: { active: true, deletedAt: null } } }] },
+    ],
+    status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
+  };
+  type FinanceMetricsRow = { client_balance: Prisma.Decimal; partner_balance: Prisma.Decimal; without_partner: bigint; clients_with_balance: bigint; partner_payable_orders: bigint; without_contract: bigint };
+  type PayrollMetricsRow = { payable: Prisma.Decimal };
+  type WorkOrderMetricsRow = { active_orders: bigint; ready_for_installation: bigint; on_installation: bigint; overdue_orders: bigint };
+  const workOrderScopeSql = scope.role === Role.MANAGER
+    ? Prisma.sql`AND (orders."managerUserId" = ${scope.userId} OR conversion."managerId" = ${scope.userId})`
+    : Prisma.empty;
+  const [leads, activeLeadsCount, overdueNextActionsCount, orders, leadEvents, orderEvents, workOrderMetricsRows, materials, taskMetrics, financeMetricsRows, measurementsToday, proposalsNeedResponse, activeUsers, payrollMetricsRows] = await Promise.all([
     prisma.client.findMany({
-      where: { ...managerLeadWhere, active: true, deletedAt: null },
+      where: { ...managerLeadWhere, active: true, deletedAt: null, createdAt: { gte: start, lte: end } },
       select: {
         id: true,
         name: true,
@@ -53,10 +66,11 @@ async function salesProjection(scope: DashboardScope) {
         manager: true,
         managerUser: { select: { name: true, active: true, role: true } },
         leadStatusHistory: { select: { toStage: true } },
-        nextActions: { where: { completedAt: null }, select: { nextActionAt: true } },
         leadConversion: { select: { orderId: true, order: { select: { deletedAt: true } } } },
       },
     }),
+    prisma.client.count({ where: { ...managerLeadWhere, active: true, deletedAt: null, stage: { notIn: [LeadStage.WON, LeadStage.LOST] } } }),
+    prisma.leadNextAction.count({ where: { completedAt: null, nextActionAt: { lt: end }, client: { ...managerLeadWhere, active: true, deletedAt: null } } }),
     prisma.order.findMany({
       where: { ...managerOrderWhere, deletedAt: null, createdAt: { gte: start, lte: end }, lifecycle: { not: OrderLifecycle.CANCELLED } },
       select: { id: true, amount: true, prepayment: true, balance: true, managerUserId: true, leadConversion: { select: { managerId: true } } },
@@ -73,28 +87,59 @@ async function salesProjection(scope: DashboardScope) {
       take: 10,
       select: { id: true, title: true, user: true, createdAt: true, order: { select: { id: true, number: true } } },
     }),
-    prisma.order.findMany({
-      where: { ...managerOrderWhere, deletedAt: null, lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
-      select: { lifecycle: true, productionDeadline: true, installation: { select: { scheduledAt: true } } },
-    }),
+    prisma.$queryRaw<WorkOrderMetricsRow[]>(Prisma.sql`
+      SELECT
+        COUNT(*)::bigint AS active_orders,
+        COUNT(*) FILTER (
+          WHERE orders.lifecycle = 'READY_FOR_INSTALLATION'::"OrderLifecycle"
+        )::bigint AS ready_for_installation,
+        COUNT(*) FILTER (
+          WHERE orders.lifecycle = 'INSTALLATION'::"OrderLifecycle"
+        )::bigint AS on_installation,
+        COUNT(*) FILTER (
+          WHERE (
+            CASE
+              WHEN orders.lifecycle IN (
+                'READY_FOR_INSTALLATION'::"OrderLifecycle",
+                'INSTALLATION'::"OrderLifecycle"
+              ) THEN COALESCE(installation."scheduledAt", orders."productionDeadline")
+              ELSE COALESCE(orders."productionDeadline", installation."scheduledAt")
+            END
+          ) < ${now}
+        )::bigint AS overdue_orders
+      FROM "Order" orders
+      LEFT JOIN "LeadConversion" conversion ON conversion."orderId" = orders.id
+      LEFT JOIN "OrderInstallation" installation ON installation."orderId" = orders.id
+      WHERE orders."deletedAt" IS NULL
+        AND orders.lifecycle NOT IN (
+          'COMPLETED'::"OrderLifecycle",
+          'CANCELLED'::"OrderLifecycle"
+        )
+        ${workOrderScopeSql}
+    `),
     scope.role === Role.DIRECTOR
       ? prisma.material.findMany({ where: { active: true }, select: { stock: true, minimumStock: true } })
       : Promise.resolve([]),
-    prisma.calendarTask.findMany({
-      where: {
-        AND: [
-          scope.role === Role.MANAGER ? { assigneeId: scope.userId } : { assignee: { active: true } },
-          { OR: [{ orderId: null }, { order: { deletedAt: null } }, { measurement: { client: { active: true, deletedAt: null } } }] },
-        ],
-        status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
-      },
-      select: { dueAt: true },
-    }),
+    Promise.all([
+      prisma.calendarTask.count({ where: { ...taskScope, dueAt: { gte: todayStart, lt: tomorrow } } }),
+      prisma.calendarTask.count({ where: { ...taskScope, dueAt: { lt: now } } }),
+    ]).then(([today, overdue]) => ({ today, overdue })),
     scope.role === Role.DIRECTOR
-      ? prisma.order.findMany({
-          where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
-          select: { id: true, balance: true, partnerId: true, partnerBalance: true, partnerAgreedAt: true, documents: { where: { type: DocumentType.CONTRACT, status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] } }, select: { id: true }, take: 1 } },
-        })
+      ? prisma.$queryRaw<FinanceMetricsRow[]>`
+          SELECT
+            COALESCE(SUM(GREATEST("balance", 0)), 0) AS client_balance,
+            COALESCE(SUM(CASE WHEN "partnerAgreedAt" IS NOT NULL THEN GREATEST("partnerBalance", 0) ELSE 0 END), 0) AS partner_balance,
+            COUNT(*) FILTER (WHERE "partnerId" IS NULL)::bigint AS without_partner,
+            COUNT(*) FILTER (WHERE "balance" > 0)::bigint AS clients_with_balance,
+            COUNT(*) FILTER (WHERE "partnerAgreedAt" IS NOT NULL AND "partnerBalance" > 0)::bigint AS partner_payable_orders,
+            COUNT(*) FILTER (WHERE NOT EXISTS (
+              SELECT 1 FROM "Document" document
+              WHERE document."orderId" = "Order".id
+                AND document.type = 'CONTRACT'::"DocumentType"
+                AND document.status NOT IN ('ARCHIVED'::"DocumentStatus", 'CANCELLED'::"DocumentStatus")
+            ))::bigint AS without_contract
+          FROM "Order"
+          WHERE "deletedAt" IS NULL AND lifecycle <> 'CANCELLED'::"OrderLifecycle"`
       : Promise.resolve([]),
     prisma.measurement.count({
       where: {
@@ -115,18 +160,27 @@ async function salesProjection(scope: DashboardScope) {
       : Promise.resolve(0),
     prisma.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
     scope.role === Role.DIRECTOR
-      ? prisma.employeePayrollProfile.findMany({ where: { active: true, payrollEnabled: true }, select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } } })
+      ? prisma.$queryRaw<PayrollMetricsRow[]>`
+          SELECT COALESCE(SUM(GREATEST(COALESCE(accrual.total, 0) - COALESCE(payment.total, 0), 0)), 0) AS payable
+          FROM "EmployeePayrollProfile" employee
+          LEFT JOIN (
+            SELECT "employeeId", SUM(CASE WHEN direction = 'INCREASE'::"PayrollDirection" THEN amount ELSE -amount END) AS total
+            FROM "PayrollAccrual" GROUP BY "employeeId"
+          ) accrual ON accrual."employeeId" = employee.id
+          LEFT JOIN (
+            SELECT "employeeId", SUM(CASE WHEN type = 'EMPLOYEE_REFUND'::"PayrollPaymentType" THEN -amount ELSE amount END) AS total
+            FROM "PayrollPayment" GROUP BY "employeeId"
+          ) payment ON payment."employeeId" = employee.id
+          WHERE employee.active = true AND employee."payrollEnabled" = true`
       : Promise.resolve([]),
   ]);
   const { start: monthStart } = dashboardPeriodRange("month", now);
-  const [measurementQueue, periodProposalCount, periodPayments, monthlyExpenses, activeEmployeeCount, productionJobs, activityPayments, activityMeasurements, activityContracts] = await Promise.all([
-    prisma.measurement.findMany({
-      where: {
-        status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] },
-        ...(scope.role === Role.MANAGER ? { client: managerLeadWhere } : {}),
-      },
-      select: { visitDate: true, status: true },
-    }),
+  type ProductionMetricRow = { stage: string; count: bigint; overdue: bigint };
+  const [measurementMetrics, periodProposalCount, periodPayments, monthlyExpenses, activeEmployeeCount, productionMetrics, activityPayments, activityMeasurements, activityContracts] = await Promise.all([
+    Promise.all([
+      prisma.measurement.count({ where: { status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] }, visitDate: { gte: tomorrow }, ...(scope.role === Role.MANAGER ? { client: managerLeadWhere } : {}) } }),
+      prisma.measurement.count({ where: { status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] }, visitDate: { lt: now }, ...(scope.role === Role.MANAGER ? { client: managerLeadWhere } : {}) } }),
+    ]).then(([upcoming, overdue]) => ({ upcoming, overdue })),
     prisma.commercialProposal.count({
       where: {
         client: { ...managerLeadWhere, active: true, deletedAt: null },
@@ -149,7 +203,15 @@ async function salesProjection(scope: DashboardScope) {
       ? prisma.employeePayrollProfile.count({ where: { active: true } })
       : Promise.resolve(0),
     scope.role === Role.DIRECTOR
-      ? prisma.production.findMany({ where: { completedAt: null, archivedAt: null, order: { deletedAt: null } }, select: { stage: true, plannedEndAt: true } })
+      ? prisma.$queryRaw<ProductionMetricRow[]>`
+          SELECT production.stage, COUNT(*)::bigint AS count,
+            COUNT(*) FILTER (WHERE production."plannedEndAt" < ${now})::bigint AS overdue
+          FROM "Production" production
+          JOIN "Order" orders ON orders.id = production."orderId"
+          WHERE production."completedAt" IS NULL
+            AND production."archivedAt" IS NULL
+            AND orders."deletedAt" IS NULL
+          GROUP BY production.stage`
       : Promise.resolve([]),
     scope.role === Role.DIRECTOR
       ? prisma.payment.findMany({
@@ -199,7 +261,7 @@ async function salesProjection(scope: DashboardScope) {
     : [];
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
-  const periodLeads = leads.filter((lead) => lead.createdAt >= start && lead.createdAt <= end);
+  const periodLeads = leads;
   const convertedLeads = periodLeads.filter((lead) => lead.leadConversion && !lead.leadConversion.order.deletedAt).length;
   const totals = orders.reduce(
     (sum, order) => ({ sales: sum.sales + Number(order.amount), received: sum.received + Number(order.prepayment), balance: sum.balance + Number(order.balance) }),
@@ -233,17 +295,12 @@ async function salesProjection(scope: DashboardScope) {
       conversion: percent(converted, group.leads.length),
     };
   });
-  const activeBalances = activeFinanceOrders.reduce(
-    (sum, order) => ({
-      client: sum.client + Math.max(Number(order.balance), 0),
-      partner: sum.partner + (order.partnerAgreedAt ? Math.max(Number(order.partnerBalance), 0) : 0),
-    }),
-    { client: 0, partner: 0 },
-  );
-  const deadline = (order: (typeof workOrders)[number]) =>
-    order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION || order.lifecycle === OrderLifecycle.INSTALLATION
-      ? order.installation?.scheduledAt ?? order.productionDeadline
-      : order.productionDeadline ?? order.installation?.scheduledAt;
+  const financeMetrics = financeMetricsRows[0];
+  const activeBalances = {
+    client: Number(financeMetrics?.client_balance ?? 0),
+    partner: Number(financeMetrics?.partner_balance ?? 0),
+  };
+  const workOrderMetrics = workOrderMetricsRows[0];
   const technicalEvent = (value: string | null | undefined) =>
     /api-security|contract manager|\btest\b|\bdemo\b|\brbac\b|acceptance/i.test(value ?? "");
   const activities = [
@@ -253,18 +310,17 @@ async function salesProjection(scope: DashboardScope) {
     ...activityMeasurements.filter((event) => !event.measurer || activeUserNames.has(event.measurer)).map((event) => ({ id: `measurement-${event.id}`, title: "Замер выполнен", subject: event.client.name, href: `/measurements/${event.id}`, user: event.measurer, createdAt: event.completedAt ?? now })),
     ...activityContracts.filter((event) => event.author?.active !== false).map((event) => ({ id: `contract-${event.id}`, title: "Договор сформирован", subject: event.number || event.order?.number || "Договор", href: event.order ? `/orders/${event.order.id}` : "/documents", user: event.author?.name ?? null, createdAt: event.createdAt })),
   ].filter((event) => !technicalEvent(event.title) && !technicalEvent(event.subject) && !technicalEvent(event.user)).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, 10);
-  const payrollPayable = payrollProfiles.reduce((total, profile) => {
-    const accrued = profile.accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
-    const paid = profile.payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
-    return total + Math.max(accrued - paid, 0);
-  }, 0);
+  const payrollPayable = Number(payrollMetricsRows[0]?.payable ?? 0);
+  const productionCount = (stages: string[]) => productionMetrics
+    .filter((row) => stages.includes(row.stage))
+    .reduce((sum, row) => sum + Number(row.count), 0);
   return {
     role: scope.role,
     period: { start, end },
     metrics: {
       newLeads: periodLeads.length,
-      activeLeads: leads.filter((lead) => lead.stage !== LeadStage.WON && lead.stage !== LeadStage.LOST).length,
-      overdueNextActions: leads.reduce((count, lead) => count + lead.nextActions.filter((action) => action.nextActionAt < end).length, 0),
+      activeLeads: activeLeadsCount,
+      overdueNextActions: overdueNextActionsCount,
       proposalsSent: periodProposalCount,
       measurementsScheduled: periodLeads.filter((lead) => reached(lead, LeadStage.MEASUREMENT_SCHEDULED)).length,
       orders: orders.length,
@@ -272,30 +328,30 @@ async function salesProjection(scope: DashboardScope) {
       receivedPrepayment: receivedFromClients,
       balanceToReceive: scope.role === Role.DIRECTOR ? activeBalances.client : Math.max(totals.balance, 0),
       partnerBalancePayable: scope.role === Role.DIRECTOR ? activeBalances.partner : undefined,
-      ordersWithoutPartner: scope.role === Role.DIRECTOR ? activeFinanceOrders.filter((order) => !order.partnerId).length : undefined,
+      ordersWithoutPartner: scope.role === Role.DIRECTOR ? Number(financeMetrics?.without_partner ?? 0) : undefined,
       payrollBalancePayable: scope.role === Role.DIRECTOR ? payrollPayable : undefined,
       conversion: percent(convertedLeads, periodLeads.length),
-      activeOrders: workOrders.length,
-      readyForInstallation: workOrders.filter((order) => order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION).length,
-      onInstallation: workOrders.filter((order) => order.lifecycle === OrderLifecycle.INSTALLATION).length,
-      overdueOrders: workOrders.filter((order) => { const value = deadline(order); return Boolean(value && value < now); }).length,
+      activeOrders: Number(workOrderMetrics?.active_orders ?? 0),
+      readyForInstallation: Number(workOrderMetrics?.ready_for_installation ?? 0),
+      onInstallation: Number(workOrderMetrics?.on_installation ?? 0),
+      overdueOrders: Number(workOrderMetrics?.overdue_orders ?? 0),
       lowStock: materials.filter((item) => item.stock <= item.minimumStock).length,
-      tasksToday: tasks.filter((task) => task.dueAt >= todayStart && task.dueAt < tomorrow).length,
-      overdueTasks: tasks.filter((task) => task.dueAt < now).length,
+      tasksToday: taskMetrics.today,
+      overdueTasks: taskMetrics.overdue,
       measurementsToday,
-      measurementsUpcoming: measurementQueue.filter((item) => item.visitDate >= tomorrow).length,
-      measurementsOverdue: measurementQueue.filter((item) => item.visitDate < now).length,
+      measurementsUpcoming: measurementMetrics.upcoming,
+      measurementsOverdue: measurementMetrics.overdue,
       proposalsNeedResponse,
       ...(scope.role === Role.DIRECTOR ? {
         expensesForMonth: Number(monthlyExpenses._sum.amount ?? 0),
         activeEmployees: activeEmployeeCount,
-        clientsWithBalance: activeFinanceOrders.filter((order) => Number(order.balance) > 0).length,
-        partnerPayableOrders: activeFinanceOrders.filter((order) => order.partnerAgreedAt && Number(order.partnerBalance) > 0).length,
-        ordersWithoutContract: activeFinanceOrders.filter((order) => order.documents.length === 0).length,
-        productionPreparation: productionJobs.filter((job) => ["Подготовка", "Каркас", "Дерево", "Комплектация"].includes(job.stage)).length,
-        productionPainting: productionJobs.filter((job) => job.stage === "Покраска").length,
-        productionReady: productionJobs.filter((job) => job.stage === "Готово к монтажу").length,
-        productionOverdue: productionJobs.filter((job) => Boolean(job.plannedEndAt && job.plannedEndAt < now)).length,
+        clientsWithBalance: Number(financeMetrics?.clients_with_balance ?? 0),
+        partnerPayableOrders: Number(financeMetrics?.partner_payable_orders ?? 0),
+        ordersWithoutContract: Number(financeMetrics?.without_contract ?? 0),
+        productionPreparation: productionCount(["Подготовка", "Каркас", "Дерево", "Комплектация"]),
+        productionPainting: productionCount(["Покраска"]),
+        productionReady: productionCount(["Готово к монтажу"]),
+        productionOverdue: productionMetrics.reduce((sum, row) => sum + Number(row.overdue), 0),
       } : {}),
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
@@ -308,26 +364,26 @@ async function accountantProjection(scope: DashboardScope) {
   const { start, end } = dashboardPeriodRange(scope.period);
   const almaty = new Date(end.getTime() + 5 * 60 * 60 * 1000);
   const period = await prisma.payrollPeriod.findUnique({ where: { year_month: { year: almaty.getUTCFullYear(), month: almaty.getUTCMonth() + 1 } } });
-  const [ledger, recent, accruals, payments, pendingAdvances, partnerBalances] = await Promise.all([
-    prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, select: { direction: true, amount: true } }),
+  const [ledgerTotals, recent, accruals, payments, pendingAdvances, partnerBalances] = await Promise.all([
+    prisma.companyLedgerEntry.groupBy({ by: ["direction"], where: { operationDate: { gte: start, lte: end } }, _sum: { amount: true } }),
     prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, orderBy: { operationDate: "desc" }, take: 12, select: { id: true, type: true, category: true, direction: true, amount: true, operationDate: true, comment: true } }),
-    period ? prisma.payrollAccrual.findMany({ where: { periodId: period.id }, select: { amount: true, direction: true } }) : Promise.resolve([]),
-    period ? prisma.payrollPayment.findMany({ where: { periodId: period.id }, select: { amount: true, type: true } }) : Promise.resolve([]),
+    period ? prisma.payrollAccrual.groupBy({ by: ["direction"], where: { periodId: period.id }, _sum: { amount: true } }) : Promise.resolve([]),
+    period ? prisma.payrollPayment.groupBy({ by: ["type"], where: { periodId: period.id }, _sum: { amount: true } }) : Promise.resolve([]),
     period ? prisma.payrollAdvanceRequest.count({ where: { periodId: period.id, status: { in: [AdvanceRequestStatus.REQUESTED, AdvanceRequestStatus.APPROVED] } } }) : Promise.resolve(0),
-    prisma.order.findMany({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, partnerAgreedAt: { not: null } }, select: { partnerBalance: true } }),
+    prisma.order.aggregate({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, partnerAgreedAt: { not: null } }, _sum: { partnerBalance: true } }),
   ]);
-  const accrued = accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
-  const paid = payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
+  const accrued = accruals.reduce((sum, row) => sum + Number(row._sum.amount ?? 0) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
+  const paid = payments.reduce((sum, row) => sum + Number(row._sum.amount ?? 0) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
   return {
     role: scope.role,
     period: { start, end },
     metrics: {
-      receipts: ledger.filter((row) => row.direction === "INCOME").reduce((sum, row) => sum + Number(row.amount), 0),
-      expenses: ledger.filter((row) => row.direction === "EXPENSE").reduce((sum, row) => sum + Number(row.amount), 0),
+      receipts: Number(ledgerTotals.find((row) => row.direction === "INCOME")?._sum.amount ?? 0),
+      expenses: Number(ledgerTotals.find((row) => row.direction === "EXPENSE")?._sum.amount ?? 0),
       payrollPayable: accrued - paid,
       pendingPayrollPayments: pendingAdvances,
       attentionOperations: pendingAdvances,
-      partnerPayable: partnerBalances.reduce((sum, order) => sum + Math.max(Number(order.partnerBalance), 0), 0),
+      partnerPayable: Math.max(Number(partnerBalances._sum.partnerBalance ?? 0), 0),
     },
     recentFinance: recent,
   };

@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { OrderLifecycle, Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import {
@@ -10,7 +10,7 @@ import { productionLog } from "@/lib/observability";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
-import { createOrder, getOrders } from "@/lib/services/order.service";
+import { countOrders, createOrder, getOrders } from "@/lib/services/order.service";
 
 const MAX_MONEY = 9_999_999_999.99;
 const paymentMethods = new Set<string>(
@@ -59,6 +59,15 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const deletedOnly = params.get("deletedOnly") === "true";
     const includeDeleted = params.get("includeDeleted") === "true";
+    const requestedPage = params.has("page") ? Number(params.get("page")) : null;
+    const requestedLimit = params.has("limit") ? Number(params.get("limit")) : 50;
+    if (
+      (requestedPage !== null && (!Number.isInteger(requestedPage) || requestedPage < 1)) ||
+      !Number.isInteger(requestedLimit) ||
+      requestedLimit < 1 ||
+      requestedLimit > 100
+    )
+      return NextResponse.json({ error: "Некорректная пагинация" }, { status: 400 });
     if (role !== Role.DIRECTOR && (deletedOnly || includeDeleted))
       return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const partner =
@@ -91,20 +100,83 @@ export async function GET(request: Request) {
             : role === Role.MEASURER
               ? { measurements: { some: { measurerUserId: userId } } }
               : {};
-    const orders = await getOrders(
-      {
+    const baseWhere: Prisma.OrderWhereInput = {
         AND: [roleScope],
         ...(deletedOnly
           ? { deletedAt: { not: null } }
           : includeDeleted
             ? {}
             : { deletedAt: null }),
+      };
+    const query = params.get("query")?.trim().slice(0, 120);
+    const lifecycle = params.get("lifecycle");
+    const filter = params.get("filter") ?? "all";
+    const paintStage: Prisma.ProductionWhereInput = {
+      OR: [
+        { stage: { contains: "paint", mode: "insensitive" } },
+        { stage: { contains: "покрас", mode: "insensitive" } },
+      ],
+    };
+    const filterWhere: Record<string, Prisma.OrderWhereInput> = {
+      all: {},
+      measurement: { lifecycle: { in: [OrderLifecycle.CREATED, OrderLifecycle.PREPARATION] } },
+      preparation: {
+        OR: [
+          { lifecycle: OrderLifecycle.READY_FOR_PRODUCTION },
+          { lifecycle: OrderLifecycle.IN_PRODUCTION, productions: { none: paintStage } },
+        ],
       },
-      { includeDeleted },
-    );
+      painting: { lifecycle: OrderLifecycle.IN_PRODUCTION, productions: { some: paintStage } },
+      ready: { lifecycle: OrderLifecycle.READY_FOR_INSTALLATION },
+      installation: { lifecycle: { in: [OrderLifecycle.INSTALLATION, OrderLifecycle.ACCEPTANCE] } },
+      completed: { lifecycle: OrderLifecycle.COMPLETED },
+      overdue: {
+        lifecycle: { not: OrderLifecycle.COMPLETED },
+        OR: [
+          { productionDeadline: { lt: new Date() } },
+          { installation: { scheduledAt: { lt: new Date() } } },
+        ],
+      },
+      "partner-payable": { partnerAgreedAt: { not: null }, partnerBalance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "without-partner": { partnerId: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "without-partner-price": { partnerId: { not: null }, partnerAgreedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "client-payable": { balance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "without-contract": {
+        lifecycle: { not: OrderLifecycle.CANCELLED },
+        documents: { none: { type: "CONTRACT", status: { notIn: ["ARCHIVED", "CANCELLED"] } } },
+      },
+      "overdue-client": { promisedAt: { lt: new Date() }, balance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "overdue-partner": { partnerPlannedReadyAt: { lt: new Date() }, partnerBalance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+    };
+    if (!Object.hasOwn(filterWhere, filter))
+      return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
+    const where: Prisma.OrderWhereInput = {
+      AND: [
+        baseWhere,
+        filterWhere[filter],
+        ...(query
+          ? [{ OR: [
+              { number: { contains: query, mode: "insensitive" as const } },
+              { client: { name: { contains: query, mode: "insensitive" as const } } },
+              { client: { phone: { contains: query } } },
+              { client: { city: { contains: query, mode: "insensitive" as const } } },
+            ] }]
+          : []),
+        ...(lifecycle && Object.values(OrderLifecycle).includes(lifecycle as OrderLifecycle)
+          ? [{ lifecycle: lifecycle as OrderLifecycle }]
+          : []),
+      ],
+    };
+    const [orders, total] = await Promise.all([
+      getOrders(where, {
+        includeDeleted,
+        skip: requestedPage === null ? 0 : (requestedPage - 1) * requestedLimit,
+        take: requestedPage === null ? 100 : requestedLimit,
+      }),
+      requestedPage === null ? Promise.resolve(null) : countOrders(where),
+    ]);
     if (role !== Role.DIRECTOR && role !== Role.ACCOUNTANT) {
-      return NextResponse.json(
-        orders.map((order) => {
+      const projected = orders.map((order) => {
           const result = { ...order } as Record<string, unknown>;
           delete result.companyProfit;
           if (role !== Role.PARTNER)
@@ -128,10 +200,16 @@ export async function GET(request: Request) {
             for (const field of ["amount", "prepayment", "balance"])
               delete result[field];
           return result;
-        }),
-      );
+        });
+      return NextResponse.json(requestedPage === null ? projected : {
+        data: projected,
+        pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
+      });
     }
-    return NextResponse.json(orders);
+    return NextResponse.json(requestedPage === null ? orders : {
+      data: orders,
+      pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
+    });
   } catch {
     return NextResponse.json(
       { error: "Ошибка получения заказов" },

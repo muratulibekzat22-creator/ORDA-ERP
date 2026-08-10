@@ -106,9 +106,12 @@ function listSelect() {
   } satisfies Prisma.DocumentSelect;
 }
 
-export async function getDocuments(actor: DocumentActor, filters: { orderId?: number; clientId?: number; type?: DocumentType; status?: DocumentStatus; query?: string; from?: Date; to?: Date; authorId?: number; includeArchived?: boolean } = {}) {
+export async function getDocuments(actor: DocumentActor, filters: { orderId?: number; clientId?: number; type?: DocumentType; status?: DocumentStatus; query?: string; from?: Date; to?: Date; authorId?: number; includeArchived?: boolean; skip?: number; take?: number } = {}) {
   const scope = await documentScope(actor);
   const query = filters.query?.trim().slice(0, 200);
+  const skip = Math.max(0, Math.trunc(filters.skip ?? 0));
+  const take = Math.min(100, Math.max(1, Math.trunc(filters.take ?? 100)));
+  const scanLimit = skip + take;
   const documents = await prisma.document.findMany({
     where: {
       AND: [
@@ -125,10 +128,12 @@ export async function getDocuments(actor: DocumentActor, filters: { orderId?: nu
     },
     select: listSelect(),
     orderBy: [{ documentDate: "desc" }, { id: "desc" }],
-    take: 500,
+    take: scanLimit,
   });
-  const linked = await getLinkedDocuments(actor, filters);
-  return [...documents.map((item) => ({ ...item, recordKind: "DOCUMENT" as const, openHref: `/documents/${item.id}` })), ...linked].sort((a, b) => new Date(String(b.documentDate)).getTime() - new Date(String(a.documentDate)).getTime());
+  const linked = await getLinkedDocuments(actor, filters, scanLimit);
+  return [...documents.map((item) => ({ ...item, recordKind: "DOCUMENT" as const, openHref: `/documents/${item.id}` })), ...linked]
+    .sort((a, b) => new Date(String(b.documentDate)).getTime() - new Date(String(a.documentDate)).getTime())
+    .slice(skip, skip + take);
 }
 
 export async function getDocumentOptions(actor: DocumentActor) {
@@ -142,19 +147,19 @@ export async function getDocumentOptions(actor: DocumentActor) {
   return { clients, orders, payments, authors: authorRows.map((row) => row.author).filter((value): value is { id: number; name: string } => Boolean(value)), allowedTypes: allowedDocumentTypes(actor) };
 }
 
-async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: number; clientId?: number; type?: DocumentType; status?: DocumentStatus; query?: string; from?: Date; to?: Date }) {
+async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: number; clientId?: number; type?: DocumentType; status?: DocumentStatus; query?: string; from?: Date; to?: Date }, take = 100) {
   if (filters.status && filters.status !== DocumentStatus.READY) return [];
   const allowed = allowedDocumentTypes(actor), scope = await entityScope(actor), rows: Array<Record<string, unknown>> = [];
   const dateWhere = filters.from || filters.to ? { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lt: filters.to } : {}) } : undefined;
   if ((actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) && allowed.includes(DocumentType.OFFER) && (!filters.type || filters.type === DocumentType.OFFER)) {
-    const proposals = await prisma.commercialProposal.findMany({ where: { ...(filters.clientId ? { clientId: filters.clientId } : {}), ...(dateWhere ? { createdAt: dateWhere } : {}), client: scope.client }, select: { id: true, number: true, createdAt: true, createdById: true, createdByName: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 500 });
+    const proposals = await prisma.commercialProposal.findMany({ where: { ...(filters.clientId ? { clientId: filters.clientId } : {}), ...(dateWhere ? { createdAt: dateWhere } : {}), client: scope.client }, select: { id: true, number: true, createdAt: true, createdById: true, createdByName: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take });
     for (const item of proposals) {
       if (filters.orderId) continue;
       rows.push({ id: `proposal-${item.id}`, recordKind: "PROPOSAL", type: DocumentType.OFFER, number: item.number, title: "Коммерческое предложение", documentDate: item.createdAt, status: DocumentStatus.READY, source: "GENERATED_PROPOSAL", currentVersion: 1, createdAt: item.createdAt, client: { id: item.client.id, name: item.client.name, phone: item.client.phone }, order: null, author: item.createdById ? { id: item.createdById, name: item.createdByName } : null, openHref: `/api/proposals/${item.id}/pdf` });
     }
   }
   if (allowed.some((type) => measurableTypes.includes(type)) && (!filters.type || measurableTypes.includes(filters.type))) {
-    const attachments = await prisma.measurementAttachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), measurement: { ...(filters.clientId ? { clientId: filters.clientId } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), OR: [{ order: scope.order }, { orderId: null, client: scope.client }] } }, select: { id: true, type: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, measurement: { select: { client: { select: { id: true, name: true, phone: true } }, order: { select: { id: true, number: true } } } } }, orderBy: { createdAt: "desc" }, take: 500 });
+    const attachments = await prisma.measurementAttachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), measurement: { ...(filters.clientId ? { clientId: filters.clientId } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), OR: [{ order: scope.order }, { orderId: null, client: scope.client }] } }, select: { id: true, type: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, measurement: { select: { client: { select: { id: true, name: true, phone: true } }, order: { select: { id: true, number: true } } } } }, orderBy: { createdAt: "desc" }, take });
     for (const item of attachments) {
       const type = item.type === MeasurementPhotoType.SHEET ? DocumentType.MEASUREMENT_SHEET : DocumentType.PHOTO;
       if (filters.type && filters.type !== type) continue;
@@ -162,7 +167,7 @@ async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: num
     }
   }
   if (allowed.some((type) => type === DocumentType.OTHER || type === DocumentType.PHOTO) && (!filters.type || filters.type === DocumentType.OTHER || filters.type === DocumentType.PHOTO)) {
-    const attachments = await prisma.attachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), order: { ...scope.order, deletedAt: null, ...(filters.clientId ? { clientId: filters.clientId } : {}) } }, select: { id: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, order: { select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } } } }, orderBy: { createdAt: "desc" }, take: 500 });
+    const attachments = await prisma.attachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), order: { ...scope.order, deletedAt: null, ...(filters.clientId ? { clientId: filters.clientId } : {}) } }, select: { id: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, order: { select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } } } }, orderBy: { createdAt: "desc" }, take });
     for (const item of attachments) {
       const type = item.contentType.startsWith("image/") ? DocumentType.PHOTO : DocumentType.OTHER;
       if (!allowed.includes(type) || (filters.type && filters.type !== type)) continue;
