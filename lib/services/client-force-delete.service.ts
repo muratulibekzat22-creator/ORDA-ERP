@@ -1,4 +1,4 @@
-import { del } from "@vercel/blob";
+import { del } from "@/lib/private-blob";
 import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 

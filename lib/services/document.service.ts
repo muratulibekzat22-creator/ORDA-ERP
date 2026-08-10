@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { del, get, put } from "@vercel/blob";
+import { del, get, put } from "@/lib/private-blob";
 import {
   DocumentSource,
   DocumentStatus,
@@ -36,7 +36,7 @@ const documentInclude = {
   order: { select: { id: true, number: true, clientId: true } },
   payment: { select: { id: true, amount: true, method: true, operationDate: true, type: true } },
   author: { select: { id: true, name: true } },
-  versions: { select: { id: true, version: true, fileName: true, contentType: true, size: true, checksum: true, comment: true, createdAt: true, uploadedBy: { select: { id: true, name: true } } }, orderBy: { version: "desc" as const } },
+  versions: { select: { id: true, version: true, fileName: true, contentType: true, size: true, checksum: true, comment: true, createdAt: true, pdfFileName: true, pdfContentType: true, pdfSize: true, pdfChecksum: true, pdfStatus: true, pdfGeneratedAt: true, pdfErrorCode: true, uploadedBy: { select: { id: true, name: true } } }, orderBy: { version: "desc" as const } },
   auditEvents: { select: { id: true, action: true, before: true, after: true, comment: true, createdAt: true, actor: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" as const }, take: 100 },
 } satisfies Prisma.DocumentInclude;
 
@@ -204,7 +204,7 @@ async function readFile(file: File) {
   return { fileName, bytes, checksum: createHash("sha256").update(bytes).digest("hex") };
 }
 
-const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "DOG", ESTIMATE: "SM", PROJECT: "PRJ", MEASUREMENT_SHEET: "ZM", ACT: "ACT", INVOICE: "SCH", PAYMENT_RECEIPT: "PAY", PHOTO: "PHOTO", OTHER: "DOC" };
+const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "DOG", CUSTOMER_MEMO: "MEMO", ESTIMATE: "SM", PROJECT: "PRJ", MEASUREMENT_SHEET: "ZM", ACT: "ACT", INVOICE: "SCH", PAYMENT_RECEIPT: "PAY", PHOTO: "PHOTO", OTHER: "DOC" };
 
 function canCreate(actor: DocumentActor, type: DocumentType) {
   if (!allowedDocumentTypes(actor).includes(type)) return false;
@@ -288,8 +288,14 @@ export async function updateDocument(id: number, actor: DocumentActor, input: { 
   });
 }
 
-export async function getDocumentVersionContent(id: number, actor: DocumentActor) {
-  const version = await prisma.documentVersion.findFirst({ where: { id, document: { AND: [await documentScope(actor)] } }, select: { id: true, pathname: true, fileName: true, contentType: true, size: true } });
+export async function getDocumentVersionContent(id: number, actor: DocumentActor, representation: "source" | "pdf" = "source") {
+  const row = await prisma.documentVersion.findFirst({ where: { id, document: { AND: [await documentScope(actor)] } }, select: { id: true, pathname: true, fileName: true, contentType: true, size: true, pdfPathname: true, pdfFileName: true, pdfContentType: true, pdfSize: true, pdfStatus: true } });
+  if (!row) return null;
+  const version = representation === "pdf"
+    ? row.pdfStatus === "READY" && row.pdfPathname && row.pdfFileName && row.pdfContentType && row.pdfSize
+      ? { id: row.id, pathname: row.pdfPathname, fileName: row.pdfFileName, contentType: row.pdfContentType, size: row.pdfSize }
+      : null
+    : { id: row.id, pathname: row.pathname, fileName: row.fileName, contentType: row.contentType, size: row.size };
   if (!version) return null;
   const blob = await get(version.pathname, { access: "private" });
   return blob?.statusCode === 200 ? { version, blob } : null;

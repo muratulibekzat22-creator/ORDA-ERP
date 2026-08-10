@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { del, get, put } from "@vercel/blob";
+import { del, get, put } from "@/lib/private-blob";
 import { DocumentSource, DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
 
 import { almatyDateParts, amountToRussianWords, calculatePayment, CONTRACT_TEMPLATE_VERSION, formatMoney, type ContractPaymentInput, type ContractSnapshot, warrantyLabel } from "@/lib/contracts/domain";
@@ -8,6 +8,7 @@ import { companyDisplayPhones } from "@/lib/company-contacts";
 import { prisma } from "@/lib/prisma";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { getDocument, type DocumentActor } from "@/lib/services/document.service";
+import { currentMemoAcknowledgement } from "@/lib/services/contract-package.service";
 
 export type ContractActor = { userId: number; role: Role; name: string };
 export type ContractInput = {
@@ -43,7 +44,7 @@ async function source(orderId: number, actor: ContractActor) {
   if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) throw new Error("FORBIDDEN");
   if (!await canAccessOrder360(orderId, actor)) throw new Error("NOT_FOUND");
   const [order, company, system] = await Promise.all([
-    prisma.order.findUnique({ where: { id: orderId }, include: { client: true, measurements: { orderBy: { visitDate: "desc" }, take: 1 }, productions: { orderBy: { createdAt: "desc" }, take: 1 } } }),
+    prisma.order.findUnique({ where: { id: orderId }, include: { client: true, measurements: { orderBy: { visitDate: "desc" }, take: 1 }, productions: { orderBy: { createdAt: "desc" }, take: 1 }, calculations: { orderBy: { createdAt: "desc" }, take: 1 } } }),
     prisma.companySettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
     prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
   ]);
@@ -63,7 +64,7 @@ export async function getContractDefaults(orderId: number, actor: ContractActor)
     clientAddress: order.client.address,
     installationAddress: measurement?.address || order.address,
     stairMaterial: order.material,
-    balusterType: order.staircase,
+    balusterType: order.railingType || order.staircase,
     contractAmount: Number(order.amount),
     payment: Number(order.prepayment) > 0
       ? { mode: "AMOUNT", prepaymentAmount: Math.min(Number(order.prepayment), Number(order.amount)) } as ContractPaymentInput
@@ -84,6 +85,7 @@ export async function getContractDefaults(orderId: number, actor: ContractActor)
 export async function buildContractSnapshot(orderId: number, actor: ContractActor, input: ContractInput, contractNumber = "будет присвоен", now = new Date()): Promise<ContractSnapshot> {
   const { order, company, system, material } = await source(orderId, actor);
   const measurement = order.measurements[0];
+  const calculation = order.calculations[0];
   const clientFullName = clean(input.clientFullName, order.client.name);
   const clientIin = clean(input.clientIin, order.client.iin);
   if (!clientFullName) throw new Error("CLIENT_NAME_REQUIRED");
@@ -102,12 +104,16 @@ export async function buildContractSnapshot(orderId: number, actor: ContractActo
   const parts = almatyDateParts(now);
   const companyPhones = companyDisplayPhones(company);
   return {
-    contractNumber, contractDateIso: now.toISOString(), contractTime: parts.time, contractDay: parts.day, contractMonth: parts.month, contractYear: parts.year, contractCity: "Алматы",
-    clientFullName, clientIin, clientPhone: clean(input.clientPhone, order.client.phone), clientAddress: clean(input.clientAddress, order.client.address),
-    installationAddress: clean(input.installationAddress, measurement?.address || order.address), stairMaterial: clean(input.stairMaterial, order.material), balusterType: clean(input.balusterType, order.staircase),
+    contractNumber, orderNumber: order.number, contractDateIso: now.toISOString(), contractTime: parts.time, contractDay: parts.day, contractMonth: parts.month, contractYear: parts.year, contractCity: "Алматы",
+    clientFullName, clientIin, clientPhone: clean(input.clientPhone, order.client.phone), clientAddress: clean(input.clientAddress, order.client.address), clientCity: clean(undefined, order.client.city),
+    installationAddress: clean(input.installationAddress, measurement?.address || order.address), stairMaterial: clean(input.stairMaterial, order.material),
+    frameType: clean(undefined, order.staircase), frameComment: clean(undefined, order.frameComment), balusterType: clean(input.balusterType, order.railingType || order.staircase), supportType: clean(undefined, order.supportType), color: clean(undefined, order.color),
+    lightingText: order.lighting ? clean(undefined, order.lightingDetails || "Предусмотрена") : "Не предусмотрена", claddingText: order.cladding ? clean(undefined, order.claddingDetails || "Предусмотрена") : "Не предусмотрена",
+    deliveryText: calculation?.deliveryRequired ? "Включена" : "По условиям заказа", installationText: calculation?.installationRequired === false ? "Не включён" : "Включён", additionalDetails: clean(undefined, order.additionalDetails),
     contractAmount: formatMoney(amount), contractAmountWords: amountToRussianWords(amount), contractAmountNumeric: amount,
     prepaymentPercent: payment.prepaymentPercent, prepaymentAmount: formatMoney(payment.prepaymentAmount), prepaymentAmountWords: amountToRussianWords(payment.prepaymentAmount), prepaymentAmountNumeric: payment.prepaymentAmount,
     balancePercent: payment.balancePercent, balanceAmount: formatMoney(payment.balanceAmount), balanceAmountWords: amountToRussianWords(payment.balanceAmount), balanceAmountNumeric: payment.balanceAmount, isFullPayment: payment.isFullPayment,
+    paymentSchedulePrimary: payment.isFullPayment ? `100% · ${formatMoney(amount)} ₸` : `${formatMoney(payment.prepaymentAmount)} ₸ · ${payment.prepaymentPercent}%`, paymentScheduleBalance: payment.isFullPayment ? "Полная оплата" : `${formatMoney(payment.balanceAmount)} ₸ · ${payment.balancePercent}%`,
     prepaymentDueText: clean(input.prepaymentDueText, PREPAYMENT_DUE), balanceDueText, fullPaymentDueText: clean(input.fullPaymentDueText, FULL_PAYMENT_DUE),
     termCalendarDays: String(term), termStartCondition, plannedCompletionDate: addDays(now, term), warrantyText: warrantyLabel(warrantyMonths), directorFullName,
     productionContactName: clean(input.productionContactName, order.productions[0]?.master || order.manager), productionContactPhone: clean(input.productionContactPhone, companyPhones[0]),
@@ -147,6 +153,7 @@ async function reviseContract(documentId: number, actor: ContractActor, input: C
   if (repeated) return repeated.document;
   const document = await getDocument(documentId, actor as DocumentActor);
   if (!document || document.type !== DocumentType.CONTRACT) throw new Error("NOT_FOUND");
+  if (!await currentMemoAcknowledgement(documentId)) throw new Error("MEMO_ACKNOWLEDGEMENT_REQUIRED");
   if (document.status === DocumentStatus.SIGNED || document.status === DocumentStatus.CANCELLED || document.status === DocumentStatus.ARCHIVED) throw new Error("CONTRACT_IMMUTABLE");
   if (!document.orderId) throw new Error("NOT_FOUND");
   const snapshot = await buildContractSnapshot(document.orderId, actor, input, document.number);

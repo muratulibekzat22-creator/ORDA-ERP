@@ -5,7 +5,7 @@ import PizZip from "pizzip";
 
 import type { ContractSnapshot } from "@/lib/contracts/domain";
 
-const TEMPLATE_PATH = path.join(process.cwd(), "resources", "documents", "templates", "contract-altyn-sapa-v1.docx");
+const TEMPLATE_PATH = path.join(process.cwd(), "resources", "documents", "templates", "contract-altyn-sapa-v2.docx");
 
 function plainParagraph(xml: string) {
   return xml.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
@@ -14,7 +14,7 @@ function plainParagraph(xml: string) {
 function paymentBlocks(xml: string, fullPayment: boolean) {
   return xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraph) => {
     const text = plainParagraph(paragraph);
-    if (fullPayment && (text.includes("{{prepaymentPercent}}") || text.includes("{{balancePercent}}"))) return "";
+    if (fullPayment && (text.startsWith("Первый платёж") || text.startsWith("Оставшаяся сумма"))) return "";
     if (!fullPayment && text.includes("{{fullPaymentDueText}}")) return "";
     return paragraph;
   });

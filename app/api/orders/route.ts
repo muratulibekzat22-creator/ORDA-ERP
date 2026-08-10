@@ -331,9 +331,7 @@ export async function POST(request: Request) {
             where: {
               id: managerUserId,
               active: true,
-              role: enhanced
-                ? Role.MANAGER
-                : { in: [Role.MANAGER, Role.DIRECTOR] },
+          role: Role.MANAGER,
             },
             select: { id: true, name: true },
           })

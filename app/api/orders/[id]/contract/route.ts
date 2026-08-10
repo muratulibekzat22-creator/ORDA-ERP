@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { readIdempotencyKey } from "@/lib/idempotency";
 import { requireOrder360Actor } from "@/lib/order360-auth";
 import { buildContractSnapshot, generateContract, getContractDefaults, type ContractActor, type ContractInput } from "@/lib/services/contract.service";
+import { ensureContractPackage } from "@/lib/services/contract-package.service";
+import { getDocument } from "@/lib/services/document.service";
 
 function errorResponse(error: unknown) {
   const code = error instanceof Error ? error.message : "CONTRACT_FAILED";
@@ -28,6 +30,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (body.action !== "generate") return NextResponse.json({ error: "Некорректное действие" }, { status: 400 });
     const key = readIdempotencyKey(request); if ("response" in key) return key.response;
     const document = await generateContract(id, auth.actor as ContractActor, body.input ?? {}, key.key);
-    return NextResponse.json(document, { status: 201 });
+    const packageResult = await ensureContractPackage(document.id, auth.actor as ContractActor);
+    const refreshed = await getDocument(document.id, auth.actor as ContractActor);
+    return NextResponse.json({ ...refreshed, packagePdfError: packageResult.pdfError }, { status: 201 });
   } catch (error) { return error instanceof SyntaxError ? NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }) : errorResponse(error); }
 }

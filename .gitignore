@@ -12,6 +12,13 @@
 
 # testing
 /coverage
+/output/
+/tmp/
+/.test-blobs/
+
+# python generated files
+__pycache__/
+*.py[cod]
 
 # next.js
 /.next/

@@ -1,0 +1,44 @@
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8.21.0
+    restart: unless-stopped
+    command:
+      - gotenberg
+      - --api-port=3000
+      - --api-timeout=35s
+      - --libreoffice-auto-start=true
+      - --libreoffice-restart-after=25
+      - --log-level=warn
+    expose:
+      - "3000"
+    networks:
+      - contract-converter
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+
+  gotenberg-gateway:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      - gotenberg
+    environment:
+      GOTENBERG_TOKEN: ${GOTENBERG_TOKEN:?GOTENBERG_TOKEN is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    expose:
+      - "3000"
+    networks:
+      - contract-converter
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /config:size=16m
+      - /data:size=16m
+
+networks:
+  contract-converter:
+    internal: true

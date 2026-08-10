@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ContractComposer from "@/components/contracts/ContractComposer";
+import ContractPackageCard from "@/components/contracts/ContractPackageCard";
 import DocumentsPage from "@/components/pages/DocumentsPage";
 
 export default function DocumentsTab({
@@ -12,12 +13,17 @@ export default function DocumentsTab({
   readOnly?: boolean;
 }) {
   const [version, setVersion] = useState(0);
+  const [composerOpen, setComposerOpen] = useState(false);
   return (
     <>
-      {!readOnly && (
+      <ContractPackageCard orderId={orderId} revision={version} readOnly={readOnly} onCreate={() => setComposerOpen(true)} />
+      {!readOnly && composerOpen && (
         <ContractComposer
           orderId={orderId}
-          onGenerated={() => setVersion((value) => value + 1)}
+          autoOpen
+          showTrigger={false}
+          onClosed={() => setComposerOpen(false)}
+          onGenerated={() => { setComposerOpen(false); setVersion((value) => value + 1); }}
         />
       )}
       <DocumentsPage key={version} initialOrderId={orderId} embedded />

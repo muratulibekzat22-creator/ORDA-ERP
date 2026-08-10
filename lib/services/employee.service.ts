@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import { Prisma, Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { allocateEmployeeCode } from "@/lib/employee-code";
 import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
 
 const employeeInclude = {
@@ -105,6 +106,7 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
           active: input.active ?? true,
           passwordChangedAt: new Date(),
           mustChangePassword: false,
+          employeeCode: await allocateEmployeeCode(tx, input.role!),
         },
       });
       userId = account.id;
@@ -226,6 +228,7 @@ export async function createEmployeeAccess(
         active: employee.active,
         passwordChangedAt: new Date(),
         mustChangePassword: false,
+        employeeCode: await allocateEmployeeCode(tx, input.role),
       },
     });
     await tx.employeePayrollProfile.update({

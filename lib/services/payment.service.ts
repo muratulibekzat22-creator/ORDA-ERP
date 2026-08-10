@@ -1,6 +1,7 @@
 import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
+import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
 
 export const financeOperationTypes = [
   "CLIENT_PAYMENT",
@@ -97,11 +98,12 @@ export async function getPayment(id: number) {
 export async function createFinanceOperation(input: CreateOperationInput) {
   if (input.type === "EXPENSE") throw new Error("EXPENSE_USE_COMPANY_LEDGER");
   for (let attempt = 0; attempt < SERIALIZABLE_RETRIES; attempt += 1) try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       if (input.idempotencyKey && input.requestHash) {
         const existing = await tx.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
         if (existing) {
           if (!compareRequestHash(existing.requestHash, input.requestHash)) throw new Error("IDEMPOTENCY_CONFLICT");
+          if (operationKind(existing.type) === "CLIENT_PAYMENT") await createPaymentReceiptRecord(tx, existing.id, input.authorId);
           return { payment: existing, order: existing.orderId ? await tx.order.findUnique({ where: { id: existing.orderId } }) : null, created: false };
         }
       }
@@ -142,6 +144,7 @@ export async function createFinanceOperation(input: CreateOperationInput) {
           requestHash: input.requestHash,
         },
       });
+      if (type === "CLIENT_PAYMENT") await createPaymentReceiptRecord(tx, payment.id, input.authorId);
       if (affectsPartner && input.authorId) {
         await tx.financeAuditEvent.create({ data: {
           orderId: order!.id,
@@ -160,12 +163,25 @@ export async function createFinanceOperation(input: CreateOperationInput) {
         await tx.orderEvent.create({ data: { orderId: order.id, title: type, description: `${input.amount} • ${input.method}${input.comment ? ` • ${input.comment}` : ""}`, user: input.author ?? "System", idempotencyKey: input.idempotencyKey ? `finance-event:${input.idempotencyKey}` : undefined, requestHash: input.requestHash } });
       }
       return { payment, order: updatedOrder, created: true };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 10_000, timeout: 20_000 });
+    if (!result) return null;
+    if (operationKind(result.payment.type) === "CLIENT_PAYMENT") {
+      try {
+        await ensurePaymentReceiptPdf(result.payment.id);
+      } catch {
+        return { ...result, receiptPdfStatus: "FAILED" as const };
+      }
+      return { ...result, receiptPdfStatus: "READY" as const };
+    }
+    return result;
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" && attempt < SERIALIZABLE_RETRIES - 1) continue;
     if (isPrismaUniqueConflict(error) && input.idempotencyKey && input.requestHash) {
       const existing = await prisma.payment.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
-      if (existing && compareRequestHash(existing.requestHash, input.requestHash)) return { payment: existing, order: existing.orderId ? await prisma.order.findUnique({ where: { id: existing.orderId } }) : null, created: false };
+      if (existing && compareRequestHash(existing.requestHash, input.requestHash)) {
+        try { await ensurePaymentReceiptPdf(existing.id); } catch { /* The immutable receipt record remains retryable. */ }
+        return { payment: existing, order: existing.orderId ? await prisma.order.findUnique({ where: { id: existing.orderId } }) : null, created: false };
+      }
       throw new Error("IDEMPOTENCY_CONFLICT");
     }
     throw error;
@@ -189,6 +205,7 @@ export async function reverseFinanceOperation(input: { paymentId: number; reason
       const mirrors = await calculatedMirrors(tx, original.orderId);
       const updated = await tx.order.update({ where: { id: original.orderId }, data: { prepayment: mirrors.paid, balance: mirrors.balance, partnerPaid: mirrors.partnerPaid, partnerBalance: mirrors.partnerBalance, companyProfit: mirrors.companyProfit } });
       await tx.financeAuditEvent.create({ data: { orderId: original.orderId, action: "FINANCIAL_REVERSAL", entityType: "Payment", entityId: original.id, before: { type: original.type, amount: String(original.amount) }, after: { reversalId: reversal.id, type: reversal.type, amount: String(reversal.amount) }, reason: input.reason.trim(), authorId: input.authorId } });
+      await voidPaymentReceipt(tx, original.id, reversal.id, input.authorId, input.reason.trim());
       return { original, reversal, order: updated };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
   } catch (error) { if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" && attempt < SERIALIZABLE_RETRIES - 1) continue; throw error; }
@@ -215,9 +232,9 @@ export async function adjustOrderAmount(input: { orderId: number; newAmount: num
 }
 
 // Kept for existing API consumers and business tests.
-export async function createPayment(data: { orderId: number; amount: number; method: string; type: string; comment?: string; author?: string; idempotencyKey?: string; requestHash?: string }) {
+export async function createPayment(data: { orderId: number; amount: number; method: string; type: string; comment?: string; author?: string; authorId?: number; idempotencyKey?: string; requestHash?: string }) {
   const result = await createFinanceOperation({ ...data, type: "CLIENT_PAYMENT" });
-  return result && { payment: result.payment, order: result.order! };
+  return result && { ...result, order: result.order! };
 }
 
 export async function deletePayment(id: number) {

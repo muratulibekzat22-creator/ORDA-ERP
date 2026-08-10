@@ -41,9 +41,9 @@ export default function ContractComposer({ orderId, onGenerated, autoOpen = fals
   function set<K extends keyof Form>(key: K, value: Form[K]) { setForm((current) => current ? { ...current, [key]: value } : current); setPreview(null); }
 
   return <>
-    {showTrigger && <button onClick={() => void begin()} className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 font-semibold text-white"><FileCheck2 size={18}/>Сформировать договор</button>}
+    {showTrigger && <button onClick={() => void begin()} className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 font-semibold text-white"><FileCheck2 size={18}/>Сформировать комплект документов</button>}
     {open && <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/80 sm:items-center sm:p-4"><form onSubmit={submit} className="max-h-dvh w-full max-w-4xl overflow-y-auto rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:rounded-2xl">
-      <div className="mb-5 flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Оформление договора</h2><p className="text-sm text-slate-400">Данные заказа заполнены автоматически. Изменения применяются только к snapshot договора.</p></div><button type="button" aria-label="Закрыть" onClick={close} className="grid size-11 place-items-center text-slate-300"><X/></button></div>
+      <div className="mb-5 flex items-center justify-between"><div><h2 className="text-xl font-bold text-white">Оформление договорного комплекта</h2><p className="text-sm text-slate-400">Данные заказа заполнены автоматически. Будут созданы договор на 2 страницах и отдельная памятка.</p></div><button type="button" aria-label="Закрыть" onClick={close} className="grid size-11 place-items-center text-slate-300"><X/></button></div>
       {error && <p className="mb-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-300">{error}</p>}
       {loading && !form ? <p className="p-8 text-slate-400">Загрузка…</p> : form && !preview ? <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Field label="ФИО клиента *"><input required value={form.clientFullName} onChange={(e) => set("clientFullName", e.target.value)} className={control}/></Field>
@@ -62,7 +62,7 @@ export default function ContractComposer({ orderId, onGenerated, autoOpen = fals
         <Field label="Контакт производства"><input value={form.productionContactName} onChange={(e) => set("productionContactName", e.target.value)} className={control}/></Field>
         <Field label="Телефон производства"><input value={form.productionContactPhone} onChange={(e) => set("productionContactPhone", e.target.value)} className={control}/></Field>
       </div> : preview && <PreviewCard value={preview}/>}
-      {form && <div className="mt-6 flex flex-wrap justify-end gap-3">{preview && <button type="button" onClick={() => setPreview(null)} className="min-h-11 rounded-xl border border-slate-600 px-4 text-white">Изменить</button>}<button disabled={loading} type={preview ? "button" : "submit"} onClick={preview ? () => void send("generate") : undefined} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50">{loading ? "Формирование…" : preview ? "Сформировать договор" : "Предпросмотр договора"}</button></div>}
+      {form && <div className="mt-6 flex flex-wrap justify-end gap-3">{preview && <button type="button" onClick={() => setPreview(null)} className="min-h-11 rounded-xl border border-slate-600 px-4 text-white">Изменить</button>}<button disabled={loading} type={preview ? "button" : "submit"} onClick={preview ? () => void send("generate") : undefined} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50">{loading ? "Формирование…" : preview ? "Сформировать комплект" : "Предпросмотр договора"}</button></div>}
     </form></div>}
   </>;
 }

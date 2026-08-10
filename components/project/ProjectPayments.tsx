@@ -17,7 +17,7 @@ export default function ProjectPayments({ orderId }: Props) {
   const [form, setForm] = useState({
     amount: "",
     type: "Предоплата",
-    method: "Kaspi",
+    method: "Kaspi перевод",
     comment: "",
   });
 
@@ -57,7 +57,7 @@ export default function ProjectPayments({ orderId }: Props) {
       setForm({
         amount: "",
         type: "Предоплата",
-        method: "Kaspi",
+        method: "Kaspi перевод",
         comment: "",
       });
       reset();
@@ -108,8 +108,11 @@ export default function ProjectPayments({ orderId }: Props) {
         }
       >
         <option>Наличные</option>
-        <option>Kaspi</option>
+        <option>Kaspi перевод</option>
+        <option>Kaspi рассрочка</option>
         <option>Банковский перевод</option>
+        <option>Банковская карта</option>
+        <option>Другое</option>
       </select>
 
       <textarea

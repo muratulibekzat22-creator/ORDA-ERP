@@ -2,6 +2,7 @@ import { DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
+import { createPaymentReceiptRecord, ensurePaymentReceiptPdf } from "@/lib/services/payment-receipt.service";
 
 export async function getOrders(
   where: import("@prisma/client").Prisma.OrderWhereInput = {},
@@ -315,7 +316,7 @@ export async function createOrder(data: CreateOrderInput) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await prisma.$transaction(
+      const result = await prisma.$transaction(
         async (tx) => {
           if (eventKey && data.requestHash) {
             const existingEvent = await tx.orderEvent.findUnique({
@@ -457,8 +458,9 @@ export async function createOrder(data: CreateOrderInput) {
               status: "Новая заявка",
             },
           });
-          if (data.prepayment > 0)
-            await tx.payment.create({
+          let initialPaymentId: number | null = null;
+          if (data.prepayment > 0) {
+            const initialPayment = await tx.payment.create({
               data: {
                 orderId: order.id,
                 amount: money(data.prepayment),
@@ -475,6 +477,9 @@ export async function createOrder(data: CreateOrderInput) {
                 requestHash: data.requestHash,
               },
             });
+            initialPaymentId = initialPayment.id;
+            await createPaymentReceiptRecord(tx, initialPayment.id, data.managerUserId);
+          }
           if (data.partnerPaid > 0)
             await tx.payment.create({
               data: {
@@ -525,7 +530,7 @@ export async function createOrder(data: CreateOrderInput) {
               requestHash: data.requestHash,
             },
           });
-          return { order, created: true };
+          return { order, created: true, initialPaymentId };
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -533,6 +538,10 @@ export async function createOrder(data: CreateOrderInput) {
           timeout: 20_000,
         },
       );
+      if ("initialPaymentId" in result && result.initialPaymentId) {
+        try { await ensurePaymentReceiptPdf(result.initialPaymentId); } catch { /* PDF remains retryable from Documents. */ }
+      }
+      return result;
     } catch (error) {
       if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
         throw error;

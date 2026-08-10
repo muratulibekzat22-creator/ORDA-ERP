@@ -19,12 +19,13 @@ async function main() {
   ({ prisma } = await import("@/lib/prisma"));
   const { createFinanceOperation, reconcileOrderFinance, adjustOrderAmount, reverseFinanceOperation } = await import("@/lib/services/payment.service");
   const { assignPartnerToOrder } = await import("@/lib/services/partner.service");
-  let userId = 0, clientId = 0, orderId = 0; const partnerIds: number[] = [];
+  let userId = 0, managerUserId = 0, clientId = 0, orderId = 0; const partnerIds: number[] = [];
   try {
     const user = await prisma.user.create({ data: { name: tag, email: `${tag}@test.local`, password: "not-used", role: Role.DIRECTOR } }); userId = user.id;
-    const client = await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "TEST", manager: tag, amount: "1000", status: "New" } }); clientId = client.id;
+    const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "not-used", role: Role.MANAGER } }); managerUserId = manager.id;
+    const client = await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "TEST", manager: manager.name, managerUserId: manager.id, amount: "1000", status: "New" } }); clientId = client.id;
     const partners = await Promise.all(["old", "new"].map((name) => prisma.partner.create({ data: { name: `${tag}-${name}` } }))); partnerIds.push(...partners.map((value) => value.id));
-    const order = await prisma.order.create({ data: { number: key("order"), clientId, partnerId: partners[0].id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", balance: "1000", partnerPrice: "400", partnerAgreedAt: new Date(), partnerBalance: "400", companyProfit: "600", manager: tag, status: "New" } }); orderId = order.id;
+    const order = await prisma.order.create({ data: { number: key("order"), clientId, partnerId: partners[0].id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", balance: "1000", partnerPrice: "400", partnerAgreedAt: new Date(), partnerBalance: "400", companyProfit: "600", manager: manager.name, managerUserId: manager.id, status: "New" } }); orderId = order.id;
     await Promise.all([
       createFinanceOperation({ type: "CLIENT_PAYMENT", orderId, amount: 100, method: "cash", idempotencyKey: key("payment-a"), requestHash: hash("payment-a") }),
       createFinanceOperation({ type: "CLIENT_PAYMENT", orderId, amount: 150, method: "cash", idempotencyKey: key("payment-b"), requestHash: hash("payment-b") }),
@@ -62,8 +63,17 @@ async function main() {
     ensure(deleteBlocked, "database allowed hard-delete of financially posted order");
     console.log("FINANCE INTEGRITY SUMMARY: concurrency=passed; reconciliation=passed; adjustment=passed; hard-delete=blocked; reassignment=audited; reversal=passed; cost-redaction=passed");
   } finally {
-    if (orderId) { await prisma.financeAuditEvent.deleteMany({ where: { orderId } }); await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId } }); await prisma.commercialAdjustment.deleteMany({ where: { orderId } }); await prisma.orderEvent.deleteMany({ where: { orderId } }); await prisma.production.deleteMany({ where: { orderId } }); await prisma.payment.deleteMany({ where: { orderId, reversalOfId: { not: null } } }); await prisma.payment.deleteMany({ where: { orderId } }); await prisma.order.deleteMany({ where: { id: orderId } }); }
-    if (partnerIds.length) await prisma.partner.deleteMany({ where: { id: { in: partnerIds } } }); if (clientId) await prisma.client.deleteMany({ where: { id: clientId } }); if (userId) await prisma.user.deleteMany({ where: { id: userId } }); await prisma.$disconnect(); console.log("cleanup completed");
+    if (orderId) {
+      const receiptDocuments = (await prisma.paymentReceipt.findMany({ where: { orderId }, select: { documentId: true } })).map((item) => item.documentId);
+      if (receiptDocuments.length) {
+        await prisma.documentAudit.deleteMany({ where: { documentId: { in: receiptDocuments } } });
+        await prisma.documentVersion.deleteMany({ where: { documentId: { in: receiptDocuments } } });
+        await prisma.paymentReceipt.deleteMany({ where: { orderId } });
+        await prisma.document.deleteMany({ where: { id: { in: receiptDocuments } } });
+      }
+      await prisma.financeAuditEvent.deleteMany({ where: { orderId } }); await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId } }); await prisma.commercialAdjustment.deleteMany({ where: { orderId } }); await prisma.orderEvent.deleteMany({ where: { orderId } }); await prisma.production.deleteMany({ where: { orderId } }); await prisma.payment.deleteMany({ where: { orderId, reversalOfId: { not: null } } }); await prisma.payment.deleteMany({ where: { orderId } }); await prisma.cashShift.deleteMany({ where: { responsibleManagerId: managerUserId } }); await prisma.order.deleteMany({ where: { id: orderId } });
+    }
+    if (partnerIds.length) await prisma.partner.deleteMany({ where: { id: { in: partnerIds } } }); if (clientId) await prisma.client.deleteMany({ where: { id: clientId } }); if (userId || managerUserId) await prisma.user.deleteMany({ where: { id: { in: [userId, managerUserId].filter(Boolean) } } }); await prisma.$disconnect(); console.log("cleanup completed");
   }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

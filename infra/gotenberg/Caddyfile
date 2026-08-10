@@ -1,0 +1,21 @@
+:3000 {
+  @unauthorized not header Authorization "Bearer {$GOTENBERG_TOKEN}"
+  respond @unauthorized 401
+
+  request_body {
+    max_size 20MB
+  }
+
+  reverse_proxy gotenberg:3000 {
+    transport http {
+      dial_timeout 5s
+      response_header_timeout 35s
+    }
+  }
+
+  log {
+    output stdout
+    format json
+    level WARN
+  }
+}

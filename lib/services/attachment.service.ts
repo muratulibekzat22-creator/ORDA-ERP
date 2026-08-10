@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { del, get, put } from "@vercel/blob";
+import { del, get, put } from "@/lib/private-blob";
 import { Role } from "@prisma/client";
 
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";

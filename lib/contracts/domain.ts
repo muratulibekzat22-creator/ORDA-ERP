@@ -1,4 +1,4 @@
-export const CONTRACT_TEMPLATE_VERSION = "ALTYN_SAPA_ORDA_V1";
+export const CONTRACT_TEMPLATE_VERSION = "ALTYN_SAPA_CONTRACT_PACKAGE_V2";
 export const CONTRACT_TIME_ZONE = "Asia/Almaty";
 
 export type ContractPaymentInput =
@@ -7,6 +7,7 @@ export type ContractPaymentInput =
 
 export type ContractSnapshot = {
   contractNumber: string;
+  orderNumber: string;
   contractDateIso: string;
   contractTime: string;
   contractDay: string;
@@ -17,9 +18,19 @@ export type ContractSnapshot = {
   clientIin: string;
   clientPhone: string;
   clientAddress: string;
+  clientCity: string;
   installationAddress: string;
   stairMaterial: string;
+  frameType: string;
+  frameComment: string;
   balusterType: string;
+  supportType: string;
+  color: string;
+  lightingText: string;
+  claddingText: string;
+  deliveryText: string;
+  installationText: string;
+  additionalDetails: string;
   contractAmount: string;
   contractAmountWords: string;
   contractAmountNumeric: number;
@@ -32,6 +43,8 @@ export type ContractSnapshot = {
   balanceAmountWords: string;
   balanceAmountNumeric: number;
   isFullPayment: boolean;
+  paymentSchedulePrimary: string;
+  paymentScheduleBalance: string;
   prepaymentDueText: string;
   balanceDueText: string;
   fullPaymentDueText: string;

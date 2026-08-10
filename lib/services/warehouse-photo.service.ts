@@ -1,4 +1,4 @@
-import { del, get, put } from "@vercel/blob";
+import { del, get, put } from "@/lib/private-blob";
 import { createHash } from "node:crypto";
 
 import { prisma } from "@/lib/prisma";

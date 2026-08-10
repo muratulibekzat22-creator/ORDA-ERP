@@ -3,6 +3,7 @@ import { DocumentStatus, DocumentType } from "@prisma/client";
 export const documentTypeLabels: Record<DocumentType, string> = {
   OFFER: "Коммерческое предложение",
   CONTRACT: "Договор",
+  CUSTOMER_MEMO: "Памятка заказчику",
   ESTIMATE: "Смета",
   PROJECT: "Проект",
   MEASUREMENT_SHEET: "Замерный лист",
@@ -26,6 +27,7 @@ documentStatusLabels.CANCELLED = "Аннулирован";
 export const documentTabs: Array<{ label: string; type: "" | DocumentType }> = [
   { label: "Все", type: "" },
   { label: "Договоры", type: DocumentType.CONTRACT },
+  { label: "Памятки", type: DocumentType.CUSTOMER_MEMO },
   { label: "Сметы", type: DocumentType.ESTIMATE },
   { label: "Акты", type: DocumentType.ACT },
   { label: "Проекты", type: DocumentType.PROJECT },

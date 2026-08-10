@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import {
   createPayment,
   getPayments,
@@ -7,6 +8,7 @@ import { requirePermission } from "@/lib/server-auth";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, createRequestHash, idempotencyConflict, isPrismaUniqueConflict, readIdempotencyKey } from "@/lib/idempotency";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 
 export async function GET() {
   const auth = await requirePermission("finance");
@@ -50,13 +52,17 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const auth = await requirePermission("finance");
-  if (auth.response) return auth.response;
-  if (auth.session!.user.role === Role.PARTNER)
+  const session = await getServerSession(authOptions);
+  if (!session?.user || session.invalid) return NextResponse.json({ error: "Сессия завершена", code: "SESSION_INVALID" }, { status: 401 });
+  const user = session.user;
+  const role = user.role as Role;
+  if (user.role === Role.PARTNER)
     return NextResponse.json(
       { error: "Цех не может создавать финансовые операции" },
       { status: 403 },
     );
+  if (role !== Role.DIRECTOR && role !== Role.MANAGER && role !== Role.ACCOUNTANT)
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency=readIdempotencyKey(req);if("response" in idempotency)return idempotency.response;
   let hash = "";
   try {
@@ -89,10 +95,8 @@ export async function POST(req: Request) {
       );
     }
 
-    if (auth.session!.user.role === Role.PARTNER) {
-      const partner = await prisma.partner.findUnique({ where: { userId: Number(auth.session!.user.id) }, select: { id: true } });
-      if (!partner || !await prisma.order.findFirst({ where: { id: orderId, partnerId: partner.id, deletedAt: null }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
-    }
+    const ownedOrder = await prisma.order.findFirst({ where: { id: orderId, deletedAt: null, ...(role === Role.MANAGER ? { managerUserId: Number(session.user.id) } : {}) }, select: { id: true } });
+    if (!ownedOrder) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
 
     if (values.type !== "Предоплата" && values.type !== "Доплата") {
       return NextResponse.json({ error: "Некорректный тип оплаты" }, { status: 400 });
@@ -101,7 +105,12 @@ export async function POST(req: Request) {
     if (
       values.method !== "Наличные" &&
       values.method !== "Kaspi" &&
-      values.method !== "Банковский перевод"
+      values.method !== "Kaspi перевод" &&
+      values.method !== "Kaspi рассрочка" &&
+      values.method !== "Банковский перевод" &&
+      values.method !== "Банковская карта" &&
+      values.method !== "Карта" &&
+      values.method !== "Другое"
     ) {
       return NextResponse.json({ error: "Некорректный способ оплаты" }, { status: 400 });
     }
@@ -112,7 +121,8 @@ export async function POST(req: Request) {
       type: values.type,
       method: values.method,
       comment: typeof values.comment === "string" ? values.comment.trim() || undefined : undefined,
-      author: auth.session!.user.name ?? "System",
+      author: session.user.name ?? "System",
+      authorId: Number(session.user.id),
       idempotencyKey:idempotency.key,
       requestHash:hash,
     });
@@ -121,12 +131,32 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     }
 
-    return NextResponse.json(payment);
+    return NextResponse.json({
+      payment: {
+        id: payment.payment.id,
+        amount: payment.payment.amount,
+        method: payment.payment.method,
+        operationDate: payment.payment.operationDate,
+      },
+      order: payment.order ? {
+        id: payment.order.id,
+        amount: payment.order.amount,
+        prepayment: payment.order.prepayment,
+        balance: payment.order.balance,
+      } : null,
+      receiptPdfStatus: "receiptPdfStatus" in payment ? payment.receiptPdfStatus : undefined,
+    });
   } catch (error) {
     console.error(error);
 
     if (error instanceof Error && error.message === "PAYMENT_EXCEEDS_BALANCE") {
       return NextResponse.json({ error: "Оплата превышает остаток заказа" }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "RESPONSIBLE_MANAGER_REQUIRED") {
+      return NextResponse.json(
+        { error: "Назначьте активного ответственного менеджера для формирования квитанции" },
+        { status: 409 },
+      );
     }
     if(error instanceof Error&&error.message==="IDEMPOTENCY_CONFLICT")return idempotencyConflict();
     if(isPrismaUniqueConflict(error)){const existing=await prisma.payment.findUnique({where:{idempotencyKey:idempotency.key}});if(existing&&existing.orderId&&compareRequestHash(existing.requestHash,hash))return NextResponse.json({payment:existing,order:await prisma.order.findUniqueOrThrow({where:{id:existing.orderId}})});return idempotencyConflict();}
