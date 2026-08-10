@@ -19,6 +19,10 @@ import {
 } from "@/lib/services/contract-package.service";
 import { getSignedContractContent } from "@/lib/services/contract.service";
 import { getDocument, type DocumentActor } from "@/lib/services/document.service";
+import {
+  convertDocxToPdf,
+  GotenbergError,
+} from "@/lib/services/gotenberg.service";
 import { createFinanceOperation, reverseFinanceOperation } from "@/lib/services/payment.service";
 import {
   closeCashShift,
@@ -39,6 +43,18 @@ async function main() {
   assert(process.env.TEST_BLOB_DIR, "TEST_BLOB_DIR is required for isolated document integration");
   process.env.NEXTAUTH_URL = "https://orda.test.invalid";
   delete process.env.BLOB_READ_WRITE_TOKEN;
+
+  process.env.GOTENBERG_URL = "http://converter.example.test";
+  process.env.GOTENBERG_TOKEN = "local-test-token";
+  await assert.rejects(
+    convertDocxToPdf({ bytes: Buffer.from("not-sent"), fileName: "contract.docx" }),
+    (error: unknown) =>
+      error instanceof GotenbergError &&
+      error.message === "CONVERTER_HTTPS_REQUIRED",
+    "non-local HTTP converter URL was accepted",
+  );
+  delete process.env.GOTENBERG_URL;
+  delete process.env.GOTENBERG_TOKEN;
 
   await prisma.companySettings.upsert({
     where: { id: 1 },

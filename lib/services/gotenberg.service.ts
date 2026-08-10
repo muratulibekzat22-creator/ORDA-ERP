@@ -19,8 +19,13 @@ function settings() {
   } catch {
     throw new GotenbergError("CONVERTER_URL_INVALID");
   }
-  if (!['http:', 'https:'].includes(parsed.protocol))
-    throw new GotenbergError("CONVERTER_URL_INVALID");
+  const localTestHttp =
+    parsed.protocol === "http:" &&
+    ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname) &&
+    Boolean(process.env.TEST_DATABASE_URL) &&
+    process.env.DATABASE_URL === process.env.TEST_DATABASE_URL;
+  if (parsed.protocol !== "https:" && !localTestHttp)
+    throw new GotenbergError("CONVERTER_HTTPS_REQUIRED");
   return { url, token };
 }
 

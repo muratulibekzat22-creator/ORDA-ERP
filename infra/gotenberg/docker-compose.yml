@@ -1,44 +1,98 @@
+name: orda-private-gotenberg
+
 services:
   gotenberg:
-    image: gotenberg/gotenberg:8.21.0
+    image: gotenberg/gotenberg:8.34.0-libreoffice
     restart: unless-stopped
     command:
       - gotenberg
       - --api-port=3000
       - --api-timeout=35s
+      - --api-body-limit=20MB
+      - --api-disable-download-from=true
       - --libreoffice-auto-start=true
+      - --libreoffice-start-timeout=20s
+      - --libreoffice-max-queue-size=4
       - --libreoffice-restart-after=25
+      - --libreoffice-deny-private-ips=true
+      - --libreoffice-deny-public-ips=true
+      - --webhook-disable=true
       - --log-level=warn
+      - --log-std-format=json
+      - --gotenberg-graceful-shutdown-duration=35s
     expose:
       - "3000"
     networks:
-      - contract-converter
+      - converter
+    environment:
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+      XDG_CONFIG_HOME: /tmp/.config
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--head", "-o", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
-  gotenberg-gateway:
+  gateway:
     image: caddy:2.10.2-alpine
     restart: unless-stopped
     depends_on:
-      - gotenberg
+      gotenberg:
+        condition: service_healthy
     environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+      GOTENBERG_DOMAIN: ${GOTENBERG_DOMAIN:?GOTENBERG_DOMAIN is required}
       GOTENBERG_TOKEN: ${GOTENBERG_TOKEN:?GOTENBERG_TOKEN is required}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    expose:
-      - "3000"
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
     networks:
-      - contract-converter
+      - edge
+      - converter
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     read_only: true
     tmpfs:
-      - /config:size=16m
-      - /data:size=16m
+      - /tmp:size=32m,mode=1777
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
 networks:
-  contract-converter:
+  edge:
+  converter:
     internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
