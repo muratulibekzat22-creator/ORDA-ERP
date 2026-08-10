@@ -5,7 +5,10 @@ export type ProductionKanbanFilter = {
   stage: "" | ProductionStage;
   assigneeId: "" | number;
   priority: "" | number;
+  partnerId: "" | number;
   overdueOnly: boolean;
+  from: string;
+  to: string;
 };
 
 export type FilterableProduction = {
@@ -22,7 +25,10 @@ export const EMPTY_PRODUCTION_FILTERS: ProductionKanbanFilter = {
   stage: "",
   assigneeId: "",
   priority: "",
+  partnerId: "",
   overdueOnly: false,
+  from: "",
+  to: "",
 };
 
 export function isProductionOverdue(item: FilterableProduction, now = new Date()) {

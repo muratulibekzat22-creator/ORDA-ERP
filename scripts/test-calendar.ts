@@ -11,7 +11,7 @@ assert.equal(parseBusinessDateTime("2026-08-08"), null, "time is required");
 
 const service = read("lib/services/calendar.service.ts"), api = read("app/api/calendar/route.ts"), schema = read("prisma/schema.prisma"), sidebar = read("components/layout/RouteShell.tsx");
 for (const marker of ["taskScope(actor)", "INVALID_ASSIGNEE", "FORBIDDEN_RELATION", "RELATION_MISMATCH", "completedAt", "CANCELLED", "calendarTaskAudit.create", "conflict"]) assert.ok(service.includes(marker), `missing calendar guard: ${marker}`);
-for (const marker of ["requirePermission(\"calendar\")", "from", "to", "370 * 86400000"]) assert.ok(api.includes(marker), `missing range/auth guard: ${marker}`);
+for (const marker of ["requirePermission(\"calendar\")", 'searchParams.get("start")', 'searchParams.get("end")', "62 * 86400000", 'searchParams.get("cursor")']) assert.ok(api.includes(marker), `missing range/auth guard: ${marker}`);
 for (const marker of ["@@index([assigneeId, dueAt])", "completedById", "cancelledAt"]) assert.ok(schema.includes(marker), `missing schema contract: ${marker}`);
 assert.ok(!api.includes("export async function DELETE"), "calendar tasks must not be hard-deleted");
 const dashboardIndex = sidebar.indexOf('["/",'), calendarIndex = sidebar.indexOf('["/calendar",');

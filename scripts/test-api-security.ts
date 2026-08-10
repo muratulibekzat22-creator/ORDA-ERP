@@ -6,7 +6,7 @@ import path from "path";
 import net from "net";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
-import { CalendarTaskPriority, CalendarTaskType, Permission, Role, type PrismaClient } from "@prisma/client";
+import { CalendarTaskPriority, CalendarTaskType, OrderLifecycle, Permission, Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
 import { defaultPermissions } from "@/lib/permissions";
@@ -417,7 +417,8 @@ async function main() {
 
     const firstCookie = await session(firstUser.email);
     const secondCookie = await session(secondUser.email);
-    const orders = await (await expectStatus("/api/orders", 200, firstCookie)).json() as Array<Record<string, unknown>>;
+    const partnerOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, firstCookie)).json() as { data: Array<Record<string, unknown>> };
+    const orders = partnerOrderPayload.data;
     assert(orders.length === 1 && orders[0].id === firstOrder.id && !orders.some((order) => order.id === secondOrder.id), "partner can only list own orders");
     assert(orders.every((order) => !("companyProfit" in order) && !("amount" in order) && !("balance" in order) && "partnerPrice" in order && "partnerPaid" in order && "partnerBalance" in order && !("userId" in order)), "partner list does not enforce workshop-only finances");
     const partnerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, firstCookie)).json() as Record<string, unknown>;
@@ -454,7 +455,8 @@ async function main() {
     const afterPartnerPatch = await prisma.order.findUniqueOrThrow({ where: { id: firstOrder.id } });
     assert(["partnerId", "partnerPrice", "prepayment", "balance", "partnerPaid", "partnerBalance", "companyProfit"].every((key) => String(afterPartnerPatch[key as keyof typeof afterPartnerPatch]) === String(beforePartnerPatch[key as keyof typeof beforePartnerPatch])), "partner financial patch changed protected fields");
 
-    const secondOrders = await (await expectStatus("/api/orders", 200, secondCookie)).json() as Array<Record<string, unknown>>;
+    const secondPartnerOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, secondCookie)).json() as { data: Array<Record<string, unknown>> };
+    const secondOrders = secondPartnerOrderPayload.data;
     assert(secondOrders.length === 1 && secondOrders[0].id === secondOrder.id && !secondOrders.some((order) => order.id === firstOrder.id), "second partner can only list own orders");
     assert(secondOrders.every((order) => !("companyProfit" in order) && !("amount" in order) && !("balance" in order) && "partnerPrice" in order && "partnerPaid" in order && "partnerBalance" in order && !("userId" in order)), "second partner list does not enforce workshop-only finances");
     await expectStatus(`/api/orders/${secondOrder.id}`, 200, secondCookie);
@@ -651,9 +653,24 @@ async function main() {
     const directorProductions = await (await expectStatus("/api/production", 200, directorCookie)).json() as ProductionPayload[];
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
     assert(directorProductions.some((production) => production.id === otherStageProduction.id && production.stage === productionStage), "director cannot see the installer non-installation record");
-    const directorCalendar = await (await expectStatus("/api/calendar", 200, directorCookie)).json() as CalendarPayload;
-    const expectedCalendarTaskIds = [firstMeasurementTask.id, secondMeasurementTask.id, firstInstallerTask.id, secondInstallerTask.id, otherStageTask.id, firstProductionTask.id, secondProductionTask.id];
-    assert(expectedCalendarTaskIds.every((id) => directorCalendar.tasks.some((task) => task.id === id)), "director cannot see all calendar tasks");
+    const calendarFrom = new Date();
+    calendarFrom.setUTCHours(0, 0, 0, 0);
+    calendarFrom.setUTCDate(calendarFrom.getUTCDate() - 1);
+    const calendarTo = new Date(calendarFrom);
+    calendarTo.setUTCDate(calendarTo.getUTCDate() + 62);
+    const expectedCalendarTasks = [
+      [firstMeasurementTask.id, firstMeasurer.id],
+      [secondMeasurementTask.id, secondMeasurer.id],
+      [firstInstallerTask.id, firstInstaller.id],
+      [secondInstallerTask.id, secondInstaller.id],
+      [otherStageTask.id, firstInstaller.id],
+      [firstProductionTask.id, firstProductionUser.id],
+      [secondProductionTask.id, secondProductionUser.id],
+    ];
+    for (const [taskId, assigneeId] of expectedCalendarTasks) {
+      const directorCalendar = await (await expectStatus(`/api/calendar?start=${encodeURIComponent(calendarFrom.toISOString())}&end=${encodeURIComponent(calendarTo.toISOString())}&assigneeId=${assigneeId}`, 200, directorCookie)).json() as CalendarPayload;
+      assert(directorCalendar.tasks.some((task) => task.id === taskId), "director cannot see all calendar tasks");
+    }
     await expectStatus(`/api/calendar/${secondProductionTask.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: secondProductionTask.title, type: CalendarTaskType.TASK, dueAt: "2026-09-05T10:00", priority: CalendarTaskPriority.NORMAL, assigneeId: secondProductionUser.id, clientId: workflowClients[4].id, orderId: secondProductionOrder.id }) });
     await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:director-production` }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
     console.log("installer and production API security checks passed");
@@ -855,8 +872,12 @@ async function main() {
     assert(deletedList.data.some((item) => item.id === removableClient.id), "Director archive does not contain the soft-deleted lead");
     await expectStatus(`/api/clients/${removableClient.id}/restore`, 200, directorCookie, { method: "POST" });
     assert((await prisma.client.findUniqueOrThrow({ where: { id: removableClient.id } })).active === true, "Director could not restore the lead");
-    const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<Record<string, unknown> & { id: number }>;
+    const managerOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, managerCookie)).json() as { data: Array<Record<string, unknown> & { id: number }> };
+    const managerOrders = managerOrderPayload.data;
     assert(Array.isArray(managerOrders) && managerOrders.some((order) => order.id === firstOrder.id), "manager orders payload is invalid");
+    const managerOrderSearch = await (await expectStatus(`/api/orders/search?q=${encodeURIComponent(firstOrder.number)}`, 200, managerCookie)).json() as { items: Array<{ id: number }> };
+    const foreignOrderSearch = await (await expectStatus(`/api/orders/search?q=${encodeURIComponent(firstOrder.number)}`, 200, foreignManagerCookie)).json() as { items: Array<{ id: number }> };
+    assert(managerOrderSearch.items.some((order) => order.id === firstOrder.id) && foreignOrderSearch.items.every((order) => order.id !== firstOrder.id), "order search ownership/IDOR guard failed");
     assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
     const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers?: Array<{ managerUserId: number }> };
     assert(!/companyProfit|partnerPrice|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
@@ -868,21 +889,30 @@ async function main() {
     for (const pathname of ["/api/settings", "/api/employees", "/api/finance", "/api/analytics"]) await expectStatus(pathname, 403, managerCookie);
     console.log("manager API security matrix passed");
 
-    const directorOrders = await (await expectStatus("/api/orders", 200, directorCookie)).json() as Array<Record<string, unknown> & { id: number }>;
+    const directorOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, directorCookie)).json() as { data: Array<Record<string, unknown> & { id: number }> };
+    const directorOrders = directorOrderPayload.data;
     assert(Array.isArray(directorOrders) && directorOrders.some((order) => order.id === firstOrder.id), "director orders payload is invalid");
     assert(directorOrders.some((order) => order.id === firstOrder.id && ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
-    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { metrics: Record<string, unknown>; managers: unknown[]; activities: unknown[] };
+    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { period: { start: string; end: string }; metrics: Record<string, unknown>; managers: unknown[]; activities: unknown[] };
     assert(Boolean(directorDashboard.metrics) && Array.isArray(directorDashboard.managers) && Array.isArray(directorDashboard.activities), "director dashboard payload is invalid");
-    const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-    const expectedDashboardOrders = await prisma.order.findMany({ where: { createdAt: { gte: monthStart }, status: { notIn: ["Отказ / отменён", "Отменен", "Отменён"] } }, select: { amount: true, prepayment: true, balance: true } });
-    assert(Number(directorDashboard.metrics.orders) === expectedDashboardOrders.length && Number(directorDashboard.metrics.totalSales) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) && Number(directorDashboard.metrics.receivedPrepayment) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.prepayment), 0) && Number(directorDashboard.metrics.balanceToReceive) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.balance), 0), "director dashboard order totals are incorrect");
+    const dashboardPeriod = { gte: new Date(directorDashboard.period.start), lte: new Date(directorDashboard.period.end) };
+    const expectedDashboardOrders = await prisma.order.findMany({ where: { deletedAt: null, createdAt: dashboardPeriod, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { amount: true } });
+    const expectedClientPayments = await prisma.payment.findMany({ where: { operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] }, order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } }, select: { amount: true, type: true } });
+    const expectedClientBalances = await prisma.order.findMany({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { balance: true } });
+    assert(
+      Number(directorDashboard.metrics.orders) === expectedDashboardOrders.length &&
+      Number(directorDashboard.metrics.totalSales) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&
+      Number(directorDashboard.metrics.receivedPrepayment) === expectedClientPayments.reduce((sum, payment) => sum + (payment.type === "REFUND" ? -Number(payment.amount) : Number(payment.amount)), 0) &&
+      Number(directorDashboard.metrics.balanceToReceive) === expectedClientBalances.reduce((sum, order) => sum + Math.max(Number(order.balance), 0), 0),
+      "director dashboard order totals are incorrect",
+    );
     const directorClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
     assert(Array.isArray(directorClients.data) && directorClients.pagination.total > 0 && directorClients.data.some((item) => item.id === client.id), "director clients payload is invalid");
     await expectStatus(`/api/clients/${client.id}/force-delete`, 403, managerCookie);
     const deletionPreview = await (await expectStatus(`/api/clients/${client.id}/force-delete`, 200, directorCookie)).json() as { blocked: boolean; blockers: string[] };
     assert(deletionPreview.blocked && deletionPreview.blockers.length > 0, "Director force-delete preview did not block a client with payments");
-    const directorMeasurements = await (await expectStatus("/api/measurements", 200, directorCookie)).json() as Array<{ id: number; order: { id: number } }>;
-    assert(Array.isArray(directorMeasurements) && directorMeasurements.some((measurement) => measurement.id === firstMeasurement.id && measurement.order.id === firstMeasurerOrder.id), "director measurements payload is invalid");
+    const directorMeasurement = await (await expectStatus(`/api/measurements/${firstMeasurement.id}`, 200, directorCookie)).json() as { id: number; order: { id: number } };
+    assert(directorMeasurement.id === firstMeasurement.id && directorMeasurement.order.id === firstMeasurerOrder.id, "director measurements payload is invalid");
     const directorPartners = await (await expectStatus("/api/partners", 200, directorCookie)).json() as Array<{ id: number; stats: { totalOrders: number } }>;
     assert(Array.isArray(directorPartners) && directorPartners.some((partner) => partner.id === firstPartner.id && partner.stats.totalOrders > 0), "director partners payload is invalid");
     const directorWarehouse = await (await expectStatus("/api/warehouse", 200, directorCookie)).json() as { materials: unknown[]; movements: unknown[]; orders: Array<{ id: number }>; stats: Record<string, unknown> };

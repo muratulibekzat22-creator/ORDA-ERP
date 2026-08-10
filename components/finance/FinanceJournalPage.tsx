@@ -132,6 +132,7 @@ export default function FinanceJournalPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [form, setForm] = useState<Form | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -156,6 +157,7 @@ export default function FinanceJournalPage() {
       params.set("from", `${from}T00:00:00`);
     if (period === "custom" && to)
       params.set("to", `${to}T23:59:59.999`);
+    if (debouncedSearch) params.set("search", debouncedSearch);
     try {
       const response = await fetch(`/api/finance?${params}`, {
         cache: "no-store",
@@ -174,7 +176,15 @@ export default function FinanceJournalPage() {
     } finally {
       setLoading(false);
     }
-  }, [from, page, period, tab, to]);
+  }, [debouncedSearch, from, page, period, tab, to]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     // Initial and filter-driven API synchronization belongs in this effect.
@@ -189,24 +199,7 @@ export default function FinanceJournalPage() {
       ),
     [form?.direction, journal.categories],
   );
-  const visible = useMemo(
-    () =>
-      journal.operations.filter((item) => {
-        if (tab === "income" && item.direction !== "INCOME") return false;
-        if (tab === "expense" && item.direction !== "EXPENSE") return false;
-        if (!search.trim()) return true;
-        const query = search.toLocaleLowerCase("ru");
-        return [
-          item.categoryName,
-          item.counterparty,
-          item.comment,
-          item.order?.number,
-          item.order?.client.name,
-          item.author,
-        ].some((value) => value?.toLocaleLowerCase("ru").includes(query));
-      }),
-    [journal.operations, search, tab],
-  );
+  const visible = journal.operations;
 
   const set = (field: keyof Form, value: string) =>
     setForm((current) => (current ? { ...current, [field]: value } : current));

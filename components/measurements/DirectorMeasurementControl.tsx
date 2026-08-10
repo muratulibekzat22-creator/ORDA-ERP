@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarClock,
   CheckCircle2,
@@ -86,6 +86,7 @@ type Measurement = {
 };
 type Payload = {
   measurements: Measurement[];
+  pagination: { nextCursor: string | null; hasMore: boolean; limit: number; sort: "asc" | "desc" };
   kpi: { today: number; upcoming: number; overdue: number; monthCompleted: number };
 };
 
@@ -163,10 +164,13 @@ export default function DirectorMeasurementControl() {
   const [managerUserId, setManagerUserId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [measurers, setMeasurers] = useState<Person[]>([]);
   const [managers, setManagers] = useState<Person[]>([]);
-  const [data, setData] = useState<Payload>({ measurements: [], kpi: { today: 0, upcoming: 0, overdue: 0, monthCompleted: 0 } });
+  const [data, setData] = useState<Payload>({ measurements: [], pagination: { nextCursor: null, hasMore: false, limit: 30, sort: "asc" }, kpi: { today: 0, upcoming: 0, overdue: 0, monthCompleted: 0 } });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const requestedMeasurementId = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -176,7 +180,10 @@ export default function DirectorMeasurementControl() {
       const requestedFilter = params.get("filter") as Filter | null;
       if (requestedFilter && filterLabels.some(([value]) => value === requestedFilter)) setFilter(requestedFilter);
       const measurement = Number(params.get("measurement"));
-      if (Number.isInteger(measurement) && measurement > 0) setSelectedId(measurement);
+      if (Number.isInteger(measurement) && measurement > 0) {
+        requestedMeasurementId.current = measurement;
+        setSelectedId(measurement);
+      }
       setInitialized(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -199,26 +206,47 @@ export default function DirectorMeasurementControl() {
     return () => controller.abort();
   }, [initialized]);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const load = useCallback(async (cursor?: string) => {
     if (!initialized) return;
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ workspace: "1", filter });
+    const params = new URLSearchParams({ workspace: "1", filter, limit: "30" });
     if (measurerUserId) params.set("measurerUserId", measurerUserId);
     if (managerUserId) params.set("managerUserId", managerUserId);
     if (from) params.set("from", from);
     if (to) params.set("to", to);
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    if (cursor) params.set("cursor", cursor);
     try {
       const response = await fetch(`/api/measurements?${params}`, { cache: "no-store" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить замеры");
-      setData(body);
+      setData((current) => cursor ? {
+        ...body,
+        measurements: [...current.measurements, ...(body.measurements ?? [])].filter(
+          (row, index, rows) => rows.findIndex((candidate) => candidate.id === row.id) === index,
+        ),
+      } : body);
+      const requestedId = requestedMeasurementId.current;
+      if (!cursor && requestedId && !(body.measurements ?? []).some((row: Measurement) => row.id === requestedId)) {
+        const detailResponse = await fetch(`/api/measurements/${requestedId}`, { cache: "no-store" });
+        if (detailResponse.ok) {
+          const detail = await detailResponse.json() as Measurement;
+          setData((current) => ({ ...current, measurements: [detail, ...current.measurements.filter((row) => row.id !== detail.id)] }));
+        }
+      }
+      if (!cursor) requestedMeasurementId.current = null;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить замеры");
     } finally {
       setLoading(false);
     }
-  }, [filter, from, initialized, managerUserId, measurerUserId, to]);
+  }, [debouncedSearch, filter, from, initialized, managerUserId, measurerUserId, to]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -262,11 +290,13 @@ export default function DirectorMeasurementControl() {
         <label className="text-xs text-slate-400">Период с<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white"/></label>
         <label className="text-xs text-slate-400">Период по<input type="date" value={to} onChange={(event) => setTo(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white"/></label>
       </div>
+      <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Клиент, телефон или город" className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white outline-none focus:border-amber-300"/>
     </section>
 
     <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)]">
       <section className="min-w-0 space-y-3">
         {loading && !rows.length ? <div className="h-40 animate-pulse rounded-2xl bg-slate-900"/> : rows.length ? rows.map((row) => <MeasurementCard key={row.id} row={row} selected={row.id === selectedId} onOpen={() => chooseMeasurement(row.id)}/>) : <div className="rounded-2xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Замеров по выбранным фильтрам нет.</div>}
+        {data.pagination.hasMore && data.pagination.nextCursor && <button type="button" onClick={() => void load(data.pagination.nextCursor ?? undefined)} disabled={loading} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 font-semibold text-white disabled:opacity-50">Загрузить ещё</button>}
       </section>
       {selected ? <MeasurementDetail row={selected}/> : <section className="grid min-h-72 place-items-center rounded-2xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Откройте замер, чтобы увидеть технический результат, фотографии и историю.</section>}
     </div>

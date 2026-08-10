@@ -43,13 +43,28 @@ export async function GET(request: Request) {
     const fromValue = url.searchParams.get("from"), toValue = url.searchParams.get("to");
     const from = periodDate(fromValue), to = periodDate(toValue, true);
     if ((fromValue && !from) || (toValue && !to)) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
-    return NextResponse.json(await measurementWorkspace(actor, {
-      filter,
-      measurerUserId: measurerUserId ?? undefined,
-      managerUserId: managerUserId ?? undefined,
-      from: from ?? undefined,
-      to: to ?? undefined,
-    }));
+    const limitValue = url.searchParams.get("limit");
+    const limit = limitValue ? Number(limitValue) : 30;
+    const sortValue = url.searchParams.get("sort");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || (sortValue && sortValue !== "asc" && sortValue !== "desc"))
+      return NextResponse.json({ error: "Некорректная пагинация" }, { status: 400 });
+    try {
+      return NextResponse.json(await measurementWorkspace(actor, {
+        filter,
+        measurerUserId: measurerUserId ?? undefined,
+        managerUserId: managerUserId ?? undefined,
+        from: from ?? undefined,
+        to: to ?? undefined,
+        search: url.searchParams.get("search")?.slice(0, 120),
+        cursor: url.searchParams.get("cursor") ?? undefined,
+        limit,
+        sort: sortValue === "desc" ? "desc" : "asc",
+      }));
+    } catch (error) {
+      if (error instanceof Error && error.message === "INVALID_CURSOR")
+        return NextResponse.json({ error: "Некорректный cursor" }, { status: 400 });
+      throw error;
+    }
   }
   const clientId = url.searchParams.has("clientId") ? positiveId(url.searchParams.get("clientId")) : undefined;
   const orderId = url.searchParams.has("orderId") ? positiveId(url.searchParams.get("orderId")) : undefined;

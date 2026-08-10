@@ -140,7 +140,7 @@ export async function getDocumentOptions(actor: DocumentActor) {
   const scope = await entityScope(actor);
   const [clients, orders, payments, authorRows] = await Promise.all([
     prisma.client.findMany({ where: { active: true, deletedAt: null, AND: [scope.client] }, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 1000 }),
-    prisma.order.findMany({ where: { deletedAt: null, AND: [scope.order] }, select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 1000 }),
+    prisma.order.findMany({ where: { deletedAt: null, AND: [scope.order] }, select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 50 }),
     prisma.payment.findMany({ where: { orderId: { not: null }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"] }, order: { deletedAt: null, AND: [scope.order] } }, select: { id: true, orderId: true, amount: true, method: true, operationDate: true, comment: true }, orderBy: { operationDate: "desc" }, take: 1000 }),
     prisma.document.findMany({ where: { AND: [await documentScope(actor)], authorId: { not: null } }, select: { author: { select: { id: true, name: true } } }, distinct: ["authorId"], take: 500 }),
   ]);

@@ -50,14 +50,14 @@ export default function DashboardPage() {
             ? request<{ data: Client[] }>("/api/clients")
             : Promise.resolve(null),
           can("orders")
-            ? request<Order[]>("/api/orders")
+            ? request<{ data: Order[] }>("/api/orders?page=1&limit=20")
             : Promise.resolve(null),
           can("production")
             ? request<Production[]>("/api/production")
             : Promise.resolve(null),
         ]);
       setClients(clientsPayload?.data ?? []);
-      setOrders(ordersPayload ?? []);
+      setOrders(ordersPayload?.data ?? []);
       setProductions(productionsPayload ?? []);
     } catch {
       setError(

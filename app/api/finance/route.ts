@@ -123,6 +123,7 @@ export async function GET(request: Request) {
           searchParams.get("direction") === "EXPENSE"
             ? (searchParams.get("direction") as FinanceDirection)
             : undefined,
+        search: searchParams.get("search")?.trim().slice(0, 120) || undefined,
         page: requestedPage,
         pageSize: requestedPageSize,
       }),

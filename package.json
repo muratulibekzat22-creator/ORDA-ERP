@@ -25,6 +25,7 @@
     "test:performance": "tsx scripts/test-performance-ux.ts",
     "seed:performance:audit": "tsx scripts/performance-load-audit.ts",
     "test:performance:load": "tsx scripts/performance-read-benchmark.ts after --assert",
+    "test:performance:phase2": "tsx scripts/test-performance-phase2.ts",
     "test:financial-model": "tsx scripts/test-financial-model.ts",
     "seed:test-accounts": "tsx scripts/seed-test-accounts.ts",
     "test:production:logins": "tsx scripts/test-production-role-logins.ts",

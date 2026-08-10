@@ -35,14 +35,19 @@ export default function PartnerPage() {
         installationCompleted: boolean;
       }>
     >([]),
+    [page, setPage] = useState(1),
+    [totalPages, setTotalPages] = useState(1),
     [error, setError] = useState("");
   const load = useCallback(
-    () =>
-      Promise.all([fetch("/api/partner/dashboard"), fetch("/api/orders")])
+    (targetPage = 1, append = false) =>
+      Promise.all([fetch("/api/partner/dashboard"), fetch(`/api/orders?page=${targetPage}&limit=50`)])
         .then(async ([a, b]) => {
           if (!a.ok || !b.ok) throw new Error("Не удалось загрузить кабинет");
           setD((await a.json()) as Dashboard);
-          setOrders(await b.json());
+          const payload = await b.json() as { data: PartnerOrderItem[]; pagination: { page: number; totalPages: number } };
+          setOrders((current) => append ? [...current, ...payload.data] : payload.data);
+          setPage(payload.pagination.page);
+          setTotalPages(payload.pagination.totalPages);
         })
         .catch((e) => setError(e instanceof Error ? e.message : "Ошибка")),
     [],
@@ -108,6 +113,7 @@ export default function PartnerPage() {
         {!orders.length && (
           <p className="mt-3 text-slate-400">Заказов пока нет.</p>
         )}
+        {page < totalPages && <button type="button" onClick={() => void load(page + 1, true)} className="mt-4 min-h-11 w-full rounded-lg bg-slate-800 px-4 text-white">Показать ещё</button>}
       </section>
       {d && (
         <section className="mt-6 rounded-xl bg-slate-900 p-5">

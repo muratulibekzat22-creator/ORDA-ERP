@@ -108,7 +108,8 @@ async function seed() {
 
   await createManyInBatches(
     "orders",
-    clients.map((client, index) => {
+    Array.from({ length: 10_000 }, (_, index) => {
+      const client = clients[index % clients.length];
       const amount = 800_000 + (index % 60) * 50_000;
       const paid = index % 4 === 0 ? amount : Math.round(amount * 0.4);
       const partnerPrice = Math.round(amount * 0.55);
@@ -150,21 +151,22 @@ async function seed() {
     orderBy: { id: "asc" },
     select: { id: true, clientId: true, createdAt: true },
   });
-  check(orders.length === 5_000, "Order seed count mismatch");
+  check(orders.length === 10_000, "Order seed count mismatch");
 
   await createManyInBatches(
     "measurements",
     Array.from({ length: 10_000 }, (_, index) => {
       const order = orders[index % orders.length];
       const visitDate = new Date(now.getTime() + ((index % 365) - 180) * DAY);
-      const completed = index % 4 === 0;
+      const cancelled = index % 11 === 0;
+      const completed = !cancelled && index % 4 === 0;
       return {
         clientId: order.clientId,
         orderId: order.id,
         measurer: measurer.name,
         measurerUserId: measurer.id,
         visitDate,
-        status: completed ? MeasurementStatus.HANDED_TO_MANAGER : MeasurementStatus.ASSIGNED,
+        status: cancelled ? MeasurementStatus.CANCELLED : completed ? MeasurementStatus.HANDED_TO_MANAGER : MeasurementStatus.ASSIGNED,
         city: `City ${index % 25}`,
         address: `Synthetic measurement address ${index}`,
         completedAt: completed ? visitDate : null,
@@ -177,7 +179,7 @@ async function seed() {
 
   await createManyInBatches(
     "calendarTasks",
-    Array.from({ length: 20_000 }, (_, index) => {
+    Array.from({ length: 30_000 }, (_, index) => {
       const order = orders[index % orders.length];
       const dueAt = new Date(now.getTime() + ((index % 365) - 180) * DAY);
       return {
@@ -209,7 +211,7 @@ async function seed() {
         amount: 10_000 + (index % 50) * 1_000,
         type: index % 5 === 0 ? "PARTNER_PAYOUT" : "CLIENT_PAYMENT",
         method: "SYNTHETIC",
-        comment: PREFIX,
+        comment: index === 14_999 ? `${PREFIX} PHASE2-DEEP-PAYMENT-COMMENT` : PREFIX,
         operationDate: new Date(now.getTime() - (index % 540) * DAY),
         author: director.name,
         idempotencyKey: `${PREFIX}-PAY-${index}`,
@@ -238,7 +240,7 @@ async function seed() {
         orderId: order.id,
         clientId: order.clientId,
         partnerId: index % 4 === 0 ? partner.id : null,
-        comment: PREFIX,
+        comment: index === 14_999 ? `${PREFIX} PHASE2-DEEP-LEDGER-COMMENT` : PREFIX,
         authorId: director.id,
         idempotencyKey: `${PREFIX}-LEDGER-${index}`,
       };
@@ -269,9 +271,9 @@ async function seed() {
 
   await createManyInBatches(
     "productionRows",
-    orders.slice(0, 2_500).map((order, index) => ({
+    orders.map((order, index) => ({
       orderId: order.id,
-      stage: index % 4 === 0 ? "Painting" : "Frame",
+      stage: index % 4 === 0 ? "Покраска" : "Каркас",
       percent: index % 100,
       master: `${PREFIX} Master`,
       plannedEndAt: new Date(now.getTime() + ((index % 90) - 45) * DAY),
@@ -339,8 +341,8 @@ async function seed() {
     measurements: await prisma.measurement.count({ where: { measurer: measurer.name } }),
     calendarTasks: await prisma.calendarTask.count({ where: { title: { startsWith: PREFIX } } }),
     financeOperations:
-      (await prisma.payment.count({ where: { comment: PREFIX } })) +
-      (await prisma.companyLedgerEntry.count({ where: { comment: PREFIX } })),
+      (await prisma.payment.count({ where: { comment: { startsWith: PREFIX } } })) +
+      (await prisma.companyLedgerEntry.count({ where: { comment: { startsWith: PREFIX } } })),
     documents: await prisma.document.count({ where: { number: { startsWith: `${PREFIX}-DOC-` } } }),
     payrollRows:
       (await prisma.payrollAccrual.count({ where: { reason: PREFIX } })) +

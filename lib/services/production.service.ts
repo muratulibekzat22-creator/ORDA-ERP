@@ -43,6 +43,7 @@ const productionInclude = {
       address: true,
       material: true,
       client: { select: { name: true } },
+      partner: { select: { id: true, name: true } },
     },
   },
   masterUser: { select: { id: true, name: true } },
@@ -51,6 +52,17 @@ const productionInclude = {
     take: 20,
   },
 } satisfies Prisma.ProductionInclude;
+
+export type ProductionListFilters = {
+  query?: string;
+  stage?: ProductionStage;
+  assigneeId?: number;
+  partnerId?: number;
+  priority?: number;
+  overdueOnly?: boolean;
+  from?: Date;
+  to?: Date;
+};
 
 function scopeWhere(actor: ProductionActor): Prisma.ProductionWhereInput {
   const active = { archivedAt: null, order: { deletedAt: null } } as const;
@@ -70,12 +82,12 @@ async function getAssignee(tx: Prisma.TransactionClient, userId: number, stage: 
 
 export async function getProductions(
   actor?: ProductionActor,
-  options: { skip?: number; take?: number } = {},
+  options: { skip?: number; take?: number; filters?: ProductionListFilters } = {},
 ) {
   const productions = await prisma.production.findMany({
-    where: actor ? scopeWhere(actor) : { archivedAt: null, order: { deletedAt: null } },
+    where: actor ? productionListWhere(actor, options.filters) : { archivedAt: null, order: { deletedAt: null } },
     include: productionInclude,
-    orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+    orderBy: [{ priority: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     skip: Math.max(0, options.skip ?? 0),
     take: Math.min(100, Math.max(1, options.take ?? 100)),
   });
@@ -93,26 +105,71 @@ export async function getProductions(
   }));
 }
 
-export function countProductions(actor: ProductionActor) {
-  return prisma.production.count({ where: scopeWhere(actor) });
+function productionListWhere(actor: ProductionActor, filters: ProductionListFilters = {}) {
+  const where: Prisma.ProductionWhereInput = { AND: [scopeWhere(actor)] };
+  if (filters.stage) where.stage = filters.stage;
+  if (filters.assigneeId) where.masterUserId = filters.assigneeId;
+  if (filters.partnerId) where.order = { partnerId: filters.partnerId, deletedAt: null };
+  if (filters.priority !== undefined) where.priority = filters.priority;
+  if (filters.overdueOnly) {
+    where.plannedEndAt = { lt: new Date() };
+    where.completedAt = null;
+  }
+  if (filters.from || filters.to) where.createdAt = {
+    ...(filters.from ? { gte: filters.from } : {}),
+    ...(filters.to ? { lt: filters.to } : {}),
+  };
+  const query = filters.query?.trim().slice(0, 120);
+  if (query) {
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : [scopeWhere(actor)]),
+      { order: { deletedAt: null, OR: [
+        { number: { contains: query, mode: "insensitive" } },
+        { client: { name: { contains: query, mode: "insensitive" } } },
+      ] } },
+    ];
+  }
+  return where;
+}
+
+export function countProductions(actor: ProductionActor, filters: ProductionListFilters = {}) {
+  return prisma.production.count({ where: productionListWhere(actor, filters) });
+}
+
+export async function getProductionCounters(actor: ProductionActor, filters: ProductionListFilters = {}) {
+  const where = productionListWhere(actor, filters);
+  const [stages, overdue] = await Promise.all([
+    prisma.production.groupBy({ by: ["stage"], where, _count: { _all: true } }),
+    prisma.production.count({ where: { AND: [where], plannedEndAt: { lt: new Date() }, completedAt: null } }),
+  ]);
+  return {
+    total: stages.reduce((sum, row) => sum + row._count._all, 0),
+    overdue,
+    byStage: Object.fromEntries(stages.map((row) => [row.stage, row._count._all])),
+  };
 }
 
 export async function getProductionOptions(actor: ProductionActor) {
   if (!canCreateProduction(actor.role)) throw new ProductionServiceError("FORBIDDEN");
-  const [orders, assignees] = await Promise.all([
+  const [orders, assignees, partners] = await Promise.all([
     prisma.order.findMany({
       where: { deletedAt: null, productions: { none: { archivedAt: null } } },
       select: { id: true, number: true, address: true, material: true, client: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
-      take: 250,
+      take: 20,
     }),
     prisma.user.findMany({
       where: { active: true, role: { in: [Role.PRODUCTION, Role.INSTALLER] } },
       select: { id: true, name: true, role: true },
       orderBy: { name: "asc" },
     }),
+    prisma.partner.findMany({
+      where: { active: true, archived: false, isTest: false },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
-  return { orders, assignees };
+  return { orders, assignees, partners };
 }
 
 export async function getProduction(id: number, actor?: ProductionActor) {

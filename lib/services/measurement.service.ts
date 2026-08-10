@@ -17,6 +17,10 @@ import {
 } from "@prisma/client";
 import { createRequestHash } from "@/lib/idempotency";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
+import {
+  decodeDateIdCursor,
+  encodeDateIdCursor,
+} from "@/lib/pagination/date-id-cursor";
 import { prisma } from "@/lib/prisma";
 import { hasTrainingClearance } from "@/lib/services/training.service";
 
@@ -180,6 +184,10 @@ export type MeasurementWorkspaceFilters = {
   managerUserId?: number;
   from?: Date;
   to?: Date;
+  search?: string;
+  cursor?: string;
+  limit?: number;
+  sort?: "asc" | "desc";
 };
 
 function jsonObject(value: Prisma.JsonValue | null) {
@@ -499,6 +507,9 @@ export async function measurementWorkspace(
   const today = dayBounds(now),
     month = monthBounds(now);
   const scope = measurementScope(actor);
+  const sort = filters.sort === "desc" ? "desc" : "asc";
+  const limit = Math.min(100, Math.max(1, Math.trunc(filters.limit ?? 30)));
+  const cursor = decodeDateIdCursor(filters.cursor);
   const active: MeasurementStatus[] = [
     MeasurementStatus.ASSIGNED,
     MeasurementStatus.IN_PROGRESS,
@@ -534,6 +545,46 @@ export async function measurementWorkspace(
     workspaceWhere.measurerUserId = filters.measurerUserId;
   if (actor.role === Role.DIRECTOR && filters.managerUserId)
     workspaceWhere.client = { managerUserId: filters.managerUserId };
+  const search = filters.search?.trim().slice(0, 120);
+  if (search) {
+    const digits = search.replace(/\D/g, "");
+    const searchOr: Prisma.ClientWhereInput[] = [
+      { name: { contains: search, mode: "insensitive" } },
+      { city: { contains: search, mode: "insensitive" } },
+      { phone: { contains: search } },
+      { whatsapp: { contains: search } },
+    ];
+    if (digits.length >= 3 && digits !== search) {
+      searchOr.push(
+        { phone: { contains: digits } },
+        { whatsapp: { contains: digits } },
+      );
+    }
+    workspaceWhere.AND = [
+      ...(Array.isArray(workspaceWhere.AND) ? workspaceWhere.AND : [scope]),
+      { client: { OR: searchOr } },
+    ];
+  }
+  if (filters.cursor && !cursor) throw new MeasurementError("INVALID_CURSOR");
+  if (cursor) {
+    const after: Prisma.MeasurementWhereInput = sort === "asc"
+      ? {
+          OR: [
+            { visitDate: { gt: cursor.at } },
+            { visitDate: cursor.at, id: { gt: cursor.id } },
+          ],
+        }
+      : {
+          OR: [
+            { visitDate: { lt: cursor.at } },
+            { visitDate: cursor.at, id: { lt: cursor.id } },
+          ],
+        };
+    workspaceWhere.AND = [
+      ...(Array.isArray(workspaceWhere.AND) ? workspaceWhere.AND : [scope]),
+      after,
+    ];
+  }
 
   type MeasurementSummaryRow = {
     kind: "NEXT" | "OVERDUE";
@@ -574,8 +625,8 @@ export async function measurementWorkspace(
     prisma.measurement.findMany({
       where: workspaceWhere,
       include: measurementInclude,
-      orderBy: [{ visitDate: "asc" }, { id: "asc" }],
-      take: 300,
+      orderBy: [{ visitDate: sort }, { id: sort }],
+      take: limit + 1,
     }),
     prisma.measurement.count({
       where: {
@@ -825,10 +876,20 @@ export async function measurementWorkspace(
         };
       }))
     : [];
+  const hasMore = measurements.length > limit;
+  const page = hasMore ? measurements.slice(0, limit) : measurements;
+  const last = page.at(-1);
   return {
-    measurements: measurements.map((measurement) =>
+    measurements: page.map((measurement) =>
       measurementOperationalView(measurement, now),
     ),
+    pagination: {
+      limit,
+      sort,
+      hasMore,
+      nextCursor:
+        hasMore && last ? encodeDateIdCursor(last.visitDate, last.id) : null,
+    },
     nextMeasurement: measurementSummaryView(
       measurementSummaries.find((row) => row.kind === "NEXT"),
     ),

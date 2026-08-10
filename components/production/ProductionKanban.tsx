@@ -33,6 +33,7 @@ export type ProductionKanbanItem = {
     address: string;
     material: string;
     client: { name: string };
+    partner?: { id: number; name: string } | null;
   };
 };
 
@@ -42,11 +43,12 @@ type Props = {
   onDropCard: (id: number, stage: ProductionStage) => void;
   onEdit?: (item: ProductionKanbanItem) => void;
   role?: string;
+  stageCounts?: Partial<Record<ProductionStage, number>>;
 };
 
 const date = (value: string | null) => value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "—";
 
-export default function ProductionKanban({ columns, savingIds, onDropCard, onEdit, role = "" }: Props) {
+export default function ProductionKanban({ columns, savingIds, onDropCard, onEdit, role = "", stageCounts = {} }: Props) {
   return (
     <div className="overflow-x-auto overscroll-x-contain pb-4 [scrollbar-width:thin]">
       <div className="flex min-w-max snap-x snap-mandatory gap-4 xl:grid xl:min-w-0 xl:grid-cols-4 2xl:grid-cols-8">
@@ -64,7 +66,7 @@ export default function ProductionKanban({ columns, savingIds, onDropCard, onEdi
           >
             <header className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-sm font-bold text-white">{stage}</h2>
-              <span className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">{columns[stage].length}</span>
+              <span className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300">{stageCounts[stage] ?? columns[stage].length}</span>
             </header>
             <div className="space-y-3">
               {columns[stage].map((item) => {

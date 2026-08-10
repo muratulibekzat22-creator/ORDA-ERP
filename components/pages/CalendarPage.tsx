@@ -119,6 +119,8 @@ export default function CalendarPage({ initialState = "active" }: { initialState
       orders: [],
     }),
     [assignee, setAssignee] = useState(""),
+    [assigneeRole, setAssigneeRole] = useState(""),
+    [taskType, setTaskType] = useState(""),
     [state, setState] = useState(["active", "overdue", "completed", "all"].includes(initialState) ? initialState : "active"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -126,6 +128,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
     [open, setOpen] = useState(false),
     [editId, setEditId] = useState<number | null>(null),
     [saving, setSaving] = useState(false);
+  const [pagination, setPagination] = useState<{ nextCursor: string | null; hasMore: boolean }>({ nextCursor: null, hasMore: false });
   const [form, setForm] = useState({
     title: "",
     type: "TASK",
@@ -139,26 +142,28 @@ export default function CalendarPage({ initialState = "active" }: { initialState
   const role = session?.user.role,
     director = role === "DIRECTOR";
   const selectedRange = useMemo(() => range(anchor, mode), [anchor, mode]);
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor?: string) => {
     setLoading(true);
     setError("");
     try {
-      const from =
-        state === "overdue"
-          ? new Date(Date.now() - 365 * 86400000)
-          : selectedRange.from;
       const q = new URLSearchParams({
-        from: from.toISOString(),
-        to: selectedRange.to.toISOString(),
+        start: selectedRange.from.toISOString(),
+        end: selectedRange.to.toISOString(),
         state,
+        limit: "200",
       });
       if (assignee) q.set("assigneeId", assignee);
+      if (assigneeRole) q.set("role", assigneeRole);
+      if (taskType) q.set("type", taskType);
+      if (cursor) q.set("cursor", cursor);
       const res = await fetch(`/api/calendar?${q}`);
       if (!res.ok)
         throw new Error(
           (await res.json()).error ?? "Не удалось загрузить календарь",
         );
-      setTasks((await res.json()).tasks);
+      const body = await res.json();
+      setTasks((current) => cursor ? [...current, ...(body.tasks ?? [])].filter((task, index, rows) => rows.findIndex((candidate) => candidate.id === task.id) === index) : (body.tasks ?? []));
+      setPagination(body.pagination ?? { nextCursor: null, hasMore: false });
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Не удалось загрузить календарь",
@@ -166,7 +171,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
     } finally {
       setLoading(false);
     }
-  }, [assignee, selectedRange, state]);
+  }, [assignee, assigneeRole, selectedRange, state, taskType]);
   useEffect(() => {
     void fetch("/api/calendar?meta=1")
       .then((r) => (r.ok ? r.json() : Promise.reject()))
@@ -352,7 +357,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
               <ChevronRight />
             </button>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {director && (
               <select
                 value={assignee}
@@ -377,6 +382,8 @@ export default function CalendarPage({ initialState = "active" }: { initialState
               <option value="completed">Выполненные</option>
               <option value="all">Все</option>
             </select>
+            {director && <select value={assigneeRole} onChange={(e) => setAssigneeRole(e.target.value)} className={field}><option value="">Все роли</option>{[...new Set(meta.assignees.map((item) => item.role))].map((value) => <option key={value} value={value}>{value}</option>)}</select>}
+            <select value={taskType} onChange={(e) => setTaskType(e.target.value)} className={field}><option value="">Все типы</option><option value="TASK">Задачи</option><option value="MEASUREMENT">Замеры</option><option value="MEETING">Встречи</option><option value="CALL">Звонки</option><option value="INSTALLATION">Монтаж</option><option value="DELIVERY">Доставка</option><option value="REMINDER">Напоминания</option><option value="OTHER">Другое</option></select>
           </div>
         </div>
       </section>
@@ -513,6 +520,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
               </div>
             </section>
           ))}
+          {pagination.hasMore && pagination.nextCursor && <button type="button" onClick={() => void load(pagination.nextCursor ?? undefined)} disabled={loading} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 font-semibold text-white disabled:opacity-50">Загрузить ещё</button>}
         </div>
       )}
       {open && (

@@ -45,7 +45,8 @@ async function main() {
     for (const path of expected[role] ?? []) check((await status(path, result.cookie)) === 200, `${role} cannot access ${path}`);
     if (role === Role.MANAGER) {
       for (const path of ["/api/finance", "/api/company-finance", "/api/personal-finance", "/api/employees", "/api/settings", "/api/reports"]) check((await status(path, result.cookie)) === 403, `MANAGER accessed ${path}`);
-      const orders = await (await fetch(`${baseUrl}/api/orders`, { headers: { Cookie: result.cookie } })).json() as Array<Record<string, unknown>>;
+      const orderPayload = await (await fetch(`${baseUrl}/api/orders?page=1&limit=100`, { headers: { Cookie: result.cookie } })).json() as { data: Array<Record<string, unknown>> };
+      const orders = orderPayload.data;
       check(orders.every((order) => !["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].some((field) => field in order)), "MANAGER order payload leaks finance");
     }
     if (role === Role.ACCOUNTANT) check((await status("/api/personal-finance", result.cookie)) === 403, "ACCOUNTANT accessed personal finance");

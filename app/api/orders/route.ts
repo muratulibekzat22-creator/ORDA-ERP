@@ -59,10 +59,10 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const deletedOnly = params.get("deletedOnly") === "true";
     const includeDeleted = params.get("includeDeleted") === "true";
-    const requestedPage = params.has("page") ? Number(params.get("page")) : null;
+    const requestedPage = Number(params.get("page") ?? 1);
     const requestedLimit = params.has("limit") ? Number(params.get("limit")) : 50;
     if (
-      (requestedPage !== null && (!Number.isInteger(requestedPage) || requestedPage < 1)) ||
+      !Number.isInteger(requestedPage) || requestedPage < 1 ||
       !Number.isInteger(requestedLimit) ||
       requestedLimit < 1 ||
       requestedLimit > 100
@@ -170,10 +170,10 @@ export async function GET(request: Request) {
     const [orders, total] = await Promise.all([
       getOrders(where, {
         includeDeleted,
-        skip: requestedPage === null ? 0 : (requestedPage - 1) * requestedLimit,
-        take: requestedPage === null ? 100 : requestedLimit,
+        skip: (requestedPage - 1) * requestedLimit,
+        take: requestedLimit,
       }),
-      requestedPage === null ? Promise.resolve(null) : countOrders(where),
+      countOrders(where),
     ]);
     if (role !== Role.DIRECTOR && role !== Role.ACCOUNTANT) {
       const projected = orders.map((order) => {
@@ -201,12 +201,12 @@ export async function GET(request: Request) {
               delete result[field];
           return result;
         });
-      return NextResponse.json(requestedPage === null ? projected : {
+      return NextResponse.json({
         data: projected,
         pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
       });
     }
-    return NextResponse.json(requestedPage === null ? orders : {
+    return NextResponse.json({
       data: orders,
       pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
     });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 
 import type { ProductionKanbanItem } from "./ProductionKanban";
 import { PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
@@ -8,6 +8,7 @@ import { PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-
 export type ProductionOptions = {
   orders: Array<{ id: number; number: string; address: string; material: string; client: { name: string } }>;
   assignees: Array<{ id: number; name: string; role: string }>;
+  partners: Array<{ id: number; name: string }>;
 };
 
 export type ProductionEditorPayload = {
@@ -33,6 +34,9 @@ const inputDate = (value: string | null) => value ? new Date(value).toISOString(
 
 export default function ProductionEditor({ item, options, saving, onClose, onSave }: Props) {
   const [orderId, setOrderId] = useState(item ? String(item.order.id) : "");
+  const [orderQuery, setOrderQuery] = useState("");
+  const [orderOptions, setOrderOptions] = useState(options.orders);
+  const deferredOrderQuery = useDeferredValue(orderQuery);
   const [stage, setStage] = useState<ProductionStage>((item?.stage as ProductionStage) ?? PRODUCTION_STAGES[0]);
   const [masterUserId, setMasterUserId] = useState(item?.masterUserId ? String(item.masterUserId) : "");
   const [priority, setPriority] = useState(String(item?.priority ?? 0));
@@ -40,6 +44,19 @@ export default function ProductionEditor({ item, options, saving, onClose, onSav
   const [plannedEndAt, setPlannedEndAt] = useState(inputDate(item?.plannedEndAt ?? null));
   const [comment, setComment] = useState(item?.comment ?? "");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (item) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: deferredOrderQuery.trim(), limit: "30" });
+      void fetch(`/api/orders/search?${params}`, { cache: "no-store", signal: controller.signal })
+        .then(async (response) => response.ok ? response.json() : Promise.reject(new Error("Не удалось найти заказы")))
+        .then((body: { items?: ProductionOptions["orders"] }) => setOrderOptions(body.items ?? []))
+        .catch((reason) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Не удалось найти заказы"); });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [deferredOrderQuery, item]);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -72,7 +89,7 @@ export default function ProductionEditor({ item, options, saving, onClose, onSav
       <form onSubmit={submit} className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-700 bg-[#101827] p-6">
         <div className="flex items-center justify-between"><h2 className="text-xl font-bold text-white">{item ? `Редактирование ${item.order.number}` : "Новая production-запись"}</h2><button type="button" onClick={onClose} className="text-slate-400 hover:text-white">Закрыть</button></div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
-          {!item && <label className="text-sm text-slate-300">Заказ<select aria-label="Заказ" value={orderId} onChange={(event) => setOrderId(event.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 p-3"><option value="">Выберите заказ</option>{options.orders.map((order) => <option key={order.id} value={order.id}>{order.number} · {order.client.name}</option>)}</select></label>}
+          {!item && <label className="text-sm text-slate-300">Заказ<input aria-label="Поиск заказа" type="search" value={orderQuery} onChange={(event) => setOrderQuery(event.target.value)} placeholder="Номер, клиент или телефон" className="mt-1 w-full rounded-lg bg-slate-900 p-3"/><select aria-label="Заказ" value={orderId} onChange={(event) => setOrderId(event.target.value)} className="mt-2 w-full rounded-lg bg-slate-900 p-3"><option value="">Выберите заказ</option>{orderOptions.map((order) => <option key={order.id} value={order.id}>{order.number} · {order.client.name}</option>)}</select></label>}
           <label className="text-sm text-slate-300">Стадия<select aria-label="Стадия" value={stage} onChange={(event) => setStage(event.target.value as ProductionStage)} className="mt-1 w-full rounded-lg bg-slate-900 p-3">{PRODUCTION_STAGES.map((value) => <option key={value}>{value}</option>)}</select></label>
           <label className="text-sm text-slate-300">Ответственный<select aria-label="Ответственный" value={masterUserId} onChange={(event) => setMasterUserId(event.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 p-3"><option value="">Выберите сотрудника</option>{options.assignees.map((user) => <option key={user.id} value={user.id}>{user.name} · {user.role}</option>)}</select></label>
           <label className="text-sm text-slate-300">Приоритет<input aria-label="Приоритет" type="number" min="0" max="999" value={priority} onChange={(event) => setPriority(event.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 p-3" /></label>

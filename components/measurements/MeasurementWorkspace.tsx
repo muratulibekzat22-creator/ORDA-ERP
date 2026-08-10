@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import DirectorMeasurementControl from "@/components/measurements/DirectorMeasurementControl";
 import {
   Banknote,
@@ -85,6 +85,7 @@ type Measurement = {
 };
 type Payload = {
   measurements: Measurement[];
+  pagination: { nextCursor: string | null; hasMore: boolean; limit: number; sort: "asc" | "desc" };
   kpi: {
     today: number;
     upcoming: number;
@@ -172,13 +173,6 @@ const time = (value: string) =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
-const businessDate = (value: string | Date) =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Almaty",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value));
 const empty = (): Form => ({
   stepsCount: "",
   sameSize: true,
@@ -260,6 +254,7 @@ function OperationalMeasurementWorkspace() {
   const { data: session } = useSession();
   const [data, setData] = useState<Payload>({
     measurements: [],
+    pagination: { nextCursor: null, hasMore: false, limit: 30, sort: "asc" },
     kpi: {
       today: 0,
       upcoming: 0,
@@ -284,6 +279,7 @@ function OperationalMeasurementWorkspace() {
     [error, setError] = useState(""),
     [trainingRequired, setTrainingRequired] = useState(false),
     [notice, setNotice] = useState("");
+  const [search, setSearch] = useState(""), [debouncedSearch, setDebouncedSearch] = useState("");
   const [inviteAt, setInviteAt] = useState(""),
     [inviteComment, setInviteComment] = useState("");
   const [clientOutcome, setClientOutcome] = useState<"" | "READY_TO_CONTINUE" | "RETURN_TO_MANAGER" | "REFUSED">(""),
@@ -318,14 +314,27 @@ function OperationalMeasurementWorkspace() {
     setRescheduleDate(new Date(row.visitDate).toISOString().slice(0, 16));
     setRescheduleMeasurerId(row.measurerUser ? String(row.measurerUser.id) : "");
   };
-  const load = useCallback(async () => {
-    const response = await fetch("/api/measurements?workspace=1", {
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+  const load = useCallback(async (cursor?: string) => {
+    const backendFilter = tab === "overdue" ? "needs-closing" : tab;
+    const params = new URLSearchParams({ workspace: "1", filter: backendFilter, limit: "30" });
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    if (cursor) params.set("cursor", cursor);
+    const response = await fetch(`/api/measurements?${params}`, {
         cache: "no-store",
       }),
       body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось загрузить замеры");
     else {
-      setData(body);
+      setData((current) => cursor ? {
+        ...body,
+        measurements: [...current.measurements, ...(body.measurements ?? [])].filter(
+          (row, index, rows) => rows.findIndex((candidate) => candidate.id === row.id) === index,
+        ),
+      } : body);
       const requestedFilter = new URLSearchParams(window.location.search).get("filter");
       if (requestedFilter === "needs-closing") setTab("overdue");
       const requested = Number(
@@ -340,9 +349,20 @@ function OperationalMeasurementWorkspace() {
         setClientOutcome(requestedMeasurement.clientOutcome ?? "");
         setOutcomeComment(requestedMeasurement.outcomeComment ?? "");
         setRefusalReason(requestedMeasurement.refusalReason ?? "");
+      } else if (!cursor && Number.isInteger(requested) && requested > 0) {
+        const detailResponse = await fetch(`/api/measurements/${requested}`, { cache: "no-store" });
+        if (detailResponse.ok) {
+          const detail = await detailResponse.json() as Measurement;
+          setData((current) => ({ ...current, measurements: [detail, ...current.measurements.filter((row) => row.id !== detail.id)] }));
+          setSelectedId(detail.id);
+          setForm(formOf(detail));
+          setClientOutcome(detail.clientOutcome ?? "");
+          setOutcomeComment(detail.outcomeComment ?? "");
+          setRefusalReason(detail.refusalReason ?? "");
+        }
       }
     }
-  }, []);
+  }, [debouncedSearch, tab]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void load();
@@ -351,30 +371,7 @@ function OperationalMeasurementWorkspace() {
   }, [load]);
   const selected =
     data.measurements.find((row) => row.id === selectedId) ?? null;
-  const rows = useMemo(() => {
-    const now = new Date(),
-      today = businessDate(now);
-    return data.measurements
-      .filter((row) =>
-        tab === "today"
-          ? businessDate(row.visitDate) === today && row.status !== "CANCELLED"
-          : tab === "upcoming"
-            ? new Date(row.visitDate) > now &&
-              ["ASSIGNED", "IN_PROGRESS"].includes(row.status)
-            : tab === "overdue"
-              ? new Date(row.visitDate) < now &&
-                ["ASSIGNED", "IN_PROGRESS"].includes(row.status)
-              : tab === "cancelled"
-                ? row.status === "CANCELLED"
-                : tab === "all"
-                  ? true
-                  : ["COMPLETED", "HANDED_TO_MANAGER"].includes(row.status),
-      )
-      .sort(
-        (a, b) =>
-          new Date(a.visitDate).getTime() - new Date(b.visitDate).getTime(),
-      );
-  }, [data.measurements, tab]);
+  const rows = data.measurements;
   const patchForm = (key: keyof Form, value: string | boolean) =>
     setForm((current) => ({ ...current, [key]: value }));
   const payload = (action: string) => ({
@@ -649,6 +646,13 @@ function OperationalMeasurementWorkspace() {
               </button>
             ))}
           </div>
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Клиент, телефон или город"
+            className={`${input} mt-3`}
+          />
           <div className="mt-4 space-y-3">
             {rows.length ? (
               rows.map((row) => (
@@ -715,6 +719,16 @@ function OperationalMeasurementWorkspace() {
               <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-slate-400">
                 Замеров в этой группе нет.
               </p>
+            )}
+            {data.pagination.hasMore && data.pagination.nextCursor && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void load(data.pagination.nextCursor ?? undefined)}
+                className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-4 font-semibold text-white disabled:opacity-50"
+              >
+                Загрузить ещё
+              </button>
             )}
           </div>
         </section>

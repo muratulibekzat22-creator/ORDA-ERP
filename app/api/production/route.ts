@@ -10,10 +10,12 @@ import {
   countProductions,
   deleteProductionCommand,
   getProduction,
+  getProductionCounters,
   getProductionOptions,
   getProductions,
   ProductionServiceError,
   type ProductionActor,
+  type ProductionListFilters,
   type ProductionWriteData,
   updateProductionCommand,
 } from "@/lib/services/production.service";
@@ -99,11 +101,33 @@ export async function GET(request: Request) {
     const limit = params.has("limit") ? Number(params.get("limit")) : 50;
     if ((page !== null && (!Number.isInteger(page) || page < 1)) || !Number.isInteger(limit) || limit < 1 || limit > 100)
       return NextResponse.json({ error: "Invalid pagination" }, { status: 400 });
-    const [items, total] = await Promise.all([
-      getProductions(actor, { skip: page === null ? 0 : (page - 1) * limit, take: page === null ? 100 : limit }),
-      page === null ? Promise.resolve(null) : countProductions(actor),
+    const positiveId = (value: string | null) => { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined; };
+    const stageValue = params.get("stage");
+    const priorityValue = params.get("priority");
+    const from = params.get("from") ? new Date(params.get("from")!) : undefined;
+    const to = params.get("to") ? new Date(params.get("to")!) : undefined;
+    if ((stageValue && !isProductionStage(stageValue)) ||
+        (params.has("assigneeId") && !positiveId(params.get("assigneeId"))) ||
+        (params.has("partnerId") && !positiveId(params.get("partnerId"))) ||
+        (priorityValue && (!Number.isInteger(Number(priorityValue)) || Number(priorityValue) < 0 || Number(priorityValue) > 999)) ||
+        (from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime())) || (from && to && from >= to))
+      return NextResponse.json({ error: "Некорректные фильтры" }, { status: 400 });
+    const filters: ProductionListFilters = {
+      query: params.get("query")?.trim().slice(0, 120) || undefined,
+      stage: stageValue && isProductionStage(stageValue) ? stageValue : undefined,
+      assigneeId: positiveId(params.get("assigneeId")),
+      partnerId: positiveId(params.get("partnerId")),
+      priority: priorityValue ? Number(priorityValue) : undefined,
+      overdueOnly: params.get("overdue") === "1",
+      from,
+      to,
+    };
+    const [items, total, counters] = await Promise.all([
+      getProductions(actor, { skip: page === null ? 0 : (page - 1) * limit, take: page === null ? 100 : limit, filters }),
+      page === null ? Promise.resolve(null) : countProductions(actor, filters),
+      getProductionCounters(actor, filters),
     ]);
-    return NextResponse.json(page === null ? items : { data: items, pagination: { page, limit, total, totalPages: Math.ceil((total ?? 0) / limit) } });
+    return NextResponse.json(page === null ? items : { data: items, counters, pagination: { page, limit, total, totalPages: Math.ceil((total ?? 0) / limit) } });
   } catch (error) {
     logRequestFailure("production.list.failed", request, error);
     return NextResponse.json({ error: "Ошибка загрузки производства" }, { status: 500 });

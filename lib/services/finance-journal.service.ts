@@ -19,6 +19,7 @@ export type FinanceJournalFilters = {
   from?: Date;
   to?: Date;
   direction?: FinanceDirection;
+  search?: string;
   page?: number;
   pageSize?: number;
 };
@@ -124,30 +125,43 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
   const pageSize = Math.min(100, Math.max(10, Math.trunc(filters.pageSize ?? 50)));
   const offset = (page - 1) * pageSize;
   const fromSql = range.from
-    ? Prisma.sql`AND "operationDate" >= ${range.from}`
+    ? Prisma.sql`AND payment."operationDate" >= ${range.from}`
     : Prisma.empty;
   const toSql = range.to
-    ? Prisma.sql`AND "operationDate" <= ${range.to}`
+    ? Prisma.sql`AND payment."operationDate" <= ${range.to}`
     : Prisma.empty;
-  const directionSql = filters.direction
-    ? Prisma.sql`WHERE direction = ${filters.direction}`
-    : Prisma.empty;
+  const search = filters.search?.trim().toLocaleLowerCase("ru").slice(0, 120);
+  const resultWhereSql = Prisma.sql`WHERE TRUE
+    ${filters.direction ? Prisma.sql`AND direction = ${filters.direction}` : Prisma.empty}
+    ${search ? Prisma.sql`AND search_text ILIKE ${`%${search}%`}` : Prisma.empty}`;
   const operationCte = Prisma.sql`
     WITH operations AS (
       SELECT
         'PAYMENT'::text AS source,
-        id,
+        payment.id,
         CASE
-          WHEN type IN ('REFUND', 'PARTNER_PAYOUT', 'PARTNER_PAYOUT_REVERSAL')
-            OR (type = 'ADJUSTMENT' AND comment LIKE '%[EXPENSE]%')
+          WHEN payment.type IN ('REFUND', 'PARTNER_PAYOUT', 'PARTNER_PAYOUT_REVERSAL')
+            OR (payment.type = 'ADJUSTMENT' AND payment.comment LIKE '%[EXPENSE]%')
           THEN 'EXPENSE'
           ELSE 'INCOME'
         END::text AS direction,
-        type::text AS category_code,
-        ''::text AS category_name,
-        "operationDate" AS operation_date,
-        amount
-      FROM "Payment"
+        payment.type::text AS category_code,
+        CASE
+          WHEN payment.type = 'ADDITIONAL_PAYMENT' THEN 'Доплата клиента'
+          WHEN payment.type IN ('CLIENT_PAYMENT', 'payment', 'PREPAYMENT') THEN 'Оплата клиента'
+          WHEN payment.type = 'REFUND' THEN 'Возврат клиенту'
+          WHEN payment.type = 'PARTNER_PAYOUT' THEN 'Цех / партнёр'
+          WHEN payment.type = 'PARTNER_PAYOUT_REVERSAL' THEN 'Сторно выплаты цеху'
+          ELSE 'Системная операция'
+        END::text AS category_name,
+        payment."operationDate" AS operation_date,
+        payment.amount,
+        LOWER(CONCAT_WS(' ', payment.type, payment.method, payment.comment, payment.author,
+          payment.amount::text, orders.number, clients.name, clients.phone, partners.name)) AS search_text
+      FROM "Payment" payment
+      LEFT JOIN "Order" orders ON orders.id = payment."orderId"
+      LEFT JOIN "Client" clients ON clients.id = orders."clientId"
+      LEFT JOIN "Partner" partners ON partners.id = payment."partnerId"
       WHERE TRUE ${fromSql} ${toSql}
       UNION ALL
       SELECT
@@ -157,9 +171,24 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
         COALESCE(category.code, ledger.category)::text AS category_code,
         COALESCE(category.name, ledger.category)::text AS category_name,
         ledger."operationDate" AS operation_date,
-        ledger.amount
+        ledger.amount,
+        LOWER(CONCAT_WS(' ', ledger.type, ledger.category, category.code, category.name,
+          ledger.method, ledger.counterparty, ledger.comment, ledger.amount::text,
+          orders.number, COALESCE(clients.name, order_clients.name), partners.name,
+          employees.name, employee_users.name, payroll_employees.name,
+          payroll_users.name, authors.name)) AS search_text
       FROM "CompanyLedgerEntry" ledger
       LEFT JOIN "FinanceCategory" category ON category.id = ledger."categoryId"
+      LEFT JOIN "Order" orders ON orders.id = ledger."orderId"
+      LEFT JOIN "Client" order_clients ON order_clients.id = orders."clientId"
+      LEFT JOIN "Client" clients ON clients.id = ledger."clientId"
+      LEFT JOIN "Partner" partners ON partners.id = ledger."partnerId"
+      LEFT JOIN "EmployeePayrollProfile" employees ON employees.id = ledger."employeeId"
+      LEFT JOIN "User" employee_users ON employee_users.id = employees."userId"
+      LEFT JOIN "PayrollPayment" payroll_payments ON payroll_payments.id = ledger."payrollPaymentId"
+      LEFT JOIN "EmployeePayrollProfile" payroll_employees ON payroll_employees.id = payroll_payments."employeeId"
+      LEFT JOIN "User" payroll_users ON payroll_users.id = payroll_employees."userId"
+      LEFT JOIN "User" authors ON authors.id = ledger."authorId"
       WHERE ledger."voidedAt" IS NULL
         AND (ledger."payrollPaymentId" IS NOT NULL OR ledger."payrollAccrualId" IS NULL)
         ${range.from ? Prisma.sql`AND ledger."operationDate" >= ${range.from}` : Prisma.empty}
@@ -178,7 +207,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
       prisma.$queryRaw<PageRow[]>`${operationCte}
         SELECT source, id, COUNT(*) OVER()::bigint AS total
         FROM operations
-        ${directionSql}
+        ${resultWhereSql}
         ORDER BY operation_date DESC, id DESC
         OFFSET ${offset}
         LIMIT ${pageSize}`,
@@ -190,7 +219,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
           DATE_TRUNC('day', operation_date) AS operation_day,
           SUM(amount) AS amount
         FROM operations
-        ${directionSql}
+        ${resultWhereSql}
         GROUP BY direction, category_code, category_name, DATE_TRUNC('day', operation_date)`,
       prisma.financeCategory.findMany({
         orderBy: [

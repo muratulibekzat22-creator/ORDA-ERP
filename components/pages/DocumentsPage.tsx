@@ -26,6 +26,7 @@ export default function DocumentsPage({ initialOrderId, initialClientId, embedde
   const [type, setType] = useState<"" | DocumentType>(""), [status, setStatus] = useState<"" | DocumentStatus>(""), [authorId, setAuthorId] = useState(""), [from, setFrom] = useState(""), [to, setTo] = useState("");
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState(""), [generated, setGenerated] = useState<GeneratedContract | null>(null), [workflow, setWorkflow] = useState<Workflow>(""), [orderQuery, setOrderQuery] = useState(""), [contractOrderId, setContractOrderId] = useState<number | null>(null), [signedContracts, setSignedContracts] = useState<DocumentItem[]>([]), [form, setForm] = useState<DocumentForm>({ ...emptyForm, orderId: initialOrderId ? String(initialOrderId) : "", clientId: initialClientId ? String(initialClientId) : "" }), [file, setFile] = useState<File | null>(null);
   const [paymentId, setPaymentId] = useState(""), [paymentAmount, setPaymentAmount] = useState(""), [paymentDate, setPaymentDate] = useState(today()), [paymentMethod, setPaymentMethod] = useState("");
+  const [orderResults, setOrderResults] = useState<Entity[]>([]), deferredOrderQuery = useDeferredValue(orderQuery);
   const [page, setPage] = useState(1), [hasMore, setHasMore] = useState(false);
   const canUpload = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(session?.user.role ?? "");
 
@@ -45,21 +46,34 @@ export default function DocumentsPage({ initialOrderId, initialClientId, embedde
   useEffect(() => { const timer = window.setTimeout(() => void load(), 250); return () => window.clearTimeout(timer); }, [load]);
   useEffect(() => { if (!canUpload) return; void fetch("/api/document-options", { cache: "no-store" }).then(async (response) => response.ok && setOptions(await response.json())); }, [canUpload]);
   useEffect(() => { if (workflow !== "signed" || !form.orderId) return; void fetch(`/api/documents?orderId=${form.orderId}&type=${DocumentType.CONTRACT}`, { cache: "no-store" }).then(async (response) => setSignedContracts(response.ok ? await response.json() : [])); }, [form.orderId, workflow]);
+  useEffect(() => {
+    if (!["contract", "signed", "upload", "payment"].includes(workflow)) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ q: deferredOrderQuery.trim(), limit: "30" });
+      void fetch(`/api/orders/search?${params}`, { cache: "no-store", signal: controller.signal })
+        .then(async (response) => response.ok ? response.json() : Promise.reject(new Error("Не удалось найти заказы")))
+        .then((body: { items?: Entity[] }) => setOrderResults(body.items ?? []))
+        .catch((reason) => { if (!(reason instanceof DOMException && reason.name === "AbortError")) setError(reason instanceof Error ? reason.message : "Не удалось найти заказы"); });
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [deferredOrderQuery, workflow]);
 
-  const filteredOrders = options.orders.filter((item) => [item.number, item.client?.name, item.client?.phone].some((value) => String(value ?? "").toLocaleLowerCase("ru").includes(orderQuery.trim().toLocaleLowerCase("ru"))));
-  const selectedOrder = options.orders.find((item) => item.id === Number(form.orderId));
+  const availableOrders = [...orderResults, ...options.orders].filter((item, index, rows) => rows.findIndex((candidate) => candidate.id === item.id) === index);
+  const filteredOrders = orderResults;
+  const selectedOrder = availableOrders.find((item) => item.id === Number(form.orderId));
   const orderPayments = options.payments.filter((item) => item.orderId === Number(form.orderId));
   const selectedPayment = options.payments.find((item) => item.id === Number(paymentId));
   const paymentReady = Boolean(paymentId) || (Number(paymentAmount) > 0 && Boolean(paymentDate) && Boolean(paymentMethod.trim()));
 
   function resetUpload(type: DocumentType, nextWorkflow: Workflow = "upload") {
-    const orderId = initialOrderId ? String(initialOrderId) : "", order = options.orders.find((item) => item.id === initialOrderId);
+    const orderId = initialOrderId ? String(initialOrderId) : "", order = availableOrders.find((item) => item.id === initialOrderId);
     setForm({ ...emptyForm, type, title: type === DocumentType.PAYMENT_RECEIPT ? "Подтверждение оплаты" : documentTypeLabels[type], orderId, clientId: initialClientId ? String(initialClientId) : order?.client?.id ? String(order.client.id) : "" });
     setFile(null); setPaymentId(""); setPaymentAmount(""); setPaymentDate(today()); setPaymentMethod(""); setWorkflow(nextWorkflow); setError("");
   }
 
   function chooseOrder(orderId: string) {
-    const order = options.orders.find((item) => item.id === Number(orderId));
+    const order = availableOrders.find((item) => item.id === Number(orderId));
     setForm((current) => ({ ...current, orderId, clientId: order?.client?.id ? String(order.client.id) : current.clientId }));
     setPaymentId("");
   }
@@ -105,7 +119,7 @@ export default function DocumentsPage({ initialOrderId, initialClientId, embedde
       <Field label="Тип"><div className={`${control} flex items-center`}>{documentTypeLabels[form.type]}</div></Field>
       <Field label="Дата"><input required type="date" value={form.documentDate} onChange={(e) => setForm({ ...form, documentDate: e.target.value })} className={control}/></Field>
       <Field label="Клиент (необязательно)"><select disabled={Boolean(initialClientId)} value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} className={control}><option value="">Не выбран</option>{options.clients.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-      <Field label={workflow === "payment" ? "Заказ *" : "Заказ (необязательно)"}><select required={workflow === "payment"} disabled={Boolean(initialOrderId)} value={form.orderId} onChange={(e) => chooseOrder(e.target.value)} className={control}><option value="">Не выбран</option>{options.orders.map((item) => <option key={item.id} value={item.id}>{item.number} — {item.client?.name}</option>)}</select></Field>
+      <Field label={workflow === "payment" ? "Заказ *" : "Заказ (необязательно)"}><input type="search" disabled={Boolean(initialOrderId)} value={orderQuery} onChange={(event) => setOrderQuery(event.target.value)} placeholder="Номер, клиент или телефон" className={`${control} mb-2`}/><select required={workflow === "payment"} disabled={Boolean(initialOrderId)} value={form.orderId} onChange={(e) => chooseOrder(e.target.value)} className={control}><option value="">Не выбран</option>{availableOrders.map((item) => <option key={item.id} value={item.id}>{item.number} — {item.client?.name}</option>)}</select></Field>
       {workflow === "payment" && <>
         <Field label="Клиент"><div className={`${control} flex items-center`}>{selectedOrder?.client?.name || "Выберите заказ"}</div></Field>
         <Field label="Связать с существующей оплатой"><select value={paymentId} onChange={(event) => { const value = event.target.value, payment = options.payments.find((item) => item.id === Number(value)); setPaymentId(value); if (payment) { setPaymentAmount(String(payment.amount)); setPaymentDate(payment.operationDate.slice(0, 10)); setPaymentMethod(payment.method); } }} className={control}><option value="">Без Payment — только файл подтверждения</option>{orderPayments.map((item) => <option key={item.id} value={item.id}>{formatMoney(item.amount)} · {formatDate(item.operationDate)} · {item.method}</option>)}</select></Field>

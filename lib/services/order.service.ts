@@ -79,9 +79,7 @@ export async function getOrders(
         },
       },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     skip: Math.max(0, options.skip ?? 0),
     take: Math.min(100, Math.max(1, options.take ?? 100)),
   });
@@ -93,6 +91,40 @@ export async function getOrders(
       _count.financeAuditEvents > 0 ||
       _count.payrollAccruals > 0,
   }));
+}
+
+export type OrderSearchActor = { role: Role; userId: number; name: string };
+
+export async function searchOrderOptions(actor: OrderSearchActor, query = "", limit = 20) {
+  const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
+    ? { OR: [
+        { managerUserId: actor.userId },
+        { managerUserId: null, manager: actor.name },
+        { leadConversion: { managerId: actor.userId } },
+      ] }
+    : actor.role === Role.PARTNER
+      ? { partner: { userId: actor.userId }, partnerAgreedAt: { not: null } }
+      : actor.role === Role.PRODUCTION
+        ? { productions: { some: { masterUserId: actor.userId, archivedAt: null } } }
+        : actor.role === Role.INSTALLER
+          ? { installation: { installerUserId: actor.userId } }
+          : actor.role === Role.MEASURER
+            ? { measurements: { some: { measurerUserId: actor.userId } } }
+            : {};
+  const search = query.trim().slice(0, 120);
+  const digits = search.replace(/\D/g, "");
+  const searchWhere: Prisma.OrderWhereInput = search ? { OR: [
+    { number: { contains: search, mode: "insensitive" } },
+    { client: { name: { contains: search, mode: "insensitive" } } },
+    { client: { phone: { contains: search } } },
+    ...(digits.length >= 3 && digits !== search ? [{ client: { phone: { contains: digits } } }] : []),
+  ] } : {};
+  return prisma.order.findMany({
+    where: { deletedAt: null, lifecycle: { not: "CANCELLED" }, AND: [roleScope, searchWhere] },
+    select: { id: true, number: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: Math.min(50, Math.max(1, Math.trunc(limit))),
+  });
 }
 
 export function countOrders(where: Prisma.OrderWhereInput = {}) {

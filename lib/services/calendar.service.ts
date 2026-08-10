@@ -1,4 +1,5 @@
 import { CalendarTaskPriority, CalendarTaskStatus, CalendarTaskType, Prisma, Role } from "@prisma/client";
+import { decodeDateIdCursor, encodeDateIdCursor } from "@/lib/pagination/date-id-cursor";
 import { prisma } from "@/lib/prisma";
 
 export type CalendarActor = { userId: number; role: Role; name: string };
@@ -48,14 +49,48 @@ async function validateRelations(tx: Prisma.TransactionClient, actor: CalendarAc
   }
 }
 
-export async function listCalendarTasks(actor: CalendarActor, filters: { from: Date; to: Date; assigneeId?: number; state?: string }) {
+export type CalendarListFilters = {
+  from: Date;
+  to: Date;
+  assigneeId?: number;
+  assigneeRole?: Role;
+  state?: string;
+  status?: CalendarTaskStatus;
+  type?: CalendarTaskType;
+  cursor?: string;
+  limit?: number;
+};
+
+export async function listCalendarTasks(actor: CalendarActor, filters: CalendarListFilters) {
+  const limit = Math.min(500, Math.max(1, Math.trunc(filters.limit ?? 200)));
+  const cursor = decodeDateIdCursor(filters.cursor);
+  if (filters.cursor && !cursor) throw new Error("INVALID_CURSOR");
   const where: Prisma.CalendarTaskWhereInput = { AND: [taskScope(actor), activeTaskScope()], dueAt: { gte: filters.from, lt: filters.to } };
   if (filters.assigneeId) where.assigneeId = actor.role === Role.DIRECTOR ? filters.assigneeId : actor.userId;
-  if (filters.state === "completed") where.status = CalendarTaskStatus.COMPLETED;
+  if (filters.status) where.status = filters.status;
+  else if (filters.state === "completed") where.status = CalendarTaskStatus.COMPLETED;
   else if (filters.state === "active") where.status = { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] };
   else if (filters.state === "overdue") { where.status = { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] }; where.dueAt = { gte: filters.from, lt: new Date(Math.min(filters.to.getTime(), Date.now())) }; }
-  const tasks = await prisma.calendarTask.findMany({ where, select: taskSelect, orderBy: [{ dueAt: "asc" }, { priority: "desc" }], take: 500 });
-  return tasks.map((task) => ({ ...task, overdue: task.dueAt < new Date() && task.status !== CalendarTaskStatus.COMPLETED && task.status !== CalendarTaskStatus.CANCELLED }));
+  if (filters.type) where.type = filters.type;
+  if (filters.assigneeRole) where.assignee = { role: filters.assigneeRole, active: true };
+  if (cursor) {
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : [taskScope(actor), activeTaskScope()]),
+      { OR: [{ dueAt: { gt: cursor.at } }, { dueAt: cursor.at, id: { gt: cursor.id } }] },
+    ];
+  }
+  const rows = await prisma.calendarTask.findMany({ where, select: taskSelect, orderBy: [{ dueAt: "asc" }, { id: "asc" }], take: limit + 1 });
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const last = page.at(-1);
+  return {
+    tasks: page.map((task) => ({ ...task, overdue: task.dueAt < new Date() && task.status !== CalendarTaskStatus.COMPLETED && task.status !== CalendarTaskStatus.CANCELLED })),
+    pagination: {
+      limit,
+      hasMore,
+      nextCursor: hasMore && last ? encodeDateIdCursor(last.dueAt, last.id) : null,
+    },
+  };
 }
 
 export async function getCalendarTask(actor: CalendarActor, id: number) {

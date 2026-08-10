@@ -9,18 +9,20 @@ type CrmOrder = { id: number; number: string; status: string; amount: string; cl
 export default function CRMPage() {
   const [orders, setOrders] = useState<CrmOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1), [totalPages, setTotalPages] = useState(1);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (targetPage = 1, append = false) => {
     try {
-      const response = await fetch("/api/orders");
+      const response = await fetch(`/api/orders?page=${targetPage}&limit=50`);
 
       if (!response.ok) {
         throw new Error("Ошибка загрузки");
       }
 
-      const data = await response.json() as CrmOrder[];
-
-      setOrders(data);
+      const payload = await response.json() as { data: CrmOrder[]; pagination: { page: number; totalPages: number } };
+      setOrders((current) => append ? [...current, ...payload.data] : payload.data);
+      setPage(payload.pagination.page);
+      setTotalPages(payload.pagination.totalPages);
     } catch {
     } finally {
       setLoading(false);
@@ -121,6 +123,7 @@ export default function CRMPage() {
       ) : (
         <KanbanBoard orders={orders} />
       )}
+      {page < totalPages && <button type="button" onClick={() => void loadOrders(page + 1, true)} className="min-h-11 w-full rounded-xl bg-slate-800 px-4 text-white">Показать ещё</button>}
 
     </section>
   );
