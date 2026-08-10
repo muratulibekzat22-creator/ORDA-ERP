@@ -21,6 +21,7 @@ export type DocumentOrder = {
     legalAddress: string;
     actualAddress: string;
     phone: string;
+    secondaryPhone: string;
     whatsapp: string;
     email: string;
     bankDetails: string;

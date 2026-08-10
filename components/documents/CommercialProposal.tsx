@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { companyDisplayPhones } from "@/lib/company-contacts";
 import { DocumentBrandFooter, DocumentBrandHeader } from "./DocumentBrand";
 import { date, documentNumber, money, type DocumentOrder } from "./types";
 
@@ -8,6 +9,7 @@ export default function CommercialProposal({
   order: DocumentOrder;
 }) {
   const calculation = order.calculations?.[0];
+  const phones = companyDisplayPhones(order.company);
   return (
     <div className="text-sm leading-6">
       <DocumentBrandHeader order={order} title="Коммерческое предложение" documentNumber={documentNumber(order, "OFFER")} />
@@ -83,11 +85,9 @@ export default function CommercialProposal({
         </Info>
       </section>
       <section className="mt-7 rounded-xl bg-amber-50 p-5 text-center">
-        <p className="text-lg font-bold">Готовы обсудить детали проекта</p>
-        <p>
-          Свяжитесь с менеджером ALTYN SAPA:{" "}
-          {order.company?.phone || "+7 708 575 0881"}
-        </p>
+        <p className="text-lg font-bold">Готовы обсудить ваш проект?</p>
+        <p className="mt-1 font-semibold">{order.company?.name || "ALTYN SAPA COMPANY"}</p>
+        <div className="mt-2 space-y-1 font-semibold">{phones.map((phone) => <p key={phone}>{phone}</p>)}</div>
         <p className="mt-1 text-sm text-slate-600">
           Предложение подготовлено {date(order.createdAt)} для заказа{" "}
           {order.number}.

@@ -2,6 +2,7 @@ import path from "node:path";
 
 import PDFDocument from "pdfkit";
 
+import { companyDisplayPhones } from "@/lib/company-contacts";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import {
   COMPANY_EXPERIENCE_FALLBACK,
@@ -363,19 +364,29 @@ function drawCta(
     width,
     align: "center",
   });
-  text(document, clean(company.phone, "+7 708 575 0881"), x, y + 48, {
+  text(document, "ОФИЦИАЛЬНЫЕ ТЕЛЕФОНЫ", x, y + 49, {
     font: "DejaVuBold",
-    size: 16,
-    color: COLORS.ink,
+    size: 6.5,
+    color: COLORS.muted,
+    characterSpacing: 0.8,
     width,
     align: "center",
   });
+  companyDisplayPhones(company).slice(0, 2).forEach((phone, index) =>
+    text(document, phone, x, y + 61 + index * 15, {
+      font: "DejaVuBold",
+      size: 10.5,
+      color: COLORS.ink,
+      width,
+      align: "center",
+    }),
+  );
   const contacts = [
     company.whatsapp ? `WhatsApp: ${clean(company.whatsapp)}` : "",
     company.email ? clean(company.email) : "",
   ].filter(Boolean);
   if (contacts.length)
-    text(document, contacts.join("   |   "), x, y + 72, {
+    text(document, contacts.join("   |   "), x, y + 94, {
       size: 8,
       color: COLORS.muted,
       width,

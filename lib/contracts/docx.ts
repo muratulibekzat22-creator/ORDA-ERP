@@ -29,7 +29,6 @@ function companyDetails(xml: string, snapshot: ContractSnapshot) {
     ["KZ188562203118864809", snapshot.companyIik],
     ["АО Банк ЦентрКредит", snapshot.companyBank],
     ["KCJBKZKX", snapshot.companyBik],
-    ["+7 708 575 0881", snapshot.companyPhone],
     ["г. Алматы, ул. Муканова, 101", snapshot.companyAddress],
   ];
   return replacements.reduce((result, [from, to]) => to ? result.split(from).join(escapeXml(to)) : result, xml);
@@ -42,7 +41,12 @@ export async function generateContractDocx(snapshot: ContractSnapshot) {
   if (!document) throw new Error("INVALID_CONTRACT_TEMPLATE");
   zip.file("word/document.xml", paymentBlocks(document.asText(), snapshot.isFullPayment));
   const template = new Docxtemplater(zip, { delimiters: { start: "{{", end: "}}" }, paragraphLoop: true, linebreaks: true, nullGetter: () => "" });
-  template.render(snapshot);
+  template.render({
+    ...snapshot,
+    companyPhoneLines: (snapshot.companyPhones?.length
+      ? snapshot.companyPhones
+      : [snapshot.companyPhone]).join("\n"),
+  });
   const rendered = template.getZip().file("word/document.xml");
   if (!rendered) throw new Error("INVALID_CONTRACT_TEMPLATE");
   template.getZip().file("word/document.xml", companyDetails(rendered.asText(), snapshot));

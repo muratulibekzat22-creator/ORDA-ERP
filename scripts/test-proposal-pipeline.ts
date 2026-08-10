@@ -1,6 +1,7 @@
 import "./require-test-database";
 import { readFileSync } from "node:fs";
 import { calculateStair, DELIVERY_CHARGES, STAIR_RATES } from "@/lib/calculator/stair-calculation";
+import { companyDisplayPhones, normalizeCompanyPhone } from "@/lib/company-contacts";
 import { normalizePhone } from "@/lib/leads/domain";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { prisma } from "@/lib/prisma";
@@ -21,6 +22,7 @@ async function main() {
   assert(normalizePhone("8 777 123-45-67") === "+77771234567", "Kazakhstan phone normalization failed");
   assert(normalizePhone("7771234567") === "+77771234567", "ten digit phone normalization failed");
   assert(normalizePhone("123") === "", "invalid phone accepted");
+  assert(normalizeCompanyPhone("+7 776 002 7555") === "+77760027555", "secondary company phone normalization failed");
   const lines = [
     { kind: "INSTALLATION" as const, name: "Монтаж", quantity: 1, unit: "заказ", unitCost: 10, unitSale: 20 },
     { kind: "DELIVERY" as const, name: "Доставка", quantity: 1, unit: "рейс", unitCost: 10, unitSale: 20 },
@@ -39,7 +41,7 @@ async function main() {
   }
   for (const forbidden of ["Доставка не включена", "Доставка не входит", "Замер включён", "Монтаж — 1 заказ", "Замер — 1 выезд", "Доставка — 1 рейс", "Срок уточняется после замера", "Гарантия согласно договору"])
     assert(!proposalPdf.includes(forbidden), `PDF template contains forbidden client text: ${forbidden}`);
-  for (const required of ["В СТОИМОСТЬ ВХОДИТ", "СРОК ИЗГОТОВЛЕНИЯ", "СРОК ДЕЙСТВИЯ КП", "ГОТОВЫ ОБСУДИТЬ ВАШ ПРОЕКТ", "+7 708 575 0881", "КАЧЕСТВО.  ОТВЕТСТВЕННОСТЬ.  РЕЗУЛЬТАТ."])
+  for (const required of ["В СТОИМОСТЬ ВХОДИТ", "СРОК ИЗГОТОВЛЕНИЯ", "СРОК ДЕЙСТВИЯ КП", "ГОТОВЫ ОБСУДИТЬ ВАШ ПРОЕКТ", "ОФИЦИАЛЬНЫЕ ТЕЛЕФОНЫ", "companyDisplayPhones", "КАЧЕСТВО.  ОТВЕТСТВЕННОСТЬ.  РЕЗУЛЬТАТ."])
     assert(proposalPdf.includes(required), `PDF template is missing ${required}`);
   assert(MATERIAL_PRESENTATION.Сосна.description.includes("Практичное решение"), "pine selling copy missing");
   assert(MATERIAL_PRESENTATION.Карагач.description.includes("высокая прочность"), "elm selling copy missing");
@@ -48,7 +50,8 @@ async function main() {
   for (const secret of ["purchaseCost", "margin", "internalCoefficient", "unitCost", "grossProfit"]) assert(!publicValue.includes(secret), `public DTO leaks ${secret}`);
   const sequenceValues = await Promise.all(Array.from({ length: 50 }, () => prisma.$queryRaw<Array<{ value: bigint }>>`SELECT nextval('commercial_proposal_number_seq') AS value`));
   assert(new Set(sequenceValues.map((row) => row[0].value.toString())).size === 50, "proposal sequence is not concurrency safe");
-  const pdf = await buildProposalPdf({ number: "100000", createdAt: new Date().toISOString(), validUntil: new Date(Date.now() + PROPOSAL_VALIDITY_DAYS * 86400000).toISOString(), company: { name: "ALTYN SAPA COMPANY", phone: "+7 708 575 0881", whatsapp: "+7 708 575 0881" }, client: { name: "Клиент", phone: "+7 777 123 45 67", city: "Алматы" }, variants: [{ material: "Сосна", total: 1_950_000, executionTerm: "40–50 календарных дней", warranty: "6 месяцев" }, { material: "Карагач", total: 2_400_000, executionTerm: "40–50 календарных дней", warranty: "1 год" }, { material: "Дуб ламель", total: 2_850_000, executionTerm: "40–50 календарных дней", warranty: "5 лет" }], purchaseCost: 1, margin: 1 });
+  const companyPhones = companyDisplayPhones();
+  const pdf = await buildProposalPdf({ number: "100000", createdAt: new Date().toISOString(), validUntil: new Date(Date.now() + PROPOSAL_VALIDITY_DAYS * 86400000).toISOString(), company: { name: "ALTYN SAPA COMPANY", phone: companyPhones[0], secondaryPhone: companyPhones[1], phones: companyPhones }, client: { name: "Клиент", phone: "+7 777 123 45 67", city: "Алматы" }, variants: [{ material: "Сосна", total: 1_950_000, executionTerm: "40–50 календарных дней", warranty: "6 месяцев" }, { material: "Карагач", total: 2_400_000, executionTerm: "40–50 календарных дней", warranty: "1 год" }, { material: "Дуб ламель", total: 2_850_000, executionTerm: "40–50 календарных дней", warranty: "5 лет" }], purchaseCost: 1, margin: 1 });
   assert(pdf.subarray(0, 5).toString("ascii") === "%PDF-" && pdf.length > 5_000, "real PDF was not generated");
   assert((pdf.toString("latin1").match(/\/Type\s*\/Page\b/g) ?? []).length === 1, "proposal PDF must fit one A4 page");
   assert(!pdf.toString("utf8").includes("purchaseCost") && !pdf.toString("utf8").includes("margin"), "PDF leaks internal fields");

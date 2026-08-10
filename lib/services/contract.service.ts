@@ -4,6 +4,7 @@ import { DocumentSource, DocumentStatus, DocumentType, Prisma, Role } from "@pri
 
 import { almatyDateParts, amountToRussianWords, calculatePayment, CONTRACT_TEMPLATE_VERSION, formatMoney, type ContractPaymentInput, type ContractSnapshot, warrantyLabel } from "@/lib/contracts/domain";
 import { generateContractDocx } from "@/lib/contracts/docx";
+import { companyDisplayPhones } from "@/lib/company-contacts";
 import { prisma } from "@/lib/prisma";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { getDocument, type DocumentActor } from "@/lib/services/document.service";
@@ -54,6 +55,7 @@ async function source(orderId: number, actor: ContractActor) {
 export async function getContractDefaults(orderId: number, actor: ContractActor) {
   const { order, company, system, material } = await source(orderId, actor);
   const measurement = order.measurements[0];
+  const companyPhones = companyDisplayPhones(company);
   return {
     clientFullName: order.client.name,
     clientIin: order.client.iin,
@@ -73,7 +75,7 @@ export async function getContractDefaults(orderId: number, actor: ContractActor)
     termStartCondition: "с даты внесения первого платежа",
     warrantyMonths: material?.warrantyMonths ?? null,
     productionContactName: order.productions[0]?.master || order.manager,
-    productionContactPhone: company.phone,
+    productionContactPhone: companyPhones[0],
     directorFullName: company.directorFullName || company.directorName,
     contractCity: "Алматы",
   };
@@ -98,6 +100,7 @@ export async function buildContractSnapshot(orderId: number, actor: ContractActo
   const directorFullName = clean(undefined, company.directorFullName || company.directorName);
   if (!directorFullName) throw new Error("DIRECTOR_REQUIRED");
   const parts = almatyDateParts(now);
+  const companyPhones = companyDisplayPhones(company);
   return {
     contractNumber, contractDateIso: now.toISOString(), contractTime: parts.time, contractDay: parts.day, contractMonth: parts.month, contractYear: parts.year, contractCity: "Алматы",
     clientFullName, clientIin, clientPhone: clean(input.clientPhone, order.client.phone), clientAddress: clean(input.clientAddress, order.client.address),
@@ -107,8 +110,8 @@ export async function buildContractSnapshot(orderId: number, actor: ContractActo
     balancePercent: payment.balancePercent, balanceAmount: formatMoney(payment.balanceAmount), balanceAmountWords: amountToRussianWords(payment.balanceAmount), balanceAmountNumeric: payment.balanceAmount, isFullPayment: payment.isFullPayment,
     prepaymentDueText: clean(input.prepaymentDueText, PREPAYMENT_DUE), balanceDueText, fullPaymentDueText: clean(input.fullPaymentDueText, FULL_PAYMENT_DUE),
     termCalendarDays: String(term), termStartCondition, plannedCompletionDate: addDays(now, term), warrantyText: warrantyLabel(warrantyMonths), directorFullName,
-    productionContactName: clean(input.productionContactName, order.productions[0]?.master || order.manager), productionContactPhone: clean(input.productionContactPhone, company.phone),
-    companyName: company.name, companyBin: company.bin, companyIik: company.iik, companyBank: company.bank, companyBik: company.bik, companyPhone: company.phone, companyAddress: company.actualAddress || company.legalAddress,
+    productionContactName: clean(input.productionContactName, order.productions[0]?.master || order.manager), productionContactPhone: clean(input.productionContactPhone, companyPhones[0]),
+    companyName: company.name, companyBin: company.bin, companyIik: company.iik, companyBank: company.bank, companyBik: company.bik, companyPhone: companyPhones[0], companyPhones, companyAddress: company.actualAddress || company.legalAddress,
   };
 }
 

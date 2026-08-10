@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import EmployeesPage from "@/components/pages/EmployeesPage";
+import { formatCompanyPhone } from "@/lib/company-contacts";
 import { permissionKeys, type Permission } from "@/lib/permissions";
 import { Role, roleNames } from "@/lib/roles";
 
@@ -86,7 +87,14 @@ export default function SettingsPage() {
       };
       if (!response.ok)
         throw new Error(payload.error ?? "Не удалось загрузить настройки");
-      setData(payload);
+      setData({
+        ...payload,
+        company: {
+          ...payload.company,
+          phone: formatCompanyPhone(payload.company.phone),
+          secondaryPhone: formatCompanyPhone(payload.company.secondaryPhone),
+        },
+      });
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -282,7 +290,8 @@ export default function SettingsPage() {
               ["bin", "БИН / ИИН"],
               ["legalAddress", "Юридический адрес"],
               ["actualAddress", "Фактический адрес"],
-              ["phone", "Телефон"],
+              ["phone", "Телефон 1"],
+              ["secondaryPhone", "Телефон 2"],
               ["whatsapp", "WhatsApp"],
               ["email", "Email"],
               ["bankDetails", "Банковские реквизиты"],

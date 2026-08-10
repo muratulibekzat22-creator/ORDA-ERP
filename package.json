@@ -54,6 +54,7 @@
     "test:orders-module": "tsx scripts/test-orders-module.ts",
     "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",
     "test:dashboard-director": "tsx scripts/test-dashboard-director.ts",
+    "test:company-contacts": "tsx scripts/test-company-contacts.tsx",
     "test:documents": "tsx scripts/test-documents-module.ts",
     "test:contracts": "tsx scripts/test-contract-generation.ts"
   },

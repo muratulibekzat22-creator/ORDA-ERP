@@ -1,3 +1,4 @@
+import { companyDisplayPhones } from "@/lib/company-contacts";
 import type { DocumentOrder } from "./types";
 
 export function DocumentBrandHeader({
@@ -49,6 +50,7 @@ export function DocumentBrandHeader({
 
 export function DocumentBrandFooter({ order }: { order: DocumentOrder }) {
   const company = order.company;
+  const phones = companyDisplayPhones(company);
   return (
     <footer className="mt-10 border-t border-slate-300 pt-4 text-xs text-slate-600">
       <div className="flex flex-wrap justify-between gap-3">
@@ -58,7 +60,7 @@ export function DocumentBrandFooter({ order }: { order: DocumentOrder }) {
         </p>
         <p>{company?.actualAddress || company?.legalAddress || "Казахстан"}</p>
         <p>
-          {company?.phone || "+7 708 575 0881"}
+          {phones.join(" · ")}
           {company?.email ? ` · ${company.email}` : ""}
         </p>
       </div>

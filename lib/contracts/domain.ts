@@ -48,6 +48,7 @@ export type ContractSnapshot = {
   companyBank: string;
   companyBik: string;
   companyPhone: string;
+  companyPhones: string[];
   companyAddress: string;
 };
 

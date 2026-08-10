@@ -5,6 +5,7 @@ import {
   calculateStair,
   STAIR_RATES,
 } from "../lib/calculator/stair-calculation";
+import { companyDisplayPhones } from "../lib/company-contacts";
 import { PROPOSAL_VALIDITY_DAYS } from "../lib/proposals/presentation";
 import { buildProposalPdf } from "../lib/services/proposal-pdf.service";
 
@@ -32,6 +33,7 @@ async function main() {
       };
     },
   );
+  const companyPhones = companyDisplayPhones();
   const pdf = await buildProposalPdf({
     number: "КП-000247",
     createdAt: createdAt.toISOString(),
@@ -40,8 +42,9 @@ async function main() {
     ).toISOString(),
     company: {
       name: "ALTYN SAPA COMPANY",
-      phone: "+7 708 575 0881",
-      whatsapp: "+7 708 575 0881",
+      phone: companyPhones[0],
+      secondaryPhone: companyPhones[1],
+      phones: companyPhones,
     },
     client: {
       name: "Александр",

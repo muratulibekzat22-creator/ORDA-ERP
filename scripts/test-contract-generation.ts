@@ -24,7 +24,7 @@ const base: ContractSnapshot = {
   contractAmount: "1 000 000", contractAmountWords: "один миллион", contractAmountNumeric: 1_000_000, prepaymentPercent: "70", prepaymentAmount: "700 000", prepaymentAmountWords: "семьсот тысяч", prepaymentAmountNumeric: 700_000,
   balancePercent: "30", balanceAmount: "300 000", balanceAmountWords: "триста тысяч", balanceAmountNumeric: 300_000, isFullPayment: false, prepaymentDueText: "в день подписания настоящего Договора", balanceDueText: "после завершения монтажа", fullPaymentDueText: "в день подписания настоящего Договора",
   termCalendarDays: "45", termStartCondition: "с даты внесения первого платежа", plannedCompletionDate: "23.09.2026", warrantyText: "6 месяцев", directorFullName: "Директор Директоров", productionContactName: "Мастер", productionContactPhone: "+7 700 111 22 33",
-  companyName: "Тестовая компания", companyBin: "123456789012", companyIik: "KZ001", companyBank: "Тест Банк", companyBik: "TESTKZ", companyPhone: "+7 700 999 88 77", companyAddress: "Алматы, Тестовая 1",
+  companyName: "Тестовая компания", companyBin: "123456789012", companyIik: "KZ001", companyBank: "Тест Банк", companyBik: "TESTKZ", companyPhone: "+7 700 999 8877", companyPhones: ["+7 700 999 8877", "+7 776 002 7555"], companyAddress: "Алматы, Тестовая 1",
 };
 
 function xml(buffer: Buffer) { const zip = new PizZip(buffer); return zip.file("word/document.xml")?.asText() ?? ""; }
@@ -35,6 +35,8 @@ assert(!splitXml.includes("fullPaymentDueText"), "full payment marker leaked");
 assert.equal((splitXml.match(/<w:tbl>/g) ?? []).length, 2, "template tables changed");
 assert(splitXml.includes("<w:sectPr"), "section settings missing");
 assert(splitXml.includes("Тестовая компания") && !splitXml.includes("220540017969"), "company settings were not substituted");
+assert(splitXml.includes("+7 700 999 8877") && splitXml.includes("+7 776 002 7555"), "contract does not contain both canonical company phones");
+assert(splitXml.includes("<w:br/>"), "contract company phones are not separated into readable lines");
 
 const fullXml = xml(await generateContractDocx({ ...base, prepaymentPercent: "100", prepaymentAmount: "1 000 000", prepaymentAmountWords: "один миллион", prepaymentAmountNumeric: 1_000_000, balancePercent: "0", balanceAmount: "0", balanceAmountWords: "ноль", balanceAmountNumeric: 0, isFullPayment: true }));
 assert(!fullXml.includes("balancePercent") && !fullXml.includes("balanceAmount"), "100% contract contains balance markers");

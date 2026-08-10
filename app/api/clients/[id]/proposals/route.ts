@@ -6,6 +6,7 @@ import {
   idempotencyConflict,
   readIdempotencyKey,
 } from "@/lib/idempotency";
+import { companyDisplayPhones } from "@/lib/company-contacts";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { warrantyLabel } from "@/lib/contracts/domain";
 import { prisma } from "@/lib/prisma";
@@ -204,11 +205,14 @@ export async function POST(request: Request, context: Context) {
             )[0].value,
           );
         const number = version === 1 ? rootNumber : `${rootNumber}-V${version}`;
+        const companyPhones = companyDisplayPhones(settings);
         const snapshot = JSON.parse(
           JSON.stringify({
             company: {
               name: settings?.name ?? "ALTYN SAPA COMPANY",
-              phone: settings?.phone ?? "+7 708 575 0881",
+              phone: companyPhones[0],
+              secondaryPhone: companyPhones[1] ?? "",
+              phones: companyPhones,
               whatsapp: settings?.whatsapp ?? "",
               email: settings?.email ?? "",
             },
@@ -250,7 +254,7 @@ export async function POST(request: Request, context: Context) {
                 "Условия оплаты согласовываются при оформлении заказа",
             ).slice(0, 500),
             warranty: variants.map((item) => `${item.material}: ${item.warranty}`).join("; ").slice(0, 300),
-            managerContact: settings?.phone || "+7 708 575 0881",
+            managerContact: companyPhones.join(", "),
             createdById: userId,
             createdByName: auth.session!.user.name ?? client.manager,
             idempotencyKey: idempotency.key,
