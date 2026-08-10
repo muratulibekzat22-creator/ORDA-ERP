@@ -12,18 +12,29 @@ export async function GET(request: Request) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const params = new URL(request.url).searchParams, role = auth.session!.user.role as Role;
   if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const includeDeleted = params.get("includeDeleted") === "true";
+  const deletedOnly = params.get("deletedOnly") === "true";
+  if (role !== Role.DIRECTOR && (includeDeleted || deletedOnly || params.get("active") === "false"))
+    return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const search = params.get("search")?.trim(), city = params.get("city")?.trim(), manager = params.get("manager")?.trim(), status = params.get("status")?.trim(), source = params.get("source")?.trim();
   const page = Math.max(1, Number(params.get("page")) || 1), limit = Math.min(100, Math.max(1, Number(params.get("limit")) || 20));
+  const managerScope: Prisma.ClientWhereInput = role === Role.MANAGER
+    ? { managerUserId: Number(auth.session!.user.id) }
+    : {};
   const where: Prisma.ClientWhereInput = {
-    ...(role === Role.MANAGER ? { managerUserId: Number(auth.session!.user.id) } : {}),
-    ...(params.get("active") === "false" ? { active: false } : { active: true }),
+    ...managerScope,
+    ...(deletedOnly
+      ? { deletedAt: { not: null } }
+      : includeDeleted
+        ? {}
+        : { active: true, deletedAt: null }),
     ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }, { whatsapp: { contains: search } }, { city: { contains: search, mode: "insensitive" } }] } : {}),
     ...(city ? { city } : {}), ...(manager ? { manager } : {}), ...(status ? { stage: status as LeadStage } : {}), ...(source ? { sourceCode: source as LeadSource } : {}),
   };
   const [data, total, cities, managers] = await Promise.all([
     prisma.client.findMany({ where, include: { _count: { select: { orders: true, interactions: true } }, nextActions: { where: { completedAt: null }, orderBy: { nextActionAt: "asc" }, take: 1 } }, orderBy: { updatedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
-    prisma.client.count({ where }), prisma.client.findMany({ where: { active: true, city: { not: "" } }, distinct: ["city"], select: { city: true }, orderBy: { city: "asc" } }),
-    prisma.client.findMany({ where: { active: true, manager: { not: "" } }, distinct: ["manager"], select: { manager: true }, orderBy: { manager: "asc" } }),
+    prisma.client.count({ where }), prisma.client.findMany({ where: { ...managerScope, active: true, deletedAt: null, city: { not: "" } }, distinct: ["city"], select: { city: true }, orderBy: { city: "asc" } }),
+    prisma.client.findMany({ where: { ...managerScope, active: true, deletedAt: null, manager: { not: "" } }, distinct: ["manager"], select: { manager: true }, orderBy: { manager: "asc" } }),
   ]);
   return NextResponse.json({ data, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) }, filters: { cities: cities.map((x) => x.city), managers: managers.map((x) => x.manager), statuses: Object.values(LeadStage), sources: Object.values(LeadSource) } });
 }
@@ -36,7 +47,7 @@ export async function POST(request: Request) {
     const body = await request.json() as Record<string, unknown>, rawPhone = text(body.phone, true), city = text(body.city, true), requestText = text(body.comment) ?? text(body.estimateNotes) ?? "", estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0);
     const normalized = rawPhone ? normalizePhone(rawPhone) : "";
     if (!normalized || !city || estimatedAmount === null) return NextResponse.json({ error: "Укажите корректный телефон WhatsApp и город" }, { status: 400 });
-    const duplicate = await prisma.client.findFirst({ where: { active: true, OR: [{ phone: normalized }, { whatsapp: normalized }] }, select: { id: true, name: true, phone: true, stage: true } });
+    const duplicate = await prisma.client.findFirst({ where: { active: true, deletedAt: null, OR: [{ phone: normalized }, { whatsapp: normalized }] }, select: { id: true, name: true, phone: true, stage: true } });
     if (duplicate && body.allowDuplicate !== true) return NextResponse.json({ error: "Клиент с таким телефоном уже существует", code: "DUPLICATE_PHONE", existingClient: duplicate }, { status: 409 });
     const managerUserId = role === Role.MANAGER ? Number(auth.session!.user.id) : Number(body.managerUserId ?? auth.session!.user.id);
     const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR] } }, select: { id: true, name: true } });

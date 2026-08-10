@@ -10,8 +10,10 @@ import {
   Prisma,
   Role,
   LeadNextActionType,
+  LeadLostReason,
   LeadSource,
   LeadStage,
+  MeasurementClientOutcome,
 } from "@prisma/client";
 import { createRequestHash } from "@/lib/idempotency";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
@@ -51,6 +53,12 @@ export type MeasurementDraft = {
   comment?: string | null;
 };
 
+export type MeasurementOutcomeInput = {
+  clientOutcome: MeasurementClientOutcome;
+  refusalReason?: LeadLostReason;
+  outcomeComment?: string;
+};
+
 export type ScheduleMeasurementInput = {
   clientId: number;
   orderId?: number;
@@ -79,7 +87,13 @@ export async function selfScheduleMeasurement(actor: MeasurementActor, input: Se
   return prisma.$transaction(async (tx) => {
     const measurer = await tx.user.findUnique({ where: { id: actor.userId }, select: { id: true, name: true, role: true, active: true } });
     if (!measurer?.active || measurer.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
-    let client = await tx.client.findFirst({ where: { OR: [{ phone }, { whatsapp: phone }] } });
+    let client = await tx.client.findFirst({
+      where: {
+        active: true,
+        deletedAt: null,
+        OR: [{ phone }, { whatsapp: phone }],
+      },
+    });
     const existingClient = Boolean(client);
     if (!client) client = await tx.client.create({ data: {
       name: trim(input.clientName, 200) ?? "", phone, whatsapp: phone, city, address,
@@ -607,6 +621,8 @@ export async function scheduleMeasurement(
           address: true,
           manager: true,
           managerUserId: true,
+          active: true,
+          deletedAt: true,
           stage: true,
           status: true,
         },
@@ -623,6 +639,8 @@ export async function scheduleMeasurement(
         : null;
       if (
         !client ||
+        !client.active ||
+        client.deletedAt ||
         (actor.role === Role.MANAGER &&
           client.managerUserId !== actor.userId &&
           (client.managerUserId || client.manager !== actor.name))
@@ -883,6 +901,7 @@ export async function completeMeasurement(
   actor: MeasurementActor,
   id: number,
   draft: MeasurementDraft,
+  outcome?: MeasurementOutcomeInput,
 ) {
   if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
@@ -895,6 +914,18 @@ export async function completeMeasurement(
       )
     )
       throw new MeasurementError("SHEET_PHOTO_REQUIRED");
+    const outcomeComment = trim(outcome?.outcomeComment, 2000);
+    if (
+      outcome?.clientOutcome === MeasurementClientOutcome.RETURN_TO_MANAGER &&
+      !outcomeComment
+    )
+      throw new MeasurementError("OUTCOME_COMMENT_REQUIRED");
+    if (
+      outcome?.clientOutcome === MeasurementClientOutcome.REFUSED &&
+      (!outcome.refusalReason ||
+        (outcome.refusalReason === LeadLostReason.OTHER && !outcomeComment))
+    )
+      throw new MeasurementError("REFUSAL_REASON_REQUIRED");
     const now = new Date();
     const result = await tx.measurement.update({
       where: { id },
@@ -903,6 +934,20 @@ export async function completeMeasurement(
         status: MeasurementStatus.COMPLETED,
         completedAt: now,
         completedSnapshot: draft as unknown as Prisma.InputJsonValue,
+        ...(outcome
+          ? {
+              clientOutcome: outcome.clientOutcome,
+              outcomeComment,
+              refusalReason:
+                outcome.clientOutcome === MeasurementClientOutcome.REFUSED
+                  ? outcome.refusalReason
+                  : null,
+              outcomeAt: now,
+              ...(outcome.clientOutcome !== MeasurementClientOutcome.REFUSED
+                ? { handedAt: now }
+                : {}),
+            }
+          : {}),
       },
     });
     if (current.calendarTaskId) {
@@ -925,12 +970,19 @@ export async function completeMeasurement(
     }
     const client = await tx.client.findUniqueOrThrow({
       where: { id: current.clientId },
-      select: { stage: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        stage: true,
+        status: true,
+        managerUserId: true,
+      },
     });
     await tx.leadNextAction.updateMany({
       where: {
         clientId: current.clientId,
         nextActionType: "MEASUREMENT",
+        nextActionAt: current.visitDate,
         completedAt: null,
       },
       data: {
@@ -939,24 +991,41 @@ export async function completeMeasurement(
         resultComment: "Замер завершён",
       },
     });
+    const refused =
+      outcome?.clientOutcome === MeasurementClientOutcome.REFUSED;
+    const nextStage = refused ? LeadStage.LOST : LeadStage.MEASUREMENT_COMPLETED;
     await tx.client.update({
       where: { id: current.clientId },
       data: {
-        stage: "MEASUREMENT_COMPLETED",
-        status: "MEASUREMENT_COMPLETED",
+        stage: nextStage,
+        status: nextStage,
         nextContactAt: null,
+        ...(refused
+          ? {
+              lostReason: outcome.refusalReason,
+              lostComment: outcomeComment,
+              lostAt: now,
+              lostByUserId: actor.userId,
+            }
+          : {}),
       },
     });
     await tx.leadStatusHistory.create({
       data: {
         clientId: current.clientId,
         fromStatus: client.status,
-        toStatus: "MEASUREMENT_COMPLETED",
+        toStatus: nextStage,
         fromStage: client.stage,
-        toStage: "MEASUREMENT_COMPLETED",
+        toStage: nextStage,
         authorId: actor.userId,
         authorName: actor.name,
-        comment: "Замер завершён",
+        comment: refused
+          ? `Замер завершён; клиент отказался: ${outcome.refusalReason}`
+          : outcome?.clientOutcome === MeasurementClientOutcome.READY_TO_CONTINUE
+            ? "Замер завершён — клиент готов продолжать"
+            : outcome?.clientOutcome === MeasurementClientOutcome.RETURN_TO_MANAGER
+              ? "Замер завершён — требуется работа менеджера"
+              : "Замер завершён",
       },
     });
     await tx.leadActivity.create({
@@ -976,6 +1045,94 @@ export async function completeMeasurement(
         after: draft as unknown as Prisma.InputJsonValue,
       },
     });
+    if (outcome) {
+      let managerTaskId: number | null = null;
+      if (
+        outcome.clientOutcome !== MeasurementClientOutcome.REFUSED &&
+        client.managerUserId
+      ) {
+        const ready =
+          outcome.clientOutcome === MeasurementClientOutcome.READY_TO_CONTINUE;
+        const task = await tx.calendarTask.create({
+          data: {
+            title: ready
+              ? `Замер завершён — клиент готов: ${client.name}`
+              : `Замер завершён — требуется работа: ${client.name}`,
+            description: [
+              `Замер №${id}`,
+              outcomeComment,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            type: CalendarTaskType.TASK,
+            dueAt: ready ? now : new Date(now.getTime() + 3_600_000),
+            priority: ready
+              ? CalendarTaskPriority.URGENT
+              : CalendarTaskPriority.IMPORTANT,
+            assigneeId: client.managerUserId,
+            creatorId: actor.userId,
+            clientId: client.id,
+            orderId: current.orderId,
+          },
+        });
+        managerTaskId = task.id;
+        await tx.calendarTaskAudit.create({
+          data: {
+            taskId: task.id,
+            action: "CREATED_FROM_MEASUREMENT_OUTCOME",
+            actorId: actor.userId,
+            after: { measurementId: id, outcome: outcome.clientOutcome },
+          },
+        });
+      }
+      if (outcome.clientOutcome !== MeasurementClientOutcome.REFUSED) {
+        const ready =
+          outcome.clientOutcome === MeasurementClientOutcome.READY_TO_CONTINUE;
+        await tx.leadNextAction.create({
+          data: {
+            clientId: client.id,
+            nextActionType: client.managerUserId
+              ? LeadNextActionType.FOLLOW_UP
+              : LeadNextActionType.OTHER,
+            nextActionAt: ready ? now : new Date(now.getTime() + 3_600_000),
+            nextActionComment: ready
+              ? `Замер №${id}: клиент готов продолжать`
+              : `Замер №${id}: требуется работа менеджера — ${outcomeComment}`,
+            createdByUserId: actor.userId,
+          },
+        });
+      }
+      await tx.leadActivity.create({
+        data: {
+          clientId: client.id,
+          type:
+            outcome.clientOutcome === MeasurementClientOutcome.READY_TO_CONTINUE
+              ? "MEASUREMENT_READY_TO_CONTINUE"
+              : outcome.clientOutcome === MeasurementClientOutcome.RETURN_TO_MANAGER
+                ? "MEASUREMENT_RETURNED_TO_MANAGER"
+                : "MEASUREMENT_CLIENT_REFUSED",
+          comment:
+            outcome.clientOutcome === MeasurementClientOutcome.REFUSED
+              ? `${outcome.refusalReason}${outcomeComment ? ` · ${outcomeComment}` : ""}`
+              : outcomeComment || "Результат общения сохранён",
+          authorId: actor.userId,
+          authorName: actor.name,
+        },
+      });
+      await tx.measurementAudit.create({
+        data: {
+          measurementId: id,
+          action: "CLIENT_OUTCOME_RECORDED",
+          actorId: actor.userId,
+          comment: outcomeComment,
+          after: {
+            clientOutcome: outcome.clientOutcome,
+            refusalReason: outcome.refusalReason ?? null,
+            managerTaskId,
+          },
+        },
+      });
+    }
     return result;
   });
 }
@@ -1069,7 +1226,14 @@ export async function markReadyForContract(
     const current = await editableMeasurement(tx, actor, id);
     if (!canManage(actor, current) && actor.role !== Role.MEASURER)
       throw new MeasurementError("NOT_FOUND");
-    if (current.status !== MeasurementStatus.HANDED_TO_MANAGER)
+    if (
+      current.status !== MeasurementStatus.HANDED_TO_MANAGER &&
+      !(
+        current.status === MeasurementStatus.COMPLETED &&
+        current.clientOutcome &&
+        current.clientOutcome !== MeasurementClientOutcome.REFUSED
+      )
+    )
       throw new MeasurementError("INVALID_STATE");
     if (current.readyForContractAt)
       return tx.measurement.findUniqueOrThrow({ where: { id } });
@@ -1146,7 +1310,14 @@ export async function inviteClientToOffice(
     const current = await editableMeasurement(tx, actor, id);
     if (!canManage(actor, current) && actor.role !== Role.MEASURER)
       throw new MeasurementError("NOT_FOUND");
-    if (current.status !== MeasurementStatus.HANDED_TO_MANAGER)
+    if (
+      current.status !== MeasurementStatus.HANDED_TO_MANAGER &&
+      !(
+        current.status === MeasurementStatus.COMPLETED &&
+        current.clientOutcome &&
+        current.clientOutcome !== MeasurementClientOutcome.REFUSED
+      )
+    )
       throw new MeasurementError("INVALID_STATE");
     const client = await tx.client.findUniqueOrThrow({
       where: { id: current.clientId },
@@ -1271,6 +1442,18 @@ export async function rescheduleMeasurement(
         after: { visitDate: input.visitDate, measurerUserId: measurer.id },
       },
     });
+    await tx.leadNextAction.updateMany({
+      where: {
+        clientId: current.clientId,
+        nextActionType: LeadNextActionType.MEASUREMENT,
+        nextActionAt: current.visitDate,
+        completedAt: null,
+      },
+      data: {
+        nextActionAt: input.visitDate,
+        nextActionComment: trim(input.comment),
+      },
+    });
     return tx.measurement.update({
       where: { id },
       data: {
@@ -1289,7 +1472,7 @@ export async function rescheduleMeasurement(
 export async function cancelMeasurement(
   actor: MeasurementActor,
   id: number,
-  comment?: string,
+  input?: string | { reason?: string; comment?: string },
 ) {
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
@@ -1299,6 +1482,9 @@ export async function cancelMeasurement(
     if (COMPLETED_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     const now = new Date();
+    const reason = trim(typeof input === "string" ? undefined : input?.reason, 300);
+    const comment = trim(typeof input === "string" ? input : input?.comment, 1000);
+    const cancellationComment = [reason, comment].filter(Boolean).join(" · ");
     if (current.calendarTaskId) {
       await tx.calendarTask.update({
         where: { id: current.calendarTaskId },
@@ -1309,7 +1495,7 @@ export async function cancelMeasurement(
           taskId: current.calendarTaskId,
           action: "CANCELLED",
           actorId: actor.userId,
-          after: { cancelledAt: now },
+          after: { cancelledAt: now, reason: reason ?? null },
         },
       });
     }
@@ -1317,19 +1503,32 @@ export async function cancelMeasurement(
       data: {
         clientId: current.clientId,
         type: "MEASUREMENT_CANCELLED",
-        comment: trim(comment) ?? "Замер отменён",
+        comment: cancellationComment || "Замер отменён",
         authorId: actor.userId,
         authorName: actor.name,
+      },
+    });
+    await tx.leadNextAction.updateMany({
+      where: {
+        clientId: current.clientId,
+        nextActionType: LeadNextActionType.MEASUREMENT,
+        nextActionAt: current.visitDate,
+        completedAt: null,
+      },
+      data: {
+        completedAt: now,
+        completedByUserId: actor.userId,
+        resultComment: cancellationComment || "Замер отменён",
       },
     });
     await tx.measurementAudit.create({
       data: {
         measurementId: id,
-        action: "CANCELLED",
+        action: "MEASUREMENT_CANCELLED",
         actorId: actor.userId,
-        comment: trim(comment),
+        comment: cancellationComment || null,
         before: { status: current.status },
-        after: { status: MeasurementStatus.CANCELLED },
+        after: { status: MeasurementStatus.CANCELLED, reason: reason ?? null },
       },
     });
     return tx.measurement.update({
@@ -1357,7 +1556,13 @@ export async function ensureMeasurerBonusForOrder(
   const measurement = await tx.measurement.findFirst({
     where: {
       clientId: order.clientId,
-      status: MeasurementStatus.HANDED_TO_MANAGER,
+      status: {
+        in: [MeasurementStatus.COMPLETED, MeasurementStatus.HANDED_TO_MANAGER],
+      },
+      OR: [
+        { clientOutcome: null },
+        { clientOutcome: { not: MeasurementClientOutcome.REFUSED } },
+      ],
       measurerUserId: { not: null },
       bonusAccrual: null,
     },

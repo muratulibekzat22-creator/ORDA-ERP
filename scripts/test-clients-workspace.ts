@@ -122,8 +122,8 @@ for (const marker of ["+ Назначить замер", "выбран авто�
   if (!measurementPanel.includes(marker) && !measurementWorkspace.includes(marker)) throw new Error(`Manager measurement UI misses ${marker}`);
 if (!measurementsApi.includes("role: Role.MEASURER, active: true")) throw new Error("Measurement selector must only use active MEASURER users");
 if (!card.includes("#measurement-scheduling")) throw new Error("Client card must expose measurement scheduling action");
-for (const marker of ["Удалить навсегда", "УДАЛИТЬ", "Причина"])
-  if (!card.includes(marker)) throw new Error(`Director force-delete UI misses ${marker}`);
+for (const marker of ["Удалить заявку из рабочего списка?", "Связанные замеры и история будут сохранены", "Удалить только заявку из рабочего списка", "Причина (необязательно)"])
+  if (!card.includes(marker)) throw new Error(`Application soft-delete UI misses ${marker}`);
 for (const marker of ["previewClientForceDelete", "forceDeleteClient"])
   if (!forceDeleteApi.includes(marker)) throw new Error(`Force-delete API misses ${marker}`);
 if (!forceDeleteService.includes("Role.DIRECTOR")) throw new Error("Force-delete service is not Director-only");

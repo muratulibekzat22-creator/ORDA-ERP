@@ -8,7 +8,10 @@ import {
   FileImage,
   MapPin,
   MessageCircle,
+  MoreVertical,
   Phone,
+  RotateCcw,
+  XCircle,
 } from "lucide-react";
 
 type Measurement = {
@@ -35,8 +38,14 @@ type Measurement = {
   objectNotes?: string | null;
   comment?: string | null;
   completedAt?: string | null;
+  cancelledAt?: string | null;
+  clientOutcome?: "READY_TO_CONTINUE" | "RETURN_TO_MANAGER" | "REFUSED" | null;
+  outcomeComment?: string | null;
+  refusalReason?: string | null;
+  outcomeAt?: string | null;
   measurerUser?: { id: number; name: string } | null;
   attachments: Array<{ id: number; type: string; fileName: string }>;
+  auditEvents: Array<{ id: number; action: string; comment?: string | null; createdAt: string; actor?: { id: number; name: string } | null }>;
 };
 type Measurer = { id: number; name: string };
 
@@ -48,6 +57,21 @@ const statusNames: Record<string, string> = {
   COMPLETED: "Завершён",
   HANDED_TO_MANAGER: "Передан менеджеру",
   CANCELLED: "Отменён",
+};
+const outcomeNames: Record<string, string> = {
+  READY_TO_CONTINUE: "Клиент готов продолжить",
+  RETURN_TO_MANAGER: "Требуется работа менеджера",
+  REFUSED: "Клиент отказался",
+};
+const refusalNames: Record<string, string> = {
+  PRICE_TOO_HIGH: "Дорого",
+  CHANGED_MIND: "Передумал",
+  COMPARING: "Сравнивает предложения",
+  NOT_READY: "Пока не готов",
+  UNSUITABLE_SOLUTION: "Не подходит решение",
+  NO_BUDGET: "Нет бюджета",
+  NO_RESPONSE: "Не выходит на связь",
+  OTHER: "Другое",
 };
 
 export default function LeadMeasurementPanel({
@@ -73,6 +97,12 @@ export default function LeadMeasurementPanel({
     [whatsappText, setWhatsappText] = useState(""),
     [scheduleOpen, setScheduleOpen] = useState(false),
     [measurersLoaded, setMeasurersLoaded] = useState(false);
+  const [cancelId, setCancelId] = useState<number | null>(null),
+    [cancelReason, setCancelReason] = useState(""),
+    [cancelComment, setCancelComment] = useState(""),
+    [rescheduleId, setRescheduleId] = useState<number | null>(null),
+    [rescheduleDate, setRescheduleDate] = useState(""),
+    [rescheduleMeasurerId, setRescheduleMeasurerId] = useState("");
   const [form, setForm] = useState({
     measurerUserId: "",
     visitDate: "",
@@ -334,10 +364,35 @@ export default function LeadMeasurementPanel({
                     {row.measurerUser?.name} · {row.city} · {row.address}
                   </p>
                 </div>
-                <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
-                  {statusNames[row.status] ?? row.status}
-                </span>
+                <div className="flex items-start gap-2">
+                  <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-200">
+                    {statusNames[row.status] ?? row.status}
+                  </span>
+                  {["ASSIGNED", "IN_PROGRESS"].includes(row.status) && (
+                    <details className="relative">
+                      <summary aria-label={`Действия с замером №${row.id}`} className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg bg-slate-800 text-slate-200 [&::-webkit-details-marker]:hidden"><MoreVertical size={17} /></summary>
+                      <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-2xl">
+                        <button type="button" onClick={() => { setCancelId(null); setRescheduleId(row.id); setRescheduleDate(new Date(row.visitDate).toISOString().slice(0, 16)); setRescheduleMeasurerId(row.measurerUser ? String(row.measurerUser.id) : ""); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-slate-200 hover:bg-slate-800"><RotateCcw size={16} />Перенести</button>
+                        <button type="button" onClick={() => { setRescheduleId(null); setCancelId(row.id); setCancelReason(""); setCancelComment(""); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-red-300 hover:bg-red-950/50"><XCircle size={16} />Отменить замер</button>
+                      </div>
+                    </details>
+                  )}
+                </div>
               </div>
+              {rescheduleId === row.id && (
+                <div className="mt-3 grid gap-3 rounded-xl border border-amber-800 bg-amber-950/20 p-3 sm:grid-cols-2">
+                  <label className="text-sm text-slate-300">Новая дата и время<input type="datetime-local" className={`${input} mt-1`} value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} /></label>
+                  <label className="text-sm text-slate-300">Замерщик<select className={`${input} mt-1`} value={rescheduleMeasurerId} onChange={(event) => setRescheduleMeasurerId(event.target.value)}><option value="">Выберите</option>{measurers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+                  <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => setRescheduleId(null)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button><button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId} onClick={() => void action(row.id, { action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: row.city, address: row.address, mapLink: row.mapLink }, "Замер перенесён").then(() => setRescheduleId(null))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button></div>
+                </div>
+              )}
+              {cancelId === row.id && (
+                <div className="mt-3 space-y-3 rounded-xl border border-red-800 bg-red-950/20 p-3">
+                  <label className="text-sm text-slate-300">Причина<input className={`${input} mt-1`} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} /></label>
+                  <label className="text-sm text-slate-300">Комментарий<textarea rows={2} className={`${input} mt-1`} value={cancelComment} onChange={(event) => setCancelComment(event.target.value)} /></label>
+                  <div className="flex gap-2"><button type="button" onClick={() => setCancelId(null)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Не отменять</button><button type="button" disabled={busy || !cancelReason.trim()} onClick={() => void action(row.id, { action: "cancel", reason: cancelReason, comment: cancelComment }, "Замер отменён").then(() => setCancelId(null))} className="min-h-11 flex-1 rounded-xl bg-red-700 px-3 font-semibold disabled:opacity-50">Отменить замер</button></div>
+                </div>
+              )}
               {row.mapLink && (
                 <a
                   href={row.mapLink}
@@ -424,6 +479,14 @@ export default function LeadMeasurementPanel({
                       <b className="text-white">{row.comment}</b>
                     </span>
                   )}
+                  {row.clientOutcome && (
+                    <span className="rounded-lg border border-emerald-900 bg-emerald-950/20 p-3 sm:col-span-3">
+                      <b className="block text-white">Результат клиента: {outcomeNames[row.clientOutcome] ?? row.clientOutcome}</b>
+                      {row.refusalReason && <span className="mt-1 block">Причина: {refusalNames[row.refusalReason] ?? row.refusalReason}</span>}
+                      {row.outcomeComment && <span className="mt-1 block whitespace-pre-wrap">{row.outcomeComment}</span>}
+                      {row.outcomeAt && <span className="mt-1 block text-xs text-slate-500">Зафиксировано {new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Almaty" }).format(new Date(row.outcomeAt))}</span>}
+                    </span>
+                  )}
                   <span className="sm:col-span-3">
                     {row.attachments.map((photo) => (
                       <a
@@ -441,7 +504,11 @@ export default function LeadMeasurementPanel({
                   </span>
                 </div>
               )}
-              {row.status === "HANDED_TO_MANAGER" && (
+              {row.status === "CANCELLED" && (() => {
+                const event = row.auditEvents.find((item) => item.action === "MEASUREMENT_CANCELLED" || item.action === "CANCELLED");
+                return <div className="mt-3 rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-300"><b className="text-white">Замер отменён</b><p className="mt-1">{event?.comment || "Причина не указана"}</p>{event && <p className="mt-1 text-xs text-slate-500">{new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Almaty" }).format(new Date(event.createdAt))} · {event.actor?.name ?? "Система"}</p>}</div>;
+              })()}
+              {(row.status === "HANDED_TO_MANAGER" || (row.status === "COMPLETED" && row.clientOutcome && row.clientOutcome !== "REFUSED")) && (
                 <div className="mt-4 grid gap-3">
                   <div className="flex flex-wrap gap-2">
                     <a
@@ -466,7 +533,7 @@ export default function LeadMeasurementPanel({
                     >
                       Открыть полный замер
                     </Link>
-                    <button
+                    {!row.clientOutcome && <button
                       disabled={busy}
                       onClick={() =>
                         void action(
@@ -478,7 +545,7 @@ export default function LeadMeasurementPanel({
                       className="min-h-11 rounded-xl bg-emerald-700 px-4 text-sm font-semibold"
                     >
                       Клиент готов к договору
-                    </button>
+                    </button>}
                     <Link
                       href={`/clients/${clientId}/proposal`}
                       className="flex min-h-11 items-center rounded-xl bg-blue-700 px-4 text-sm font-semibold"

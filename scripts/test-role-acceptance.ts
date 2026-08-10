@@ -135,7 +135,7 @@ const partnerFinanceGuard = finance.indexOf(
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(
-  partnerFinanceGuard < finance.indexOf("const data = await getFinanceDashboard"),
+  partnerFinanceGuard < finance.indexOf("getFinanceDashboard({", partnerFinanceGuard),
   "partner ledger guard must run before the general finance query",
 );
 

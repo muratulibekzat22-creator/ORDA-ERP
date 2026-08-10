@@ -43,7 +43,7 @@ async function salesProjection(scope: DashboardScope) {
       : {};
   const [leads, orders, leadEvents, orderEvents, workOrders, materials, tasks, activeFinanceOrders, measurementsToday, proposalsNeedResponse, activeUsers, payrollProfiles] = await Promise.all([
     prisma.client.findMany({
-      where: { ...managerLeadWhere, active: true },
+      where: { ...managerLeadWhere, active: true, deletedAt: null },
       select: {
         id: true,
         name: true,
@@ -62,7 +62,7 @@ async function salesProjection(scope: DashboardScope) {
       select: { id: true, amount: true, prepayment: true, balance: true, managerUserId: true, leadConversion: { select: { managerId: true } } },
     }),
     prisma.leadStatusHistory.findMany({
-      where: { client: { ...managerLeadWhere, active: true }, createdAt: { gte: start, lte: end }, OR: [{ authorId: null }, { changedBy: { active: true } }] },
+      where: { client: { ...managerLeadWhere, active: true, deletedAt: null }, createdAt: { gte: start, lte: end }, OR: [{ authorId: null }, { changedBy: { active: true } }] },
       orderBy: { createdAt: "desc" },
       take: 10,
       select: { id: true, toStatus: true, authorName: true, createdAt: true, client: { select: { id: true, name: true, phone: true } } },
@@ -100,7 +100,7 @@ async function salesProjection(scope: DashboardScope) {
     scope.role === Role.MANAGER
       ? prisma.commercialProposal.count({
           where: {
-            client: managerLeadWhere,
+            client: { ...managerLeadWhere, active: true, deletedAt: null },
             sentAt: { not: null },
             acceptedAt: null,
             status: { notIn: ["ACCEPTED", "REJECTED", "Принято", "Отклонено"] },
@@ -123,7 +123,7 @@ async function salesProjection(scope: DashboardScope) {
     }),
     prisma.commercialProposal.count({
       where: {
-        client: managerLeadWhere,
+        client: { ...managerLeadWhere, active: true, deletedAt: null },
         sentAt: { gte: start, lte: end },
       },
     }),
@@ -170,6 +170,27 @@ async function salesProjection(scope: DashboardScope) {
         })
       : Promise.resolve([]),
   ]);
+  const measurementAttention = scope.role === Role.MANAGER
+    ? await prisma.leadNextAction.findMany({
+        where: {
+          completedAt: null,
+          nextActionComment: { contains: "Замер №", mode: "insensitive" },
+          client: {
+            managerUserId: scope.userId,
+            active: true,
+            deletedAt: null,
+          },
+        },
+        orderBy: { nextActionAt: "asc" },
+        take: 12,
+        select: {
+          id: true,
+          nextActionAt: true,
+          nextActionComment: true,
+          client: { select: { id: true, name: true, phone: true } },
+        },
+      })
+    : [];
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
   const periodLeads = leads.filter((lead) => lead.createdAt >= start && lead.createdAt <= end);
@@ -272,6 +293,7 @@ async function salesProjection(scope: DashboardScope) {
       } : {}),
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
+    ...(scope.role === Role.MANAGER ? { measurementAttention } : {}),
     activities,
   };
 }

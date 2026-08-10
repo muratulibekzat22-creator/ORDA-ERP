@@ -1,3 +1,4 @@
+import { LeadLostReason, MeasurementClientOutcome } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { parseBusinessDateTime } from "@/lib/calendar-time";
 import { measurementActor, measurementError } from "@/lib/measurement-api";
@@ -40,7 +41,12 @@ export async function PATCH(request: Request, { params }: Context) {
     if (action === undefined && typeof body.comment === "string" && Object.keys(body).every((key) => key === "comment")) return NextResponse.json(await saveMeasurementComment(actor, id, body.comment));
     if (action === "start") return NextResponse.json(await startMeasurement(actor, id));
     if (action === "save-draft") return NextResponse.json(await saveMeasurementDraft(actor, id, parseMeasurementDraft(body, false)));
-    if (action === "complete") return NextResponse.json(await completeMeasurement(actor, id, parseMeasurementDraft(body)));
+    if (action === "complete") {
+      const clientOutcome = typeof body.clientOutcome === "string" && Object.values(MeasurementClientOutcome).includes(body.clientOutcome as MeasurementClientOutcome) ? body.clientOutcome as MeasurementClientOutcome : null;
+      const refusalReason = typeof body.refusalReason === "string" && Object.values(LeadLostReason).includes(body.refusalReason as LeadLostReason) ? body.refusalReason as LeadLostReason : undefined;
+      if (!clientOutcome) return NextResponse.json({ error: "Выберите результат общения с клиентом" }, { status: 400 });
+      return NextResponse.json(await completeMeasurement(actor, id, parseMeasurementDraft(body), { clientOutcome, refusalReason, outcomeComment: typeof body.outcomeComment === "string" ? body.outcomeComment : undefined }));
+    }
     if (action === "handoff") return NextResponse.json(await handMeasurementToManager(actor, id));
     if (action === "ready-contract") return NextResponse.json(await markReadyForContract(actor, id));
     if (action === "invite-office") {
@@ -53,7 +59,7 @@ export async function PATCH(request: Request, { params }: Context) {
       if (!visitDate || !Number.isInteger(measurerUserId) || measurerUserId <= 0) return NextResponse.json({ error: "Укажите дату, время и замерщика" }, { status: 400 });
       return NextResponse.json(await rescheduleMeasurement(actor, id, { visitDate, measurerUserId, city: typeof body.city === "string" ? body.city : undefined, address: typeof body.address === "string" ? body.address : undefined, mapLink: typeof body.mapLink === "string" ? body.mapLink : undefined, comment: typeof body.comment === "string" ? body.comment : undefined }));
     }
-    if (action === "cancel") return NextResponse.json(await cancelMeasurement(actor, id, typeof body.comment === "string" ? body.comment : undefined));
+    if (action === "cancel") return NextResponse.json(await cancelMeasurement(actor, id, { reason: typeof body.reason === "string" ? body.reason : undefined, comment: typeof body.comment === "string" ? body.comment : undefined }));
     return NextResponse.json({ error: "Неподдерживаемое действие" }, { status: 400 });
   } catch (error) {
     return error instanceof SyntaxError ? NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }) : measurementError(error);

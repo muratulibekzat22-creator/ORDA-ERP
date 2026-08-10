@@ -83,6 +83,9 @@ type ClientDetail = {
   estimatedAmount: string;
   createdAt: string;
   updatedAt: string;
+  active: boolean;
+  deletedAt?: string | null;
+  deletedBy?: { id: number; name: string } | null;
   interactions: Interaction[];
   attachments: Attachment[];
   orders: Order[];
@@ -110,8 +113,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
     [success, setSuccess] = useState("");
-  const [deletePreview, setDeletePreview] = useState<{ impact: Record<string, number>; blocked: boolean; blockers: string[] } | null>(null),
-    [deleteConfirmation, setDeleteConfirmation] = useState(""),
+  const [deleteOpen, setDeleteOpen] = useState(false),
     [deleteReason, setDeleteReason] = useState("");
   const [interaction, setInteraction] = useState(""),
     fileRef = useRef<HTMLInputElement>(null);
@@ -176,25 +178,24 @@ export default function ClientCard({ clientId }: { clientId: number }) {
       setSaving(false);
     }
   }
-  async function openForceDelete() {
+  async function deleteFromWork() {
+    if (!client) return;
     setSaving(true); setError("");
     try {
-      const response = await fetch(`/api/clients/${clientId}/force-delete`, { cache: "no-store" });
-      const payload = await response.json() as { impact?: Record<string, number>; blocked?: boolean; blockers?: string[]; error?: string };
-      if (!response.ok || !payload.impact) throw new Error(payload.error ?? "Не удалось проверить связанные данные");
-      setDeletePreview({ impact: payload.impact, blocked: Boolean(payload.blocked), blockers: payload.blockers ?? [] });
-    } catch (next) { setError(next instanceof Error ? next.message : "Не удалось проверить связанные данные"); }
-    finally { setSaving(false); }
-  }
-  async function forceDelete() {
-    if (!client || !deletePreview || deletePreview.blocked) return;
-    setSaving(true); setError("");
-    try {
-      const response = await fetch(`/api/clients/${client.id}/force-delete`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirmation: deleteConfirmation, reason: deleteReason }) });
+      const response = await fetch(`/api/clients/${client.id}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: deleteReason }) });
       const payload = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Не удалось удалить заявку");
       router.replace("/clients");
     } catch (next) { setError(next instanceof Error ? next.message : "Не удалось удалить заявку"); setSaving(false); }
+  }
+  async function restore() {
+    if (!client) return;
+    setSaving(true); setError("");
+    const response = await fetch(`/api/clients/${client.id}/restore`, { method: "POST" });
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) setError(payload.error ?? "Не удалось восстановить заявку");
+    else { flash("Заявка восстановлена"); await load(); }
+    setSaving(false);
   }
   async function addInteraction() {
     const comment = interaction.trim();
@@ -320,6 +321,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           </p>
         </div>
         <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+          {client.deletedAt && session?.user.role === "DIRECTOR" ? <button onClick={() => void restore()} disabled={saving} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:opacity-60">Восстановить заявку</button> : <>
           <a
             href={`https://wa.me/${(client.whatsapp || client.phone).replace(/\D/g, "")}`}
             target="_blank"
@@ -357,16 +359,11 @@ export default function ClientCard({ clientId }: { clientId: number }) {
             )}
             Сохранить изменения
           </button>
-          <a
-            href="#lead-workflow"
-            className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-amber-700 bg-amber-950/30 px-5 font-semibold text-amber-200"
-          >
-            <Trash2 size={18} />
-            Отменить / архивировать заявку
-          </a>
-          {session?.user.role === "DIRECTOR" && <button onClick={() => void openForceDelete()} disabled={saving} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-600 bg-red-950/70 px-5 font-semibold text-red-100 disabled:opacity-60"><Trash2 size={18}/>Удалить навсегда…</button>}
+          <button onClick={() => setDeleteOpen(true)} disabled={saving} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-700 bg-red-950/30 px-5 font-semibold text-red-200 disabled:opacity-60"><Trash2 size={18} />Удалить заявку</button>
+          </>}
         </div>
       </div>
+      {client.deletedAt && <div className="rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-amber-200"><b>Заявка удалена из рабочего списка.</b><p className="mt-1 text-sm">Связанные заказы, документы, замеры и история сохранены. Удалил: {client.deletedBy?.name ?? "Система"} · {date(client.deletedAt)}</p></div>}
       {error && (
         <p
           role="alert"
@@ -383,8 +380,8 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           {success}
         </p>
       )}
-      {deletePreview && <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-xl rounded-2xl border border-red-800 bg-slate-950 p-5"><h2 className="text-xl font-bold text-white">Контролируемое удаление</h2><p className="mt-2 text-sm text-slate-400">Будут удалены только перечисленные связанные записи. Действие фиксируется в неизменяемом аудите.</p><div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">{Object.entries(deletePreview.impact).filter(([, value]) => value > 0).map(([key, value]) => <div key={key} className="rounded-lg bg-slate-900 p-2"><span className="block break-all text-xs text-slate-500">{key}</span><b className="text-white">{value}</b></div>)}</div>{deletePreview.blocked ? <div className="mt-4 rounded-xl border border-red-700 bg-red-950/50 p-3 text-sm text-red-200"><b>Удаление заблокировано.</b><p className="mt-1">Есть платежи, выплаты, записи финансового ledger или складские движения. Используйте аннулирование и сторно.</p><p className="mt-2 break-all text-xs text-red-300">{deletePreview.blockers.join(" · ")}</p></div> : <div className="mt-4 space-y-3"><label className="grid gap-1 text-sm text-slate-300"><span>Причина</span><textarea value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} rows={3} className={inputClass}/></label><label className="grid gap-1 text-sm text-slate-300"><span>Введите УДАЛИТЬ</span><input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} className={inputClass}/></label></div>}<div className="mt-5 flex justify-end gap-2"><button onClick={() => { setDeletePreview(null); setDeleteConfirmation(""); setDeleteReason(""); }} className="min-h-11 rounded-xl px-4 text-slate-300">Отмена</button>{!deletePreview.blocked && <button onClick={() => void forceDelete()} disabled={saving || deleteConfirmation !== "УДАЛИТЬ" || deleteReason.trim().length < 5} className="min-h-11 rounded-xl bg-red-700 px-4 font-semibold text-white disabled:opacity-40">Удалить навсегда</button>}</div></div></div>}
-      <LeadWorkflow
+      {deleteOpen && <div className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-lg rounded-2xl border border-red-800 bg-slate-950 p-5"><h2 className="text-xl font-bold text-white">Удалить заявку из рабочего списка?</h2><p className="mt-3 text-sm text-slate-300">Связанные замеры и история будут сохранены в системе, но заявка больше не будет отображаться в активной работе.</p>{client.orders.length > 0 && <div className="mt-3 rounded-xl border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200"><p>По этой заявке существует заказ №{client.orders.map((order) => order.number).join(", ")}.</p><p className="mt-1 font-semibold">Удалить только заявку из рабочего списка.</p></div>}<label className="mt-4 block text-sm text-slate-300">Причина (необязательно)<textarea value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} rows={3} className={`${inputClass} mt-1`} /></label><div className="mt-5 grid grid-cols-2 gap-2"><button onClick={() => { setDeleteOpen(false); setDeleteReason(""); }} className="min-h-11 rounded-xl bg-slate-800 px-4 text-slate-200">Отмена</button><button onClick={() => void deleteFromWork()} disabled={saving} className="min-h-11 rounded-xl bg-red-700 px-4 font-semibold text-white disabled:opacity-50">Удалить заявку</button></div></div></div>}
+      {!client.deletedAt && <><LeadWorkflow
         client={client}
         saving={saving}
         setSaving={setSaving}
@@ -398,7 +395,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
         initialAddress={client.address}
         clientPhone={client.phone}
         clientWhatsapp={client.whatsapp}
-      />
+      /></>}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <div className="space-y-5">
           <Card title="Что нужно клиенту" icon={<UserRound size={20} />}>

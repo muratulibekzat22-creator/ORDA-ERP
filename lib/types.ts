@@ -15,6 +15,8 @@ export interface Client {
   source?: string;
   comment?: string;
   status: string;
+  active?: boolean;
+  deletedAt?: Date | string | null;
 
   _count?: { orders: number; interactions: number };
   interactions?: Array<{ createdAt: Date }>;

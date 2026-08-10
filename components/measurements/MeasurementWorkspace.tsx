@@ -10,11 +10,14 @@ import {
   ClipboardCheck,
   MapPin,
   MessageCircle,
+  MoreVertical,
   Phone,
   Play,
   Plus,
+  RotateCcw,
   Save,
   Upload,
+  XCircle,
 } from "lucide-react";
 
 type Photo = {
@@ -65,6 +68,19 @@ type Measurement = {
   attachments: Photo[];
   order?: { id: number; number: string } | null;
   readyForContractAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  clientOutcome?: "READY_TO_CONTINUE" | "RETURN_TO_MANAGER" | "REFUSED" | null;
+  outcomeComment?: string | null;
+  refusalReason?: string | null;
+  outcomeAt?: string | null;
+  auditEvents: Array<{
+    id: number;
+    action: string;
+    comment?: string | null;
+    createdAt: string;
+    actor?: { id: number; name: string } | null;
+  }>;
 };
 type Payload = {
   measurements: Measurement[];
@@ -127,6 +143,21 @@ const statusTone: Record<string, string> = {
   HANDED_TO_MANAGER: "bg-violet-950 text-violet-200",
   CANCELLED: "bg-slate-800 text-slate-300",
 };
+const outcomeNames: Record<string, string> = {
+  READY_TO_CONTINUE: "Клиент готов продолжить",
+  RETURN_TO_MANAGER: "Вернуть менеджеру",
+  REFUSED: "Клиент отказался",
+};
+const refusalReasons: Array<[string, string]> = [
+  ["PRICE_TOO_HIGH", "Дорого"],
+  ["CHANGED_MIND", "Передумал"],
+  ["COMPARING", "Сравнивает предложения"],
+  ["NOT_READY", "Пока не готов"],
+  ["UNSUITABLE_SOLUTION", "Не подходит решение"],
+  ["NO_BUDGET", "Нет бюджета"],
+  ["NO_RESPONSE", "Не выходит на связь"],
+  ["OTHER", "Другое"],
+];
 const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 const when = (value: string) =>
   new Intl.DateTimeFormat("ru-RU", {
@@ -248,6 +279,15 @@ export default function MeasurementWorkspace() {
     [notice, setNotice] = useState("");
   const [inviteAt, setInviteAt] = useState(""),
     [inviteComment, setInviteComment] = useState("");
+  const [clientOutcome, setClientOutcome] = useState<"" | "READY_TO_CONTINUE" | "RETURN_TO_MANAGER" | "REFUSED">(""),
+    [outcomeComment, setOutcomeComment] = useState(""),
+    [refusalReason, setRefusalReason] = useState(""),
+    [cancelOpen, setCancelOpen] = useState(false),
+    [cancelReason, setCancelReason] = useState(""),
+    [cancelComment, setCancelComment] = useState(""),
+    [rescheduleOpen, setRescheduleOpen] = useState(false),
+    [rescheduleDate, setRescheduleDate] = useState(""),
+    [rescheduleMeasurerId, setRescheduleMeasurerId] = useState("");
   const [creating, setCreating] = useState(false), [createOpen, setCreateOpen] = useState(false),
     [createForm, setCreateForm] = useState({ clientName: "", phone: "", city: "", visitDate: "", address: "", mapLink: "", comment: "" });
   const [scheduleOpen, setScheduleOpen] = useState(false),
@@ -259,6 +299,17 @@ export default function MeasurementWorkspace() {
     [photoType, setPhotoType] = useState("SHEET");
   const measurer = session?.user.role === "MEASURER";
   const canSchedule = session?.user.role === "MANAGER" || session?.user.role === "DIRECTOR";
+  const selectMeasurement = (row: Measurement) => {
+    setSelectedId(row.id);
+    setForm(formOf(row));
+    setClientOutcome(row.clientOutcome ?? "");
+    setOutcomeComment(row.outcomeComment ?? "");
+    setRefusalReason(row.refusalReason ?? "");
+    setCancelOpen(false);
+    setRescheduleOpen(false);
+    setRescheduleDate(new Date(row.visitDate).toISOString().slice(0, 16));
+    setRescheduleMeasurerId(row.measurerUser ? String(row.measurerUser.id) : "");
+  };
   const load = useCallback(async () => {
     const response = await fetch("/api/measurements?workspace=1", {
         cache: "no-store",
@@ -276,6 +327,9 @@ export default function MeasurementWorkspace() {
       if (requestedMeasurement) {
         setSelectedId(requested);
         setForm(formOf(requestedMeasurement));
+        setClientOutcome(requestedMeasurement.clientOutcome ?? "");
+        setOutcomeComment(requestedMeasurement.outcomeComment ?? "");
+        setRefusalReason(requestedMeasurement.refusalReason ?? "");
       }
     }
   }, []);
@@ -353,6 +407,24 @@ export default function MeasurementWorkspace() {
       setBusy(false);
     }
   }
+  async function complete() {
+    if (!clientOutcome) {
+      setError("Выберите результат общения с клиентом");
+      return;
+    }
+    if (clientOutcome === "RETURN_TO_MANAGER" && !outcomeComment.trim()) {
+      setError("Для передачи менеджеру укажите комментарий");
+      return;
+    }
+    if (clientOutcome === "REFUSED" && (!refusalReason || (refusalReason === "OTHER" && !outcomeComment.trim()))) {
+      setError("Укажите причину отказа и комментарий для варианта «Другое»");
+      return;
+    }
+    await run(
+      { ...payload("complete"), clientOutcome, refusalReason: clientOutcome === "REFUSED" ? refusalReason : undefined, outcomeComment },
+      "Замер завершён, результат передан менеджеру",
+    );
+  }
   async function upload(file?: File) {
     if (!selected || !file) return;
     setBusy(true);
@@ -401,6 +473,15 @@ export default function MeasurementWorkspace() {
     const first = clients[0];
     setScheduleForm((current) => ({ ...current, clientId: first ? String(first.id) : "", city: first?.city ?? "", address: first?.address ?? "", measurerUserId: active.length === 1 ? String(active[0].id) : "" }));
     setScheduleOpen(true);
+  }
+  async function openReschedule() {
+    setCancelOpen(false);
+    setRescheduleOpen(true);
+    if (scheduleMeasurers.length) return;
+    const response = await fetch("/api/measurements?meta=1", { cache: "no-store" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось загрузить замерщиков");
+    else setScheduleMeasurers((body.measurers ?? []) as ActiveMeasurer[]);
   }
   function chooseScheduleClient(clientId: string) {
     const client = scheduleClients.find((row) => String(row.id) === clientId);
@@ -556,10 +637,7 @@ export default function MeasurementWorkspace() {
                   className={`rounded-xl border p-4 ${selectedId === row.id ? "border-blue-500 bg-blue-950/30" : "border-slate-800 bg-slate-950/60"}`}
                 >
                   <button
-                    onClick={() => {
-                      setSelectedId(row.id);
-                      setForm(formOf(row));
-                    }}
+                    onClick={() => selectMeasurement(row)}
                     className="w-full text-left"
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -638,12 +716,49 @@ export default function MeasurementWorkspace() {
                   {selected.city} · {selected.address}
                 </p>
               </div>
-              <span
-                className={`rounded-full px-3 py-1 text-sm ${statusTone[selected.status]}`}
-              >
-                {statusNames[selected.status]}
-              </span>
+              <div className="flex items-start gap-2">
+                <span className={`rounded-full px-3 py-1 text-sm ${statusTone[selected.status]}`}>
+                  {statusNames[selected.status]}
+                </span>
+                {canSchedule && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+                  <details className="relative">
+                    <summary aria-label="Действия с замером" className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg bg-slate-800 text-slate-200 [&::-webkit-details-marker]:hidden">
+                      <MoreVertical size={18} />
+                    </summary>
+                    <div className="absolute right-0 z-20 mt-2 w-56 rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-2xl">
+                      <button type="button" onClick={() => void openReschedule()} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-slate-200 hover:bg-slate-800">
+                        <RotateCcw size={16} /> Перенести замер
+                      </button>
+                      <button type="button" onClick={() => { setCancelOpen(true); setRescheduleOpen(false); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-red-300 hover:bg-red-950/50">
+                        <XCircle size={16} /> Отменить замер
+                      </button>
+                    </div>
+                  </details>
+                )}
+              </div>
             </div>
+            {canSchedule && rescheduleOpen && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+              <section className="grid gap-3 rounded-xl border border-amber-800 bg-amber-950/20 p-4 sm:grid-cols-2">
+                <h3 className="font-semibold text-white sm:col-span-2">Перенести замер</h3>
+                <Field label="Новая дата и время"><input type="datetime-local" className={input} value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} /></Field>
+                <Field label="Замерщик"><select className={input} value={rescheduleMeasurerId} onChange={(event) => setRescheduleMeasurerId(event.target.value)}><option value="">Выберите</option>{scheduleMeasurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
+                <div className="flex gap-2 sm:col-span-2">
+                  <button type="button" onClick={() => setRescheduleOpen(false)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button>
+                  <button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId} onClick={() => void run({ action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: selected.city, address: selected.address, mapLink: selected.mapLink, comment: selected.managerComment }, "Замер перенесён").then(() => setRescheduleOpen(false))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button>
+                </div>
+              </section>
+            )}
+            {canSchedule && cancelOpen && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+              <section className="space-y-3 rounded-xl border border-red-800 bg-red-950/20 p-4">
+                <h3 className="font-semibold text-white">Отменить замер?</h3>
+                <Field label="Причина"><input className={input} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Например: клиент перенёс решение" /></Field>
+                <Field label="Комментарий"><textarea rows={2} className={input} value={cancelComment} onChange={(event) => setCancelComment(event.target.value)} /></Field>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setCancelOpen(false)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Не отменять</button>
+                  <button type="button" disabled={busy || !cancelReason.trim()} onClick={() => void run({ action: "cancel", reason: cancelReason, comment: cancelComment }, "Замер отменён").then(() => setCancelOpen(false))} className="min-h-11 flex-1 rounded-xl bg-red-700 px-3 font-semibold disabled:opacity-50">Отменить замер</button>
+                </div>
+              </section>
+            )}
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               <a
                 href={`tel:${selected.client.phone}`}
@@ -902,26 +1017,45 @@ export default function MeasurementWorkspace() {
                     <Save size={18} />
                     Сохранить черновик
                   </button>
+                </div>
+                <section className="space-y-4 rounded-xl border border-emerald-800/60 bg-emerald-950/10 p-4">
+                  <div>
+                    <h3 className="font-semibold text-white">Результат общения с клиентом</h3>
+                    <p className="mt-1 text-sm text-slate-400">Что сказал клиент после замера? Выбор обязателен для завершения.</p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {([
+                      ["READY_TO_CONTINUE", "Готов продолжить"],
+                      ["RETURN_TO_MANAGER", "Вернуть менеджеру"],
+                      ["REFUSED", "Отказался"],
+                    ] as const).map(([value, label]) => (
+                      <label key={value} className={`flex min-h-12 cursor-pointer items-center gap-2 rounded-xl border px-3 text-sm ${clientOutcome === value ? "border-emerald-500 bg-emerald-950/50 text-white" : "border-slate-700 bg-slate-950 text-slate-300"}`}>
+                        <input type="radio" name="client-outcome" value={value} checked={clientOutcome === value} onChange={() => { setClientOutcome(value); if (value !== "REFUSED") setRefusalReason(""); }} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                  {clientOutcome === "REFUSED" && (
+                    <Field label="Причина отказа"><select className={input} value={refusalReason} onChange={(event) => setRefusalReason(event.target.value)}><option value="">Выберите причину</option>{refusalReasons.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+                  )}
+                  {(clientOutcome === "RETURN_TO_MANAGER" || clientOutcome === "REFUSED") && (
+                    <Field label={clientOutcome === "RETURN_TO_MANAGER" ? "Комментарий менеджеру" : "Комментарий к результату"}><textarea rows={3} className={input} value={outcomeComment} onChange={(event) => setOutcomeComment(event.target.value)} placeholder={clientOutcome === "RETURN_TO_MANAGER" ? "Что должен сделать менеджер" : "Дополнительные детали"} /></Field>
+                  )}
                   <button
-                    disabled={busy}
-                    onClick={() =>
-                      void run(
-                        payload("complete"),
-                        "Замер завершён; данные зафиксированы",
-                      )
-                    }
-                    className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 font-semibold"
+                    disabled={busy || !clientOutcome || (clientOutcome === "RETURN_TO_MANAGER" && !outcomeComment.trim()) || (clientOutcome === "REFUSED" && (!refusalReason || (refusalReason === "OTHER" && !outcomeComment.trim())))}
+                    onClick={() => void complete()}
+                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 font-semibold disabled:opacity-50"
                   >
                     <CheckCircle2 size={18} />
-                    Замер выполнен
+                    Завершить замер
                   </button>
-                </div>
+                </section>
               </>
             )}
             {["COMPLETED", "HANDED_TO_MANAGER"].includes(selected.status) && (
               <MeasurementResult row={selected} />
             )}
-            {measurer && selected.status === "COMPLETED" && (
+            {measurer && selected.status === "COMPLETED" && !selected.clientOutcome && (
               <button
                 disabled={busy}
                 onClick={() =>
@@ -932,6 +1066,15 @@ export default function MeasurementWorkspace() {
                 <ClipboardCheck size={18} />
                 Передать менеджеру
               </button>
+            )}
+            {selected.status === "CANCELLED" && (
+              <section className="rounded-xl border border-slate-700 bg-slate-950/60 p-4 text-sm text-slate-300">
+                <h3 className="font-semibold text-white">Замер отменён</h3>
+                {(() => {
+                  const event = selected.auditEvents.find((item) => item.action === "MEASUREMENT_CANCELLED" || item.action === "CANCELLED");
+                  return event ? <div className="mt-2 space-y-1"><p>{event.comment || "Причина не указана"}</p><p className="text-slate-500">{when(event.createdAt)} · {event.actor?.name ?? "Система"}</p></div> : <p className="mt-2 text-slate-500">История отмены сохранена.</p>;
+                })()}
+              </section>
             )}
             {measurer && selected.status === "HANDED_TO_MANAGER" && (
               <section className="space-y-3 rounded-xl border border-violet-900 bg-violet-950/20 p-4">
@@ -1226,6 +1369,14 @@ function MeasurementResult({ row }: { row: Measurement }) {
         <p className="mt-3 whitespace-pre-wrap text-sm text-slate-300">
           {row.objectNotes}
         </p>
+      )}
+      {row.clientOutcome && (
+        <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-sm text-slate-300">
+          <b className="text-white">Результат клиента: {outcomeNames[row.clientOutcome] ?? row.clientOutcome}</b>
+          {row.refusalReason && <p className="mt-1">Причина: {refusalReasons.find(([value]) => value === row.refusalReason)?.[1] ?? row.refusalReason}</p>}
+          {row.outcomeComment && <p className="mt-1 whitespace-pre-wrap">{row.outcomeComment}</p>}
+          {row.outcomeAt && <p className="mt-1 text-xs text-slate-500">Зафиксировано {when(row.outcomeAt)}</p>}
+        </div>
       )}
       <PhotoList photos={row.attachments} />
     </section>

@@ -215,6 +215,11 @@ enum LeadSource {
 
 enum LeadLostReason {
   EXPENSIVE
+  PRICE_TOO_HIGH
+  CHANGED_MIND
+  COMPARING
+  NOT_READY
+  UNSUITABLE_SOLUTION
   NO_RESPONSE
   COMPETITOR
   POSTPONED
@@ -255,6 +260,12 @@ enum MeasurementStatus {
   COMPLETED
   HANDED_TO_MANAGER
   CANCELLED
+}
+
+enum MeasurementClientOutcome {
+  READY_TO_CONTINUE
+  RETURN_TO_MANAGER
+  REFUSED
 }
 
 enum MeasurementPhotoType {
@@ -317,6 +328,7 @@ model User {
   partnerAssignments           PartnerAssignmentHistory[]   @relation("PartnerAssignmentAuthor")
   authAuditEvents              AuthAuditEvent[]
   managedClients               Client[]                     @relation("ClientManager")
+  deletedClients               Client[]                     @relation("ClientDeletedBy")
   changedLeadStages            LeadStatusHistory[]          @relation("LeadStageChangedBy")
   createdLeadActions           LeadNextAction[]             @relation("LeadActionCreatedBy")
   completedLeadActions         LeadNextAction[]             @relation("LeadActionCompletedBy")
@@ -403,6 +415,9 @@ model Client {
   lostComment     String?
   lostAt          DateTime?
   lostByUserId    Int?
+  deletedAt       DateTime?
+  deletedById     Int?
+  deletedBy       User?           @relation("ClientDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   orders              Order[]
   interactions        ClientInteraction[]
@@ -430,6 +445,7 @@ model Client {
   @@index([stage, createdAt])
   @@index([managerUserId, stage])
   @@index([sourceCode, createdAt])
+  @@index([deletedAt, managerUserId])
 }
 
 model LeadActivity {
@@ -1739,6 +1755,10 @@ model Measurement {
   handedAt           DateTime?
   cancelledAt        DateTime?
   readyForContractAt DateTime?
+  clientOutcome      MeasurementClientOutcome?
+  outcomeComment     String?
+  refusalReason      LeadLostReason?
+  outcomeAt          DateTime?
   idempotencyKey     String?   @unique
   requestHash        String?
 
@@ -1752,6 +1772,7 @@ model Measurement {
   @@index([measurerUserId, visitDate])
   @@index([clientId, status, visitDate])
   @@index([orderId])
+  @@index([clientOutcome, outcomeAt])
 }
 
 model MeasurementAttachment {

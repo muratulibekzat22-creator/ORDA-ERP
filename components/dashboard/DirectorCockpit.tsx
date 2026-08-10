@@ -19,7 +19,8 @@ type SalesMetrics = {
   productionReady?: number; productionOverdue?: number;
 };
 type ManagerRow = { managerUserId: number; manager: string; newLeads: number; orders: number; totalSales: number; conversion: number };
-type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; activities: Activity[] };
+type MeasurementAttention = { id: number; nextActionAt: string; nextActionComment?: string | null; client: { id: number; name: string; phone: string } };
+type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; measurementAttention?: MeasurementAttention[]; activities: Activity[] };
 type AccountantPayload = { role: "ACCOUNTANT"; metrics: { receipts: number; expenses: number; partnerPayable: number; payrollPayable: number; pendingPayrollPayments: number; attentionOperations: number }; recentFinance: Array<{ id: number; type: string; category: string; direction: string; amount: string; operationDate: string; comment?: string | null }> };
 type ProductionPayload = { role: "PRODUCTION"; metrics: { preparation: number; painting: number; readyForInstallation: number; overdue: number; tasksToday: number; attentionOrders: number; missingMaterials: number; readyMaterials: number }; jobs: Array<{ id: number; stage: string; percent: number; href: string; order: { number: string; client: { name: string; city: string } } }> };
 type InstallationItem = { id: number; scheduledAt: string; href: string; order: { number: string; address: string; client: { name: string; city: string } } };
@@ -75,7 +76,7 @@ function Projection({ data }: { data: Payload }) {
 function SalesDashboard({ data }: { data: SalesPayload }) {
   const m = data.metrics, director = data.role === "DIRECTOR";
   return <>
-    {director ? <DirectorSalesDashboard metrics={m} managers={data.managers ?? []}/> : <ManagerSalesDashboard metrics={m}/>}
+    {director ? <DirectorSalesDashboard metrics={m} managers={data.managers ?? []}/> : <ManagerSalesDashboard metrics={m} attention={data.measurementAttention ?? []}/>}
     <Panel title="Последние важные действия">{data.activities.length ? <div className="divide-y divide-slate-800">{data.activities.map((item) => <Link key={item.id} href={item.href} className="flex min-w-0 flex-col gap-1 py-3 hover:text-blue-300 sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0"><strong className="block truncate text-white">{item.subject}</strong><span className="block truncate text-sm text-slate-400">{item.title} · {item.user ?? "Система"}</span></span><time className="shrink-0 text-xs text-slate-500">{new Date(item.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link>)}</div> : <Empty text="Важных действий пока нет."/>}</Panel>
   </>;
 }
@@ -131,8 +132,8 @@ function DirectorSalesDashboard({ metrics: m, managers }: { metrics: SalesMetric
   </>;
 }
 
-function ManagerSalesDashboard({ metrics: m }: { metrics: SalesMetrics }) {
-  return <div className="grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4">
+function ManagerSalesDashboard({ metrics: m, attention }: { metrics: SalesMetrics; attention: MeasurementAttention[] }) {
+  return <><div className="grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4">
     <Metric href="/clients" label="Мои новые заявки" value={m.newLeads} featured/>
     <Metric href="/clients" label="Мои активные заявки" value={m.activeLeads} featured/>
     <Metric href="/orders" label="Мои заказы" value={m.orders} featured/>
@@ -141,7 +142,7 @@ function ManagerSalesDashboard({ metrics: m }: { metrics: SalesMetrics }) {
     <Metric href="/measurements" label="Мои замеры сегодня" value={m.measurementsToday}/>
     <Metric href="/calendar" label="Мои задачи сегодня" value={m.tasksToday}/>
     <Metric href="/calendar?state=overdue" label="Мои просроченные" value={m.overdueNextActions + m.overdueTasks + m.overdueOrders} alert/>
-  </div>;
+  </div><Panel title="Требует внимания после замера">{attention.length ? <div className="grid gap-2 md:grid-cols-2">{attention.map((item) => <Link key={item.id} href={`/clients/${item.client.id}`} className="min-w-0 rounded-xl border border-amber-800/60 bg-amber-950/20 p-3 hover:border-amber-500"><b className="block truncate text-white">{item.client.name || item.client.phone}</b><span className="mt-1 block break-words text-sm text-amber-200">{item.nextActionComment || "Замер выполнен — требуется работа менеджера"}</span><time className="mt-2 block text-xs text-slate-500">до {new Date(item.nextActionAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link>)}</div> : <Empty text="Новых результатов замеров, требующих внимания, нет." />}</Panel></>;
 }
 
 function AccountantDashboard({ data }: { data: AccountantPayload }) { const m = data.metrics; return <><div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><Metric href="/finance" label="Поступления" value={money(m.receipts)} featured/><Metric href="/finance" label="Расходы" value={money(m.expenses)} featured/><Metric href="/partners" label="К выплате партнёрам" value={money(m.partnerPayable)}/><Metric href="/payroll" label="Payroll к выплате" value={money(m.payrollPayable)}/><Metric href="/payroll" label="Ожидают выплаты" value={m.pendingPayrollPayments}/><Metric href="/finance" label="Требуют внимания" value={m.attentionOperations} alert/></div><Panel title="Последние финансовые операции" href="/finance">{data.recentFinance.length ? <div className="divide-y divide-slate-800">{data.recentFinance.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-3 text-sm"><span className="min-w-0"><b className="block truncate text-white">{item.category}</b><span className="block truncate text-slate-400">{item.comment || item.type}</span></span><b className={item.direction === "INCOME" ? "text-emerald-300" : "text-red-300"}>{item.direction === "INCOME" ? "+" : "−"}{money(item.amount)}</b></div>)}</div> : <Empty text="Финансовых операций за период нет."/>}</Panel></>; }

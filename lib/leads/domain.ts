@@ -34,7 +34,9 @@ export const NEXT_ACTION_LABELS: Record<LeadNextActionType, string> = {
 };
 
 export const LOST_REASON_LABELS: Record<LeadLostReason, string> = {
-  EXPENSIVE: "Дорого", NO_RESPONSE: "Не отвечает", COMPETITOR: "Выбрал конкурента",
+  EXPENSIVE: "Дорого", PRICE_TOO_HIGH: "Дорого", CHANGED_MIND: "Передумал",
+  COMPARING: "Сравнивает с другими", NOT_READY: "Не готов сейчас",
+  UNSUITABLE_SOLUTION: "Не подходит решение", NO_RESPONSE: "Не отвечает", COMPETITOR: "Выбрал конкурента",
   POSTPONED: "Отложил", NO_BUDGET: "Нет бюджета", NOT_RELEVANT: "Неактуально",
   LOCATION: "Регион/локация", TIMING: "Не подходит срок", OTHER: "Другое",
 };

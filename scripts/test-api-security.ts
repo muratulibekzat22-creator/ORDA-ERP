@@ -815,9 +815,9 @@ async function main() {
     } else {
       console.log("private attachment Blob integration skipped: test BLOB_READ_WRITE_TOKEN is absent; MIME rejection passed");
     }
-    const managerClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, managerCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
+    const managerClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, managerCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number }; filters: { managers: string[] } };
     assert(Array.isArray(managerClients.data) && managerClients.pagination.total > 0 && managerClients.data.some((item) => item.id === client.id), "manager clients payload is invalid");
-    await expectStatus(`/api/clients/${client.id}`, 409, managerCookie, { method: "DELETE" });
+    assert(managerClients.filters.managers.every((name) => name === manager.name), "manager client filters expose another manager's ownership metadata");
     const removableClient = await prisma.client.create({ data: { name: `${tag}-removable`, phone: `+7${Date.now()}99`, city: "E2E", manager: manager.name, managerUserId: manager.id, amount: "0", status: "New" } });
     const removableCalculation = await prisma.leadCalculation.create({ data: {
       clientId: removableClient.id,
@@ -844,10 +844,17 @@ async function main() {
     } });
     const foreignManagerCookie = await session(sharedUsers[0].email);
     await expectStatus(`/api/clients/${removableClient.id}`, 404, foreignManagerCookie, { method: "DELETE" });
-    await expectStatus(`/api/clients/${removableClient.id}`, 204, managerCookie, { method: "DELETE" });
-    assert(await prisma.client.count({ where: { id: removableClient.id } }) === 0, "manager could not permanently delete an own unlinked lead");
-    assert(await prisma.leadCalculation.count({ where: { id: removableCalculation.id } }) === 0, "lead calculation was orphaned after permanent deletion");
-    assert(await prisma.commercialProposal.count({ where: { id: removableProposal.id } }) === 0, "commercial proposal was orphaned after permanent deletion");
+    await expectStatus(`/api/clients/${removableClient.id}`, 200, managerCookie, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "API security lifecycle" }) });
+    const archivedClient = await prisma.client.findUniqueOrThrow({ where: { id: removableClient.id } });
+    assert(archivedClient.active === false && Boolean(archivedClient.deletedAt), "manager soft-delete did not archive an own lead");
+    assert(await prisma.leadCalculation.count({ where: { id: removableCalculation.id } }) === 1, "lead calculation was deleted by application soft-delete");
+    assert(await prisma.commercialProposal.count({ where: { id: removableProposal.id } }) === 1, "commercial proposal was deleted by application soft-delete");
+    await expectStatus(`/api/clients/${removableClient.id}`, 404, managerCookie);
+    await expectStatus(`/api/clients/${removableClient.id}/restore`, 403, managerCookie, { method: "POST" });
+    const deletedList = await (await expectStatus(`/api/clients?deletedOnly=true&search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }> };
+    assert(deletedList.data.some((item) => item.id === removableClient.id), "Director archive does not contain the soft-deleted lead");
+    await expectStatus(`/api/clients/${removableClient.id}/restore`, 200, directorCookie, { method: "POST" });
+    assert((await prisma.client.findUniqueOrThrow({ where: { id: removableClient.id } })).active === true, "Director could not restore the lead");
     const managerOrders = await (await expectStatus("/api/orders", 200, managerCookie)).json() as Array<Record<string, unknown> & { id: number }>;
     assert(Array.isArray(managerOrders) && managerOrders.some((order) => order.id === firstOrder.id), "manager orders payload is invalid");
     assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
@@ -967,7 +974,14 @@ async function main() {
         await prisma.commercialProposal.deleteMany({ where: { clientId: { in: leadIds } } });
         await prisma.leadCalculation.deleteMany({ where: { clientId: { in: leadIds } } });
       }
-      await prisma.client.deleteMany({ where: { OR: [{ name: { startsWith: tag } }, { comment: { startsWith: tag } }] } });
+      const lifecycleClientIds = (await prisma.client.findMany({ where: { OR: [{ name: { startsWith: tag } }, { comment: { startsWith: tag } }] }, select: { id: true } })).map((row) => row.id);
+      if (lifecycleClientIds.length) {
+        await prisma.leadConversion.deleteMany({ where: { clientId: { in: lifecycleClientIds } } });
+        await prisma.commercialProposal.deleteMany({ where: { clientId: { in: lifecycleClientIds } } });
+        await prisma.leadCalculation.deleteMany({ where: { clientId: { in: lifecycleClientIds } } });
+        await prisma.clientDeletionAudit.deleteMany({ where: { deletedClientId: { in: lifecycleClientIds } } });
+      }
+      await prisma.client.deleteMany({ where: { id: { in: lifecycleClientIds } } });
       await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
       await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
       if (generatedMaterialIds.length) { await prisma.inventoryCogsEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.inventoryValuationEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } }); }

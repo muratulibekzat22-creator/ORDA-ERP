@@ -48,6 +48,8 @@
     "test:proposal-go-live": "tsx scripts/test-proposal-go-live.ts",
     "test:calendar": "tsx scripts/test-calendar.ts",
     "test:measurements": "tsx scripts/test-measurements.ts",
+    "test:application-lifecycle": "tsx scripts/test-application-measurement-lifecycle.ts",
+    "test:application-go-live": "tsx scripts/test-application-lifecycle-go-live.ts",
     "test:reports": "tsx scripts/test-reports.ts",
     "test:orders-module": "tsx scripts/test-orders-module.ts",
     "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",
