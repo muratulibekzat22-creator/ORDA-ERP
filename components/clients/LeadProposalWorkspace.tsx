@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import StairCalculator from "@/components/calculator/StairCalculator";
 import PriceObjectionPanel from "@/components/clients/PriceObjectionPanel";
+import { MATERIAL_PRESENTATION } from "@/lib/proposals/presentation";
 
 type Calculation = {
   id: number;
@@ -12,7 +13,11 @@ type Calculation = {
   clientPrice: string;
   createdAt: string;
 };
-type Variant = { material: string; total: string | number };
+type Variant = {
+  material: string;
+  total: string | number;
+  warranty?: string;
+};
 type Proposal = {
   id: number;
   number: string;
@@ -217,13 +222,24 @@ export default function LeadProposalWorkspace({
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             {latest.snapshot.variants?.map((variant) => (
-              <article key={variant.material} className="rounded-xl bg-slate-900 p-4">
-                <h3 className="mt-1 font-semibold text-white">
+              <article key={variant.material} className="rounded-xl border border-amber-800/40 bg-slate-900 p-4">
+                <h3 className="mt-1 text-sm font-semibold uppercase tracking-wide text-white">
                   {variant.material}
                 </h3>
-                <p className="mt-3 text-lg font-bold text-blue-300">
+                <p className="mt-2 min-h-10 text-xs leading-5 text-slate-400">
+                  {MATERIAL_PRESENTATION[variant.material]?.description}
+                </p>
+                <p className="mt-3 text-xl font-bold text-amber-200">
                   {money(variant.total)}
                 </p>
+                <div className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-slate-950">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                    Гарантия
+                  </p>
+                  <p className="text-sm font-bold uppercase">
+                    {variant.warranty ?? "По материалу"}
+                  </p>
+                </div>
               </article>
             ))}
           </div>

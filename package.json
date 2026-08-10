@@ -44,6 +44,8 @@
     "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",
     "test:order360": "tsx scripts/test-order360.ts",
     "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts",
+    "preview:proposal": "tsx scripts/generate-proposal-preview.ts",
+    "test:proposal-go-live": "tsx scripts/test-proposal-go-live.ts",
     "test:calendar": "tsx scripts/test-calendar.ts",
     "test:measurements": "tsx scripts/test-measurements.ts",
     "test:reports": "tsx scripts/test-reports.ts",

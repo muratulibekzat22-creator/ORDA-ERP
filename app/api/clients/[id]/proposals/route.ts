@@ -9,6 +9,7 @@ import {
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { warrantyLabel } from "@/lib/contracts/domain";
 import { prisma } from "@/lib/prisma";
+import { PROPOSAL_VALIDITY_DAYS } from "@/lib/proposals/presentation";
 import { requirePermission } from "@/lib/server-auth";
 
 type Context = { params: Promise<{ id: string }> };
@@ -94,7 +95,7 @@ export async function POST(request: Request, context: Context) {
       clientId,
       calculationIds: [...requestedIds].sort(),
       previousProposalId: body.previousProposalId ?? null,
-      validDays: 3,
+      validDays: PROPOSAL_VALIDITY_DAYS,
       executionTerm: "FROM_SETTINGS",
       paymentTerms: body.paymentTerms ?? null,
       warranty: "FROM_MATERIALS",
@@ -171,7 +172,7 @@ export async function POST(request: Request, context: Context) {
         total: Number(item.clientPrice),
         composition: calculation.lines ?? [],
         executionTerm,
-        warranty: warrantyByMaterial.get(item.material) ?? "согласно договору",
+        warranty: warrantyByMaterial.get(item.material) ?? "по материалу",
         includedServices: {
           measurement:
             calculation.includeMeasurement ??
@@ -208,6 +209,7 @@ export async function POST(request: Request, context: Context) {
             company: {
               name: settings?.name ?? "ALTYN SAPA COMPANY",
               phone: settings?.phone ?? "+7 708 575 0881",
+              whatsapp: settings?.whatsapp ?? "",
               email: settings?.email ?? "",
             },
             client: {
@@ -223,7 +225,9 @@ export async function POST(request: Request, context: Context) {
               body.paymentTerms ??
                 "Условия оплаты согласовываются при оформлении заказа",
             ),
-            validUntil: new Date(now.getTime() + 3 * 86400000).toISOString(),
+            validUntil: new Date(
+              now.getTime() + PROPOSAL_VALIDITY_DAYS * 86400000,
+            ).toISOString(),
             createdAt: now.toISOString(),
             number: rootNumber,
             version,
