@@ -30,14 +30,14 @@ function redactCalculation(value: Record<string, unknown>, role: Role) {
 }
 async function scopedOrder(id: number, role: Role, userId: string) {
   if (role !== Role.PARTNER)
-    return prisma.order.findUnique({ where: { id }, select: { id: true } });
+    return prisma.order.findFirst({ where: { id, deletedAt: null }, select: { id: true } });
   const partner = await prisma.partner.findUnique({
     where: { userId: Number(userId) },
     select: { id: true },
   });
   return partner
     ? prisma.order.findFirst({
-        where: { id, partnerId: partner.id },
+        where: { id, partnerId: partner.id, deletedAt: null },
         select: { id: true },
       })
     : null;

@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status: 201 });
     }
     const orderId = positiveId(body.orderId);
-    const order = !body.clientId && orderId ? await prisma.order.findUnique({ where: { id: orderId }, select: { clientId: true } }) : null;
+    const order = !body.clientId && orderId ? await prisma.order.findFirst({ where: { id: orderId, deletedAt: null }, select: { clientId: true } }) : null;
     const clientId = positiveId(body.clientId) ?? order?.clientId ?? null;
     let measurerUserId = positiveId(body.measurerUserId);
     if (!measurerUserId) {

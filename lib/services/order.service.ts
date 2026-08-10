@@ -2,11 +2,17 @@ import { DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
-import { del } from "@vercel/blob";
 
-export async function getOrders(where: import("@prisma/client").Prisma.OrderWhereInput = {}) {
-  return prisma.order.findMany({
-    where,
+export async function getOrders(
+  where: import("@prisma/client").Prisma.OrderWhereInput = {},
+  options: { includeDeleted?: boolean } = {},
+) {
+  const effectiveWhere: Prisma.OrderWhereInput =
+    options.includeDeleted || Object.hasOwn(where, "deletedAt")
+      ? where
+      : { AND: [where, { deletedAt: null }] };
+  const orders = await prisma.order.findMany({
+    where: effectiveWhere,
     select: {
       id: true,
       number: true,
@@ -23,6 +29,9 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
       partnerBalance: true,
       manager: true,
       managerUserId: true,
+      deletedAt: true,
+      deletedById: true,
+      deletedBy: { select: { id: true, name: true } },
       lifecycle: true,
       version: true,
       status: true,
@@ -40,7 +49,10 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
         select: { stage: true, master: true, plannedEndAt: true },
       },
       installation: {
-        select: { scheduledAt: true, installerUser: { select: { name: true } } },
+        select: {
+          scheduledAt: true,
+          installerUser: { select: { name: true } },
+        },
       },
       blockers: {
         where: { status: "OPEN" },
@@ -51,16 +63,34 @@ export async function getOrders(where: import("@prisma/client").Prisma.OrderWher
       documents: {
         where: {
           type: DocumentType.CONTRACT,
-          status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] },
+          status: {
+            notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED],
+          },
         },
         take: 1,
         select: { id: true },
+      },
+      _count: {
+        select: {
+          payments: true,
+          companyLedgerEntries: true,
+          financeAuditEvents: true,
+          payrollAccruals: true,
+        },
       },
     },
     orderBy: {
       createdAt: "desc",
     },
   });
+  return orders.map(({ _count, ...order }) => ({
+    ...order,
+    hasFinancialHistory:
+      _count.payments > 0 ||
+      _count.companyLedgerEntries > 0 ||
+      _count.financeAuditEvents > 0 ||
+      _count.payrollAccruals > 0,
+  }));
 }
 
 export async function getOrder(id: number) {
@@ -71,11 +101,31 @@ export async function getOrder(id: number) {
     include: {
       client: true,
       partner: true,
+      deletedBy: { select: { id: true, name: true } },
       managerUser: { include: { payrollProfile: { select: { id: true } } } },
-      measurements: { include: { measurerUser: { include: { payrollProfile: { select: { id: true } } } } } },
-      payments: { include: { partner: true }, orderBy: [{ operationDate: "desc" }, { id: "desc" }] },
-      partnerAssignmentHistory: { include: { author: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
-      payrollAccruals: { include: { employee: { include: { user: { select: { name: true } } } }, payments: true, reversedBy: { select: { id: true } } }, orderBy: { createdAt: "desc" } },
+      measurements: {
+        include: {
+          measurerUser: {
+            include: { payrollProfile: { select: { id: true } } },
+          },
+        },
+      },
+      payments: {
+        include: { partner: true },
+        orderBy: [{ operationDate: "desc" }, { id: "desc" }],
+      },
+      partnerAssignmentHistory: {
+        include: { author: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+      },
+      payrollAccruals: {
+        include: {
+          employee: { include: { user: { select: { name: true } } } },
+          payments: true,
+          reversedBy: { select: { id: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
       productions: true,
       documents: true,
       calculations: {
@@ -86,6 +136,14 @@ export async function getOrder(id: number) {
       events: {
         orderBy: {
           createdAt: "desc",
+        },
+      },
+      _count: {
+        select: {
+          payments: true,
+          companyLedgerEntries: true,
+          financeAuditEvents: true,
+          payrollAccruals: true,
         },
       },
     },
@@ -192,17 +250,24 @@ function money(value: number) {
 }
 
 function isTransactionWriteConflict(error: unknown) {
-  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") return true;
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2034"
+  )
+    return true;
   if (!error || typeof error !== "object" || !("cause" in error)) return false;
   const cause = (error as { cause?: { kind?: unknown } }).cause;
   return cause?.kind === "TransactionWriteConflict";
 }
 
 export async function createOrder(data: CreateOrderInput) {
-  if (data.partnerPaid > 0 && !data.partnerId) throw new Error("PARTNER_REQUIRED_FOR_INITIAL_PAYOUT");
-  if (data.partnerPaid > 0 && !data.partnerPriceSet) throw new Error("PARTNER_PRICE_REQUIRED");
+  if (data.partnerPaid > 0 && !data.partnerId)
+    throw new Error("PARTNER_REQUIRED_FOR_INITIAL_PAYOUT");
+  if (data.partnerPaid > 0 && !data.partnerPriceSet)
+    throw new Error("PARTNER_PRICE_REQUIRED");
   if (!data.clientId && !data.client) throw new Error("CLIENT_REQUIRED");
-  if (data.actorRole === Role.MANAGER && !data.managerUserId) throw new Error("MANAGER_REQUIRED");
+  if (data.actorRole === Role.MANAGER && !data.managerUserId)
+    throw new Error("MANAGER_REQUIRED");
   const eventKey = data.idempotencyKey
     ? `order:${data.idempotencyKey}`
     : undefined;
@@ -212,147 +277,232 @@ export async function createOrder(data: CreateOrderInput) {
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await prisma.$transaction(async (tx) => {
-        if (eventKey && data.requestHash) {
-          const existingEvent = await tx.orderEvent.findUnique({
-            where: { idempotencyKey: eventKey },
-            select: { orderId: true, requestHash: true },
-          });
-          if (existingEvent) {
-            if (
-              !compareRequestHash(existingEvent.requestHash, data.requestHash)
-            )
-              throw new Error("IDEMPOTENCY_CONFLICT");
-            return {
-              order: await tx.order.findUniqueOrThrow({
-                where: { id: existingEvent.orderId },
-              }),
-              created: false,
-            };
-          }
-        }
-
-        let clientId = data.clientId;
-        if (data.client) {
-          const phone = normalizePhone(data.client.phone);
-          if (!phone) throw new Error("INVALID_CLIENT_PHONE");
-          const existing = await tx.client.findFirst({
-            where: { active: true, OR: [{ phone }, { whatsapp: phone }] },
-            select: { id: true, managerUserId: true, manager: true },
-          });
-          if (existing) {
-            if (
-              (data.actorRole === Role.MANAGER || data.enforceClientOwnership) &&
-              existing.managerUserId &&
-              existing.managerUserId !== data.managerUserId
-            )
-              throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
-            if (!existing.managerUserId && data.actorRole === Role.MANAGER && existing.manager && existing.manager !== data.manager)
-              throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
-            if (!existing.managerUserId) await tx.client.update({ where: { id: existing.id }, data: { managerUserId: data.managerUserId, manager: data.manager } });
-            if (clientId && clientId !== existing.id) throw new Error("CLIENT_PHONE_MISMATCH");
-            clientId = existing.id;
-          } else if (clientId) {
-            throw new Error("CLIENT_PHONE_MISMATCH");
-          } else {
-            const createdClient = await tx.client.create({
-              data: {
-                name: data.client.name,
-                phone,
-                whatsapp: phone,
-                city: data.client.city,
-                address: data.client.address,
-                manager: data.manager,
-                managerUserId: data.managerUserId,
-                amount: money(data.amount),
-                estimatedAmount: money(data.amount),
-                status: "Order registered",
-                stage: "WON",
-                source: "Existing order",
-                comment: "Created while registering an existing order",
-              },
-              select: { id: true },
+      return await prisma.$transaction(
+        async (tx) => {
+          if (eventKey && data.requestHash) {
+            const existingEvent = await tx.orderEvent.findUnique({
+              where: { idempotencyKey: eventKey },
+              select: { orderId: true, requestHash: true },
             });
-            clientId = createdClient.id;
+            if (existingEvent) {
+              if (
+                !compareRequestHash(existingEvent.requestHash, data.requestHash)
+              )
+                throw new Error("IDEMPOTENCY_CONFLICT");
+              return {
+                order: await tx.order.findUniqueOrThrow({
+                  where: { id: existingEvent.orderId },
+                }),
+                created: false,
+              };
+            }
           }
-        }
-        if (!clientId) throw new Error("CLIENT_REQUIRED");
-        const ownedClient = await tx.client.findUnique({ where: { id: clientId }, select: { managerUserId: true, manager: true } });
-        if (!ownedClient) throw new Error("CLIENT_NOT_FOUND");
-        if (
-          (data.actorRole === Role.MANAGER || data.enforceClientOwnership) &&
-          ownedClient.managerUserId &&
-          ownedClient.managerUserId !== data.managerUserId
-        )
-          throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
-        if (!ownedClient.managerUserId && data.actorRole === Role.MANAGER && ownedClient.manager && ownedClient.manager !== data.manager)
-          throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
-        if (!ownedClient.managerUserId) await tx.client.update({ where: { id: clientId }, data: { managerUserId: data.managerUserId, manager: data.manager } });
 
-        const order = await tx.order.create({
-          data: {
-            number: orderNumber(),
-            clientId,
-            partnerId: data.partnerId,
-            address: data.address,
-            staircase: data.staircase,
-            material: data.material,
-            mapUrl: data.mapUrl ?? "",
-            orderReceivedAt: data.orderReceivedAt ?? new Date(),
-            promisedAt: data.promisedAt,
-            frameComment: data.frameComment ?? "",
-            railingType: data.railingType ?? "",
-            supportType: data.supportType ?? "",
-            color: data.color ?? "",
-            lighting: data.lighting ?? false,
-            lightingDetails: data.lightingDetails ?? "",
-            cladding: data.cladding ?? false,
-            claddingDetails: data.claddingDetails ?? "",
-            additionalDetails: data.additionalDetails ?? "",
-            paymentMethod: data.paymentMethod ?? "",
-            amount: money(data.amount),
-            prepayment: money(data.prepayment),
-            balance: money(balance),
-            partnerPrice: money(data.partnerPrice),
-            partnerAgreedAt: data.partnerId && data.partnerPriceSet ? new Date() : null,
-            partnerPaid: money(data.partnerPaid),
-            partnerBalance: money(partnerBalance),
-            companyProfit: money(companyProfit),
-            manager: data.manager,
-            managerUserId: data.managerUserId,
-            status: "Новая заявка",
-          },
-        });
-        if (data.prepayment > 0) await tx.payment.create({ data: { orderId: order.id, amount: money(data.prepayment), type: "CLIENT_PAYMENT", method: data.paymentMethod || "OTHER", operationDate: data.initialPaymentDate ?? new Date(), comment: data.initialPaymentComment || "Initial payment registered with existing order", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-client-payment:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
-        if (data.partnerPaid > 0) await tx.payment.create({ data: { orderId: order.id, partnerId: data.partnerId, amount: money(data.partnerPaid), type: "PARTNER_PAYOUT", method: "initial_order_posting", comment: "Initial partner payout", author: data.manager, idempotencyKey: data.idempotencyKey ? `order-partner-payout:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
-        await tx.orderEvent.create({
-          data: {
-            orderId: order.id,
-            title: "Создан заказ",
-            description: `Заказ ${order.number} успешно создан.`,
-            user: data.manager,
-            idempotencyKey: eventKey,
-            requestHash: data.requestHash,
-          },
-        });
-        await tx.orderStatusHistory.create({
-          data: {
-            orderId: order.id,
-            fromStatus: null,
-            toStatus: "Новая заявка",
-            changedByName: data.manager,
-            changedByRole: data.actorRole ?? "MANAGER",
-            comment: "Заказ создан",
-          },
-        });
-        await tx.orderLifecycleEvent.create({ data: { orderId: order.id, type: "ORDER_CREATED", toLifecycle: "CREATED", actorId: data.managerUserId, actorName: data.manager, role: data.actorRole ?? "MANAGER", idempotencyKey: data.idempotencyKey ? `order-lifecycle:${data.idempotencyKey}` : undefined, requestHash: data.requestHash } });
-        return { order, created: true };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
+          let clientId = data.clientId;
+          if (data.client) {
+            const phone = normalizePhone(data.client.phone);
+            if (!phone) throw new Error("INVALID_CLIENT_PHONE");
+            const existing = await tx.client.findFirst({
+              where: { active: true, OR: [{ phone }, { whatsapp: phone }] },
+              select: { id: true, managerUserId: true, manager: true },
+            });
+            if (existing) {
+              if (
+                (data.actorRole === Role.MANAGER ||
+                  data.enforceClientOwnership) &&
+                existing.managerUserId &&
+                existing.managerUserId !== data.managerUserId
+              )
+                throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+              if (
+                !existing.managerUserId &&
+                data.actorRole === Role.MANAGER &&
+                existing.manager &&
+                existing.manager !== data.manager
+              )
+                throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+              if (!existing.managerUserId)
+                await tx.client.update({
+                  where: { id: existing.id },
+                  data: {
+                    managerUserId: data.managerUserId,
+                    manager: data.manager,
+                  },
+                });
+              if (clientId && clientId !== existing.id)
+                throw new Error("CLIENT_PHONE_MISMATCH");
+              clientId = existing.id;
+            } else if (clientId) {
+              throw new Error("CLIENT_PHONE_MISMATCH");
+            } else {
+              const createdClient = await tx.client.create({
+                data: {
+                  name: data.client.name,
+                  phone,
+                  whatsapp: phone,
+                  city: data.client.city,
+                  address: data.client.address,
+                  manager: data.manager,
+                  managerUserId: data.managerUserId,
+                  amount: money(data.amount),
+                  estimatedAmount: money(data.amount),
+                  status: "Order registered",
+                  stage: "WON",
+                  source: "Existing order",
+                  comment: "Created while registering an existing order",
+                },
+                select: { id: true },
+              });
+              clientId = createdClient.id;
+            }
+          }
+          if (!clientId) throw new Error("CLIENT_REQUIRED");
+          const ownedClient = await tx.client.findUnique({
+            where: { id: clientId },
+            select: { managerUserId: true, manager: true },
+          });
+          if (!ownedClient) throw new Error("CLIENT_NOT_FOUND");
+          if (
+            (data.actorRole === Role.MANAGER || data.enforceClientOwnership) &&
+            ownedClient.managerUserId &&
+            ownedClient.managerUserId !== data.managerUserId
+          )
+            throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+          if (
+            !ownedClient.managerUserId &&
+            data.actorRole === Role.MANAGER &&
+            ownedClient.manager &&
+            ownedClient.manager !== data.manager
+          )
+            throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
+          if (!ownedClient.managerUserId)
+            await tx.client.update({
+              where: { id: clientId },
+              data: {
+                managerUserId: data.managerUserId,
+                manager: data.manager,
+              },
+            });
+
+          const order = await tx.order.create({
+            data: {
+              number: orderNumber(),
+              clientId,
+              partnerId: data.partnerId,
+              address: data.address,
+              staircase: data.staircase,
+              material: data.material,
+              mapUrl: data.mapUrl ?? "",
+              orderReceivedAt: data.orderReceivedAt ?? new Date(),
+              promisedAt: data.promisedAt,
+              frameComment: data.frameComment ?? "",
+              railingType: data.railingType ?? "",
+              supportType: data.supportType ?? "",
+              color: data.color ?? "",
+              lighting: data.lighting ?? false,
+              lightingDetails: data.lightingDetails ?? "",
+              cladding: data.cladding ?? false,
+              claddingDetails: data.claddingDetails ?? "",
+              additionalDetails: data.additionalDetails ?? "",
+              paymentMethod: data.paymentMethod ?? "",
+              amount: money(data.amount),
+              prepayment: money(data.prepayment),
+              balance: money(balance),
+              partnerPrice: money(data.partnerPrice),
+              partnerAgreedAt:
+                data.partnerId && data.partnerPriceSet ? new Date() : null,
+              partnerPaid: money(data.partnerPaid),
+              partnerBalance: money(partnerBalance),
+              companyProfit: money(companyProfit),
+              manager: data.manager,
+              managerUserId: data.managerUserId,
+              status: "Новая заявка",
+            },
+          });
+          if (data.prepayment > 0)
+            await tx.payment.create({
+              data: {
+                orderId: order.id,
+                amount: money(data.prepayment),
+                type: "CLIENT_PAYMENT",
+                method: data.paymentMethod || "OTHER",
+                operationDate: data.initialPaymentDate ?? new Date(),
+                comment:
+                  data.initialPaymentComment ||
+                  "Initial payment registered with existing order",
+                author: data.manager,
+                idempotencyKey: data.idempotencyKey
+                  ? `order-client-payment:${data.idempotencyKey}`
+                  : undefined,
+                requestHash: data.requestHash,
+              },
+            });
+          if (data.partnerPaid > 0)
+            await tx.payment.create({
+              data: {
+                orderId: order.id,
+                partnerId: data.partnerId,
+                amount: money(data.partnerPaid),
+                type: "PARTNER_PAYOUT",
+                method: "initial_order_posting",
+                comment: "Initial partner payout",
+                author: data.manager,
+                idempotencyKey: data.idempotencyKey
+                  ? `order-partner-payout:${data.idempotencyKey}`
+                  : undefined,
+                requestHash: data.requestHash,
+              },
+            });
+          await tx.orderEvent.create({
+            data: {
+              orderId: order.id,
+              title: "Создан заказ",
+              description: `Заказ ${order.number} успешно создан.`,
+              user: data.manager,
+              idempotencyKey: eventKey,
+              requestHash: data.requestHash,
+            },
+          });
+          await tx.orderStatusHistory.create({
+            data: {
+              orderId: order.id,
+              fromStatus: null,
+              toStatus: "Новая заявка",
+              changedByName: data.manager,
+              changedByRole: data.actorRole ?? "MANAGER",
+              comment: "Заказ создан",
+            },
+          });
+          await tx.orderLifecycleEvent.create({
+            data: {
+              orderId: order.id,
+              type: "ORDER_CREATED",
+              toLifecycle: "CREATED",
+              actorId: data.managerUserId,
+              actorName: data.manager,
+              role: data.actorRole ?? "MANAGER",
+              idempotencyKey: data.idempotencyKey
+                ? `order-lifecycle:${data.idempotencyKey}`
+                : undefined,
+              requestHash: data.requestHash,
+            },
+          });
+          return { order, created: true };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 20_000,
+        },
+      );
     } catch (error) {
       if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
         throw error;
       if (isTransactionWriteConflict(error)) {
-        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+        if (attempt < 2)
+          await new Promise((resolve) =>
+            setTimeout(resolve, 25 * (attempt + 1)),
+          );
         continue;
       }
       if (!isPrismaUniqueConflict(error)) throw error;
@@ -422,25 +572,6 @@ export async function updateOrder(
   return order;
 }
 
-export async function deleteOrder(id: number) {
-  const attachments = await prisma.attachment.findMany({
-    where: { orderId: id },
-    select: { pathname: true },
-  });
-  if (attachments.length)
-    await del(attachments.map((attachment) => attachment.pathname));
-  await prisma.orderEvent.deleteMany({
-    where: {
-      orderId: id,
-    },
-  });
-
-  return prisma.order.delete({
-    where: {
-      id,
-    },
-  });
-}
 export async function addPayment(data: {
   orderId: number;
   amount: number;
@@ -487,7 +618,10 @@ export async function addMeasurement(data: {
   stepsCount?: number;
   comment?: string;
 }) {
-  const order = await prisma.order.findUniqueOrThrow({ where: { id: data.orderId }, select: { clientId: true } });
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: data.orderId },
+    select: { clientId: true },
+  });
   const measurement = await prisma.measurement.create({
     data: { ...data, clientId: order.clientId },
   });

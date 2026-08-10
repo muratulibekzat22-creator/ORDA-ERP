@@ -13,18 +13,49 @@ const includesAll = (source: string, values: string[], subject: string) => {
 
 const expectedPermissions: Partial<Record<Role, string[]>> = {
   [Role.DIRECTOR]: [
-    "employees", "clients", "orders", "measurements", "calendar",
-    "documents", "finance", "partners", "reports", "settings", "design",
-    "production", "installation", "warehouse", "payroll",
+    "employees",
+    "clients",
+    "orders",
+    "measurements",
+    "calendar",
+    "documents",
+    "finance",
+    "partners",
+    "reports",
+    "settings",
+    "design",
+    "production",
+    "installation",
+    "warehouse",
+    "payroll",
   ],
   [Role.MANAGER]: [
-    "clients", "orders", "measurements", "calendar", "documents",
-    "production", "warehouse", "partners",
+    "clients",
+    "orders",
+    "measurements",
+    "calendar",
+    "documents",
+    "production",
+    "warehouse",
+    "partners",
   ],
-  [Role.ACCOUNTANT]: ["documents", "finance", "partners", "reports", "warehouse", "payroll"],
+  [Role.ACCOUNTANT]: [
+    "documents",
+    "finance",
+    "partners",
+    "reports",
+    "warehouse",
+    "payroll",
+  ],
   [Role.MEASURER]: ["measurements", "calendar", "documents"],
   [Role.PRODUCTION]: ["production", "calendar", "documents", "warehouse"],
-  [Role.INSTALLER]: ["production", "installation", "calendar", "documents", "warehouse"],
+  [Role.INSTALLER]: [
+    "production",
+    "installation",
+    "calendar",
+    "documents",
+    "warehouse",
+  ],
   [Role.PARTNER]: ["orders", "finance", "partners", "documents"],
 };
 
@@ -40,7 +71,11 @@ assert.deepEqual(roleHome, {
 });
 
 const roleDashboard = read("components/dashboard/Dashboard.tsx");
-includesAll(roleDashboard, ["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"], "role dashboards");
+includesAll(
+  roleDashboard,
+  ["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"],
+  "role dashboards",
+);
 
 const proxy = read("proxy.ts");
 includesAll(
@@ -66,11 +101,13 @@ const orderList = read("app/api/orders/route.ts");
 includesAll(
   orderList,
   [
-    'role !== Role.DIRECTOR && role !== Role.MANAGER',
+    "role !== Role.DIRECTOR && role !== Role.MANAGER",
     '"partnerPrice" in body',
     '"partnerPaid" in body',
-    '"companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"',
-    '? { partnerId: partner.id, partnerAgreedAt: { not: null }',
+    "delete result.companyProfit",
+    '"partnerAgreedAt"',
+    '"partnerBalance"',
+    "partnerAgreedAt: { not: null }",
   ],
   "orders API",
 );
@@ -79,12 +116,13 @@ const orderDetail = read("app/api/orders/[id]/route.ts");
 includesAll(
   orderDetail,
   [
-    "canAccessOrder360(id, { userId: Number(userId), role, name: user.name })",
-    'delete result.amount',
-    'delete result.prepayment',
-    'delete result.balance',
-    'delete result.payments',
-    'delete result.calculations',
+    "canAccessOrder360(",
+    "{ includeDeleted }",
+    "delete result.amount",
+    "delete result.prepayment",
+    "delete result.balance",
+    "delete result.payments",
+    "delete result.calculations",
     '"workshopCost"',
     '"grossProfit"',
     "delete line.unitCost",
@@ -97,11 +135,11 @@ const calculation = read("app/api/orders/[id]/calculation/route.ts");
 includesAll(
   calculation,
   [
-    "where: { id, partnerId: partner.id }",
+    "where: { id, partnerId: partner.id, deletedAt: null }",
     "if (role === Role.PARTNER)",
     'if ("workshopCost" in body && role !== Role.DIRECTOR)',
-    'delete result.grossProfit',
-    'delete result[key]',
+    "delete result.grossProfit",
+    "delete result[key]",
   ],
   "calculator boundary",
 );
@@ -118,12 +156,15 @@ includesAll(
   partnerPaymentBranch,
   [
     'type: "PARTNER_PAYOUT"',
-    "order: { partnerId: partner.id }",
+    "order: { partnerId: partner.id, deletedAt: null }",
     "order: { select: { id: true, number: true } }",
   ],
   "partner payment scope",
 );
-assert.doesNotMatch(partnerPaymentBranch, /client:\s*true|include:\s*\{\s*order/);
+assert.doesNotMatch(
+  partnerPaymentBranch,
+  /client:\s*true|include:\s*\{\s*order/,
+);
 assert.match(
   payments,
   /user\.role === Role\.PARTNER[\s\S]*Цех не может создавать финансовые операции/,
@@ -135,12 +176,16 @@ const partnerFinanceGuard = finance.indexOf(
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(
-  partnerFinanceGuard < finance.indexOf("getFinanceDashboard({", partnerFinanceGuard),
+  partnerFinanceGuard <
+    finance.indexOf("getFinanceDashboard({", partnerFinanceGuard),
   "partner ledger guard must run before the general finance query",
 );
 
 const documents = read("lib/services/document.service.ts");
-assert.match(documents, /order:\s*\{ partnerId: ownerPartnerId \}/);
+assert.match(
+  documents,
+  /order:\s*\{ deletedAt: null, partnerId: ownerPartnerId \}/,
+);
 
 const calendar = read("lib/services/calendar.service.ts");
 includesAll(
@@ -184,7 +229,9 @@ const partnerApiSources = [
   "app/api/partner/dashboard/route.ts",
   "app/api/partner/profile/route.ts",
   "app/api/partners/payments/route.ts",
-].map(read).join("\n");
+]
+  .map(read)
+  .join("\n");
 assert.doesNotMatch(
   partnerApiSources,
   /Partner access only|Partner profile not found|Invalid partner payout|Order not found|Unable to create partner payout|Insufficient permissions/,

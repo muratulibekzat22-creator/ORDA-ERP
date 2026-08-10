@@ -17,8 +17,8 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     if (!Number.isInteger(managerId) || managerId <= 0 || !await prisma.user.findFirst({ where: { id: managerId, role: Role.MANAGER, active: true }, select: { id: true } })) throw new Error("INVALID_MANAGER");
     scope = { managerUserId: managerId };
   }
-  const orderScope: Prisma.OrderWhereInput = scope.managerUserId ? { managerUserId: scope.managerUserId } : {};
-  const clientScope: Prisma.ClientWhereInput = scope.managerUserId ? { managerUserId: scope.managerUserId } : {};
+  const orderScope: Prisma.OrderWhereInput = { deletedAt: null, ...(scope.managerUserId ? { managerUserId: scope.managerUserId } : {}) };
+  const clientScope: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(scope.managerUserId ? { managerUserId: scope.managerUserId } : {}) };
   const activeOrder: Prisma.OrderWhereInput = { ...orderScope, lifecycle: { not: "CANCELLED" } };
   const [clients, previousClients, orders, previousOrders, measurements, previousMeasurements, payments, previousPayments, production, managerUsers, completed] = await Promise.all([
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.start, period.end) }, select: { id: true, managerUserId: true, stage: true } }),

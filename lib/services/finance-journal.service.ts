@@ -192,7 +192,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
         ],
       }),
       prisma.order.findMany({
-        where: { lifecycle: { not: "CANCELLED" } },
+        where: { deletedAt: null, lifecycle: { not: "CANCELLED" } },
         select: {
           id: true,
           number: true,

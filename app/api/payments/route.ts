@@ -19,7 +19,7 @@ export async function GET() {
       ? await prisma.payment.findMany({
           where: {
             type: "PARTNER_PAYOUT",
-            order: { partnerId: partner.id },
+            order: { partnerId: partner.id, deletedAt: null },
           },
           select: {
             id: true,
@@ -91,7 +91,7 @@ export async function POST(req: Request) {
 
     if (auth.session!.user.role === Role.PARTNER) {
       const partner = await prisma.partner.findUnique({ where: { userId: Number(auth.session!.user.id) }, select: { id: true } });
-      if (!partner || !await prisma.order.findFirst({ where: { id: orderId, partnerId: partner.id }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+      if (!partner || !await prisma.order.findFirst({ where: { id: orderId, partnerId: partner.id, deletedAt: null }, select: { id: true } })) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     }
 
     if (values.type !== "Предоплата" && values.type !== "Доплата") {

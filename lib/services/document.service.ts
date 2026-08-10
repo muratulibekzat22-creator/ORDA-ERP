@@ -57,19 +57,19 @@ export function allowedDocumentTypes(actor: DocumentActor): DocumentType[] {
 async function entityScope(actor: DocumentActor): Promise<{ client: Prisma.ClientWhereInput; order: Prisma.OrderWhereInput }> {
   if (actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT) return { client: {}, order: {} };
   if (actor.role === Role.MANAGER) {
-    const client = { OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] };
-    return { client, order: { client } };
+    const client = { active: true, deletedAt: null, OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] };
+    return { client, order: { deletedAt: null, client } };
   }
-  if (actor.role === Role.PRODUCTION) return { client: { id: -1 }, order: { productions: { some: { masterUserId: actor.userId } } } };
-  if (actor.role === Role.INSTALLER) return { client: { id: -1 }, order: { installation: { installerUserId: actor.userId } } };
+  if (actor.role === Role.PRODUCTION) return { client: { id: -1 }, order: { deletedAt: null, productions: { some: { masterUserId: actor.userId, archivedAt: null } } } };
+  if (actor.role === Role.INSTALLER) return { client: { id: -1 }, order: { deletedAt: null, installation: { installerUserId: actor.userId } } };
   if (actor.role === Role.MEASURER) {
     const measurement = { some: { measurerUserId: actor.userId } };
-    return { client: { measurements: measurement }, order: { measurements: measurement } };
+    return { client: { active: true, deletedAt: null, measurements: measurement }, order: { deletedAt: null, measurements: measurement } };
   }
   if (actor.role === Role.DESIGNER) return { client: { id: -1 }, order: { id: -1 } };
   if (actor.role === Role.PARTNER) {
     const ownerPartnerId = await partnerId(actor);
-    return { client: { id: -1 }, order: { partnerId: ownerPartnerId } };
+    return { client: { id: -1 }, order: { deletedAt: null, partnerId: ownerPartnerId } };
   }
   return { client: { id: -1 }, order: { id: -1 } };
 }
@@ -88,7 +88,7 @@ async function documentScope(actor: DocumentActor): Promise<Prisma.DocumentWhere
 export async function canUseEntities(actor: DocumentActor, clientId?: number | null, orderId?: number | null) {
   if (!clientId && !orderId) return null;
   const scope = await entityScope(actor);
-  const order = orderId ? await prisma.order.findFirst({ where: { id: orderId, AND: [scope.order] }, select: { id: true, clientId: true } }) : null;
+  const order = orderId ? await prisma.order.findFirst({ where: { id: orderId, deletedAt: null, AND: [scope.order] }, select: { id: true, clientId: true } }) : null;
   if (orderId && !order) return null;
   const effectiveClientId = clientId ?? order?.clientId ?? null;
   if (clientId && order && order.clientId !== clientId) throw new Error("ENTITY_MISMATCH");
@@ -111,7 +111,10 @@ export async function getDocuments(actor: DocumentActor, filters: { orderId?: nu
   const query = filters.query?.trim().slice(0, 200);
   const documents = await prisma.document.findMany({
     where: {
-      AND: [scope],
+      AND: [
+        scope,
+        { OR: [{ orderId: null }, { order: { deletedAt: null } }, { status: { not: DocumentStatus.DRAFT } }] },
+      ],
       ...(filters.orderId ? { orderId: filters.orderId } : {}),
       ...(filters.clientId ? { clientId: filters.clientId } : {}),
       ...(filters.type ? { type: filters.type } : {}),
@@ -131,9 +134,9 @@ export async function getDocuments(actor: DocumentActor, filters: { orderId?: nu
 export async function getDocumentOptions(actor: DocumentActor) {
   const scope = await entityScope(actor);
   const [clients, orders, payments, authorRows] = await Promise.all([
-    prisma.client.findMany({ where: scope.client, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 1000 }),
-    prisma.order.findMany({ where: scope.order, select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 1000 }),
-    prisma.payment.findMany({ where: { orderId: { not: null }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"] }, order: scope.order }, select: { id: true, orderId: true, amount: true, method: true, operationDate: true, comment: true }, orderBy: { operationDate: "desc" }, take: 1000 }),
+    prisma.client.findMany({ where: { active: true, deletedAt: null, AND: [scope.client] }, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 1000 }),
+    prisma.order.findMany({ where: { deletedAt: null, AND: [scope.order] }, select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take: 1000 }),
+    prisma.payment.findMany({ where: { orderId: { not: null }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"] }, order: { deletedAt: null, AND: [scope.order] } }, select: { id: true, orderId: true, amount: true, method: true, operationDate: true, comment: true }, orderBy: { operationDate: "desc" }, take: 1000 }),
     prisma.document.findMany({ where: { AND: [await documentScope(actor)], authorId: { not: null } }, select: { author: { select: { id: true, name: true } } }, distinct: ["authorId"], take: 500 }),
   ]);
   return { clients, orders, payments, authors: authorRows.map((row) => row.author).filter((value): value is { id: number; name: string } => Boolean(value)), allowedTypes: allowedDocumentTypes(actor) };
@@ -159,7 +162,7 @@ async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: num
     }
   }
   if (allowed.some((type) => type === DocumentType.OTHER || type === DocumentType.PHOTO) && (!filters.type || filters.type === DocumentType.OTHER || filters.type === DocumentType.PHOTO)) {
-    const attachments = await prisma.attachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), order: { ...scope.order, ...(filters.clientId ? { clientId: filters.clientId } : {}) } }, select: { id: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, order: { select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } } } }, orderBy: { createdAt: "desc" }, take: 500 });
+    const attachments = await prisma.attachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), order: { ...scope.order, deletedAt: null, ...(filters.clientId ? { clientId: filters.clientId } : {}) } }, select: { id: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, order: { select: { id: true, number: true, client: { select: { id: true, name: true, phone: true } } } } }, orderBy: { createdAt: "desc" }, take: 500 });
     for (const item of attachments) {
       const type = item.contentType.startsWith("image/") ? DocumentType.PHOTO : DocumentType.OTHER;
       if (!allowed.includes(type) || (filters.type && filters.type !== type)) continue;

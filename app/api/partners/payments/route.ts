@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     const requestHash = createRequestHash({ orderId, amount, method: body.method, comment: body.comment ?? null, operationDate: operationDate.toISOString() });
     const existing = await prisma.payment.findUnique({ where: { idempotencyKey: idempotency.key } });
     if (existing) return existing.requestHash === requestHash ? NextResponse.json(existing) : idempotencyConflict();
-    const order = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
+    const order = await prisma.order.findFirst({ where: { id: orderId, deletedAt: null }, select: { id: true } });
     if (!order) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     const payment = await payPartner({ orderId, amount, method: body.method.trim(), comment: typeof body.comment === "string" ? body.comment.trim() || undefined : undefined, operationDate, author: auth.session!.user.name ?? "System", authorId: Number(auth.session!.user.id), idempotencyKey: idempotency.key, requestHash });
     return payment ? NextResponse.json(payment, { status: 201 }) : NextResponse.json({ error: "Заказ не связан с цехом" }, { status: 409 });

@@ -54,11 +54,11 @@ async function salesProjection(scope: DashboardScope) {
         managerUser: { select: { name: true, active: true, role: true } },
         leadStatusHistory: { select: { toStage: true } },
         nextActions: { where: { completedAt: null }, select: { nextActionAt: true } },
-        leadConversion: { select: { orderId: true } },
+        leadConversion: { select: { orderId: true, order: { select: { deletedAt: true } } } },
       },
     }),
     prisma.order.findMany({
-      where: { ...managerOrderWhere, createdAt: { gte: start, lte: end }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      where: { ...managerOrderWhere, deletedAt: null, createdAt: { gte: start, lte: end }, lifecycle: { not: OrderLifecycle.CANCELLED } },
       select: { id: true, amount: true, prepayment: true, balance: true, managerUserId: true, leadConversion: { select: { managerId: true } } },
     }),
     prisma.leadStatusHistory.findMany({
@@ -68,25 +68,31 @@ async function salesProjection(scope: DashboardScope) {
       select: { id: true, toStatus: true, authorName: true, createdAt: true, client: { select: { id: true, name: true, phone: true } } },
     }),
     prisma.orderEvent.findMany({
-      where: { createdAt: { gte: start, lte: end }, ...(scope.role === Role.MANAGER ? { order: managerOrderWhere } : {}) },
+      where: { createdAt: { gte: start, lte: end }, order: { ...managerOrderWhere, deletedAt: null } },
       orderBy: { createdAt: "desc" },
       take: 10,
       select: { id: true, title: true, user: true, createdAt: true, order: { select: { id: true, number: true } } },
     }),
     prisma.order.findMany({
-      where: { ...managerOrderWhere, lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+      where: { ...managerOrderWhere, deletedAt: null, lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
       select: { lifecycle: true, productionDeadline: true, installation: { select: { scheduledAt: true } } },
     }),
     scope.role === Role.DIRECTOR
       ? prisma.material.findMany({ where: { active: true }, select: { stock: true, minimumStock: true } })
       : Promise.resolve([]),
     prisma.calendarTask.findMany({
-      where: { ...(scope.role === Role.MANAGER ? { assigneeId: scope.userId } : { assignee: { active: true } }), status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } },
+      where: {
+        AND: [
+          scope.role === Role.MANAGER ? { assigneeId: scope.userId } : { assignee: { active: true } },
+          { OR: [{ orderId: null }, { order: { deletedAt: null } }, { measurement: { client: { active: true, deletedAt: null } } }] },
+        ],
+        status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
+      },
       select: { dueAt: true },
     }),
     scope.role === Role.DIRECTOR
       ? prisma.order.findMany({
-          where: { lifecycle: { not: OrderLifecycle.CANCELLED } },
+          where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
           select: { id: true, balance: true, partnerId: true, partnerBalance: true, partnerAgreedAt: true, documents: { where: { type: DocumentType.CONTRACT, status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] } }, select: { id: true }, take: 1 } },
         })
       : Promise.resolve([]),
@@ -132,7 +138,7 @@ async function salesProjection(scope: DashboardScope) {
       where: {
         operationDate: { gte: start, lte: end },
         type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] },
-        order: { ...managerOrderWhere, lifecycle: { not: OrderLifecycle.CANCELLED } },
+        order: { ...managerOrderWhere, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
       },
       _sum: { amount: true },
     }),
@@ -143,11 +149,11 @@ async function salesProjection(scope: DashboardScope) {
       ? prisma.employeePayrollProfile.count({ where: { active: true } })
       : Promise.resolve(0),
     scope.role === Role.DIRECTOR
-      ? prisma.production.findMany({ where: { completedAt: null }, select: { stage: true, plannedEndAt: true } })
+      ? prisma.production.findMany({ where: { completedAt: null, archivedAt: null, order: { deletedAt: null } }, select: { stage: true, plannedEndAt: true } })
       : Promise.resolve([]),
     scope.role === Role.DIRECTOR
       ? prisma.payment.findMany({
-          where: { operationDate: { gte: start, lte: end }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "PARTNER_PAYOUT"] }, order: { lifecycle: { not: OrderLifecycle.CANCELLED } } },
+          where: { operationDate: { gte: start, lte: end }, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "PARTNER_PAYOUT"] }, order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } },
           orderBy: { operationDate: "desc" },
           take: 10,
           select: { id: true, type: true, author: true, operationDate: true, order: { select: { id: true, number: true } } },
@@ -163,7 +169,7 @@ async function salesProjection(scope: DashboardScope) {
       : Promise.resolve([]),
     scope.role === Role.DIRECTOR
       ? prisma.document.findMany({
-          where: { type: DocumentType.CONTRACT, createdAt: { gte: start, lte: end }, status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] } },
+          where: { type: DocumentType.CONTRACT, createdAt: { gte: start, lte: end }, status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] }, OR: [{ orderId: null }, { order: { deletedAt: null } }] },
           orderBy: { createdAt: "desc" },
           take: 10,
           select: { id: true, number: true, createdAt: true, author: { select: { name: true, active: true } }, order: { select: { id: true, number: true } } },
@@ -194,7 +200,7 @@ async function salesProjection(scope: DashboardScope) {
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
   const periodLeads = leads.filter((lead) => lead.createdAt >= start && lead.createdAt <= end);
-  const convertedLeads = periodLeads.filter((lead) => lead.leadConversion).length;
+  const convertedLeads = periodLeads.filter((lead) => lead.leadConversion && !lead.leadConversion.order.deletedAt).length;
   const totals = orders.reduce(
     (sum, order) => ({ sales: sum.sales + Number(order.amount), received: sum.received + Number(order.prepayment), balance: sum.balance + Number(order.balance) }),
     { sales: 0, received: 0, balance: 0 },
@@ -215,7 +221,7 @@ async function salesProjection(scope: DashboardScope) {
   const activeManagerIds = new Set(activeUsers.filter((user) => user.role === Role.MANAGER).map((user) => user.id));
   const activeUserNames = new Set(activeUsers.map((user) => user.name));
   const managers = [...managerGroups.values()].filter((group) => activeManagerIds.has(group.managerUserId)).map((group) => {
-    const converted = group.leads.filter((lead) => lead.leadConversion).length;
+    const converted = group.leads.filter((lead) => lead.leadConversion && !lead.leadConversion.order.deletedAt).length;
     const managerOrders = orders.filter((order) => (order.managerUserId ?? order.leadConversion?.managerId) === group.managerUserId);
     return {
       managerUserId: group.managerUserId,
@@ -308,7 +314,7 @@ async function accountantProjection(scope: DashboardScope) {
     period ? prisma.payrollAccrual.findMany({ where: { periodId: period.id }, select: { amount: true, direction: true } }) : Promise.resolve([]),
     period ? prisma.payrollPayment.findMany({ where: { periodId: period.id }, select: { amount: true, type: true } }) : Promise.resolve([]),
     period ? prisma.payrollAdvanceRequest.count({ where: { periodId: period.id, status: { in: [AdvanceRequestStatus.REQUESTED, AdvanceRequestStatus.APPROVED] } } }) : Promise.resolve(0),
-    prisma.order.findMany({ where: { lifecycle: { not: OrderLifecycle.CANCELLED }, partnerAgreedAt: { not: null } }, select: { partnerBalance: true } }),
+    prisma.order.findMany({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, partnerAgreedAt: { not: null } }, select: { partnerBalance: true } }),
   ]);
   const accrued = accruals.reduce((sum, row) => sum + Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1), 0);
   const paid = payments.reduce((sum, row) => sum + Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1), 0);
@@ -333,7 +339,7 @@ async function productionProjection(scope: DashboardScope) {
   const tomorrow = new Date(todayStart.getTime() + 86_400_000);
   const [jobs, materials, tasksToday] = await Promise.all([
     prisma.production.findMany({
-      where: { completedAt: null, OR: [{ masterUserId: scope.userId }, { masterUserId: null }] },
+      where: { completedAt: null, archivedAt: null, order: { deletedAt: null }, OR: [{ masterUserId: scope.userId }, { masterUserId: null }] },
       orderBy: [{ priority: "desc" }, { plannedEndAt: "asc" }],
       take: 30,
       select: { id: true, stage: true, percent: true, priority: true, plannedEndAt: true, masterUserId: true, order: { select: { id: true, number: true, client: { select: { name: true, city: true } } } } },
@@ -364,7 +370,7 @@ async function installerProjection(scope: DashboardScope) {
   const { start: todayStart } = dashboardPeriodRange("today", now);
   const tomorrow = new Date(todayStart.getTime() + 86_400_000);
   const installations = await prisma.orderInstallation.findMany({
-    where: { installerUserId: scope.userId, completedAt: null, order: { lifecycle: { not: OrderLifecycle.CANCELLED } } },
+    where: { installerUserId: scope.userId, completedAt: null, order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } },
     orderBy: { scheduledAt: "asc" },
     take: 30,
     select: { id: true, scheduledAt: true, startedAt: true, order: { select: { id: true, number: true, address: true, client: { select: { name: true, city: true } } } } },

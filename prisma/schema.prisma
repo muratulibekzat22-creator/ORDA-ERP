@@ -347,6 +347,7 @@ model User {
   closedPayrollPeriods         PayrollPeriod[]              @relation("PayrollPeriodCloser")
   payrollAuditEvents           PayrollAuditEvent[]          @relation("PayrollAuditActor")
   managedOrders                Order[]                      @relation("OrderResponsibleManager")
+  deletedOrders                Order[]                      @relation("OrderDeletedBy")
   openedOrderBlockers          OrderBlocker[]               @relation("OrderBlockerOpenedBy")
   responsibleOrderBlockers     OrderBlocker[]               @relation("OrderBlockerResponsible")
   resolvedOrderBlockers        OrderBlocker[]               @relation("OrderBlockerResolvedBy")
@@ -737,6 +738,9 @@ model Order {
   manager                       String
   managerUserId                 Int?
   managerUser                   User?          @relation("OrderResponsibleManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  deletedAt                     DateTime?
+  deletedById                   Int?
+  deletedBy                     User?          @relation("OrderDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   lifecycle                     OrderLifecycle @default(CREATED)
   version                       Int            @default(1)
   promisedAt                    DateTime?
@@ -788,6 +792,8 @@ model Order {
 
   @@index([lifecycle, promisedAt])
   @@index([managerUserId, lifecycle])
+  @@index([deletedAt, managerUserId])
+  @@index([deletedAt, lifecycle])
   @@index([orderReceivedAt])
   @@index([partnerId, partnerAgreedAt])
 }
@@ -2017,12 +2023,16 @@ model Production {
   plannedStartAt DateTime?
   plannedEndAt   DateTime?
   actualEndAt    DateTime?
+  archivedAt     DateTime?
+  archiveReason  String?
   stageHistory   ProductionStageHistory[]
   idempotencyKey String?                  @unique
   requestHash    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([archivedAt, stage])
 }
 
 model ProductionStageHistory {

@@ -27,7 +27,7 @@ export async function GET() {
 
   const [orders, recentPayments] = await Promise.all([
     prisma.order.findMany({
-      where: { partnerId: partner.id, partnerAgreedAt: { not: null }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      where: { partnerId: partner.id, deletedAt: null, partnerAgreedAt: { not: null }, lifecycle: { not: OrderLifecycle.CANCELLED } },
       select: {
         status: true,
         lifecycle: true,
@@ -39,7 +39,7 @@ export async function GET() {
     prisma.payment.findMany({
       where: {
         type: "PARTNER_PAYOUT",
-        order: { partnerId: partner.id },
+        order: { partnerId: partner.id, deletedAt: null },
       },
       select: {
         id: true,

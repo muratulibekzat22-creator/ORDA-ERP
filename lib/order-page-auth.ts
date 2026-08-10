@@ -19,7 +19,20 @@ export async function getAuthorizedOrder(id: number) {
     !(await hasPermission(role, "orders"))
   )
     return null;
-  if (!(await canAccessOrder360(id, { userId: Number(session.user.id), role: role as unknown as PrismaRole, name: session.user.name ?? "" }))) return null;
+  if (
+    !(await canAccessOrder360(
+      id,
+      {
+        userId: Number(session.user.id),
+        role: role as unknown as PrismaRole,
+        name: session.user.name ?? "",
+      },
+      {
+        includeDeleted: (role as unknown as PrismaRole) === PrismaRole.DIRECTOR,
+      },
+    ))
+  )
+    return null;
   if ((role as unknown as PrismaRole) === PrismaRole.PARTNER) {
     const partner = await prisma.partner.findUnique({
       where: { userId: Number(session.user.id) },
@@ -28,7 +41,12 @@ export async function getAuthorizedOrder(id: number) {
     if (
       !partner ||
       !(await prisma.order.findFirst({
-        where: { id, partnerId: partner.id, partnerAgreedAt: { not: null }, lifecycle: { not: "CANCELLED" } },
+        where: {
+          id,
+          partnerId: partner.id,
+          partnerAgreedAt: { not: null },
+          lifecycle: { not: "CANCELLED" },
+        },
         select: { id: true },
       }))
     )
@@ -36,37 +54,58 @@ export async function getAuthorizedOrder(id: number) {
   }
   const source = await getOrder(id);
   if (!source) return null;
-  const order = { ...source, settlement: buildOrderSettlement(source) };
+  const { _count, ...sourceOrder } = source;
+  const order = {
+    ...sourceOrder,
+    deletionImpact: {
+      hasFinancialHistory:
+        _count.payments > 0 ||
+        _count.companyLedgerEntries > 0 ||
+        _count.financeAuditEvents > 0 ||
+        _count.payrollAccruals > 0,
+    },
+    settlement: buildOrderSettlement(source),
+  };
   if (role === Role.DIRECTOR) return order;
-  if (role === Role.ACCOUNTANT) return {
-    ...order,
-    companyProfit: undefined,
-    calculations: order.calculations.map((calculation) => {
-      const result = { ...calculation } as Partial<typeof calculation>;
-      delete result.grossDifference;
-      delete result.grossProfit;
-      return result;
-    }),
-  } as unknown as typeof order;
+  if (role === Role.ACCOUNTANT)
+    return {
+      ...order,
+      companyProfit: undefined,
+      calculations: order.calculations.map((calculation) => {
+        const result = { ...calculation } as Partial<typeof calculation>;
+        delete result.grossDifference;
+        delete result.grossProfit;
+        return result;
+      }),
+    } as unknown as typeof order;
 
-  if (role === Role.PARTNER) return {
-    ...order,
-    managerUser: undefined,
-    amount: undefined,
-    prepayment: undefined,
-    balance: undefined,
-    companyProfit: undefined,
-    payments: [],
-    partnerAssignmentHistory: [],
-    payrollAccruals: [],
-    measurements: order.measurements.map((measurement) => {
-      const safe = { ...measurement } as Partial<typeof measurement>;
-      delete safe.measurerUser;
-      return safe;
-    }),
-    settlement: { partner: { ...order.settlement.partner, payouts: order.settlement.partner.payouts.filter((payment) => payment.partnerId === order.partnerId), assignments: [] } },
-    calculations: [],
-  } as unknown as typeof order;
+  if (role === Role.PARTNER)
+    return {
+      ...order,
+      managerUser: undefined,
+      amount: undefined,
+      prepayment: undefined,
+      balance: undefined,
+      companyProfit: undefined,
+      payments: [],
+      partnerAssignmentHistory: [],
+      payrollAccruals: [],
+      measurements: order.measurements.map((measurement) => {
+        const safe = { ...measurement } as Partial<typeof measurement>;
+        delete safe.measurerUser;
+        return safe;
+      }),
+      settlement: {
+        partner: {
+          ...order.settlement.partner,
+          payouts: order.settlement.partner.payouts.filter(
+            (payment) => payment.partnerId === order.partnerId,
+          ),
+          assignments: [],
+        },
+      },
+      calculations: [],
+    } as unknown as typeof order;
 
   // Server Components serialize their props into the RSC response. Remove
   // management figures here as well as in the REST API so they never reach a
@@ -90,9 +129,15 @@ export async function getAuthorizedOrder(id: number) {
     settlement: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
       ? undefined
       : { client: order.settlement.client },
-    amount: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role) ? undefined : order.amount,
-    prepayment: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role) ? undefined : order.prepayment,
-    balance: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role) ? undefined : order.balance,
+    amount: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
+      ? undefined
+      : order.amount,
+    prepayment: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
+      ? undefined
+      : order.prepayment,
+    balance: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
+      ? undefined
+      : order.balance,
     calculations: order.calculations.map((calculation) => ({
       id: calculation.id,
       orderId: calculation.orderId,

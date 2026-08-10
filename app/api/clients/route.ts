@@ -32,7 +32,7 @@ export async function GET(request: Request) {
     ...(city ? { city } : {}), ...(manager ? { manager } : {}), ...(status ? { stage: status as LeadStage } : {}), ...(source ? { sourceCode: source as LeadSource } : {}),
   };
   const [data, total, cities, managers] = await Promise.all([
-    prisma.client.findMany({ where, include: { _count: { select: { orders: true, interactions: true } }, nextActions: { where: { completedAt: null }, orderBy: { nextActionAt: "asc" }, take: 1 } }, orderBy: { updatedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+    prisma.client.findMany({ where, include: { _count: { select: { orders: { where: { deletedAt: null } }, interactions: true } }, nextActions: { where: { completedAt: null }, orderBy: { nextActionAt: "asc" }, take: 1 } }, orderBy: { updatedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
     prisma.client.count({ where }), prisma.client.findMany({ where: { ...managerScope, active: true, deletedAt: null, city: { not: "" } }, distinct: ["city"], select: { city: true }, orderBy: { city: "asc" } }),
     prisma.client.findMany({ where: { ...managerScope, active: true, deletedAt: null, manager: { not: "" } }, distinct: ["manager"], select: { manager: true }, orderBy: { manager: "asc" } }),
   ]);

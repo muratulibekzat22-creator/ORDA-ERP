@@ -9,7 +9,7 @@ export async function getCompanyFinance(from?: Date, to?: Date) {
   const where = from || to ? { operationDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {};
   const [entries, completedOrders] = await Promise.all([
     prisma.companyLedgerEntry.findMany({ where, include: { order: { select: { number: true } }, author: { select: { name: true } } }, orderBy: [{ operationDate: "desc" }, { id: "desc" }] }),
-    prisma.order.findMany({ where: { status: "Сдано", ...(from || to ? { updatedAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) }, select: { companyProfit: true } }),
+    prisma.order.findMany({ where: { deletedAt: null, status: "Сдано", ...(from || to ? { updatedAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) }, select: { companyProfit: true } }),
   ]);
   const orderProfit = completedOrders.reduce((sum, order) => sum + Number(order.companyProfit), 0);
   const otherIncome = entries.filter((entry) => entry.direction === "INCOME").reduce((sum, entry) => sum + Number(entry.amount), 0);

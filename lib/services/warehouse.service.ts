@@ -193,7 +193,7 @@ export async function getWarehouse(
       prisma.material.count({ where: materialWhere }),
       prisma.material.findMany({ select: { stock: true, reserved: true, minimumStock: true, sellingPrice: true, inventoryValue: true, averageCost: true, supplier: true, category: true } }),
       prisma.order.findMany({
-        where: orderIds === undefined ? {} : { id: { in: orderIds } },
+        where: orderIds === undefined ? { deletedAt: null } : { id: { in: orderIds }, deletedAt: null },
         select: { id: true, number: true, client: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
       }),
@@ -610,8 +610,8 @@ async function canOperateOrder(
 ) {
   if (actor.role === Role.DIRECTOR)
     return Boolean(
-      await tx.order.findUnique({
-        where: { id: orderId },
+      await tx.order.findFirst({
+        where: { id: orderId, deletedAt: null },
         select: { id: true },
       }),
     );
@@ -619,8 +619,8 @@ async function canOperateOrder(
     return (
       ["reserve", "release"].includes(type) &&
       Boolean(
-        await tx.order.findUnique({
-          where: { id: orderId },
+        await tx.order.findFirst({
+          where: { id: orderId, deletedAt: null },
           select: { id: true },
         }),
       )
@@ -629,8 +629,8 @@ async function canOperateOrder(
     return (
       ["incoming", "adjustment", "return"].includes(type) &&
       Boolean(
-        await tx.order.findUnique({
-          where: { id: orderId },
+        await tx.order.findFirst({
+          where: { id: orderId, deletedAt: null },
           select: { id: true },
         }),
       )
@@ -640,6 +640,7 @@ async function canOperateOrder(
       await tx.order.findFirst({
         where: {
           id: orderId,
+          deletedAt: null,
           productions: { some: { masterUserId: actor.userId } },
         },
         select: { id: true },
@@ -650,6 +651,7 @@ async function canOperateOrder(
       await tx.order.findFirst({
         where: {
           id: orderId,
+          deletedAt: null,
           productions: {
             some: { masterUserId: actor.userId, stage: "Монтаж" },
           },

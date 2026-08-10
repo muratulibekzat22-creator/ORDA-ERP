@@ -42,9 +42,10 @@ const productionInclude = {
 } satisfies Prisma.ProductionInclude;
 
 function scopeWhere(actor: ProductionActor): Prisma.ProductionWhereInput {
-  if (actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) return {};
-  if (actor.role === Role.PRODUCTION) return { masterUserId: actor.userId, stage: { notIn: ["Монтаж", "Сдано"] } };
-  if (actor.role === Role.INSTALLER) return { masterUserId: actor.userId, stage: "Монтаж" };
+  const active = { archivedAt: null, order: { deletedAt: null } } as const;
+  if (actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) return active;
+  if (actor.role === Role.PRODUCTION) return { ...active, masterUserId: actor.userId, stage: { notIn: ["Монтаж", "Сдано"] } };
+  if (actor.role === Role.INSTALLER) return { ...active, masterUserId: actor.userId, stage: "Монтаж" };
   return { id: -1 };
 }
 
@@ -58,7 +59,7 @@ async function getAssignee(tx: Prisma.TransactionClient, userId: number, stage: 
 
 export async function getProductions(actor?: ProductionActor) {
   const productions = await prisma.production.findMany({
-    where: actor ? scopeWhere(actor) : undefined,
+    where: actor ? scopeWhere(actor) : { archivedAt: null, order: { deletedAt: null } },
     include: productionInclude,
     orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
   });
@@ -80,7 +81,7 @@ export async function getProductionOptions(actor: ProductionActor) {
   if (!canCreateProduction(actor.role)) throw new ProductionServiceError("FORBIDDEN");
   const [orders, assignees] = await Promise.all([
     prisma.order.findMany({
-      where: { productions: { none: {} } },
+      where: { deletedAt: null, productions: { none: { archivedAt: null } } },
       select: { id: true, number: true, address: true, material: true, client: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
     }),
@@ -95,7 +96,7 @@ export async function getProductionOptions(actor: ProductionActor) {
 
 export async function getProduction(id: number, actor?: ProductionActor) {
   const production = await prisma.production.findFirst({
-    where: { id, ...(actor ? scopeWhere(actor) : {}) },
+    where: { id, ...(actor ? scopeWhere(actor) : { archivedAt: null, order: { deletedAt: null } }) },
     include: productionInclude,
   });
   if (!production) return null;
@@ -125,7 +126,7 @@ export async function createProductionCommand(input: {
 
   try {
     const production = await prisma.$transaction(async (tx) => {
-      const order = await tx.order.findUnique({ where: { id: input.orderId }, select: { id: true } });
+      const order = await tx.order.findFirst({ where: { id: input.orderId, deletedAt: null }, select: { id: true } });
       if (!order) return null;
       const existing = await tx.production.findFirst({ where: { orderId: input.orderId }, select: { id: true } });
       if (existing) throw new ProductionServiceError("IDEMPOTENCY_CONFLICT");
@@ -186,7 +187,7 @@ export async function updateProductionCommand(input: {
   idempotencyKey: string;
   requestHash: string;
 }) {
-  const current = await prisma.production.findUnique({ where: { id: input.id } });
+  const current = await prisma.production.findFirst({ where: { id: input.id, archivedAt: null, order: { deletedAt: null } } });
   if (!current) return null;
   const [repeatedEvent, repeatedHistory] = await Promise.all([
     prisma.orderEvent.findUnique({ where: { idempotencyKey: input.idempotencyKey } }),
@@ -221,7 +222,7 @@ export async function updateProductionCommand(input: {
 
   try {
     return await prisma.$transaction(async (tx) => {
-      const fresh = await tx.production.findUnique({ where: { id: input.id } });
+      const fresh = await tx.production.findFirst({ where: { id: input.id, archivedAt: null, order: { deletedAt: null } } });
       if (!fresh || fresh.stage !== current.stage) throw new ProductionServiceError("INVALID_STAGE");
 
       const assigneeId = input.data.masterUserId ?? fresh.masterUserId;
@@ -305,7 +306,7 @@ export function updateStage(id: number, stage: string, percent: number) {
 }
 
 export async function getProductionStats() {
-  const productions = await prisma.production.findMany();
+  const productions = await prisma.production.findMany({ where: { archivedAt: null, order: { deletedAt: null } } });
   return {
     total: productions.length,
     waiting: productions.filter((item) => item.stage === "Подготовка").length,

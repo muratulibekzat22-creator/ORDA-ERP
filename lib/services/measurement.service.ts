@@ -575,7 +575,7 @@ export async function measurementWorkspace(
     where: {
       AND: [scope],
       completedAt: { gte: month.start, lt: month.end },
-      order: { is: { lifecycle: { not: "CANCELLED" } } },
+      order: { is: { deletedAt: null, lifecycle: { not: "CANCELLED" } } },
     },
   });
   const settings = await prisma.systemSettings.findUnique({
@@ -763,8 +763,8 @@ export async function scheduleMeasurement(
         select: { id: true, name: true, role: true, active: true },
       });
       const order = input.orderId
-        ? await tx.order.findUnique({
-            where: { id: input.orderId },
+        ? await tx.order.findFirst({
+            where: { id: input.orderId, deletedAt: null },
             select: { id: true, clientId: true },
           })
         : null;
@@ -1697,8 +1697,8 @@ export async function ensureMeasurerBonusForOrder(
   orderId: number,
   actor: MeasurementActor,
 ) {
-  const order = await tx.order.findUnique({
-    where: { id: orderId },
+  const order = await tx.order.findFirst({
+    where: { id: orderId, deletedAt: null },
     select: { id: true, clientId: true, createdAt: true, lifecycle: true },
   });
   if (!order || order.lifecycle === "CANCELLED")

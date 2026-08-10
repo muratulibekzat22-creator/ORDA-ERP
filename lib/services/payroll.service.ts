@@ -301,8 +301,8 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
         throw new PayrollError("ORDER_REQUIRED");
       let cancelledOrderWarning = false;
       if (input.orderId) {
-        const order = await tx.order.findUnique({
-          where: { id: input.orderId },
+        const order = await tx.order.findFirst({
+          where: { id: input.orderId, deletedAt: null },
           select: { status: true },
         });
         if (!order) throw new PayrollError("ORDER_NOT_FOUND");

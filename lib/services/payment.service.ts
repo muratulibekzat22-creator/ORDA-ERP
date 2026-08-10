@@ -112,7 +112,7 @@ export async function createFinanceOperation(input: CreateOperationInput) {
       if ((affectsClient || affectsPartner) && !input.orderId) throw new Error("ORDER_REQUIRED");
 
       const order = input.orderId ? await lockOrder(tx, input.orderId) : null;
-      if (input.orderId && !order) return null;
+      if (input.orderId && (!order || order.deletedAt)) return null;
       const partnerId = input.partnerId ?? (affectsPartner ? order?.partnerId ?? undefined : undefined);
       if (partnerId && !await tx.partner.findFirst({ where: { id: partnerId, active: true, archived: false, isTest: false }, select: { id: true } })) throw new Error("PARTNER_NOT_FOUND");
       if (affectsPartner && (!order?.partnerId || order.partnerId !== partnerId)) throw new Error("ORDER_PARTNER_REQUIRED");
@@ -245,6 +245,7 @@ const operationInRange = (date: Date, from?: Date, to?: Date) => (!from || date 
 export async function getFinanceDashboard(filters: FinanceFilters = {}) {
   const selectedRange = financeRange(filters.period, filters.from, filters.to);
   const orderWhere: Prisma.OrderWhereInput = {
+    deletedAt: null,
     lifecycle: { not: "CANCELLED" },
     ...(filters.manager ? { manager: filters.manager } : {}),
     ...(filters.partnerId ? { partnerId: filters.partnerId } : {}),

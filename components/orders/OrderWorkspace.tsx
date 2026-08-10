@@ -24,9 +24,13 @@ import { useState } from "react";
 
 import StairCalculator from "@/components/calculator/StairCalculator";
 import ProjectPayments from "@/components/project/ProjectPayments";
+import OrderActionsMenu from "./OrderActionsMenu";
 import OrderProcess from "./OrderProcess";
 import OrderSettlementPanel from "./OrderSettlementPanel";
-import { ORDER_STAGE_LABELS, projectOrderStage } from "@/lib/orders/presentation";
+import {
+  ORDER_STAGE_LABELS,
+  projectOrderStage,
+} from "@/lib/orders/presentation";
 import { paymentMethodLabel } from "@/lib/orders/registration";
 
 import DocumentsTab from "./tabs/DocumentsTab";
@@ -36,6 +40,9 @@ import type { NumericValue, OrderTabData } from "./tabs/types";
 type WorkspaceOrder = OrderTabData & {
   partnerPlannedReadyAt?: Date | string | null;
   partnerComment?: string;
+  deletedAt?: Date | string | null;
+  deletedBy?: { id: number; name: string } | null;
+  deletionImpact?: { hasFinancialHistory: boolean };
 };
 
 const panel =
@@ -111,10 +118,11 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     manager: order.manager,
     amount: String(order.amount),
   });
-  const canEdit = ["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "");
-  const canAddPayment = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
-    session?.user.role ?? "",
-  );
+  const archived = Boolean(order.deletedAt);
+  const role = session?.user.role ?? "";
+  const canEdit = !archived && ["DIRECTOR", "MANAGER"].includes(role);
+  const canAddPayment =
+    !archived && ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canSeeClientFinance = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
     session?.user.role ?? "",
   );
@@ -180,7 +188,14 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 Заказ {order.number}
               </h1>
               <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-300">
-                {ORDER_STAGE_LABELS[projectOrderStage(order.lifecycle, order.productions[0]?.stage)]}
+                {
+                  ORDER_STAGE_LABELS[
+                    projectOrderStage(
+                      order.lifecycle,
+                      order.productions[0]?.stage,
+                    )
+                  ]
+                }
               </span>
             </div>
             <p className="mt-2 flex items-center gap-2 text-slate-300">
@@ -202,6 +217,21 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 <Pencil size={17} /> Редактировать
               </button>
             )}
+            <OrderActionsMenu
+              order={{
+                id: order.id,
+                number: order.number,
+                deletedAt: order.deletedAt,
+                hasFinancialHistory:
+                  order.deletionImpact?.hasFinancialHistory ?? false,
+              }}
+              canDelete={canEdit}
+              canRestore={archived && role === "DIRECTOR"}
+              onChanged={() => {
+                router.push("/orders");
+                router.refresh();
+              }}
+            />
             <Link
               href={`/orders/${order.id}/print`}
               target="_blank"
@@ -209,12 +239,14 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             >
               <Printer size={17} /> Печать
             </Link>
-            <a
-              href="#files"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-            >
-              <FilePlus2 size={17} /> Добавить файл
-            </a>
+            {!archived && (
+              <a
+                href="#files"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+              >
+                <FilePlus2 size={17} /> Добавить файл
+              </a>
+            )}
             {canEdit && (
               <button
                 type="button"
@@ -243,6 +275,14 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             )}
           </nav>
         </div>
+        {archived && (
+          <div className="mt-5 rounded-xl border border-amber-800 bg-amber-950/30 p-4 text-sm text-amber-100">
+            <strong>Заказ находится в архиве.</strong> Рабочие действия
+            отключены, связанная финансовая, документальная и производственная
+            история сохранена.
+            {order.deletedBy?.name ? ` Удалил: ${order.deletedBy.name}.` : ""}
+          </div>
+        )}
         {(notice || error) && (
           <p
             role={error ? "alert" : "status"}
@@ -253,9 +293,14 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         )}
       </header>
 
-      {paymentOpen && <ProjectPayments orderId={order.id} />}
+      {paymentOpen && !archived && <ProjectPayments orderId={order.id} />}
 
-      <OrderProcess orderId={order.id} lifecycle={order.lifecycle} version={order.version} />
+      <OrderProcess
+        orderId={order.id}
+        lifecycle={order.lifecycle}
+        version={order.version}
+        readOnly={archived}
+      />
 
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.85fr)] xl:gap-5">
         <div className="space-y-4 md:space-y-5">
@@ -299,11 +344,31 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 value={order.address || order.client.address}
               />
               <Field title="Ответственный менеджер" value={order.manager} />
-              <Field title="Дата получения заказа" value={date(order.orderReceivedAt)} />
+              <Field
+                title="Дата получения заказа"
+                value={date(order.orderReceivedAt)}
+              />
               <Field title="Срок" value={date(order.promisedAt)} />
               <Field title="Статус заказа" value={order.status} />
-              <Field title="Зарегистрирован в ORDA" value={date(order.createdAt)} />
-              {order.mapUrl ? <Field title="Карта" value={<a href={order.mapUrl} target="_blank" rel="noreferrer" className="text-blue-300 hover:text-blue-200">Открыть карту</a>} /> : null}
+              <Field
+                title="Зарегистрирован в ORDA"
+                value={date(order.createdAt)}
+              />
+              {order.mapUrl ? (
+                <Field
+                  title="Карта"
+                  value={
+                    <a
+                      href={order.mapUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-300 hover:text-blue-200"
+                    >
+                      Открыть карту
+                    </a>
+                  }
+                />
+              ) : null}
             </div>
           </section>
 
@@ -320,120 +385,133 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               <Field title="Ограждение" value={order.railingType} />
               <Field title="Стойка / опора" value={order.supportType} />
               <Field title="Цвет" value={order.color} />
-              <Field title="Подсветка" value={order.lighting ? order.lightingDetails || "Да" : "Нет"} />
-              <Field title="Обшивка" value={order.cladding ? order.claddingDetails || "Да" : "Нет"} />
+              <Field
+                title="Подсветка"
+                value={order.lighting ? order.lightingDetails || "Да" : "Нет"}
+              />
+              <Field
+                title="Обшивка"
+                value={order.cladding ? order.claddingDetails || "Да" : "Нет"}
+              />
               <Field title="Дополнительно" value={order.additionalDetails} />
             </div>
           </section>
 
-          {canSeeClientFinance && <section id="order-finance" className={panel}>
-            <SectionTitle
-              icon={<CircleDollarSign size={20} />}
-              title="Финансы заказа"
-              description="Клиентские суммы; расчёт с цехом остаётся отдельным"
-            />
-            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 md:p-5">
-              <Field title="Общая сумма" value={money(order.amount)} />
-              <Field title="Получено" value={money(order.prepayment)} />
-              <Field title="Остаток" value={money(order.balance)} />
-              <Field title="Способ оплаты" value={paymentMethodLabel(order.paymentMethod) || "Не указан"} />
-            </div>
-          </section>}
+          {canSeeClientFinance && (
+            <section id="order-finance" className={panel}>
+              <SectionTitle
+                icon={<CircleDollarSign size={20} />}
+                title="Финансы заказа"
+                description="Клиентские суммы; расчёт с цехом остаётся отдельным"
+              />
+              <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 md:p-5">
+                <Field title="Общая сумма" value={money(order.amount)} />
+                <Field title="Получено" value={money(order.prepayment)} />
+                <Field title="Остаток" value={money(order.balance)} />
+                <Field
+                  title="Способ оплаты"
+                  value={paymentMethodLabel(order.paymentMethod) || "Не указан"}
+                />
+              </div>
+            </section>
+          )}
 
-          {canSeeClientFinance && <section id="calculation" className={panel}>
-            <SectionTitle
-              icon={<ClipboardList size={20} />}
-              title="Расчёт"
-              description="Для менеджера отображаются только клиентские цены"
-              action={
-                <a
-                  href="#calculator-details"
-                  className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-800 px-3 text-sm text-slate-200 hover:bg-slate-700"
-                >
-                  Открыть расчёт <ExternalLink size={15} />
-                </a>
-              }
-            />
-            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 md:p-5">
-              <Field
-                title="Материал"
-                value={calculation?.material || order.material}
-              />
-              <Field
-                title="Количество ступеней"
-                value={calculation?.regularSteps ?? "—"}
-              />
-              <Field
-                title="Площадки"
-                value={
-                  calculation?.platformEquivalents?.length
-                    ? `${calculation.platformEquivalents.length} шт.`
-                    : "Нет"
+          {canSeeClientFinance && (
+            <section id="calculation" className={panel}>
+              <SectionTitle
+                icon={<ClipboardList size={20} />}
+                title="Расчёт"
+                description="Для менеджера отображаются только клиентские цены"
+                action={
+                  <a
+                    href="#calculator-details"
+                    className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-800 px-3 text-sm text-slate-200 hover:bg-slate-700"
+                  >
+                    Открыть расчёт <ExternalLink size={15} />
+                  </a>
                 }
               />
-              <Field
-                title="Монтаж"
-                value={
-                  calculation
-                    ? calculation.installationRequired
-                      ? "Включён"
-                      : "Не включён"
-                    : "Не рассчитан"
-                }
-              />
-              <Field
-                title="Доставка"
-                value={
-                  calculation
-                    ? calculation.deliveryRequired
-                      ? "Включена"
-                      : "Не включена"
-                    : "Не рассчитана"
-                }
-              />
-              <Field
-                title="Дополнительные позиции"
-                value={
-                  calculation?.lines?.filter(
-                    (line) => line.enabled && line.kind !== "step",
-                  ).length ?? 0
-                }
-              />
-            </div>
-            <div className="grid gap-3 border-t border-slate-800 p-4 sm:grid-cols-3 md:p-5">
-              <div className="rounded-xl bg-emerald-500/10 p-4">
-                <p className={label}>Стоимость клиенту</p>
-                <p className="mt-1 text-xl font-bold text-emerald-300">
-                  {money(calculation?.clientPrice ?? order.amount)}
-                </p>
+              <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 md:p-5">
+                <Field
+                  title="Материал"
+                  value={calculation?.material || order.material}
+                />
+                <Field
+                  title="Количество ступеней"
+                  value={calculation?.regularSteps ?? "—"}
+                />
+                <Field
+                  title="Площадки"
+                  value={
+                    calculation?.platformEquivalents?.length
+                      ? `${calculation.platformEquivalents.length} шт.`
+                      : "Нет"
+                  }
+                />
+                <Field
+                  title="Монтаж"
+                  value={
+                    calculation
+                      ? calculation.installationRequired
+                        ? "Включён"
+                        : "Не включён"
+                      : "Не рассчитан"
+                  }
+                />
+                <Field
+                  title="Доставка"
+                  value={
+                    calculation
+                      ? calculation.deliveryRequired
+                        ? "Включена"
+                        : "Не включена"
+                      : "Не рассчитана"
+                  }
+                />
+                <Field
+                  title="Дополнительные позиции"
+                  value={
+                    calculation?.lines?.filter(
+                      (line) => line.enabled && line.kind !== "step",
+                    ).length ?? 0
+                  }
+                />
               </div>
-              <div className="rounded-xl bg-blue-500/10 p-4">
-                <p className={label}>Предоплата</p>
-                <p className="mt-1 text-xl font-bold text-blue-300">
-                  {money(order.prepayment)}
-                </p>
+              <div className="grid gap-3 border-t border-slate-800 p-4 sm:grid-cols-3 md:p-5">
+                <div className="rounded-xl bg-emerald-500/10 p-4">
+                  <p className={label}>Стоимость клиенту</p>
+                  <p className="mt-1 text-xl font-bold text-emerald-300">
+                    {money(calculation?.clientPrice ?? order.amount)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-blue-500/10 p-4">
+                  <p className={label}>Предоплата</p>
+                  <p className="mt-1 text-xl font-bold text-blue-300">
+                    {money(order.prepayment)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-amber-500/10 p-4">
+                  <p className={label}>Остаток клиента</p>
+                  <p className="mt-1 text-xl font-bold text-amber-300">
+                    {money(order.balance)}
+                  </p>
+                </div>
               </div>
-              <div className="rounded-xl bg-amber-500/10 p-4">
-                <p className={label}>Остаток клиента</p>
-                <p className="mt-1 text-xl font-bold text-amber-300">
-                  {money(order.balance)}
-                </p>
-              </div>
-            </div>
-            <details
-              id="calculator-details"
-              className="border-t border-slate-800 p-4 md:p-5"
-            >
-              <summary className="cursor-pointer font-semibold text-blue-300">
-                Изменить клиентский расчёт
-              </summary>
-              <div className="mt-5">
-                <StairCalculator orderId={order.id} />
-              </div>
-            </details>
-          </section>}
+              <details
+                id="calculator-details"
+                className="border-t border-slate-800 p-4 md:p-5"
+              >
+                <summary className="cursor-pointer font-semibold text-blue-300">
+                  Изменить клиентский расчёт
+                </summary>
+                <div className="mt-5">
+                  <StairCalculator orderId={order.id} />
+                </div>
+              </details>
+            </section>
+          )}
 
-          <OrderSettlementPanel order={order} />
+          <OrderSettlementPanel order={order} readOnly={archived} />
 
           <section id="documents" className={panel}>
             <SectionTitle
@@ -442,7 +520,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               description="Все документы заказа доступны в одном месте"
             />
             <div className="p-4 md:p-5">
-              <DocumentsTab orderId={order.id} />
+              <DocumentsTab orderId={order.id} readOnly={archived} />
             </div>
           </section>
 
@@ -513,7 +591,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               description="Фото, видео, PDF, чертежи и другие вложения заказа"
             />
             <div className="p-4 md:p-5">
-              <FilesTab orderId={order.id} />
+              <FilesTab orderId={order.id} readOnly={archived} />
             </div>
           </section>
         </div>
@@ -632,7 +710,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               {[
                 ["Клиент", "client"],
                 ["Технические параметры", "technical"],
-                ...(canSeeClientFinance ? [["Финансы заказа", "order-finance"]] : []),
+                ...(canSeeClientFinance
+                  ? [["Финансы заказа", "order-finance"]]
+                  : []),
                 ...(canSeeClientFinance ? [["Расчёты", "settlements"]] : []),
                 ["Расчёт", "calculation"],
                 ["Документы", "documents"],

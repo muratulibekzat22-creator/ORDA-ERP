@@ -17,21 +17,51 @@ import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
+import {
+  deleteOrderFromWork,
+  OrderDeletionError,
+} from "@/lib/services/order-deletion.service";
 
 type Context = { params: Promise<{ id: string }> };
 const include = {
   client: true,
   partner: true,
+  deletedBy: { select: { id: true, name: true } },
   managerUser: { include: { payrollProfile: { select: { id: true } } } },
-  measurements: { include: { measurerUser: { include: { payrollProfile: { select: { id: true } } } } } },
-  payments: { include: { partner: true }, orderBy: [{ operationDate: "desc" as const }, { id: "desc" as const }] },
-  partnerAssignmentHistory: { include: { author: { select: { name: true } } }, orderBy: { createdAt: "desc" as const } },
-  payrollAccruals: { include: { employee: { include: { user: { select: { name: true } } } }, payments: true, reversedBy: { select: { id: true } } }, orderBy: { createdAt: "desc" as const } },
+  measurements: {
+    include: {
+      measurerUser: { include: { payrollProfile: { select: { id: true } } } },
+    },
+  },
+  payments: {
+    include: { partner: true },
+    orderBy: [{ operationDate: "desc" as const }, { id: "desc" as const }],
+  },
+  partnerAssignmentHistory: {
+    include: { author: { select: { name: true } } },
+    orderBy: { createdAt: "desc" as const },
+  },
+  payrollAccruals: {
+    include: {
+      employee: { include: { user: { select: { name: true } } } },
+      payments: true,
+      reversedBy: { select: { id: true } },
+    },
+    orderBy: { createdAt: "desc" as const },
+  },
   productions: true,
   documents: true,
   calculations: { orderBy: { createdAt: "desc" as const } },
   statusHistory: { orderBy: { createdAt: "desc" as const } },
   events: { orderBy: { createdAt: "desc" as const } },
+  _count: {
+    select: {
+      payments: true,
+      companyLedgerEntries: true,
+      financeAuditEvents: true,
+      payrollAccruals: true,
+    },
+  },
 } satisfies Prisma.OrderInclude;
 const idOf = (value: string) => {
   const id = Number(value);
@@ -40,9 +70,24 @@ const idOf = (value: string) => {
 const text = (value: unknown, max = 1000) =>
   typeof value === "string" ? value.trim().slice(0, max) : null;
 
-async function canAccess(id: number, role: Role, userId: string) {
-  const user = await prisma.user.findUnique({ where: { id: Number(userId) }, select: { name: true } });
-  return !!user && canAccessOrder360(id, { userId: Number(userId), role, name: user.name });
+async function canAccess(
+  id: number,
+  role: Role,
+  userId: string,
+  includeDeleted = false,
+) {
+  const user = await prisma.user.findUnique({
+    where: { id: Number(userId) },
+    select: { name: true },
+  });
+  return (
+    !!user &&
+    canAccessOrder360(
+      id,
+      { userId: Number(userId), role, name: user.name },
+      { includeDeleted },
+    )
+  );
 }
 
 function redactForRole<T extends Record<string, unknown>>(
@@ -53,12 +98,13 @@ function redactForRole<T extends Record<string, unknown>>(
   const result: Record<string, unknown> = { ...order };
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
-    if (Array.isArray(result.calculations)) result.calculations = result.calculations.map((value) => {
-      const calculation = { ...(value as Record<string, unknown>) };
-      delete calculation.grossDifference;
-      delete calculation.grossProfit;
-      return calculation;
-    });
+    if (Array.isArray(result.calculations))
+      result.calculations = result.calculations.map((value) => {
+        const calculation = { ...(value as Record<string, unknown>) };
+        delete calculation.grossDifference;
+        delete calculation.grossProfit;
+        return calculation;
+      });
     return result;
   }
   if (role === Role.PARTNER) {
@@ -76,7 +122,13 @@ function redactForRole<T extends Record<string, unknown>>(
       delete settlement.client;
       if (settlement.partner && typeof settlement.partner === "object") {
         const partner = settlement.partner as Record<string, unknown>;
-        partner.payouts = Array.isArray(partner.payouts) ? partner.payouts.filter((item) => (item as Record<string, unknown>).partnerId === result.partnerId) : [];
+        partner.payouts = Array.isArray(partner.payouts)
+          ? partner.payouts.filter(
+              (item) =>
+                (item as Record<string, unknown>).partnerId ===
+                result.partnerId,
+            )
+          : [];
         delete partner.assignments;
       }
     }
@@ -94,18 +146,23 @@ function redactForRole<T extends Record<string, unknown>>(
   delete result.partnerAssignmentHistory;
   delete result.payrollAccruals;
   delete result.managerUser;
-  if (Array.isArray(result.measurements)) result.measurements = result.measurements.map((value) => {
-    const measurement = { ...(value as Record<string, unknown>) };
-    delete measurement.measurerUser;
-    return measurement;
-  });
+  if (Array.isArray(result.measurements))
+    result.measurements = result.measurements.map((value) => {
+      const measurement = { ...(value as Record<string, unknown>) };
+      delete measurement.measurerUser;
+      return measurement;
+    });
   if (result.settlement && typeof result.settlement === "object") {
     const settlement = result.settlement as Record<string, unknown>;
     delete settlement.partner;
     delete settlement.manager;
     delete settlement.measurer;
   }
-  if (role === Role.PRODUCTION || role === Role.INSTALLER || role === Role.MEASURER) {
+  if (
+    role === Role.PRODUCTION ||
+    role === Role.INSTALLER ||
+    role === Role.MEASURER
+  ) {
     delete result.amount;
     delete result.prepayment;
     delete result.balance;
@@ -148,12 +205,30 @@ export async function GET(_: Request, { params }: Context) {
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const role = auth.session!.user.role as Role;
-  if (!(await canAccess(id, role, auth.session!.user.id)))
+  if (
+    !(await canAccess(id, role, auth.session!.user.id, role === Role.DIRECTOR))
+  )
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   const order = await prisma.order.findUnique({ where: { id }, include });
-  return order
-    ? NextResponse.json(redactForRole({ ...order, settlement: buildOrderSettlement(order) }, role))
-    : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+  if (!order)
+    return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+  const { _count, ...source } = order;
+  return NextResponse.json(
+    redactForRole(
+      {
+        ...source,
+        deletionImpact: {
+          hasFinancialHistory:
+            _count.payments > 0 ||
+            _count.companyLedgerEntries > 0 ||
+            _count.financeAuditEvents > 0 ||
+            _count.payrollAccruals > 0,
+        },
+        settlement: buildOrderSettlement(order),
+      },
+      role,
+    ),
+  );
 }
 
 export async function PATCH(request: Request, { params }: Context) {
@@ -167,15 +242,50 @@ export async function PATCH(request: Request, { params }: Context) {
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    const commandOnly = ["lifecycle", "version", "managerUserId", "contractConfirmedAt", "controlMeasurementCompletedAt", "drawingApprovedAt", "specificationDefinedAt", "workshopConfirmedAt", "productionDeadline", "materialsReadyAt", "qaApprovedAt", "completenessConfirmedAt", "operationalAcceptedAt", "completedAt"];
-    if (commandOnly.some((field) => field in body)) return NextResponse.json({ error: "Критические поля изменяются только domain-командами" }, { status: 400 });
+    const commandOnly = [
+      "lifecycle",
+      "version",
+      "managerUserId",
+      "contractConfirmedAt",
+      "controlMeasurementCompletedAt",
+      "drawingApprovedAt",
+      "specificationDefinedAt",
+      "workshopConfirmedAt",
+      "productionDeadline",
+      "materialsReadyAt",
+      "qaApprovedAt",
+      "completenessConfirmedAt",
+      "operationalAcceptedAt",
+      "completedAt",
+    ];
+    if (commandOnly.some((field) => field in body))
+      return NextResponse.json(
+        { error: "Критические поля изменяются только domain-командами" },
+        { status: 400 },
+      );
     if (body.action === "commercialAdjustment") {
-      if (role !== Role.DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-      const newAmount = Number(body.newAmount), reason = text(body.reason, 1000);
-      if (!Number.isFinite(newAmount) || newAmount < 0 || !reason) return NextResponse.json({ error: "Укажите новую сумму и причину" }, { status: 400 });
-      const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
+      if (role !== Role.DIRECTOR)
+        return NextResponse.json(
+          { error: "Недостаточно прав" },
+          { status: 403 },
+        );
+      const newAmount = Number(body.newAmount),
+        reason = text(body.reason, 1000);
+      if (!Number.isFinite(newAmount) || newAmount < 0 || !reason)
+        return NextResponse.json(
+          { error: "Укажите новую сумму и причину" },
+          { status: 400 },
+        );
+      const idempotency = readIdempotencyKey(request);
+      if ("response" in idempotency) return idempotency.response;
       const payload = { orderId: id, newAmount, reason };
-      const result = await adjustOrderAmount({ ...payload, authorId: Number(auth.session!.user.id), author: auth.session!.user.name ?? "System", idempotencyKey: idempotency.key, requestHash: createRequestHash(payload) });
+      const result = await adjustOrderAmount({
+        ...payload,
+        authorId: Number(auth.session!.user.id),
+        author: auth.session!.user.name ?? "System",
+        idempotencyKey: idempotency.key,
+        requestHash: createRequestHash(payload),
+      });
       return NextResponse.json(result, { status: result.created ? 201 : 200 });
     }
     const financial = [
@@ -217,7 +327,9 @@ export async function PATCH(request: Request, { params }: Context) {
         );
       const partnerId = Number(body.partnerId),
         partnerPrice = Number(body.partnerPrice);
-      const partnerAgreedAt = body.partnerAgreedAt ? new Date(String(body.partnerAgreedAt)) : new Date();
+      const partnerAgreedAt = body.partnerAgreedAt
+        ? new Date(String(body.partnerAgreedAt))
+        : new Date();
       const partnerReason = text(body.reason, 1000);
       if (
         !Number.isInteger(partnerId) ||
@@ -239,11 +351,18 @@ export async function PATCH(request: Request, { params }: Context) {
         manager: auth.session!.user.name ?? undefined,
         authorId: Number(auth.session!.user.id),
         reason: partnerReason,
-        directorConfirmed: role === Role.DIRECTOR && body.directorConfirmed === true,
+        directorConfirmed:
+          role === Role.DIRECTOR && body.directorConfirmed === true,
       });
       return updated
         ? NextResponse.json(
-            redactForRole({ ...updated, settlement: buildOrderSettlement(updated) } as unknown as Record<string, unknown>, role),
+            redactForRole(
+              {
+                ...updated,
+                settlement: buildOrderSettlement(updated),
+              } as unknown as Record<string, unknown>,
+              role,
+            ),
           )
         : NextResponse.json(
             { error: "Заказ или цех не найден" },
@@ -324,8 +443,11 @@ export async function PATCH(request: Request, { params }: Context) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)
           throw new Error("INVALID_AMOUNT");
-        const hasFinancialHistory = await tx.payment.count({ where: { orderId: id } });
-        if (hasFinancialHistory) throw new Error("COMMERCIAL_ADJUSTMENT_REQUIRED");
+        const hasFinancialHistory = await tx.payment.count({
+          where: { orderId: id },
+        });
+        if (hasFinancialHistory)
+          throw new Error("COMMERCIAL_ADJUSTMENT_REQUIRED");
         data.amount = amount;
       }
       if ("partnerPlannedReadyAt" in body)
@@ -340,11 +462,29 @@ export async function PATCH(request: Request, { params }: Context) {
         data.installationCompleted = body.installationCompleted;
       await tx.order.update({ where: { id }, data });
       if (status === ORDER_STATUSES[ORDER_STATUSES.length - 1]) {
-        const activeReservations = await tx.materialReservation.findMany({ where: { orderId: id, status: "ACTIVE", quantity: { gt: 0 } } });
+        const activeReservations = await tx.materialReservation.findMany({
+          where: { orderId: id, status: "ACTIVE", quantity: { gt: 0 } },
+        });
         for (const reservation of activeReservations) {
-          await tx.material.update({ where: { id: reservation.materialId }, data: { reserved: { decrement: reservation.quantity } } });
-          await tx.materialReservation.update({ where: { id: reservation.id }, data: { quantity: 0, status: "RELEASED" } });
-          await tx.materialMovement.create({ data: { materialId: reservation.materialId, orderId: id, type: "release", quantity: reservation.quantity, reserveDelta: -reservation.quantity, employeeId: Number(auth.session!.user.id) || null, comment: "Автоматическое освобождение при отмене заказа" } });
+          await tx.material.update({
+            where: { id: reservation.materialId },
+            data: { reserved: { decrement: reservation.quantity } },
+          });
+          await tx.materialReservation.update({
+            where: { id: reservation.id },
+            data: { quantity: 0, status: "RELEASED" },
+          });
+          await tx.materialMovement.create({
+            data: {
+              materialId: reservation.materialId,
+              orderId: id,
+              type: "release",
+              quantity: reservation.quantity,
+              reserveDelta: -reservation.quantity,
+              employeeId: Number(auth.session!.user.id) || null,
+              comment: "Автоматическое освобождение при отмене заказа",
+            },
+          });
         }
       }
       if (status) {
@@ -395,7 +535,12 @@ export async function PATCH(request: Request, { params }: Context) {
       return tx.order.findUnique({ where: { id }, include });
     });
     return updated
-      ? NextResponse.json(redactForRole({ ...updated, settlement: buildOrderSettlement(updated) }, role))
+      ? NextResponse.json(
+          redactForRole(
+            { ...updated, settlement: buildOrderSettlement(updated) },
+            role,
+          ),
+        )
       : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   } catch (error) {
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
@@ -405,8 +550,21 @@ export async function PATCH(request: Request, { params }: Context) {
         { error: "Переход статуса запрещён" },
         { status: 409 },
       );
-    if (error instanceof Error && ["COMMERCIAL_ADJUSTMENT_REQUIRED", "DIRECTOR_CONFIRMATION_REQUIRED", "PARTNER_PRICE_BELOW_PAID"].includes(error.message))
-      return NextResponse.json({ error: "Изменение требует контролируемой финансовой операции и подтверждения директора" }, { status: 409 });
+    if (
+      error instanceof Error &&
+      [
+        "COMMERCIAL_ADJUSTMENT_REQUIRED",
+        "DIRECTOR_CONFIRMATION_REQUIRED",
+        "PARTNER_PRICE_BELOW_PAID",
+      ].includes(error.message)
+    )
+      return NextResponse.json(
+        {
+          error:
+            "Изменение требует контролируемой финансовой операции и подтверждения директора",
+        },
+        { status: 409 },
+      );
     if (
       error instanceof Error &&
       ["INVALID_STATUS", "INVALID_AMOUNT"].includes(error.message)
@@ -422,19 +580,39 @@ export async function PATCH(request: Request, { params }: Context) {
   }
 }
 
-export async function DELETE(_: Request, { params }: Context) {
+export async function DELETE(request: Request, { params }: Context) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
-  if ((auth.session!.user.role as Role) !== Role.DIRECTOR)
+  const role = auth.session!.user.role as Role;
+  if (role !== Role.DIRECTOR && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = idOf((await params).id);
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const protectedOrder = await prisma.order.findUnique({ where: { id }, select: { _count: { select: { payments: true, calculations: true, events: true, materialMovements: true, materialReservations: true, productions: true, statusHistory: true, documents: true } } } });
-  if (!protectedOrder) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
-  if (Object.values(protectedOrder._count).some((count) => count > 0)) return NextResponse.json({ error: "Финансово или операционно проведённый заказ нельзя удалить; используйте отмену или архив" }, { status: 409 });
-  const deleted = await prisma.order.delete({ where: { id } }).catch(() => null);
-  return deleted
-    ? NextResponse.json(deleted)
-    : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+  try {
+    const body = (await request.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
+    return NextResponse.json(
+      await deleteOrderFromWork(
+        {
+          userId: Number(auth.session!.user.id),
+          role,
+          name: auth.session!.user.name ?? "Сотрудник",
+        },
+        id,
+        typeof body.reason === "string" ? body.reason : undefined,
+      ),
+    );
+  } catch (error) {
+    if (error instanceof OrderDeletionError && error.message === "FORBIDDEN")
+      return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+    if (error instanceof OrderDeletionError && error.message === "NOT_FOUND")
+      return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Не удалось удалить заказ из рабочего списка" },
+      { status: 500 },
+    );
+  }
 }
