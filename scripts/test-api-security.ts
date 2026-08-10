@@ -907,8 +907,8 @@ async function main() {
     assert(typeof directorAnalytics.kpi.leads === "number" && Array.isArray(directorAnalytics.funnel) && Array.isArray(directorAnalytics.months) && directorAnalytics.byManager.some((item) => item.managerUserId === manager.id) && directorAnalytics.filters.partners.some((partner) => partner.id === firstPartner.id), "director analytics payload is invalid");
     const directorSettings = await (await expectStatus("/api/settings", 200, directorCookie)).json() as Record<string, unknown>;
     assert(typeof directorSettings === "object" && directorSettings !== null, "director settings payload is invalid");
-    const directorEmployees = await (await expectStatus("/api/employees", 200, directorCookie)).json() as Array<{ id: number; role: Role }>;
-    assert(Array.isArray(directorEmployees) && directorEmployees.some((employee) => employee.id === director.id && employee.role === Role.DIRECTOR) && directorEmployees.some((employee) => employee.id === manager.id && employee.role === Role.MANAGER), "director employees payload is invalid");
+    const directorEmployees = await (await expectStatus("/api/employees", 200, directorCookie)).json() as Array<{ employeeId: number; userId: number | null; hasOrdaAccess: boolean }>;
+    assert(Array.isArray(directorEmployees) && directorEmployees.every((employee) => Number.isInteger(employee.employeeId) && employee.hasOrdaAccess === Boolean(employee.userId)), "director employees payload is invalid");
     const directorDocuments = await (await expectStatus("/api/documents", 200, directorCookie)).json() as DocumentPayload[];
     assert(directorDocuments.some((document) => document.id === createdDocument.id && document.order.id === firstOrder.id), "director cannot see the temporary document");
     console.log("manager and director API security matrix passed");

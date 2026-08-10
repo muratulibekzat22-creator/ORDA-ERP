@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { Role } from "@prisma/client";
 
 import { prisma } from "../lib/prisma";
+import { getFinanceJournal } from "../lib/services/finance-journal.service";
 import { createFinanceOperation, getFinanceDashboard } from "../lib/services/payment.service";
 import { assignPartnerToOrder, getPartner, getPartners } from "../lib/services/partner.service";
 import { getReportsReadModel } from "../lib/services/report.service";
@@ -22,10 +23,10 @@ const paid = [800_000, 400_000, 100_000, 50_000, 100_000, 200_000];
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
 async function main() {
-  const financeUi = readFileSync("app/finance/page.tsx", "utf8");
+  const financeUi = readFileSync("components/finance/FinanceJournalPage.tsx", "utf8");
   const financeService = readFileSync("lib/services/payment.service.ts", "utf8");
-  for (const field of ["Остаток клиента", "Остаток цеха", "Менеджеру", "Замерщику"])
-    assert(financeUi.includes(field), `Order settlements read model is missing ${field}`);
+  for (const field of ["+ Доход", "+ Расход", "Разница доходов и расходов", "Доходы по категориям", "Расходы по категориям"])
+    assert(financeUi.includes(field), `Finance journal UI is missing ${field}`);
   for (const field of ["managerBonusPayable", "measurerBonusPayable"])
     assert(financeService.includes(field), `Finance aggregation is missing ${field}`);
   const ids = { users: [] as number[], clients: [] as number[], orders: [] as number[], partners: [] as number[] };
@@ -75,6 +76,10 @@ async function main() {
     assert.equal(dashboard.cards.receipts, sum(received), "order creation was incorrectly counted as cash");
     assert.equal(dashboard.cards.expenses, sum(paid), "partner agreement was incorrectly counted as cash expense");
     assert.equal(dashboard.partnerBreakdown[0]?.remaining, sum(agreed) - sum(paid), "partner dashboard remaining");
+    const journal = await getFinanceJournal({ period: "month" });
+    const orderOperations = journal.operations.filter((item) => item.order && ids.orders.includes(item.order.id));
+    assert.equal(orderOperations.filter((item) => item.source === "CLIENT_PAYMENT" && item.direction === "INCOME").length, amounts.length, "client payments are not canonical income");
+    assert.equal(orderOperations.filter((item) => item.source === "PARTNER_PAYOUT" && item.direction === "EXPENSE").length, amounts.length, "partner payouts are not canonical expense");
 
     const future = await getFinanceDashboard({ manager: manager.name, from: new Date("2030-01-01"), to: new Date("2030-01-31") });
     assert.equal(future.cards.receipts, 0, "future period has customer cash");

@@ -37,6 +37,8 @@
     "test:finance-integrity": "tsx scripts/test-finance-integrity.ts",
     "test:partner-settlements": "tsx scripts/test-partner-settlements.ts",
     "test:partner-finance": "tsx scripts/test-partner-finance-dashboard.ts",
+    "test:finance-journal": "tsx scripts/test-finance-journal.ts",
+    "test:finance-go-live": "tsx scripts/test-finance-go-live.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
     "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",

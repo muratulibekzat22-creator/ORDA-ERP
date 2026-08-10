@@ -4,6 +4,11 @@ import { Role } from "@prisma/client";
 import { createRequestHash, idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { logRequestFailure } from "@/lib/observability";
 import { requirePermission } from "@/lib/server-auth";
+import {
+  createManualFinanceEntry,
+  type FinanceDirection,
+  getFinanceJournal,
+} from "@/lib/services/finance-journal.service";
 import { createFinanceOperation, financeOperationTypes, getFinanceDashboard, type AdjustmentDirection, type FinanceOperationType } from "@/lib/services/payment.service";
 
 const methods = ["cash", "kaspi", "bank_transfer", "card", "other"] as const;
@@ -45,6 +50,7 @@ function operationError(error: unknown) {
     PARTNER_PAYMENT_EXCEEDS_BALANCE: ["Выплата превышает остаток по заказу", 409],
     PARTNER_PRICE_REQUIRED: ["Сначала директор должен указать согласованную цену партнёра", 409],
     EXPENSE_USE_COMPANY_LEDGER: ["Расходы проводятся через журнал расходов компании", 409],
+    CATEGORY_NOT_FOUND: ["Категория не найдена или находится в архиве", 400],
   };
   return messages[error.message] ?? null;
 }
@@ -63,17 +69,53 @@ export async function GET(request: Request) {
     const from = optionalDate(searchParams.get("from"));
     const to = optionalDate(searchParams.get("to"));
     if (from === null || to === null) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
-    const data = await getFinanceDashboard({
-      period: (searchParams.get("period") ?? "all") as "all" | "today" | "week" | "month" | "quarter" | "year",
-      manager: searchParams.get("manager") || undefined,
-      partnerId: requestedPartnerId ?? undefined,
-      paymentStatus: (searchParams.get("paymentStatus") ?? "all") as "all" | "debt" | "partial" | "paid",
-      type: searchParams.get("type") || undefined,
-      orderId: positiveInteger(searchParams.get("orderId")) ?? undefined,
-      from: from ?? undefined,
-      to: to ?? undefined,
-    });
-    return NextResponse.json(data);
+    const period = searchParams.get("period") ?? "month";
+    const [data, journal] = await Promise.all([
+      getFinanceDashboard({
+        period: (["today", "week", "month", "quarter", "year"].includes(
+          period,
+        )
+          ? period
+          : "all") as "all" | "today" | "week" | "month" | "quarter" | "year",
+        manager: searchParams.get("manager") || undefined,
+        partnerId: requestedPartnerId ?? undefined,
+        paymentStatus: (searchParams.get("paymentStatus") ?? "all") as
+          | "all"
+          | "debt"
+          | "partial"
+          | "paid",
+        type: searchParams.get("type") || undefined,
+        orderId: positiveInteger(searchParams.get("orderId")) ?? undefined,
+        from: from ?? undefined,
+        to: to ?? undefined,
+      }),
+      getFinanceJournal({
+        period: ([
+          "all",
+          "today",
+          "week",
+          "month",
+          "previous_month",
+          "year",
+        ].includes(period)
+          ? period
+          : "all") as
+          | "all"
+          | "today"
+          | "week"
+          | "month"
+          | "previous_month"
+          | "year",
+        from: from ?? undefined,
+        to: to ?? undefined,
+        direction:
+          searchParams.get("direction") === "INCOME" ||
+          searchParams.get("direction") === "EXPENSE"
+            ? (searchParams.get("direction") as FinanceDirection)
+            : undefined,
+      }),
+    ]);
+    return NextResponse.json({ ...data, journal });
   } catch (error) {
     logRequestFailure("finance.read_failed", request, error);
     return NextResponse.json({ error: "Не удалось загрузить финансы" }, { status: 500 });
@@ -88,6 +130,69 @@ export async function POST(request: Request) {
   if ("response" in idempotency) return idempotency.response;
   try {
     const body = await request.json() as Record<string, unknown>;
+    if (
+      body.categoryId !== undefined &&
+      (body.direction === "INCOME" || body.direction === "EXPENSE")
+    ) {
+      const amount = positiveMoney(body.amount);
+      const categoryId = positiveInteger(body.categoryId);
+      const operationDate = optionalDate(body.operationDate);
+      const method =
+        typeof body.method === "string" &&
+        methods.includes(body.method as (typeof methods)[number])
+          ? body.method
+          : null;
+      const optionalId = (value: unknown) =>
+        value == null || value === "" ? null : positiveInteger(value);
+      const orderId = optionalId(body.orderId);
+      const clientId = optionalId(body.clientId);
+      const partnerId = optionalId(body.partnerId);
+      const employeeId = optionalId(body.employeeId);
+      const suppliedIds = [
+        [body.orderId, orderId],
+        [body.clientId, clientId],
+        [body.partnerId, partnerId],
+        [body.employeeId, employeeId],
+      ];
+      if (
+        amount === null ||
+        !categoryId ||
+        operationDate === null ||
+        !method ||
+        suppliedIds.some(
+          ([raw, parsed]) => raw != null && raw !== "" && parsed === null,
+        )
+      )
+        return NextResponse.json(
+          { error: "Некорректная финансовая операция" },
+          { status: 400 },
+        );
+      const payload = {
+        direction: body.direction as FinanceDirection,
+        categoryId,
+        amount,
+        operationDate: operationDate ?? new Date(),
+        method,
+        orderId,
+        clientId,
+        partnerId,
+        employeeId,
+        counterparty: optionalText(body.counterparty) ?? null,
+        comment: optionalText(body.comment) ?? null,
+      };
+      const result = await createManualFinanceEntry({
+        ...payload,
+        authorId: Number(auth.session!.user.id),
+        idempotencyKey: idempotency.key,
+        requestHash: createRequestHash({
+          ...payload,
+          operationDate: payload.operationDate.toISOString(),
+        }),
+      });
+      return NextResponse.json(result.entry, {
+        status: result.created ? 201 : 200,
+      });
+    }
     const type = typeof body.type === "string" && financeOperationTypes.includes(body.type as FinanceOperationType) ? body.type as FinanceOperationType : null;
     if (type === "PARTNER_PAYOUT" && auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const amount = positiveMoney(body.amount);

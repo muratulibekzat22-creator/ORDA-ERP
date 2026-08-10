@@ -418,6 +418,7 @@ model Client {
   calendarTasks       CalendarTask[]
   measurements        Measurement[]
   documents           Document[]
+  companyLedgerEntries CompanyLedgerEntry[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -674,6 +675,7 @@ model Partner {
 
   orders   Order[]
   payments Payment[]
+  companyLedgerEntries CompanyLedgerEntry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -976,11 +978,22 @@ model CompanyLedgerEntry {
   id               Int             @id @default(autoincrement())
   type             String
   category         String
+  categoryId       Int?
+  categoryRef      FinanceCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   direction        String
+  source           String           @default("MANUAL")
   amount           Decimal         @db.Decimal(14, 2)
   operationDate    DateTime        @default(now())
+  method           String?
+  counterparty     String?
   orderId          Int?
   order            Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  clientId         Int?
+  client           Client?         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  partnerId        Int?
+  partner          Partner?        @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  employeeId       Int?
+  employee         EmployeePayrollProfile? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
   comment          String?
   authorId         Int?
   author           User?           @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
@@ -991,10 +1004,33 @@ model CompanyLedgerEntry {
   payrollAccrual   PayrollAccrual? @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
   payrollPaymentId Int?            @unique
   payrollPayment   PayrollPayment? @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
+  voidedAt         DateTime?
+  voidReason       String?
   createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   @@index([operationDate])
   @@index([orderId])
+  @@index([categoryId, operationDate])
+  @@index([source, operationDate])
+  @@index([clientId])
+  @@index([partnerId])
+  @@index([employeeId])
+}
+
+model FinanceCategory {
+  id        Int      @id @default(autoincrement())
+  code      String
+  name      String
+  direction String
+  system    Boolean  @default(false)
+  active    Boolean  @default(true)
+  entries   CompanyLedgerEntry[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([direction, code])
+  @@index([direction, active, name])
 }
 
 model EmployeePayrollProfile {
@@ -1018,6 +1054,7 @@ model EmployeePayrollProfile {
   paymentConfirmations   PayrollPaymentConfirmation[]
   advanceRequests        PayrollAdvanceRequest[]
   auditEvents            PayrollAuditEvent[]
+  companyLedgerEntries   CompanyLedgerEntry[]
   createdAt              DateTime                     @default(now())
   updatedAt              DateTime                     @updatedAt
 }

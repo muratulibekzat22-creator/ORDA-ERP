@@ -336,6 +336,7 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
         data: {
           type: "PAYROLL_ACCRUAL",
           category: "SALARY",
+          source: "OTHER_SYSTEM",
           direction:
             accrual.direction === PayrollDirection.INCREASE
               ? "EXPENSE"
@@ -455,12 +456,15 @@ async function createPaymentTx(
     data: {
       type: "PAYROLL_PAYMENT",
       category: "SALARY",
+      source: "PAYROLL_PAYMENT",
       direction:
         input.type === PayrollPaymentType.EMPLOYEE_REFUND
           ? "INCOME"
           : "EXPENSE",
       amount: payment.amount,
       operationDate: input.paymentDate,
+      method: input.method,
+      employeeId: input.employeeId,
       comment: input.comment,
       authorId: actor.userId,
       idempotencyKey: `payroll-payment:${payment.id}`,
