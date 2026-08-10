@@ -130,6 +130,7 @@ const measurementInclude = {
       whatsapp: true,
       city: true,
       address: true,
+      manager: true,
       managerUserId: true,
       managerUser: { select: { id: true, name: true, phone: true } },
     },
@@ -151,6 +152,8 @@ const measurementInclude = {
       id: true,
       action: true,
       comment: true,
+      before: true,
+      after: true,
       createdAt: true,
       actor: { select: { id: true, name: true } },
     },
@@ -158,6 +161,87 @@ const measurementInclude = {
     take: 30,
   },
 } satisfies Prisma.MeasurementInclude;
+
+type MeasurementRow = Prisma.MeasurementGetPayload<{
+  include: typeof measurementInclude;
+}>;
+
+export type MeasurementWorkspaceFilter =
+  | "today"
+  | "upcoming"
+  | "needs-closing"
+  | "completed"
+  | "cancelled"
+  | "all";
+
+export type MeasurementWorkspaceFilters = {
+  filter?: MeasurementWorkspaceFilter;
+  measurerUserId?: number;
+  managerUserId?: number;
+  from?: Date;
+  to?: Date;
+};
+
+function jsonObject(value: Prisma.JsonValue | null) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Prisma.JsonObject)
+    : null;
+}
+
+function jsonString(value: Prisma.JsonValue | undefined) {
+  return typeof value === "string" ? value : null;
+}
+
+export function measurementOperationalView(
+  measurement: MeasurementRow,
+  now = new Date(),
+) {
+  const active = EDITABLE_STATUSES.includes(measurement.status);
+  const overdueMs = active
+    ? Math.max(0, now.getTime() - measurement.visitDate.getTime())
+    : 0;
+  const reschedule = measurement.auditEvents.find((event) =>
+    ["RESCHEDULED", "REASSIGNED"].includes(event.action),
+  );
+  const cancellation = measurement.auditEvents.find((event) =>
+    ["MEASUREMENT_CANCELLED", "CANCELLED"].includes(event.action),
+  );
+  const rescheduleBefore = jsonObject(reschedule?.before ?? null);
+  const rescheduleAfter = jsonObject(reschedule?.after ?? null);
+  const cancellationAfter = jsonObject(cancellation?.after ?? null);
+
+  return {
+    ...measurement,
+    operational: {
+      needsClosing: overdueMs > 0,
+      overdueMs,
+    },
+    latestReschedule: reschedule
+      ? {
+          previousVisitDate: jsonString(rescheduleBefore?.visitDate),
+          visitDate:
+            jsonString(rescheduleAfter?.visitDate) ??
+            measurement.visitDate.toISOString(),
+          comment:
+            jsonString(rescheduleAfter?.comment) ?? reschedule.comment ?? null,
+          changedAt: reschedule.createdAt,
+          changedBy: reschedule.actor,
+          reassigned: reschedule.action === "REASSIGNED",
+        }
+      : null,
+    cancellation: cancellation
+      ? {
+          reason: jsonString(cancellationAfter?.reason),
+          comment:
+            jsonString(cancellationAfter?.comment) ??
+            cancellation.comment ??
+            null,
+          cancelledAt: cancellation.createdAt,
+          cancelledBy: cancellation.actor,
+        }
+      : null,
+  };
+}
 
 export function measurementScope(
   actor: MeasurementActor,
@@ -388,22 +472,29 @@ export async function listMeasurements(
       ...(filters.from ? { gte: filters.from } : {}),
       ...(filters.to ? { lt: filters.to } : {}),
     };
-  return prisma.measurement.findMany({
+  const measurements = await prisma.measurement.findMany({
     where,
     include: measurementInclude,
     orderBy: [{ visitDate: "asc" }, { id: "asc" }],
     take: 500,
   });
+  return measurements.map((measurement) =>
+    measurementOperationalView(measurement),
+  );
 }
 
 export async function getMeasurement(actor: MeasurementActor, id: number) {
-  return prisma.measurement.findFirst({
+  const measurement = await prisma.measurement.findFirst({
     where: { id, AND: [measurementScope(actor)] },
     include: measurementInclude,
   });
+  return measurement ? measurementOperationalView(measurement) : null;
 }
 
-export async function measurementWorkspace(actor: MeasurementActor) {
+export async function measurementWorkspace(
+  actor: MeasurementActor,
+  filters: MeasurementWorkspaceFilters = {},
+) {
   const now = new Date();
   const today = dayBounds(now),
     month = monthBounds(now);
@@ -412,11 +503,40 @@ export async function measurementWorkspace(actor: MeasurementActor) {
     MeasurementStatus.ASSIGNED,
     MeasurementStatus.IN_PROGRESS,
   ];
+  const workspaceWhere: Prisma.MeasurementWhereInput = { AND: [scope] };
+  if (filters.filter === "today") {
+    workspaceWhere.visitDate = { gte: today.start, lt: today.end };
+  } else if (filters.filter === "upcoming") {
+    workspaceWhere.visitDate = { gt: now };
+    workspaceWhere.status = { in: active };
+  } else if (filters.filter === "needs-closing") {
+    workspaceWhere.visitDate = { lt: now };
+    workspaceWhere.status = { in: active };
+  } else if (filters.filter === "completed") {
+    workspaceWhere.status = { in: COMPLETED_STATUSES };
+  } else if (filters.filter === "cancelled") {
+    workspaceWhere.status = MeasurementStatus.CANCELLED;
+  }
+  if (filters.from || filters.to) {
+    workspaceWhere.visitDate = {
+      ...(workspaceWhere.visitDate && typeof workspaceWhere.visitDate === "object"
+        ? workspaceWhere.visitDate
+        : {}),
+      ...(filters.from ? { gte: filters.from } : {}),
+      ...(filters.to ? { lt: filters.to } : {}),
+    };
+  } else if (!filters.filter) {
+    workspaceWhere.visitDate = {
+      gte: new Date(now.getTime() - 30 * 86_400_000),
+    };
+  }
+  if (actor.role === Role.DIRECTOR && filters.measurerUserId)
+    workspaceWhere.measurerUserId = filters.measurerUserId;
+  if (actor.role === Role.DIRECTOR && filters.managerUserId)
+    workspaceWhere.client = { managerUserId: filters.managerUserId };
+
   const measurements = await prisma.measurement.findMany({
-    where: {
-      AND: [scope],
-      visitDate: { gte: new Date(now.getTime() - 30 * 86_400_000) },
-    },
+    where: workspaceWhere,
     include: measurementInclude,
     orderBy: [{ visitDate: "asc" }, { id: "asc" }],
     take: 300,
@@ -510,6 +630,10 @@ export async function measurementWorkspace(actor: MeasurementActor) {
     measurements.find(
       (row) => row.visitDate >= now && active.includes(row.status),
     ) ?? null;
+  const needsClosingMeasurement =
+    measurements.find(
+      (row) => row.visitDate < now && active.includes(row.status),
+    ) ?? null;
   const conversion =
     monthCompleted > 0
       ? Math.round((monthOrders / monthCompleted) * 1000) / 10
@@ -575,8 +699,15 @@ export async function measurementWorkspace(actor: MeasurementActor) {
         })
       : [];
   return {
-    measurements,
-    nextMeasurement,
+    measurements: measurements.map((measurement) =>
+      measurementOperationalView(measurement, now),
+    ),
+    nextMeasurement: nextMeasurement
+      ? measurementOperationalView(nextMeasurement, now)
+      : null,
+    needsClosingMeasurement: needsClosingMeasurement
+      ? measurementOperationalView(needsClosingMeasurement, now)
+      : null,
     measurerStats,
     kpi: {
       today: todayCount,
@@ -914,6 +1045,7 @@ export async function completeMeasurement(
       )
     )
       throw new MeasurementError("SHEET_PHOTO_REQUIRED");
+    if (!outcome) throw new MeasurementError("CLIENT_OUTCOME_REQUIRED");
     const outcomeComment = trim(outcome?.outcomeComment, 2000);
     if (
       outcome?.clientOutcome === MeasurementClientOutcome.RETURN_TO_MANAGER &&
@@ -1389,9 +1521,14 @@ export async function rescheduleMeasurement(
 ) {
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
-    if (!canManage(actor, current)) throw new MeasurementError("NOT_FOUND");
+    const ownMeasurement =
+      actor.role === Role.MEASURER && current.measurerUserId === actor.userId;
+    if (!canManage(actor, current) && !ownMeasurement)
+      throw new MeasurementError("NOT_FOUND");
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
+    if (ownMeasurement && input.measurerUserId !== actor.userId)
+      throw new MeasurementError("FORBIDDEN");
     const measurer = await tx.user.findFirst({
       where: { id: input.measurerUserId, role: Role.MEASURER, active: true },
       select: { id: true, name: true },
@@ -1425,7 +1562,11 @@ export async function rescheduleMeasurement(
             dueAt: current.visitDate,
             assigneeId: current.measurerUserId,
           },
-          after: { dueAt: input.visitDate, assigneeId: measurer.id },
+          after: {
+            dueAt: input.visitDate,
+            assigneeId: measurer.id,
+            comment: trim(input.comment),
+          },
         },
       });
     }
@@ -1439,7 +1580,12 @@ export async function rescheduleMeasurement(
           visitDate: current.visitDate,
           measurerUserId: current.measurerUserId,
         },
-        after: { visitDate: input.visitDate, measurerUserId: measurer.id },
+        comment: trim(input.comment),
+        after: {
+          visitDate: input.visitDate,
+          measurerUserId: measurer.id,
+          comment: trim(input.comment),
+        },
       },
     });
     await tx.leadNextAction.updateMany({
@@ -1476,7 +1622,10 @@ export async function cancelMeasurement(
 ) {
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
-    if (!canManage(actor, current)) throw new MeasurementError("NOT_FOUND");
+    const ownMeasurement =
+      actor.role === Role.MEASURER && current.measurerUserId === actor.userId;
+    if (!canManage(actor, current) && !ownMeasurement)
+      throw new MeasurementError("NOT_FOUND");
     if (current.status === MeasurementStatus.CANCELLED)
       return tx.measurement.findUniqueOrThrow({ where: { id } });
     if (COMPLETED_STATUSES.includes(current.status))
@@ -1484,6 +1633,7 @@ export async function cancelMeasurement(
     const now = new Date();
     const reason = trim(typeof input === "string" ? undefined : input?.reason, 300);
     const comment = trim(typeof input === "string" ? input : input?.comment, 1000);
+    if (!reason) throw new MeasurementError("CANCELLATION_REASON_REQUIRED");
     const cancellationComment = [reason, comment].filter(Boolean).join(" · ");
     if (current.calendarTaskId) {
       await tx.calendarTask.update({
@@ -1528,7 +1678,11 @@ export async function cancelMeasurement(
         actorId: actor.userId,
         comment: cancellationComment || null,
         before: { status: current.status },
-        after: { status: MeasurementStatus.CANCELLED, reason: reason ?? null },
+        after: {
+          status: MeasurementStatus.CANCELLED,
+          reason,
+          comment,
+        },
       },
     });
     return tx.measurement.update({

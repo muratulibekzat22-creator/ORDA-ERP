@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DirectorMeasurementControl from "@/components/measurements/DirectorMeasurementControl";
 import {
   Banknote,
   CheckCircle2,
@@ -251,6 +252,12 @@ function dimensions(value: string, withComment = false) {
 
 export default function MeasurementWorkspace() {
   const { data: session } = useSession();
+  if (session?.user.role === "DIRECTOR") return <DirectorMeasurementControl />;
+  return <OperationalMeasurementWorkspace />;
+}
+
+function OperationalMeasurementWorkspace() {
+  const { data: session } = useSession();
   const [data, setData] = useState<Payload>({
     measurements: [],
     kpi: {
@@ -269,7 +276,7 @@ export default function MeasurementWorkspace() {
     measurerStats: [],
   });
   const [tab, setTab] = useState<
-      "today" | "upcoming" | "completed" | "overdue"
+      "today" | "upcoming" | "completed" | "overdue" | "cancelled" | "all"
     >("today"),
     [selectedId, setSelectedId] = useState<number | null>(null),
     [form, setForm] = useState<Form>(empty()),
@@ -298,7 +305,8 @@ export default function MeasurementWorkspace() {
   const photoRef = useRef<HTMLInputElement>(null),
     [photoType, setPhotoType] = useState("SHEET");
   const measurer = session?.user.role === "MEASURER";
-  const canSchedule = session?.user.role === "MANAGER" || session?.user.role === "DIRECTOR";
+  const canSchedule = session?.user.role === "MANAGER";
+  const canCloseOutcome = canSchedule || measurer;
   const selectMeasurement = (row: Measurement) => {
     setSelectedId(row.id);
     setForm(formOf(row));
@@ -318,6 +326,8 @@ export default function MeasurementWorkspace() {
     if (!response.ok) setError(body.error ?? "Не удалось загрузить замеры");
     else {
       setData(body);
+      const requestedFilter = new URLSearchParams(window.location.search).get("filter");
+      if (requestedFilter === "needs-closing") setTab("overdue");
       const requested = Number(
         new URLSearchParams(window.location.search).get("measurement"),
       );
@@ -354,7 +364,11 @@ export default function MeasurementWorkspace() {
             : tab === "overdue"
               ? new Date(row.visitDate) < now &&
                 ["ASSIGNED", "IN_PROGRESS"].includes(row.status)
-              : ["COMPLETED", "HANDED_TO_MANAGER"].includes(row.status),
+              : tab === "cancelled"
+                ? row.status === "CANCELLED"
+                : tab === "all"
+                  ? true
+                  : ["COMPLETED", "HANDED_TO_MANAGER"].includes(row.status),
       )
       .sort(
         (a, b) =>
@@ -477,6 +491,10 @@ export default function MeasurementWorkspace() {
   async function openReschedule() {
     setCancelOpen(false);
     setRescheduleOpen(true);
+    if (measurer) {
+      setRescheduleMeasurerId(selected?.measurerUser ? String(selected.measurerUser.id) : "");
+      return;
+    }
     if (scheduleMeasurers.length) return;
     const response = await fetch("/api/measurements?meta=1", { cache: "no-store" });
     const body = await response.json().catch(() => ({}));
@@ -500,7 +518,7 @@ export default function MeasurementWorkspace() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white md:text-3xl">
-            Кабинет замерщика
+            {measurer ? "Кабинет замерщика" : "Замеры клиентов"}
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Расписание, фактические размеры и передача результата менеджеру
@@ -560,7 +578,7 @@ export default function MeasurementWorkspace() {
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi title="Сегодня" value={data.kpi.today} />
         <Kpi title="Предстоящие" value={data.kpi.upcoming} />
-        <Kpi title="Просрочены" value={data.kpi.overdue} alert />
+        <Kpi title="Требуют закрытия" value={data.kpi.overdue} alert />
         <Kpi title="Передано за месяц" value={data.kpi.handed} />
       </section>
       {measurer && (
@@ -611,13 +629,15 @@ export default function MeasurementWorkspace() {
       )}
       <div className="grid gap-5 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,1.5fr)]">
         <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {(
               [
                 ["today", "Сегодня"],
                 ["upcoming", "Предстоящие"],
                 ["completed", "Завершённые"],
-                ["overdue", "Просроченные"],
+                ["overdue", "Требуют закрытия"],
+                ["cancelled", "Отменённые"],
+                ["all", "Все"],
               ] as const
             ).map(([value, title]) => (
               <button
@@ -720,7 +740,7 @@ export default function MeasurementWorkspace() {
                 <span className={`rounded-full px-3 py-1 text-sm ${statusTone[selected.status]}`}>
                   {statusNames[selected.status]}
                 </span>
-                {canSchedule && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+                {canCloseOutcome && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
                   <details className="relative">
                     <summary aria-label="Действия с замером" className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg bg-slate-800 text-slate-200 [&::-webkit-details-marker]:hidden">
                       <MoreVertical size={18} />
@@ -737,18 +757,18 @@ export default function MeasurementWorkspace() {
                 )}
               </div>
             </div>
-            {canSchedule && rescheduleOpen && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+            {canCloseOutcome && rescheduleOpen && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
               <section className="grid gap-3 rounded-xl border border-amber-800 bg-amber-950/20 p-4 sm:grid-cols-2">
                 <h3 className="font-semibold text-white sm:col-span-2">Перенести замер</h3>
                 <Field label="Новая дата и время"><input type="datetime-local" className={input} value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} /></Field>
-                <Field label="Замерщик"><select className={input} value={rescheduleMeasurerId} onChange={(event) => setRescheduleMeasurerId(event.target.value)}><option value="">Выберите</option>{scheduleMeasurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>
+                {measurer ? <div className="text-sm text-slate-300">Замерщик<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{selected.measurerUser?.name ?? "Текущий замерщик"}</b></div> : <Field label="Замерщик"><select className={input} value={rescheduleMeasurerId} onChange={(event) => setRescheduleMeasurerId(event.target.value)}><option value="">Выберите</option>{scheduleMeasurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}
                 <div className="flex gap-2 sm:col-span-2">
                   <button type="button" onClick={() => setRescheduleOpen(false)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button>
                   <button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId} onClick={() => void run({ action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: selected.city, address: selected.address, mapLink: selected.mapLink, comment: selected.managerComment }, "Замер перенесён").then(() => setRescheduleOpen(false))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button>
                 </div>
               </section>
             )}
-            {canSchedule && cancelOpen && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+            {canCloseOutcome && cancelOpen && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
               <section className="space-y-3 rounded-xl border border-red-800 bg-red-950/20 p-4">
                 <h3 className="font-semibold text-white">Отменить замер?</h3>
                 <Field label="Причина"><input className={input} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Например: клиент перенёс решение" /></Field>

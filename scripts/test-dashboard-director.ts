@@ -65,12 +65,13 @@ async function main() {
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
     for (const label of ["Продажи", "Получено", "К получению от клиентов", "К выплате партнёрам", "К выплате сотрудникам", "Мои новые заявки", "Мои отправленные КП", "Payroll к выплате", "Активные сотрудники", "Расходы за месяц", "Требует внимания", "Конверсия", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
-    for (const label of ["Краткий статус бизнеса за выбранный период", "Открыть финансы", "Замеры, требующие обработки", "Последние важные действия", "Работа идёт стабильно"])
+    for (const label of ["Краткий статус бизнеса за выбранный период", "Открыть финансы", "Замеры, требующие закрытия", "Последние важные действия", "Работа идёт стабильно"])
       assert.ok(dashboard.includes(label), `premium Director hierarchy is missing: ${label}`);
     assert(!dashboard.includes("<table"), "Director team performance must not regress to a wide table");
     for (const routeName of ["/clients", "/orders", "/calendar", "/warehouse", "/finance", "/payroll", "/production", "/partners", "/measurements"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
     assert(dashboard.includes("/orders?settlement=without-partner") && dashboard.includes("без партнёра"), "orders-without-workshop metric is not clickable");
     assert(dashboard.includes("/orders?settlement=client-payable") && dashboard.includes("/orders?settlement=without-contract"), "Director attention links are incomplete");
+    assert(dashboard.includes("/measurements?filter=needs-closing"), "Director measurement attention must open the needs-closing queue");
     const home = readFileSync("app/page.tsx", "utf8");
     assert(home.includes("getServerSession"), "home role projection is not server-side");
     console.log("dashboard role projections, own scope, cancelled exclusion, balances, empty state and routes passed");

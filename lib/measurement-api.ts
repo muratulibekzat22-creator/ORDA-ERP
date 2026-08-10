@@ -15,7 +15,9 @@ export function measurementError(error: unknown) {
   if (code === "LOCATION_REQUIRED") return NextResponse.json({ error: "Укажите адрес или ссылку на локацию" }, { status: 400 });
   if (code === "SHEET_PHOTO_REQUIRED") return NextResponse.json({ error: "Перед завершением загрузите фото листа замера" }, { status: 409 });
   if (code === "OUTCOME_COMMENT_REQUIRED") return NextResponse.json({ error: "Для передачи менеджеру укажите комментарий" }, { status: 400 });
+  if (code === "CLIENT_OUTCOME_REQUIRED") return NextResponse.json({ error: "Выберите результат общения с клиентом" }, { status: 400 });
   if (code === "REFUSAL_REASON_REQUIRED") return NextResponse.json({ error: "Укажите причину отказа; для «Другое» нужен комментарий" }, { status: 400 });
+  if (code === "CANCELLATION_REASON_REQUIRED") return NextResponse.json({ error: "Укажите причину отмены замера" }, { status: 400 });
   if (code === "MANAGER_REQUIRED") return NextResponse.json({ error: "У заявки нет ответственного менеджера" }, { status: 409 });
   if (code === "TRAINING_REQUIRED") return NextResponse.json({ error: "Для начала работы необходимо пройти обязательное обучение.", code: "TRAINING_REQUIRED" }, { status: 409 });
   if (["INVALID_STATE", "IMMUTABLE_MEASUREMENT"].includes(code)) return NextResponse.json({ error: "Завершённый или переданный замер нельзя изменять" }, { status: 409 });

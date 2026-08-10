@@ -278,7 +278,7 @@ async function salesProjection(scope: DashboardScope) {
       overdueTasks: tasks.filter((task) => task.dueAt < now).length,
       measurementsToday,
       measurementsUpcoming: measurementQueue.filter((item) => item.visitDate >= tomorrow).length,
-      measurementsOverdue: measurementQueue.filter((item) => item.visitDate < todayStart).length,
+      measurementsOverdue: measurementQueue.filter((item) => item.visitDate < now).length,
       proposalsNeedResponse,
       ...(scope.role === Role.DIRECTOR ? {
         expensesForMonth: Number(monthlyExpenses._sum.amount ?? 0),

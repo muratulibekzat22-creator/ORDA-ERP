@@ -175,7 +175,7 @@ function DirectorSalesDashboard({ metrics: m, managers }: { metrics: SalesMetric
     <section aria-label="Ключевые показатели" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OperationalMetric icon={<ClipboardList size={19}/>} href="/clients" label="Заявки" value={m.newLeads} detail={`${m.activeLeads} активных`} progress={m.conversion}/>
       <OperationalMetric icon={<ShoppingBag size={19}/>} href="/orders" label="Заказы" value={m.orders} detail={`${m.activeOrders} в работе`} progress={m.orders ? Math.round(m.readyForInstallation / m.orders * 100) : 0}/>
-      <OperationalMetric icon={<Ruler size={19}/>} href="/measurements" label="Замеры" value={m.measurementsToday + m.measurementsUpcoming + m.measurementsOverdue} detail={`${m.measurementsToday} сегодня · ${m.measurementsUpcoming} впереди`}/>
+      <OperationalMetric icon={<Ruler size={19}/>} href="/measurements" label="Замеры сегодня" value={m.measurementsToday} detail={`${m.measurementsOverdue} требуют закрытия`}/>
       <OperationalMetric icon={<TriangleAlert size={19}/>} href="/calendar?state=overdue" label="Просрочено / требует внимания" value={overdueTotal} detail={overdueTotal ? "Нужно проверить сегодня" : "Работа идёт стабильно"} alert={overdueTotal > 0}/>
     </section>
 
@@ -186,7 +186,7 @@ function DirectorSalesDashboard({ metrics: m, managers }: { metrics: SalesMetric
           <AttentionLink href="/orders?settlement=client-payable" label="Клиенты с остатком" value={m.clientsWithBalance ?? 0} icon={<WalletCards size={17}/>}/>
           <AttentionLink href="/orders?settlement=without-contract" label="Заказы без договора" value={m.ordersWithoutContract ?? 0} icon={<FileWarning size={17}/>}/>
           <AttentionLink href="/calendar?state=overdue" label="Просроченные задачи" value={m.overdueTasks} icon={<CalendarClock size={17}/>}/>
-          <AttentionLink href="/measurements" label="Замеры, требующие обработки" value={m.measurementsOverdue} icon={<Ruler size={17}/>}/>
+          <AttentionLink href="/measurements?filter=needs-closing" label="Замеры, требующие закрытия" value={m.measurementsOverdue} icon={<Ruler size={17}/>}/>
           <AttentionLink href="/orders?settlement=partner-payable" label="Заказы к выплате партнёру" value={m.partnerPayableOrders ?? 0} icon={<HandCoins size={17}/>}/>
         </div>
         {!overdueTotal && !(m.ordersWithoutPartner ?? 0) && !(m.clientsWithBalance ?? 0) && !(m.ordersWithoutContract ?? 0) && <StableState text="Нет новых проблем — операционная работа идёт стабильно."/>}

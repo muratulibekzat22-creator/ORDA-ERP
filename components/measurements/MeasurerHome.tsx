@@ -24,10 +24,12 @@ type Measurement = {
     whatsapp: string;
     managerUser?: { name: string } | null;
   };
+  operational?: { needsClosing: boolean; overdueMs: number };
 };
 
 type Workspace = {
   nextMeasurement: Measurement | null;
+  needsClosingMeasurement: Measurement | null;
   kpi: {
     today: number;
     upcoming: number;
@@ -44,6 +46,7 @@ type Workspace = {
 
 const empty: Workspace = {
   nextMeasurement: null,
+  needsClosingMeasurement: null,
   kpi: {
     today: 0,
     upcoming: 0,
@@ -64,6 +67,13 @@ const when = (value: string) =>
     dateStyle: "long",
     timeStyle: "short",
   }).format(new Date(value));
+const overdue = (value: number) => {
+  const minutes = Math.max(1, Math.floor(value / 60_000));
+  if (minutes < 60) return `${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ч`;
+  return `${Math.floor(hours / 24)} дн`;
+};
 
 export default function MeasurerHome() {
   const [data, setData] = useState<Workspace>(empty);
@@ -117,7 +127,7 @@ export default function MeasurerHome() {
       >
         <Kpi title="Сегодня" value={data.kpi.today} />
         <Kpi title="Предстоящие" value={data.kpi.upcoming} />
-        <Kpi title="Просрочено" value={data.kpi.overdue} alert />
+        <Kpi title="Требуют закрытия" value={data.kpi.overdue} alert />
         <Kpi title="Назначено за месяц" value={data.kpi.monthAssigned} />
         <Kpi title="Выполнено за месяц" value={data.kpi.monthCompleted} />
         <Kpi title="Передано менеджеру" value={data.kpi.handed} />
@@ -126,6 +136,21 @@ export default function MeasurerHome() {
         <Kpi title="Бонусов начислено" value={money(data.kpi.monthBonus)} />
         <Kpi title="Моя зарплата · к выплате" value={money(payable)} />
       </section>
+      {data.needsClosingMeasurement && (
+        <section className="rounded-2xl border border-red-700 bg-red-950/30 p-4 md:p-6">
+          <p className="text-xs font-bold uppercase tracking-wider text-red-300">Требует закрытия</p>
+          <h2 className="mt-2 text-xl font-bold text-white">Укажите результат замера</h2>
+          <p className="mt-1 text-sm text-red-100">
+            {data.needsClosingMeasurement.client.name} · {when(data.needsClosingMeasurement.visitDate)} · просрочено на {overdue(data.needsClosingMeasurement.operational?.overdueMs ?? 0)}
+          </p>
+          <Link
+            href={`/measurements?filter=needs-closing&measurement=${data.needsClosingMeasurement.id}`}
+            className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 font-semibold text-white sm:w-auto"
+          >
+            Закрыть замер <ArrowRight size={18}/>
+          </Link>
+        </section>
+      )}
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-6">
         <div className="flex items-center justify-between gap-3">
           <div>

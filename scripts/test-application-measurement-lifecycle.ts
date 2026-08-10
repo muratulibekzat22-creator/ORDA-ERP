@@ -23,6 +23,7 @@ import {
 import {
   cancelMeasurement,
   completeMeasurement,
+  listMeasurements,
   MeasurementError,
   scheduleMeasurement,
   type MeasurementActor,
@@ -215,6 +216,15 @@ async function main() {
     assert.equal(cancelled.status, MeasurementStatus.CANCELLED);
     assert.equal((await prisma.calendarTask.findUniqueOrThrow({ where: { id: cancelScheduled.measurement.calendarTaskId! } })).status, CalendarTaskStatus.CANCELLED);
     assert.equal(await prisma.measurementAudit.count({ where: { measurementId: cancelScheduled.measurement.id, action: "MEASUREMENT_CANCELLED", comment: { contains: "Клиент отменил" } } }), 1);
+
+    const directorMeasurements = await listMeasurements(directorActor);
+    assert.equal(directorMeasurements.find((row) => row.id === ready.id)?.clientOutcome, MeasurementClientOutcome.READY_TO_CONTINUE);
+    assert.equal(directorMeasurements.find((row) => row.id === returned.id)?.clientOutcome, MeasurementClientOutcome.RETURN_TO_MANAGER);
+    const directorRefusal = directorMeasurements.find((row) => row.id === refused.id);
+    assert.equal(directorRefusal?.status, MeasurementStatus.COMPLETED, "Client refusal must not cancel a completed measurement");
+    assert.equal(directorRefusal?.refusalReason, LeadLostReason.PRICE_TOO_HIGH);
+    assert.equal(directorMeasurements.find((row) => row.id === cancelled.id)?.cancellation?.reason, "Клиент отменил выезд");
+    assert.equal((await listMeasurements(otherManagerActor, { clientId: refusedClient.id })).length, 0, "Another manager must not read the measurement result by ID scope");
 
     console.log("application soft-delete, restore, cancellation sync, structured measurement outcomes and preservation passed");
   } finally {

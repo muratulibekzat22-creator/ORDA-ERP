@@ -4,11 +4,17 @@ import { parseBusinessDateTime } from "@/lib/calendar-time";
 import { measurementActor, measurementError } from "@/lib/measurement-api";
 import { requirePermission } from "@/lib/server-auth";
 import { prisma } from "@/lib/prisma";
-import { listMeasurements, measurementWorkspace, scheduleMeasurement } from "@/lib/services/measurement.service";
+import { listMeasurements, measurementWorkspace, scheduleMeasurement, type MeasurementWorkspaceFilter } from "@/lib/services/measurement.service";
 import { selfScheduleMeasurement } from "@/lib/services/measurement.service";
 import { normalizePhone } from "@/lib/leads/domain";
 
 const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
+const workspaceFilters = new Set<MeasurementWorkspaceFilter>(["today", "upcoming", "needs-closing", "completed", "cancelled", "all"]);
+const periodDate = (value: string | null, end = false) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = parseBusinessDateTime(`${value}T00:00`);
+  return date && end ? new Date(date.getTime() + 86_400_000) : date;
+};
 
 export async function GET(request: Request) {
   const auth = await requirePermission("measurements");
@@ -18,9 +24,33 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   if (url.searchParams.get("meta") === "1") {
     if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-    return NextResponse.json({ measurers: await prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }) });
+    const [measurers, managers] = await Promise.all([
+      prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
+      actor.role === Role.DIRECTOR
+        ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
+        : Promise.resolve([]),
+    ]);
+    return NextResponse.json({ measurers, managers });
   }
-  if (url.searchParams.get("workspace") === "1") return NextResponse.json(await measurementWorkspace(actor));
+  if (url.searchParams.get("workspace") === "1") {
+    const filterValue = url.searchParams.get("filter");
+    const filter = filterValue && workspaceFilters.has(filterValue as MeasurementWorkspaceFilter)
+      ? (filterValue as MeasurementWorkspaceFilter)
+      : undefined;
+    if (filterValue && !filter) return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
+    const measurerUserId = positiveId(url.searchParams.get("measurerUserId"));
+    const managerUserId = positiveId(url.searchParams.get("managerUserId"));
+    const fromValue = url.searchParams.get("from"), toValue = url.searchParams.get("to");
+    const from = periodDate(fromValue), to = periodDate(toValue, true);
+    if ((fromValue && !from) || (toValue && !to)) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
+    return NextResponse.json(await measurementWorkspace(actor, {
+      filter,
+      measurerUserId: measurerUserId ?? undefined,
+      managerUserId: managerUserId ?? undefined,
+      from: from ?? undefined,
+      to: to ?? undefined,
+    }));
+  }
   const clientId = url.searchParams.has("clientId") ? positiveId(url.searchParams.get("clientId")) : undefined;
   const orderId = url.searchParams.has("orderId") ? positiveId(url.searchParams.get("orderId")) : undefined;
   if (url.searchParams.has("clientId") && !clientId) return NextResponse.json({ error: "Некорректный clientId" }, { status: 400 });

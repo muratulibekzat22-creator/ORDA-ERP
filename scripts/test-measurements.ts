@@ -1,16 +1,18 @@
 import "./require-test-database";
 
 import assert from "node:assert/strict";
-import { MeasurementPhotoType, PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
+import { MeasurementClientOutcome, MeasurementPhotoType, MeasurementStatus, PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
 import { parseBusinessDateTime } from "@/lib/calendar-time";
 import { prisma } from "@/lib/prisma";
 import { createPayment, payrollSummary } from "@/lib/services/payroll.service";
 import {
   completeMeasurement,
+  cancelMeasurement,
   ensureMeasurerBonusForOrder,
   handMeasurementToManager,
   inviteClientToOffice,
   listMeasurements,
+  measurementWorkspace,
   markReadyForContract,
   MeasurementError,
   parseMeasurementDraft,
@@ -112,14 +114,16 @@ async function main() {
   const previousSettings = await prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: { measurerOrderBonus: true } });
   try {
     await prisma.systemSettings.update({ where: { id: 1 }, data: { measurerOrderBonus: 20_000 } });
+    const director = await prisma.user.create({ data: { name: `${tag}-director`, email: `${tag}-director@test.local`, password: "test", role: Role.DIRECTOR } });
     const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "test", role: Role.MANAGER } });
     const otherManager = await prisma.user.create({ data: { name: `${tag}-other-manager`, email: `${tag}-other-manager@test.local`, password: "test", role: Role.MANAGER } });
     const measurerA = await prisma.user.create({ data: { name: `${tag}-a`, email: `${tag}-a@test.local`, password: "test", role: Role.MEASURER } });
     const measurerB = await prisma.user.create({ data: { name: `${tag}-b`, email: `${tag}-b@test.local`, password: "test", role: Role.MEASURER } });
     const accountant = await prisma.user.create({ data: { name: `${tag}-accountant`, email: `${tag}-accountant@test.local`, password: "test", role: Role.ACCOUNTANT } });
-    ids.users.push(manager.id, otherManager.id, measurerA.id, measurerB.id, accountant.id);
+    ids.users.push(director.id, manager.id, otherManager.id, measurerA.id, measurerB.id, accountant.id);
     console.log("measurement test: actors created");
     const managerActor: MeasurementActor = { userId: manager.id, role: Role.MANAGER, name: manager.name };
+    const directorActor: MeasurementActor = { userId: director.id, role: Role.DIRECTOR, name: director.name };
     const otherManagerActor: MeasurementActor = { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name };
     const actorA: MeasurementActor = { userId: measurerA.id, role: Role.MEASURER, name: measurerA.name };
     const actorB: MeasurementActor = { userId: measurerB.id, role: Role.MEASURER, name: measurerB.name };
@@ -147,6 +151,20 @@ async function main() {
     assert.equal(syncedMeasurement.visitDate.toISOString(), rescheduledAt.toISOString());
     assert.equal(syncedTask.dueAt.toISOString(), rescheduledAt.toISOString());
     assert.equal(await prisma.calendarTask.count({ where: { clientId: client.id, type: "MEASUREMENT" } }), 1, "Reschedule must update the canonical task without duplicates");
+    const overdueAt = new Date(Date.now() - 2 * 3_600_000);
+    await rescheduleMeasurement(actorA, scheduled.measurement.id, { visitDate: overdueAt, measurerUserId: measurerA.id, address: "ул. Абая, 10", comment: "Клиент попросил изменить время" });
+    await assert.rejects(
+      () => rescheduleMeasurement(actorA, scheduled.measurement.id, { visitDate: overdueAt, measurerUserId: measurerB.id, address: "ул. Абая, 10" }),
+      (error) => error instanceof MeasurementError && error.message === "FORBIDDEN",
+      "Measurer cannot reassign an own measurement to another employee",
+    );
+    const directorNeedsClosing = await measurementWorkspace(directorActor, { filter: "needs-closing" });
+    const attentionMeasurement = directorNeedsClosing.measurements.find((row) => row.id === scheduled.measurement.id);
+    assert.equal(attentionMeasurement?.status, MeasurementStatus.ASSIGNED, "Attention state must not replace canonical status");
+    assert.equal(attentionMeasurement?.operational.needsClosing, true, "Past active measurement must require closing");
+    assert.equal(attentionMeasurement?.latestReschedule?.previousVisitDate != null, true, "Director read model must expose previous schedule");
+    assert.equal(attentionMeasurement?.latestReschedule?.comment, "Клиент попросил изменить время");
+    assert.equal(await prisma.calendarTask.count({ where: { clientId: client.id, type: "MEASUREMENT" } }), 1, "Measurer reschedule must not duplicate CalendarTask");
     assert.equal((await listMeasurements(actorA)).some((row) => row.id === scheduled.measurement.id), true, "Measurer A sees assigned measurement");
     assert.equal((await listMeasurements(actorB)).some((row) => row.id === scheduled.measurement.id), false, "Measurer B cannot see A measurement");
     assert.equal((await listMeasurements(otherManagerActor)).some((row) => row.id === scheduled.measurement.id), false, "Another manager cannot see the lead measurement");
@@ -168,7 +186,8 @@ async function main() {
     assert.equal(savedDraft.status, "IN_PROGRESS", "Saving the first draft must start the measurement lifecycle");
     assert.equal((savedDraft.individualSteps as Array<{ length: number | null }>)[1].length, null, "Partial measurement draft was not persisted");
     await prisma.measurementAttachment.create({ data: { measurementId: scheduled.measurement.id, type: MeasurementPhotoType.SHEET, uploadedById: measurerA.id, fileName: "sheet.jpg", pathname: `${tag}/sheet.jpg`, contentType: "image/jpeg", size: 1024 } });
-    const completed = await completeMeasurement(actorA, scheduled.measurement.id, draft);
+    await assert.rejects(() => completeMeasurement(actorA, scheduled.measurement.id, draft), (error) => error instanceof MeasurementError && error.message === "CLIENT_OUTCOME_REQUIRED");
+    const completed = await completeMeasurement(actorA, scheduled.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE });
     assert.equal(completed.status, "COMPLETED");
     assert.equal(completed.stepsCount, 15);
     assert.equal(completed.stepLength, 1000);
@@ -209,10 +228,19 @@ async function main() {
     console.log("measurement test: no-order measurement scheduled");
     ids.measurements.push(noOrder.measurement.id);
     await prisma.measurementAttachment.create({ data: { measurementId: noOrder.measurement.id, type: MeasurementPhotoType.SHEET, uploadedById: measurerA.id, fileName: "sheet-2.jpg", pathname: `${tag}/sheet-2.jpg`, contentType: "image/jpeg", size: 1024 } });
-    await completeMeasurement(actorA, noOrder.measurement.id, draft);
+    await completeMeasurement(actorA, noOrder.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.RETURN_TO_MANAGER, outcomeComment: "Уточнить детали заказа" });
     await handMeasurementToManager(actorA, noOrder.measurement.id);
     console.log("measurement test: no-order path completed");
     assert.equal(await prisma.payrollAccrual.count({ where: { measurementId: noOrder.measurement.id } }), 0, "No Order means no bonus");
+
+    const cancelledOwn = await scheduleMeasurement(managerActor, { clientId: noOrderClient.id, measurerUserId: measurerA.id, visitDate: new Date(Date.now() + 3_600_000), address: noOrderClient.address });
+    ids.measurements.push(cancelledOwn.measurement.id);
+    await assert.rejects(() => cancelMeasurement(actorA, cancelledOwn.measurement.id, { comment: "Без причины" }), (error) => error instanceof MeasurementError && error.message === "CANCELLATION_REASON_REQUIRED");
+    await cancelMeasurement(actorA, cancelledOwn.measurement.id, { reason: "Клиент отменил выезд", comment: "Связаться позже" });
+    const cancelledView = (await listMeasurements(directorActor, { clientId: noOrderClient.id })).find((row) => row.id === cancelledOwn.measurement.id);
+    assert.equal(cancelledView?.status, MeasurementStatus.CANCELLED);
+    assert.equal(cancelledView?.cancellation?.reason, "Клиент отменил выезд");
+    assert.equal(cancelledView?.cancellation?.cancelledBy?.id, measurerA.id);
 
     const profileA = await prisma.employeePayrollProfile.findUniqueOrThrow({ where: { userId: measurerA.id } });
     const profileB = await prisma.employeePayrollProfile.create({ data: { userId: measurerB.id, hiredAt: new Date(), baseSalary: 0, defaultGuaranteedBonus: 0 } });
