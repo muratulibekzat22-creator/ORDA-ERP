@@ -2,13 +2,18 @@ import "./require-test-database";
 
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createServer } from "node:http";
 
 import { DocumentSource, DocumentStatus, DocumentType, PaymentReceiptStatus, Prisma, Role } from "@prisma/client";
 
+import { type ContractPaymentInput } from "@/lib/contracts/domain";
+import {
+  buildContractPdf,
+  CONTRACT_PDF_PAGE_COUNT,
+} from "@/lib/documents/contract-pdf";
+import { privateDocumentHeaders } from "@/lib/documents/download-response";
 import { buildCustomerMemoPdf, CUSTOMER_MEMO_TEMPLATE_VERSION } from "@/lib/documents/customer-memo-pdf";
 import { buildPaymentReceiptPdf, type PaymentReceiptSnapshot } from "@/lib/documents/payment-receipt-pdf";
-import { countPdfPages, pdfBuffer } from "@/lib/documents/pdf-utils";
+import { countPdfPages, streamToBuffer } from "@/lib/documents/pdf-utils";
 import { put } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
 import {
@@ -17,12 +22,15 @@ import {
   ensureContractPdf,
   uploadSignedPackageDocument,
 } from "@/lib/services/contract-package.service";
-import { getSignedContractContent } from "@/lib/services/contract.service";
-import { getDocument, type DocumentActor } from "@/lib/services/document.service";
 import {
-  convertDocxToPdf,
-  GotenbergError,
-} from "@/lib/services/gotenberg.service";
+  buildContractSnapshot,
+  getSignedContractContent,
+} from "@/lib/services/contract.service";
+import {
+  getDocument,
+  getDocumentVersionContent,
+  type DocumentActor,
+} from "@/lib/services/document.service";
 import { createFinanceOperation, reverseFinanceOperation } from "@/lib/services/payment.service";
 import {
   closeCashShift,
@@ -44,18 +52,6 @@ async function main() {
   process.env.NEXTAUTH_URL = "https://orda.test.invalid";
   delete process.env.BLOB_READ_WRITE_TOKEN;
 
-  process.env.GOTENBERG_URL = "http://converter.example.test";
-  process.env.GOTENBERG_TOKEN = "local-test-token";
-  await assert.rejects(
-    convertDocxToPdf({ bytes: Buffer.from("not-sent"), fileName: "contract.docx" }),
-    (error: unknown) =>
-      error instanceof GotenbergError &&
-      error.message === "CONVERTER_HTTPS_REQUIRED",
-    "non-local HTTP converter URL was accepted",
-  );
-  delete process.env.GOTENBERG_URL;
-  delete process.env.GOTENBERG_TOKEN;
-
   await prisma.companySettings.upsert({
     where: { id: 1 },
     create: {
@@ -63,15 +59,25 @@ async function main() {
       name: "ALTYN SAPA COMPANY",
       bin: "220540017969",
       actualAddress: "г. Алматы",
+      legalAddress: "г. Алматы, ул. Муканова, 101",
       phone: "+77085750881",
       secondaryPhone: "+77760027555",
+      directorFullName: "Бекзат Нурланович",
+      iik: "KZ188562203118864809",
+      bank: "АО Банк ЦентрКредит",
+      bik: "KCJBKZKX",
     },
     update: {
       name: "ALTYN SAPA COMPANY",
       bin: "220540017969",
       actualAddress: "г. Алматы",
+      legalAddress: "г. Алматы, ул. Муканова, 101",
       phone: "+77085750881",
       secondaryPhone: "+77760027555",
+      directorFullName: "Бекзат Нурланович",
+      iik: "KZ188562203118864809",
+      bank: "АО Банк ЦентрКредит",
+      bik: "KCJBKZKX",
     },
   });
   const [director, manager, otherManager, accountant, measurer] = await Promise.all([
@@ -117,6 +123,58 @@ async function main() {
       managerUserId: manager.id,
     },
   });
+  const snapshotInput = (payment: ContractPaymentInput) => ({
+    clientFullName: client.name,
+    clientIin: client.iin ?? "",
+    clientPhone: client.phone,
+    clientAddress: client.address ?? "",
+    installationAddress: "г. Алматы, ул. Абая, 125",
+    stairMaterial: order.material,
+    balusterType: order.railingType ?? "",
+    contractAmount: 100_000_000,
+    payment,
+    termCalendarDays: 45,
+    warrantyMonths: 60,
+    productionContactName: "Ответственный по производству",
+    productionContactPhone: "+7 700 000 00 00",
+  });
+  const payments: ContractPaymentInput[] = [
+    { mode: "PERCENT", prepaymentPercent: 70 },
+    { mode: "PERCENT", prepaymentPercent: 15 },
+    { mode: "PERCENT", prepaymentPercent: 50 },
+    { mode: "AMOUNT", prepaymentAmount: 12_345_678 },
+    { mode: "PERCENT", prepaymentPercent: 100 },
+  ];
+  const snapshots = [];
+  for (const payment of payments) {
+    snapshots.push(
+      await buildContractSnapshot(
+        order.id,
+        actor(manager),
+        snapshotInput(payment),
+        `${tag}-CONTRACT`,
+        operationDate,
+      ),
+    );
+  }
+  const [snapshot70, snapshot15, snapshot50, snapshotCustom, snapshot100] = snapshots;
+  assert.equal(snapshot70.prepaymentPercent, "70");
+  assert.equal(snapshot70.balancePercent, "30");
+  assert.equal(snapshot15.prepaymentPercent, "15");
+  assert.equal(snapshot15.balancePercent, "85");
+  assert.equal(snapshot50.prepaymentPercent, "50");
+  assert.equal(snapshot50.balancePercent, "50");
+  assert.equal(snapshotCustom.prepaymentAmountNumeric, 12_345_678);
+  assert.equal(snapshot100.isFullPayment, true);
+  assert.equal(snapshot100.paymentSchedulePrimary, "100% · 100 000 000 ₸");
+  assert.equal(snapshot100.paymentScheduleBalance, "Полная оплата");
+  assert(!/(^|[^\d])0%/u.test(snapshot100.paymentSchedulePrimary));
+  assert.equal(snapshot70.contractAmountWords, "сто миллионов");
+  for (const snapshot of snapshots) {
+    const pdf = await buildContractPdf(snapshot);
+    assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
+    assert.equal(countPdfPages(pdf), CONTRACT_PDF_PAGE_COUNT);
+  }
   const contract = await prisma.document.create({
     data: {
       orderId: order.id,
@@ -130,13 +188,7 @@ async function main() {
       authorId: manager.id,
       currentVersion: 1,
       templateVersion: "ALTYN_SAPA_CONTRACT_PACKAGE_V2",
-      snapshot: {
-        contractAmountNumeric: 100_000_000,
-        stairMaterial: "Дуб ламель",
-        frameType: "Металлический каркас",
-        balusterType: "Стеклянное ограждение",
-        installationText: "Включён",
-      },
+      snapshot: snapshot70 as unknown as Prisma.InputJsonValue,
     },
   });
   const contractDocx = await readFile("resources/documents/templates/contract-altyn-sapa-v2.docx");
@@ -158,42 +210,62 @@ async function main() {
       size: contractDocx.length,
       checksum: "b".repeat(64),
       templateVersion: "ALTYN_SAPA_CONTRACT_PACKAGE_V2",
+      snapshot: snapshot70 as unknown as Prisma.InputJsonValue,
     },
   });
-  const converterPdf = await pdfBuffer({ size: "A4", margin: 30 }, (document) => {
-    document.font("DejaVu").fontSize(12).text("Страница 1");
-    document.addPage({ size: "A4", margin: 30 }).font("DejaVu").fontSize(12).text("Страница 2");
+  const sourceSnapshot = JSON.stringify(contract.snapshot);
+  const converted = await ensureContractPdf(contract.id, actor(manager));
+  assert.equal(converted.id, contractVersion.id);
+  assert.equal(converted.pdfStatus, "READY");
+  assert.equal(converted.pdfContentType, "application/pdf");
+  assert(converted.pdfPathname && converted.pdfChecksum);
+  const managerPdf = await getDocumentVersionContent(
+    contractVersion.id,
+    actor(manager),
+    "pdf",
+  );
+  assert(managerPdf);
+  assert.equal(managerPdf.version.contentType, "application/pdf");
+  assert(managerPdf.version.fileName.endsWith(".pdf"));
+  const inlineHeaders = privateDocumentHeaders(managerPdf.version, false);
+  const downloadHeaders = privateDocumentHeaders(managerPdf.version, true);
+  assert.equal(inlineHeaders["Content-Type"], "application/pdf");
+  assert(inlineHeaders["Content-Disposition"].startsWith("inline;"));
+  assert(downloadHeaders["Content-Disposition"].startsWith("attachment;"));
+  const managerPdfBytes = await streamToBuffer(managerPdf.blob.stream);
+  assert.equal(managerPdfBytes.subarray(0, 5).toString("ascii"), "%PDF-");
+  assert.equal(countPdfPages(managerPdfBytes), CONTRACT_PDF_PAGE_COUNT);
+  assert.equal(
+    await getDocumentVersionContent(contractVersion.id, actor(otherManager), "pdf"),
+    null,
+    "another manager downloaded an owned contract PDF",
+  );
+  assert.equal(
+    await getDocumentVersionContent(contractVersion.id, actor(measurer), "pdf"),
+    null,
+    "measurer downloaded a contract PDF",
+  );
+  const repeated = await ensureContractPdf(contract.id, actor(manager));
+  assert.equal(repeated.id, contractVersion.id);
+  assert.equal(repeated.pdfPathname, converted.pdfPathname);
+  assert.equal(repeated.pdfChecksum, converted.pdfChecksum);
+  assert.equal(
+    await prisma.documentAudit.count({
+      where: { documentId: contract.id, action: "CONTRACT_PDF_GENERATED" },
+    }),
+    1,
+  );
+  const immutableContract = await prisma.document.findUniqueOrThrow({
+    where: { id: contract.id },
   });
-  assert.equal(countPdfPages(converterPdf), 2);
-  let converterCalls = 0;
-  const converter = createServer((request, response) => {
-    assert.equal(request.url, "/forms/libreoffice/convert");
-    assert.equal(request.headers.authorization, "Bearer local-test-token");
-    request.resume();
-    request.on("end", () => {
-      converterCalls += 1;
-      response.writeHead(200, { "Content-Type": "application/pdf" });
-      response.end(converterPdf);
-    });
+  const immutableVersion = await prisma.documentVersion.findUniqueOrThrow({
+    where: { id: contractVersion.id },
   });
-  await new Promise<void>((resolve) => converter.listen(0, "127.0.0.1", resolve));
-  const address = converter.address();
-  assert(address && typeof address !== "string");
-  process.env.GOTENBERG_URL = `http://127.0.0.1:${address.port}`;
-  process.env.GOTENBERG_TOKEN = "local-test-token";
-  try {
-    const converted = await ensureContractPdf(contract.id, actor(manager));
-    assert.equal(converted.id, contractVersion.id);
-    assert.equal(converted.pdfStatus, "READY");
-    assert(converted.pdfPathname && converted.pdfChecksum);
-    const repeated = await ensureContractPdf(contract.id, actor(manager));
-    assert.equal(repeated.id, contractVersion.id);
-    assert.equal(converterCalls, 1, "PDF retry created another conversion/blob");
-  } finally {
-    await new Promise<void>((resolve, reject) => converter.close((error) => error ? reject(error) : resolve()));
-    delete process.env.GOTENBERG_URL;
-    delete process.env.GOTENBERG_TOKEN;
-  }
+  assert.equal(immutableContract.number, contract.number);
+  assert.equal(immutableContract.currentVersion, 1);
+  assert.equal(JSON.stringify(immutableContract.snapshot), sourceSnapshot);
+  assert.equal(immutableVersion.checksum, contractVersion.checksum);
+  assert.equal(immutableVersion.pathname, contractVersion.pathname);
 
   async function payment(amount: number, suffix: string) {
     const result = await createFinanceOperation({
@@ -364,7 +436,7 @@ async function main() {
 
   const receiptNumbers = (await prisma.paymentReceipt.findMany({ select: { receiptNumber: true } })).map((item) => item.receiptNumber);
   assert.equal(new Set(receiptNumbers).size, receiptNumbers.length);
-  console.log("contract document package: sequences, shifts, receipt idempotency/concurrency, responsible manager, RBAC, QR projection, memo acknowledgement, one-page PDFs and void passed");
+  console.log("contract document package: direct three-page contract PDF, payment schedules, immutable source, private Blob, RBAC/IDOR, memo, receipts, QR and void passed");
 }
 
 main()

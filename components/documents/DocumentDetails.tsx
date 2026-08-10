@@ -1,45 +1,631 @@
 "use client";
 
 import { DocumentSource, DocumentStatus, DocumentType } from "@prisma/client";
-import { Archive, Download, ExternalLink, History, Upload } from "lucide-react";
-import { useSession } from "next-auth/react";
+import {
+  Archive,
+  Download,
+  ExternalLink,
+  History,
+  RefreshCw,
+  Upload,
+} from "lucide-react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+
 import { documentStatusLabels, documentTypeLabels } from "@/lib/document-meta";
 
-type Version = { id: number; version: number; fileName: string; contentType: string; size: number; checksum: string; comment: string | null; createdAt: string; uploadedBy: { id: number; name: string } | null; pdfFileName?: string | null; pdfContentType?: string | null; pdfSize?: number | null; pdfChecksum?: string | null; pdfStatus?: "NOT_REQUESTED" | "PENDING" | "READY" | "FAILED"; pdfErrorCode?: string | null };
-type Audit = { id: number; action: string; comment: string | null; createdAt: string; actor: { id: number; name: string } };
-type PaymentData = { id?: number; amount?: string | number; method?: string; operationDate?: string; type?: string; comment?: string };
-type DocumentDetail = { id: number; type: DocumentType; number: string; title: string; documentDate: string; status: DocumentStatus; source: DocumentSource; comment: string | null; snapshot: PaymentData | null; signedAt: string | null; signedComment: string | null; signedFileName: string | null; currentVersion: number; client: { id: number; name: string; phone: string } | null; order: { id: number; number: string } | null; payment: PaymentData | null; author: { id: number; name: string } | null; versions: Version[]; auditEvents: Audit[] };
-const statusActions = [DocumentStatus.DRAFT, DocumentStatus.READY, DocumentStatus.SIGNED];
+type Version = {
+  id: number;
+  version: number;
+  fileName: string;
+  contentType: string;
+  size: number;
+  checksum: string;
+  comment: string | null;
+  createdAt: string;
+  uploadedBy: { id: number; name: string } | null;
+  pdfFileName?: string | null;
+  pdfContentType?: string | null;
+  pdfSize?: number | null;
+  pdfChecksum?: string | null;
+  pdfStatus?: "NOT_REQUESTED" | "PENDING" | "READY" | "FAILED";
+  pdfErrorCode?: string | null;
+};
+type Audit = {
+  id: number;
+  action: string;
+  comment: string | null;
+  createdAt: string;
+  actor: { id: number; name: string };
+};
+type PaymentData = {
+  id?: number;
+  amount?: string | number;
+  method?: string;
+  operationDate?: string;
+  type?: string;
+  comment?: string;
+};
+type DocumentDetail = {
+  id: number;
+  type: DocumentType;
+  number: string;
+  title: string;
+  documentDate: string;
+  status: DocumentStatus;
+  source: DocumentSource;
+  comment: string | null;
+  snapshot: PaymentData | null;
+  signedAt: string | null;
+  signedComment: string | null;
+  signedFileName: string | null;
+  currentVersion: number;
+  client: { id: number; name: string; phone: string } | null;
+  order: { id: number; number: string } | null;
+  payment: PaymentData | null;
+  author: { id: number; name: string } | null;
+  versions: Version[];
+  auditEvents: Audit[];
+};
+
+const statusActions = [
+  DocumentStatus.DRAFT,
+  DocumentStatus.READY,
+  DocumentStatus.SIGNED,
+];
 
 export default function DocumentDetails({ documentId }: { documentId: number }) {
   const { data: session } = useSession();
-  const [document, setDocument] = useState<DocumentDetail | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [file, setFile] = useState<File | null>(null), [signedFile, setSignedFile] = useState<File | null>(null), [versionComment, setVersionComment] = useState(""), [signedComment, setSignedComment] = useState("");
-  const canEdit = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(session?.user.role ?? "");
-  const canSignPackage = ["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "");
-  const load = useCallback(async () => { setLoading(true); const response = await fetch(`/api/documents/${documentId}`, { cache: "no-store" }); const payload = await response.json(); if (response.ok) setDocument(payload); else setError(payload.error ?? "Документ не найден"); setLoading(false); }, [documentId]);
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
-  async function changeStatus(status: DocumentStatus) { setSaving(true); setError(""); const response = await fetch(`/api/documents/${documentId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, signedComment }) }); const payload = await response.json(); if (!response.ok) setError(payload.error ?? "Не удалось изменить статус"); else setDocument(payload); setSaving(false); }
-  async function upload(event: FormEvent) { event.preventDefault(); if (!file) return; setSaving(true); setError(""); const data = new FormData(); data.set("file", file); data.set("comment", versionComment); const response = await fetch(`/api/documents/${documentId}/versions`, { method: "POST", body: data }); const payload = await response.json(); if (!response.ok) setError(payload.error ?? "Не удалось загрузить версию"); else { setFile(null); setVersionComment(""); await load(); } setSaving(false); }
-  if (loading) return <main className="p-4 text-slate-400 md:p-8">Загрузка документа…</main>;
-  if (!document) return <main className="p-4 md:p-8"><p className="rounded-xl border border-red-800 bg-red-950/40 p-4 text-red-300">{error || "Документ не найден"}</p></main>;
-  async function uploadSigned(event: FormEvent) { event.preventDefault(); if (!signedFile) return; setSaving(true); setError(""); const data = new FormData(); data.set("file", signedFile); data.set("comment", signedComment); const response = await fetch(`/api/documents/${documentId}/signed`, { method: "POST", body: data }); const payload = await response.json(); if (!response.ok) setError(payload.error ?? "Не удалось загрузить подписанный договор"); else { setSignedFile(null); await load(); } setSaving(false); }
-  const current = document.versions.find((item) => item.version === document.currentVersion);
+  const [document, setDocument] = useState<DocumentDetail | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [signedFile, setSignedFile] = useState<File | null>(null);
+  const [versionComment, setVersionComment] = useState("");
+  const [signedComment, setSignedComment] = useState("");
+  const canEdit = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
+    session?.user.role ?? "",
+  );
+  const canSignPackage = ["DIRECTOR", "MANAGER"].includes(
+    session?.user.role ?? "",
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const response = await fetch(`/api/documents/${documentId}`, {
+      cache: "no-store",
+    });
+    const payload = (await response.json()) as DocumentDetail & { error?: string };
+    if (response.ok) setDocument(payload);
+    else setError(payload.error ?? "Документ не найден");
+    setLoading(false);
+  }, [documentId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  async function changeStatus(status: DocumentStatus) {
+    setSaving(true);
+    setError("");
+    const response = await fetch(`/api/documents/${documentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, signedComment }),
+    });
+    const payload = (await response.json()) as DocumentDetail & { error?: string };
+    if (!response.ok) setError(payload.error ?? "Не удалось изменить статус");
+    else setDocument(payload);
+    setSaving(false);
+  }
+
+  async function upload(event: FormEvent) {
+    event.preventDefault();
+    if (!file) return;
+    setSaving(true);
+    setError("");
+    const data = new FormData();
+    data.set("file", file);
+    data.set("comment", versionComment);
+    const response = await fetch(`/api/documents/${documentId}/versions`, {
+      method: "POST",
+      body: data,
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (!response.ok) setError(payload.error ?? "Не удалось загрузить версию");
+    else {
+      setFile(null);
+      setVersionComment("");
+      await load();
+    }
+    setSaving(false);
+  }
+
+  async function uploadSigned(event: FormEvent) {
+    event.preventDefault();
+    if (!signedFile) return;
+    setSaving(true);
+    setError("");
+    const data = new FormData();
+    data.set("file", signedFile);
+    data.set("comment", signedComment);
+    const response = await fetch(`/api/documents/${documentId}/signed`, {
+      method: "POST",
+      body: data,
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (!response.ok)
+      setError(payload.error ?? "Не удалось загрузить подписанный оригинал");
+    else {
+      setSignedFile(null);
+      await load();
+    }
+    setSaving(false);
+  }
+
+  async function generatePdf() {
+    if (!document?.order) return;
+    setSaving(true);
+    setError("");
+    const response = await fetch(
+      `/api/orders/${document.order.id}/contract-package`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "retry-contract-pdf",
+          contractDocumentId: document.id,
+        }),
+      },
+    );
+    const payload = (await response.json()) as { error?: string };
+    if (!response.ok) setError(payload.error ?? "Не удалось сформировать PDF");
+    else await load();
+    setSaving(false);
+  }
+
+  if (loading)
+    return <main className="p-4 text-slate-400 md:p-8">Загрузка документа…</main>;
+  if (!document)
+    return (
+      <main className="p-4 md:p-8">
+        <p className="rounded-xl border border-red-800 bg-red-950/40 p-4 text-red-300">
+          {error || "Документ не найден"}
+        </p>
+      </main>
+    );
+
+  const current = document.versions.find(
+    (item) => item.version === document.currentVersion,
+  );
   const payment = document.payment ?? document.snapshot;
-  return <main className="min-w-0 p-4 md:p-8"><div className="mx-auto max-w-5xl"><Link href="/documents" className="text-sm text-blue-300">← Все документы</Link><header className="mt-4 flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><p className="text-sm text-blue-300">{documentTypeLabels[document.type]}</p><h1 className="break-words text-2xl font-bold text-white md:text-3xl">{document.title}</h1><p className="mt-1 text-slate-400">{document.number ? `№ ${document.number}` : "Без номера"}</p></div><span className="rounded-full bg-slate-800 px-3 py-1.5 text-sm text-slate-200">{documentStatusLabels[document.status]}</span></header>{error && <p className="mt-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-300">{error}</p>}
-    <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_22rem]"><div className="min-w-0 space-y-5"><section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 md:p-6"><h2 className="text-lg font-semibold text-white">Карточка документа</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Meta label="Дата" value={formatDate(document.documentDate)}/><Meta label="Клиент" value={document.client?.name ?? "—"}/><Meta label="Заказ" value={document.order ? `№ ${document.order.number}` : "—"}/><Meta label="Автор" value={document.author?.name ?? "—"}/><Meta label="Текущая версия" value={document.currentVersion ? `v${document.currentVersion}` : "Файл не прикреплён"}/><Meta label="Источник" value={sourceLabel(document.source)}/></dl>{document.comment && <p className="mt-5 whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">{document.comment}</p>}{document.signedAt && <p className="mt-4 text-sm text-green-300">Подписан {formatDate(document.signedAt)}{document.signedComment ? ` · ${document.signedComment}` : ""}</p>}{current && <div className="mt-5 flex flex-wrap gap-3">{document.type === DocumentType.CONTRACT && current.pdfStatus === "READY" ? <><a target="_blank" href={`/api/document-versions/${current.id}?representation=pdf`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white"><ExternalLink size={17}/>Открыть PDF</a><a href={`/api/document-versions/${current.id}?representation=pdf&download=1`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"><Download size={17}/>Скачать PDF</a><a href={`/api/document-versions/${current.id}?download=1`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"><Download size={17}/>Скачать DOCX</a></> : <><a target="_blank" href={`/api/document-versions/${current.id}`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white"><ExternalLink size={17}/>Открыть файл</a><a href={`/api/document-versions/${current.id}?download=1`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"><Download size={17}/>Скачать</a></>}</div>}{document.type === DocumentType.CONTRACT && current?.pdfStatus !== "READY" && <p className="mt-4 rounded-xl border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">PDF не сформирован. Повторите формирование из карточки договорного комплекта в заказе.</p>}</section>
-      {document.type === DocumentType.PAYMENT_RECEIPT && <section className="rounded-2xl border border-emerald-700/60 bg-emerald-950/20 p-4 md:p-6"><h2 className="text-lg font-semibold text-white">Подтверждение оплаты</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2"><Meta label="Клиент" value={document.client?.name ?? "—"}/><Meta label="Заказ" value={document.order ? `№ ${document.order.number}` : "—"}/><Meta label="Сумма" value={payment?.amount !== undefined ? `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(payment.amount))} ₸` : "—"}/><Meta label="Дата оплаты" value={payment?.operationDate ? formatDate(payment.operationDate) : "—"}/><Meta label="Способ оплаты" value={payment?.method || "—"}/><Meta label="Связь с Payment" value={document.payment?.id ? `Payment #${document.payment.id}` : "Финансовая операция не создавалась"}/></dl></section>}
-      <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 md:p-6"><h2 className="flex items-center gap-2 text-lg font-semibold text-white"><History size={19}/>История версий</h2><div className="mt-4 space-y-3">{document.versions.length ? document.versions.map((item) => <article key={item.id} className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-white">v{item.version} · <span className="break-all">{item.fileName}</span></strong><div className="flex gap-2"><a target="_blank" aria-label={`Открыть версию ${item.version}`} href={`/api/document-versions/${item.id}`} className="grid size-10 place-items-center rounded-lg bg-slate-800 text-white"><ExternalLink size={16}/></a><a aria-label={`Скачать версию ${item.version}`} href={`/api/document-versions/${item.id}?download=1`} className="grid size-10 place-items-center rounded-lg bg-slate-800 text-white"><Download size={16}/></a></div></div><p className="mt-2 text-xs text-slate-500">{item.uploadedBy?.name ?? "Сотрудник"} · {formatDateTime(item.createdAt)} · {(item.size / 1024 / 1024).toFixed(2)} МБ</p><p className="mt-1 font-mono text-[10px] text-slate-600">SHA-256 {item.checksum}</p>{item.comment && <p className="mt-2 text-sm text-slate-300">{item.comment}</p>}</article>) : <p className="text-sm text-slate-400">У generated-документа нет загруженного файла.</p>}</div></section>
-      <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 md:p-6"><h2 className="text-lg font-semibold text-white">Audit</h2><div className="mt-4 space-y-3">{document.auditEvents.map((item) => <div key={item.id} className="border-l-2 border-slate-700 pl-3"><p className="text-sm text-slate-200">{auditLabel(item.action)}</p><p className="text-xs text-slate-500">{item.actor.name} · {formatDateTime(item.createdAt)}</p>{item.comment && <p className="mt-1 text-sm text-slate-400">{item.comment}</p>}</div>)}</div></section></div>
-      {canEdit && <aside className="space-y-5"><section className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><h2 className="font-semibold text-white">Статус</h2>{document.status !== DocumentStatus.ARCHIVED && <><input value={signedComment} onChange={(event) => setSignedComment(event.target.value)} placeholder="Комментарий к подписанию" className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white"/><div className="mt-3 grid gap-2">{statusActions.map((value) => <button key={value} disabled={saving || value === document.status} onClick={() => void changeStatus(value)} className="min-h-11 rounded-xl bg-slate-800 px-3 text-sm text-white disabled:opacity-40">{documentStatusLabels[value]}</button>)}</div>{session?.user.role === "DIRECTOR" && <button disabled={saving} onClick={() => window.confirm("Архивировать документ? История и версии сохранятся.") && void changeStatus(DocumentStatus.ARCHIVED)} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-amber-950 text-amber-200"><Archive size={17}/>Архивировать</button>}</>}</section>
-      {document.source === DocumentSource.UPLOADED && document.status !== DocumentStatus.ARCHIVED && <form onSubmit={upload} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><h2 className="font-semibold text-white">Новая версия</h2><input required type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp" onChange={(event) => setFile(event.target.files?.[0] ?? null)} className="mt-3 block w-full text-xs text-slate-300 file:mr-2 file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-white"/><input maxLength={1000} value={versionComment} onChange={(event) => setVersionComment(event.target.value)} placeholder="Что изменилось" className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white"/><button disabled={saving || !file} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold text-white disabled:opacity-50"><Upload size={17}/>Загрузить v{document.currentVersion + 1}</button></form>}
-      {canSignPackage && (document.type === DocumentType.CONTRACT || document.type === DocumentType.CUSTOMER_MEMO) && <form onSubmit={uploadSigned} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><h2 className="font-semibold text-white">{document.type === DocumentType.CONTRACT ? "Подписанный договор" : "Подписанная памятка"}</h2><p className="mt-1 text-xs text-slate-400">PDF, фото или скан сохраняется отдельно от generated-документа.</p>{document.signedFileName && <a target="_blank" href={`/api/documents/${document.id}/signed`} className="mt-3 inline-flex min-h-10 items-center gap-2 text-green-300"><ExternalLink size={16}/>{document.signedFileName}</a>}<input required type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(event) => setSignedFile(event.target.files?.[0] ?? null)} className="mt-3 block w-full text-xs text-slate-300 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-white"/><button disabled={saving || !signedFile} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 font-semibold text-white disabled:opacity-50"><Upload size={17}/>Загрузить подписанную копию</button></form>}</aside>}
-    </div></div></main>;
+  const contractPdfReady =
+    document.type === DocumentType.CONTRACT && current?.pdfStatus === "READY";
+
+  return (
+    <main className="min-w-0 p-4 md:p-8">
+      <div className="mx-auto max-w-5xl">
+        <Link href="/documents" className="text-sm text-blue-300">
+          ← Все документы
+        </Link>
+        <header className="mt-4 flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm text-blue-300">{documentTypeLabels[document.type]}</p>
+            <h1 className="break-words text-2xl font-bold text-white md:text-3xl">
+              {document.title}
+            </h1>
+            <p className="mt-1 text-slate-400">
+              {document.number ? `№ ${document.number}` : "Без номера"}
+            </p>
+          </div>
+          <span className="rounded-full bg-slate-800 px-3 py-1.5 text-sm text-slate-200">
+            {documentStatusLabels[document.status]}
+          </span>
+        </header>
+        {error && (
+          <p className="mt-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-300">
+            {error}
+          </p>
+        )}
+
+        <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_22rem]">
+          <div className="min-w-0 space-y-5">
+            <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 md:p-6">
+              <h2 className="text-lg font-semibold text-white">Карточка документа</h2>
+              <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Meta label="Дата" value={formatDate(document.documentDate)} />
+                <Meta label="Клиент" value={document.client?.name ?? "—"} />
+                <Meta
+                  label="Заказ"
+                  value={document.order ? `№ ${document.order.number}` : "—"}
+                />
+                <Meta label="Автор" value={document.author?.name ?? "—"} />
+                <Meta
+                  label="Текущая версия"
+                  value={
+                    document.currentVersion
+                      ? `v${document.currentVersion}`
+                      : "Файл не прикреплён"
+                  }
+                />
+                <Meta label="Источник" value={sourceLabel(document.source)} />
+              </dl>
+              {document.comment && (
+                <p className="mt-5 whitespace-pre-wrap rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300">
+                  {document.comment}
+                </p>
+              )}
+              {document.signedAt && (
+                <p className="mt-4 text-sm text-green-300">
+                  Подписан {formatDate(document.signedAt)}
+                  {document.signedComment ? ` · ${document.signedComment}` : ""}
+                </p>
+              )}
+              {current && (
+                <div className="mt-5 flex flex-wrap gap-3">
+                  {contractPdfReady ? (
+                    <>
+                      <a
+                        target="_blank"
+                        href={`/api/document-versions/${current.id}?representation=pdf`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white"
+                      >
+                        <ExternalLink size={17} />
+                        Открыть PDF
+                      </a>
+                      <a
+                        href={`/api/document-versions/${current.id}?representation=pdf&download=1`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                      >
+                        <Download size={17} />
+                        Скачать PDF
+                      </a>
+                      <a
+                        href={`/api/document-versions/${current.id}?download=1`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                      >
+                        <Download size={17} />
+                        Скачать DOCX
+                      </a>
+                    </>
+                  ) : document.type === DocumentType.CONTRACT ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={saving || !document.order}
+                        onClick={() => void generatePdf()}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white disabled:opacity-50"
+                      >
+                        <RefreshCw size={17} />
+                        {current.pdfStatus === "FAILED"
+                          ? "Повторить формирование PDF"
+                          : "Сформировать PDF"}
+                      </button>
+                      <a
+                        href={`/api/document-versions/${current.id}?download=1`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                      >
+                        <Download size={17} />
+                        Скачать DOCX
+                      </a>
+                    </>
+                  ) : (
+                    <>
+                      <a
+                        target="_blank"
+                        href={`/api/document-versions/${current.id}`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white"
+                      >
+                        <ExternalLink size={17} />
+                        Открыть файл
+                      </a>
+                      <a
+                        href={`/api/document-versions/${current.id}?download=1`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                      >
+                        <Download size={17} />
+                        Скачать
+                      </a>
+                    </>
+                  )}
+                </div>
+              )}
+              {document.type === DocumentType.CONTRACT &&
+                current?.pdfStatus !== "READY" && (
+                  <p className="mt-4 rounded-xl border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">
+                    PDF ещё не сформирован. Номер, snapshot и версия договора при
+                    формировании не изменятся.
+                  </p>
+                )}
+            </section>
+
+            {document.type === DocumentType.PAYMENT_RECEIPT && (
+              <section className="rounded-2xl border border-emerald-700/60 bg-emerald-950/20 p-4 md:p-6">
+                <h2 className="text-lg font-semibold text-white">Подтверждение оплаты</h2>
+                <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <Meta label="Клиент" value={document.client?.name ?? "—"} />
+                  <Meta
+                    label="Заказ"
+                    value={document.order ? `№ ${document.order.number}` : "—"}
+                  />
+                  <Meta
+                    label="Сумма"
+                    value={
+                      payment?.amount !== undefined
+                        ? `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(payment.amount))} ₸`
+                        : "—"
+                    }
+                  />
+                  <Meta
+                    label="Дата оплаты"
+                    value={payment?.operationDate ? formatDate(payment.operationDate) : "—"}
+                  />
+                  <Meta label="Способ оплаты" value={payment?.method || "—"} />
+                  <Meta
+                    label="Связь с Payment"
+                    value={
+                      document.payment?.id
+                        ? `Payment #${document.payment.id}`
+                        : "Финансовая операция не создавалась"
+                    }
+                  />
+                </dl>
+              </section>
+            )}
+
+            <details className="group rounded-2xl border border-slate-700 bg-[#101827]">
+              <summary className="flex min-h-14 cursor-pointer list-none items-center gap-2 p-4 font-semibold text-white md:px-6">
+                <History size={19} />
+                История документа
+                <span className="ml-auto text-slate-500 transition group-open:rotate-180">⌄</span>
+              </summary>
+              <div className="space-y-6 border-t border-slate-700 p-4 md:p-6">
+                <section>
+                  <h2 className="text-sm font-semibold text-slate-300">История версий</h2>
+                  <div className="mt-4 space-y-3">
+                    {document.versions.length ? (
+                      document.versions.map((item) => (
+                        <article
+                          key={item.id}
+                          className="min-w-0 rounded-xl border border-slate-800 bg-slate-950/60 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <strong className="text-white">
+                              v{item.version} ·{" "}
+                              <span className="break-all">{item.fileName}</span>
+                            </strong>
+                            <div className="flex gap-2">
+                              <a
+                                target="_blank"
+                                aria-label={`Открыть версию ${item.version}`}
+                                href={`/api/document-versions/${item.id}`}
+                                className="grid size-10 place-items-center rounded-lg bg-slate-800 text-white"
+                              >
+                                <ExternalLink size={16} />
+                              </a>
+                              <a
+                                aria-label={`Скачать версию ${item.version}`}
+                                href={`/api/document-versions/${item.id}?download=1`}
+                                className="grid size-10 place-items-center rounded-lg bg-slate-800 text-white"
+                              >
+                                <Download size={16} />
+                              </a>
+                            </div>
+                          </div>
+                          <p className="mt-2 text-xs text-slate-500">
+                            {item.uploadedBy?.name ?? "Сотрудник"} ·{" "}
+                            {formatDateTime(item.createdAt)} ·{" "}
+                            {(item.size / 1024 / 1024).toFixed(2)} МБ
+                          </p>
+                          <p className="mt-1 break-all font-mono text-[10px] text-slate-600">
+                            SHA-256 {item.checksum}
+                          </p>
+                          {item.pdfChecksum && (
+                            <p className="mt-1 break-all font-mono text-[10px] text-slate-600">
+                              PDF SHA-256 {item.pdfChecksum}
+                            </p>
+                          )}
+                          {item.comment && (
+                            <p className="mt-2 text-sm text-slate-300">{item.comment}</p>
+                          )}
+                        </article>
+                      ))
+                    ) : (
+                      <p className="text-sm text-slate-400">
+                        У generated-документа нет загруженного файла.
+                      </p>
+                    )}
+                  </div>
+                </section>
+                <section>
+                  <h2 className="text-sm font-semibold text-slate-300">Audit</h2>
+                  <div className="mt-4 space-y-3">
+                    {document.auditEvents.map((item) => (
+                      <div key={item.id} className="border-l-2 border-slate-700 pl-3">
+                        <p className="text-sm text-slate-200">{auditLabel(item.action)}</p>
+                        <p className="text-xs text-slate-500">
+                          {item.actor.name} · {formatDateTime(item.createdAt)}
+                        </p>
+                        {item.comment && (
+                          <p className="mt-1 text-sm text-slate-400">{item.comment}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </details>
+          </div>
+
+          {canEdit && (
+            <aside className="space-y-5">
+              <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
+                <h2 className="font-semibold text-white">Статус</h2>
+                {document.status !== DocumentStatus.ARCHIVED && (
+                  <>
+                    <input
+                      value={signedComment}
+                      onChange={(event) => setSignedComment(event.target.value)}
+                      placeholder="Комментарий к подписанию"
+                      className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white"
+                    />
+                    <div className="mt-3 grid gap-2">
+                      {statusActions.map((value) => (
+                        <button
+                          key={value}
+                          disabled={saving || value === document.status}
+                          onClick={() => void changeStatus(value)}
+                          className="min-h-11 rounded-xl bg-slate-800 px-3 text-sm text-white disabled:opacity-40"
+                        >
+                          {documentStatusLabels[value]}
+                        </button>
+                      ))}
+                    </div>
+                    {session?.user.role === "DIRECTOR" && (
+                      <button
+                        disabled={saving}
+                        onClick={() =>
+                          window.confirm(
+                            "Архивировать документ? История и версии сохранятся.",
+                          ) && void changeStatus(DocumentStatus.ARCHIVED)
+                        }
+                        className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-amber-950 text-amber-200"
+                      >
+                        <Archive size={17} />
+                        Архивировать
+                      </button>
+                    )}
+                  </>
+                )}
+              </section>
+
+              {document.source === DocumentSource.UPLOADED &&
+                document.status !== DocumentStatus.ARCHIVED && (
+                  <form
+                    onSubmit={upload}
+                    className="rounded-2xl border border-slate-700 bg-[#101827] p-4"
+                  >
+                    <h2 className="font-semibold text-white">Новая версия</h2>
+                    <input
+                      required
+                      type="file"
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp"
+                      onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                      className="mt-3 block w-full text-xs text-slate-300 file:mr-2 file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-white"
+                    />
+                    <input
+                      maxLength={1000}
+                      value={versionComment}
+                      onChange={(event) => setVersionComment(event.target.value)}
+                      placeholder="Что изменилось"
+                      className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm text-white"
+                    />
+                    <button
+                      disabled={saving || !file}
+                      className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold text-white disabled:opacity-50"
+                    >
+                      <Upload size={17} />
+                      Загрузить v{document.currentVersion + 1}
+                    </button>
+                  </form>
+                )}
+
+              {canSignPackage &&
+                (document.type === DocumentType.CONTRACT ||
+                  document.type === DocumentType.CUSTOMER_MEMO) && (
+                  <form
+                    onSubmit={uploadSigned}
+                    className="rounded-2xl border border-slate-700 bg-[#101827] p-4"
+                  >
+                    <h2 className="font-semibold text-white">
+                      {document.type === DocumentType.CONTRACT
+                        ? "Подписанный оригинал"
+                        : "Подписанная памятка"}
+                    </h2>
+                    <p className="mt-1 text-xs text-slate-400">
+                      PDF, фото или скан хранится отдельно от generated PDF/DOCX.
+                    </p>
+                    {document.signedFileName && (
+                      <a
+                        target="_blank"
+                        href={`/api/documents/${document.id}/signed`}
+                        className="mt-3 inline-flex min-h-10 items-center gap-2 text-green-300"
+                      >
+                        <ExternalLink size={16} />
+                        {document.signedFileName}
+                      </a>
+                    )}
+                    <input
+                      required
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg"
+                      onChange={(event) =>
+                        setSignedFile(event.target.files?.[0] ?? null)
+                      }
+                      className="mt-3 block w-full text-xs text-slate-300 file:mr-2 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-3 file:py-2 file:text-white"
+                    />
+                    <button
+                      disabled={saving || !signedFile}
+                      className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 font-semibold text-white disabled:opacity-50"
+                    >
+                      <Upload size={17} />
+                      Загрузить подписанный оригинал
+                    </button>
+                  </form>
+                )}
+            </aside>
+          )}
+        </div>
+      </div>
+    </main>
+  );
 }
 
-function Meta({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm font-medium text-slate-200">{value}</dd></div>; }
-function formatDate(value: string) { return new Intl.DateTimeFormat("ru-RU").format(new Date(value)); }
-function formatDateTime(value: string) { return new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)); }
-function sourceLabel(value: DocumentSource) { return ({ UPLOADED: "Загружен", GENERATED_ORDER: "Сформирован из заказа", GENERATED_PROPOSAL: "КП", MEASUREMENT_ATTACHMENT: "Замер", ORDER_ATTACHMENT: "Вложение заказа" })[value]; }
-function auditLabel(value: string) { return ({ CREATED: "Документ создан", VERSION_UPLOADED: "Загружена новая версия", STATUS_CHANGED: "Изменён статус", ARCHIVED: "Документ архивирован" } as Record<string, string>)[value] ?? value; }
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs text-slate-500">{label}</dt>
+      <dd className="mt-1 break-words text-sm font-medium text-slate-200">{value}</dd>
+    </div>
+  );
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("ru-RU").format(new Date(value));
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function sourceLabel(value: DocumentSource) {
+  return {
+    UPLOADED: "Загружен",
+    GENERATED_ORDER: "Сформирован из заказа",
+    GENERATED_PROPOSAL: "КП",
+    MEASUREMENT_ATTACHMENT: "Замер",
+    ORDER_ATTACHMENT: "Вложение заказа",
+  }[value];
+}
+
+function auditLabel(value: string) {
+  return (
+    {
+      CREATED: "Документ создан",
+      VERSION_UPLOADED: "Загружена новая версия",
+      STATUS_CHANGED: "Изменён статус",
+      ARCHIVED: "Документ архивирован",
+      CONTRACT_NUMBER_ASSIGNED: "Присвоен номер договора",
+      CONTRACT_GENERATED: "Сформирован договор",
+      CONTRACT_REVISED: "Сформирована новая версия договора",
+      CONTRACT_PDF_GENERATED: "Сформирован PDF договора",
+      SIGNED_COPY_UPLOADED: "Загружен подписанный оригинал",
+    } as Record<string, string>
+  )[value] ?? value;
+}

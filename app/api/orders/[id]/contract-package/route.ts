@@ -128,10 +128,10 @@ export async function POST(request: Request, { params }: Context) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "PACKAGE_FAILED";
     const label =
-      code === "CONVERTER_NOT_CONFIGURED"
-        ? "PDF-конвертер не настроен"
-        : code === "MEMO_NOT_READY"
-          ? "Памятка ещё не сформирована"
+      code === "MEMO_NOT_READY"
+        ? "Памятка ещё не сформирована"
+        : code === "CONTRACT_PDF_LAYOUT_OVERFLOW"
+          ? "Данные договора не помещаются в утверждённый PDF-шаблон"
           : code;
     return NextResponse.json(
       { error: label },

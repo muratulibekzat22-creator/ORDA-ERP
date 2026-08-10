@@ -12,6 +12,11 @@ import JSZip from "jszip";
 
 import type { ContractSnapshot } from "@/lib/contracts/domain";
 import {
+  buildContractPdf,
+  CONTRACT_PDF_PAGE_COUNT,
+  CONTRACT_PDF_TEMPLATE_VERSION,
+} from "@/lib/documents/contract-pdf";
+import {
   buildCustomerMemoPdf,
   CUSTOMER_MEMO_TEMPLATE_VERSION,
   type CustomerMemoSnapshot,
@@ -19,7 +24,6 @@ import {
 import { countPdfPages, streamToBuffer } from "@/lib/documents/pdf-utils";
 import { del, get, put } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
-import { convertDocxToPdf } from "@/lib/services/gotenberg.service";
 import {
   getDocument,
   type DocumentActor,
@@ -96,14 +100,22 @@ export async function ensureContractPdf(
   )
     return version;
 
-  await prisma.documentVersion.update({
-    where: { id: version.id },
+  const pending = await prisma.documentVersion.updateMany({
+    where: {
+      id: version.id,
+      pdfStatus: { not: PdfGenerationStatus.READY },
+    },
     data: { pdfStatus: PdfGenerationStatus.PENDING, pdfErrorCode: null },
   });
+  if (!pending.count)
+    return prisma.documentVersion.findUniqueOrThrow({ where: { id: version.id } });
   try {
-    const docx = await privateBlobBytes(version.pathname);
-    const pdf = await convertDocxToPdf({ bytes: docx, fileName: version.fileName });
-    if (countPdfPages(pdf) !== 2) throw new Error("CONTRACT_PDF_NOT_TWO_PAGES");
+    const snapshot = (version.snapshot ?? document.snapshot) as unknown as ContractSnapshot | null;
+    if (!snapshot?.contractNumber || !snapshot.clientFullName || !snapshot.companyName)
+      throw new Error("CONTRACT_SNAPSHOT_INVALID");
+    const pdf = await buildContractPdf(snapshot);
+    if (countPdfPages(pdf) !== CONTRACT_PDF_PAGE_COUNT)
+      throw new Error("CONTRACT_PDF_PAGE_COUNT_INVALID");
     const fileName = `Договор-${document.number}-v${version.version}.pdf`;
     const pathname = `documents/contracts/${document.id}/v${version.version}/contract.pdf`;
     const checksum = createHash("sha256").update(pdf).digest("hex");
@@ -115,8 +127,11 @@ export async function ensureContractPdf(
       maximumSizeInBytes: 25 * 1024 * 1024,
     });
     const updated = await prisma.$transaction(async (tx) => {
-      const result = await tx.documentVersion.update({
-        where: { id: version.id },
+      const claimed = await tx.documentVersion.updateMany({
+        where: {
+          id: version.id,
+          pdfStatus: { not: PdfGenerationStatus.READY },
+        },
         data: {
           pdfFileName: fileName,
           pdfPathname: blob.pathname,
@@ -128,24 +143,30 @@ export async function ensureContractPdf(
           pdfErrorCode: null,
         },
       });
-      await tx.documentAudit.create({
-        data: {
-          documentId,
-          actorId: actor.userId,
-          action: "CONTRACT_PDF_GENERATED",
-          after: {
-            version: version.version,
-            pages: 2,
-            checksum,
+      if (claimed.count) {
+        await tx.documentAudit.create({
+          data: {
+            documentId,
+            actorId: actor.userId,
+            action: "CONTRACT_PDF_GENERATED",
+            after: {
+              version: version.version,
+              pages: CONTRACT_PDF_PAGE_COUNT,
+              checksum,
+              renderer: CONTRACT_PDF_TEMPLATE_VERSION,
+            },
           },
-        },
-      });
-      return result;
+        });
+      }
+      return tx.documentVersion.findUniqueOrThrow({ where: { id: version.id } });
     });
     return updated;
   } catch (error) {
-    await prisma.documentVersion.update({
-      where: { id: version.id },
+    await prisma.documentVersion.updateMany({
+      where: {
+        id: version.id,
+        pdfStatus: { not: PdfGenerationStatus.READY },
+      },
       data: {
         pdfStatus: PdfGenerationStatus.FAILED,
         pdfErrorCode: errorCode(error),

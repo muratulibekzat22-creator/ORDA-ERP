@@ -202,8 +202,9 @@ export default function ContractPackageCard({
           Договорный комплект
         </h3>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-          Договор на 2 страницах, отдельная памятка заказчику и квитанции только
-          по подтверждённым оплатам.
+          Основной PDF: 2 страницы договора и отдельная страница памятки.
+          DOCX сохраняется дополнительно, квитанции создаются только по
+          подтверждённым оплатам.
         </p>
         {!readOnly && (
           <button
@@ -263,7 +264,7 @@ export default function ContractPackageCard({
                 Договор №{data.contract.number}
               </h4>
               <p className="mt-1 text-sm text-emerald-300">
-                2 страницы · DOCX + PDF
+                PDF основной · 2 страницы договора + памятка · DOCX дополнительно
               </p>
             </div>
             <FileCheck2 className="text-[#d8b873]" />
@@ -308,7 +309,9 @@ export default function ContractPackageCard({
                   className="mt-2 inline-flex min-h-10 items-center gap-2 rounded-lg bg-amber-800 px-3 font-semibold text-white disabled:opacity-50"
                 >
                   <RefreshCw size={15} />
-                  Повторить формирование PDF
+                  {contract?.pdfStatus === "FAILED"
+                    ? "Повторить формирование PDF"
+                    : "Сформировать PDF"}
                 </button>
               )}
             </div>
@@ -317,8 +320,8 @@ export default function ContractPackageCard({
             <Link href={`/documents/${data.contract.id}`} className="action">
               <Upload size={16} />
               {data.contract.signedFileName
-                ? "Открыть подписанный"
-                : "Загрузить подписанный договор"}
+                ? "Открыть подписанный оригинал"
+                : "Загрузить подписанный оригинал"}
             </Link>
             {data.contract.signedFileName && (
               <a
