@@ -4,6 +4,7 @@ import { Role, TrainingAuditAction } from "@prisma/client";
 
 import { MEASURER_COURSE, MEASURER_QUESTIONS } from "@/lib/training-course";
 import { prisma } from "@/lib/prisma";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 async function main() {
   const course = await prisma.trainingCourse.upsert({
@@ -54,4 +55,4 @@ async function main() {
   );
 }
 
-main().finally(() => prisma.$disconnect());
+runWithSystemAccess(main).finally(() => prisma.$disconnect());

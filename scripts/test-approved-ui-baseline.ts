@@ -10,7 +10,7 @@ const manifest = JSON.parse(
 
 assert.ok(Object.keys(manifest).length >= 8, "approved UI baseline is incomplete");
 for (const [file, expected] of Object.entries(manifest)) {
-  const source = fs.readFileSync(path.join(root, file));
+  const source = fs.readFileSync(path.join(root, file), "utf8").replaceAll("\r\n", "\n");
   const actual = createHash("sha256").update(source).digest("hex");
   assert.equal(
     actual,
