@@ -2,6 +2,7 @@ import {
   AdvanceRequestStatus,
   BonusPaymentMode,
   PayrollAccrualType,
+  PayrollBonusRule,
   PayrollPaymentType,
   PayrollPeriodStatus,
   Role,
@@ -72,8 +73,8 @@ export async function GET(request: Request) {
       return NextResponse.json({
         period: null,
         rows: [],
-        totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
-        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+        totals: { accrued: 0, paid: 0, received: 0, deductions: 0, pending: 0, payable: 0 },
+        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, otherAccruals: 0, advancesPaid: 0, partialPayments: 0, finalPayments: 0, salaryPayments: 0, deductions: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
         settings,
         unconfigured,
       });
@@ -104,7 +105,7 @@ export async function POST(request: Request) {
     if (action === "create-period") {
       if (identity.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
       return NextResponse.json(
-        await ensurePeriod(Number(body.year), Number(body.month)),
+        await ensurePeriod(Number(body.year), Number(body.month), identity),
       );
     }
     if (action === "profile")
@@ -158,6 +159,9 @@ export async function POST(request: Request) {
             orderId: body.orderId == null ? undefined : Number(body.orderId),
             reason: String(body.reason ?? ""),
             paymentMode: body.paymentMode as BonusPaymentMode | undefined,
+            bonusRule: body.bonusRule as PayrollBonusRule | undefined,
+            bonusValue:
+              body.bonusValue == null ? undefined : Number(body.bonusValue),
             key: keyResult.key,
             requestHash: hash,
           },
@@ -194,9 +198,6 @@ export async function POST(request: Request) {
           Number(body.id),
           {
             decision: body.decision === "REJECT" ? "REJECT" : "CONFIRM",
-            amount: body.amount == null ? undefined : Number(body.amount),
-            paymentDate: body.paymentDate == null ? undefined : new Date(String(body.paymentDate)),
-            method: typeof body.method === "string" ? body.method : undefined,
             comment: typeof body.comment === "string" ? body.comment : undefined,
             key: keyResult.key,
             requestHash: hash,
@@ -218,12 +219,11 @@ export async function POST(request: Request) {
           Number(body.id),
           {
             status: body.status as AdvanceRequestStatus,
-            approvedAmount:
-              body.approvedAmount == null
-                ? undefined
-                : Number(body.approvedAmount),
+            method: typeof body.method === "string" ? body.method : undefined,
             comment:
               typeof body.comment === "string" ? body.comment : undefined,
+            key: keyResult.key,
+            requestHash: hash,
           },
           identity,
         ),
