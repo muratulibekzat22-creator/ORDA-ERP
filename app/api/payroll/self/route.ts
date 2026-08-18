@@ -68,8 +68,8 @@ export async function GET(request: Request) {
       return NextResponse.json({
         period: null,
         rows: [],
-        totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
-        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+        totals: { accrued: 0, paid: 0, received: 0, deductions: 0, pending: 0, payable: 0 },
+        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, otherAccruals: 0, advancesPaid: 0, partialPayments: 0, finalPayments: 0, salaryPayments: 0, deductions: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
         settings,
       });
     return NextResponse.json({
@@ -89,8 +89,8 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     if (body.action === "report-payment") {
-      const type = Object.values(PayrollPaymentType).includes(body.type as PayrollPaymentType)
-        ? body.type as PayrollPaymentType
+      const type = body.type === PayrollPaymentType.ADVANCE
+        ? PayrollPaymentType.ADVANCE
         : PayrollPaymentType.SALARY_PAYMENT;
       return NextResponse.json(
         await requestPaymentConfirmation(
@@ -113,6 +113,7 @@ export async function POST(request: Request) {
         {
           periodId: Number(body.periodId),
           amount: Number(body.amount),
+          method: typeof body.method === "string" ? body.method : undefined,
           comment: typeof body.comment === "string" ? body.comment : undefined,
           key: key.key,
           requestHash: createRequestHash(body),
