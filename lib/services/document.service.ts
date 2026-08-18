@@ -31,6 +31,12 @@ const financialTypes: DocumentType[] = [DocumentType.INVOICE, DocumentType.PAYME
 const technicalTypes: DocumentType[] = [DocumentType.PROJECT, DocumentType.MEASUREMENT_SHEET, DocumentType.PHOTO, DocumentType.OTHER];
 const installerTypes: DocumentType[] = [...technicalTypes, DocumentType.ACT];
 const measurableTypes: DocumentType[] = [DocumentType.MEASUREMENT_SHEET, DocumentType.PHOTO, DocumentType.PROJECT, DocumentType.OTHER];
+const legacyReadOnlyTypes = new Set<DocumentType>([
+  DocumentType.PREPAYMENT_CONFIRMATION,
+  DocumentType.CLOSING_ACT,
+  DocumentType.WARRANTY,
+  DocumentType.FINAL_PAYMENT_CONFIRMATION,
+]);
 
 const documentInclude = {
   client: { select: { id: true, name: true, phone: true, managerUserId: true, manager: true } },
@@ -205,9 +211,10 @@ async function readFile(file: File) {
   return { fileName, bytes, checksum: createHash("sha256").update(bytes).digest("hex") };
 }
 
-const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "DOG", CUSTOMER_MEMO: "MEMO", ESTIMATE: "SM", PROJECT: "PRJ", MEASUREMENT_SHEET: "ZM", ACT: "ACT", INVOICE: "SCH", PAYMENT_RECEIPT: "PAY", PHOTO: "PHOTO", OTHER: "DOC" };
+const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "DOG", CUSTOMER_MEMO: "MEMO", PREPAYMENT_CONFIRMATION: "LEGACY-PREPAY", CLOSING_ACT: "LEGACY-CLOSE", WARRANTY: "LEGACY-WARRANTY", FINAL_PAYMENT_CONFIRMATION: "LEGACY-FINAL", ESTIMATE: "SM", PROJECT: "PRJ", MEASUREMENT_SHEET: "ZM", ACT: "ACT", INVOICE: "SCH", PAYMENT_RECEIPT: "PAY", PHOTO: "PHOTO", OTHER: "DOC" };
 
 function canCreate(actor: DocumentActor, type: DocumentType) {
+  if (legacyReadOnlyTypes.has(type)) return false;
   if (!allowedDocumentTypes(actor).includes(type)) return false;
   return actor.role === Role.DIRECTOR || actor.role === Role.MANAGER || (actor.role === Role.ACCOUNTANT && financialTypes.includes(type));
 }
