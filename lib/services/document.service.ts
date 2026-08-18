@@ -12,6 +12,7 @@ import {
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { getOrder } from "@/lib/services/order.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export type DocumentActor = { role: Role; userId: number; name: string };
 export const MAX_DOCUMENT_SIZE = 15 * 1024 * 1024;
@@ -237,9 +238,10 @@ export async function createDocument(input: { clientId?: number | null; orderId?
   }
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const settings = await tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: { nextDocumentNumber: true } });
+      const companyId = requireTenantIdentity().companyId;
+      const settings = await tx.systemSettings.upsert({ where: { companyId }, create: {}, update: {}, select: { nextDocumentNumber: true } });
       const number = input.number?.trim().slice(0, 80) || `${numberPrefixes[input.type]}-${String(settings.nextDocumentNumber).padStart(6, "0")}`;
-      if (!input.number) await tx.systemSettings.update({ where: { id: 1 }, data: { nextDocumentNumber: { increment: 1 } } });
+      if (!input.number) await tx.systemSettings.update({ where: { companyId }, data: { nextDocumentNumber: { increment: 1 } } });
       const document = await tx.document.create({ data: { clientId: entities.clientId, orderId: entities.orderId, paymentId: input.paymentId || null, type: input.type, title: input.title?.trim().slice(0, 200) || numberPrefixes[input.type], number, documentDate: input.documentDate, comment: input.comment?.trim().slice(0, 2000) || null, snapshot: paymentSnapshot ?? undefined, authorId: input.actor.userId, source: input.source ?? (prepared ? DocumentSource.UPLOADED : DocumentSource.GENERATED_ORDER), currentVersion: prepared ? 1 : 0, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, ...(prepared && blobPath ? { versions: { create: { version: 1, uploadedById: input.actor.userId, comment: input.comment?.trim().slice(0, 1000) || null, fileName: prepared.fileName, pathname: blobPath, contentType: input.file!.type, size: prepared.bytes.byteLength, checksum: prepared.checksum } } } : {}), auditEvents: { create: { action: "CREATED", actorId: input.actor.userId, after: { type: input.type, number, currentVersion: prepared ? 1 : 0, paymentId: input.paymentId || null } } } }, include: documentInclude });
       return document;
     });
@@ -319,6 +321,6 @@ export async function getDocumentOrder(id: number, actor: DocumentActor) {
   const scope = await entityScope(actor);
   const owned = await prisma.order.findFirst({ where: { id, AND: [scope.order] }, select: { id: true } });
   if (!owned) return null;
-  const [order, company] = await Promise.all([getOrder(id), prisma.companySettings.findUnique({ where: { id: 1 } })]);
+  const [order, company] = await Promise.all([getOrder(id), prisma.companySettings.findUnique({ where: { companyId: requireTenantIdentity().companyId } })]);
   return order ? { ...order, company } : null;
 }

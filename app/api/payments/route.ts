@@ -9,6 +9,7 @@ import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, createRequestHash, idempotencyConflict, isPrismaUniqueConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 export async function GET() {
   const auth = await requirePermission("finance");
@@ -53,7 +54,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user || session.invalid) return NextResponse.json({ error: "Сессия завершена", code: "SESSION_INVALID" }, { status: 401 });
+  if (!session?.user || !enterTenantFromSession(session)) return NextResponse.json({ error: "Сессия завершена", code: "SESSION_INVALID" }, { status: 401 });
   const user = session.user;
   const role = user.role as Role;
   if (user.role === Role.PARTNER)

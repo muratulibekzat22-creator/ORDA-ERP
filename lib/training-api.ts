@@ -3,12 +3,13 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 export type TrainingActor = { userId: number; role: Role; name: string };
 
 export async function requireTrainingRole(...roles: Role[]) {
   const session = await getServerSession(authOptions);
-  if (!session?.user || session.invalid || !session.user.id) {
+  if (!session?.user || !session.user.id || !enterTenantFromSession(session)) {
     return {
       response: NextResponse.json(
         { error: "Сессия завершена", code: "SESSION_INVALID" },
@@ -25,12 +26,20 @@ export async function requireTrainingRole(...roles: Role[]) {
       ),
     };
   }
-  return {
-    actor: {
+  const actor = {
       userId: Number(session.user.id),
       role,
       name: session.user.name ?? "Сотрудник",
-    } satisfies TrainingActor,
+    } satisfies TrainingActor;
+  return {
+    get response(): undefined {
+      enterTenantFromSession(session);
+      return undefined;
+    },
+    get actor() {
+      enterTenantFromSession(session);
+      return actor;
+    },
   };
 }
 

@@ -1,12 +1,14 @@
 import { Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 type Actor = { id: number; role: Role };
 type Scope = { managerUserId?: number };
 const range = (start: Date, end: Date) => ({ gte: start, lte: end });
 
 export async function getReportsReadModel(params: URLSearchParams, actor: Actor): Promise<ReportsReadModel> {
+  const companyId = requireTenantIdentity().companyId;
   if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
   const period = resolveReportRange(params);
   const requestedManager = params.get("managerId");
@@ -45,7 +47,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       FROM "PayrollAccrual" accrual
       JOIN "EmployeePayrollProfile" employee ON employee.id = accrual."employeeId"
       JOIN "User" account ON account.id = employee."userId"
-      WHERE employee.active = true AND employee."payrollEnabled" = true AND account.active = true
+      WHERE employee."companyId" = ${companyId} AND employee.active = true AND employee."payrollEnabled" = true AND account.active = true
       UNION ALL
       SELECT 'payment'::text AS kind,
         COALESCE(SUM(CASE WHEN payment.type = 'EMPLOYEE_REFUND'::"PayrollPaymentType" THEN -payment.amount ELSE payment.amount END), 0) AS total,
@@ -53,7 +55,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       FROM "PayrollPayment" payment
       JOIN "EmployeePayrollProfile" employee ON employee.id = payment."employeeId"
       JOIN "User" account ON account.id = employee."userId"
-      WHERE employee.active = true AND employee."payrollEnabled" = true AND account.active = true`
+      WHERE employee."companyId" = ${companyId} AND employee.active = true AND employee."payrollEnabled" = true AND account.active = true`
     : Promise.resolve([]),
   ]);
   const received = payments.reduce((sum, item) => sum + paymentEffect(item.type, item.amount), 0);

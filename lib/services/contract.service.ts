@@ -6,6 +6,7 @@ import { almatyDateParts, amountToRussianWords, calculatePayment, CONTRACT_TEMPL
 import { generateContractDocx } from "@/lib/contracts/docx";
 import { companyDisplayPhones } from "@/lib/company-contacts";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { getDocument, type DocumentActor } from "@/lib/services/document.service";
 import { currentMemoAcknowledgement } from "@/lib/services/contract-package.service";
@@ -43,10 +44,11 @@ function addDays(date: Date, days: number) { const next = new Date(date); next.s
 async function source(orderId: number, actor: ContractActor) {
   if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) throw new Error("FORBIDDEN");
   if (!await canAccessOrder360(orderId, actor)) throw new Error("NOT_FOUND");
+  const companyId = requireTenantIdentity().companyId;
   const [order, company, system] = await Promise.all([
     prisma.order.findUnique({ where: { id: orderId }, include: { client: true, measurements: { orderBy: { visitDate: "desc" }, take: 1 }, productions: { orderBy: { createdAt: "desc" }, take: 1 }, calculations: { orderBy: { createdAt: "desc" }, take: 1 } } }),
-    prisma.companySettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
+    prisma.companySettings.upsert({ where: { companyId }, create: {}, update: {} }),
+    prisma.systemSettings.upsert({ where: { companyId }, create: {}, update: {} }),
   ]);
   if (!order) throw new Error("NOT_FOUND");
   const material = await prisma.material.findFirst({ where: { name: { equals: order.material, mode: "insensitive" }, active: true }, select: { name: true, warrantyMonths: true } });
@@ -128,9 +130,10 @@ export async function generateContract(orderId: number, actor: ContractActor, in
   if (active) return reviseContract(active.id, actor, input, idempotencyKey);
   const baseSnapshot = await buildContractSnapshot(orderId, actor, input);
   const draft = await prisma.$transaction(async (tx) => {
-    const rows = await tx.$queryRaw<Array<{ value: number }>>`UPDATE "SystemSettings" SET "nextContractNumber" = "nextContractNumber" + 1, "updatedAt" = NOW() WHERE id = 1 RETURNING "nextContractNumber" - 1 AS value`;
+    const companyId = requireTenantIdentity().companyId;
+    const rows = await tx.$queryRaw<Array<{ value: number }>>`UPDATE "SystemSettings" SET "nextContractNumber" = "nextContractNumber" + 1, "updatedAt" = NOW() WHERE "companyId" = ${companyId} RETURNING "nextContractNumber" - 1 AS value`;
     if (!rows[0]) throw new Error("SETTINGS_REQUIRED");
-    const settings = await tx.systemSettings.findUniqueOrThrow({ where: { id: 1 }, select: { contractPrefix: true } });
+    const settings = await tx.systemSettings.findUniqueOrThrow({ where: { companyId }, select: { contractPrefix: true } });
     const number = `${settings.contractPrefix}-${String(rows[0].value).padStart(6, "0")}`;
     const snapshot = { ...baseSnapshot, contractNumber: number };
     return tx.document.create({ data: { orderId, clientId: (await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { clientId: true } })).clientId, type: DocumentType.CONTRACT, number, title: `Договор №${number}`, documentDate: new Date(snapshot.contractDateIso), status: DocumentStatus.DRAFT, source: DocumentSource.GENERATED_ORDER, authorId: actor.userId, templateVersion: CONTRACT_TEMPLATE_VERSION, snapshot: snapshot as unknown as Prisma.InputJsonValue, idempotencyKey, requestHash: createHash("sha256").update(JSON.stringify({ orderId, input })).digest("hex"), auditEvents: { create: { action: "CONTRACT_NUMBER_ASSIGNED", actorId: actor.userId, after: { number, templateVersion: CONTRACT_TEMPLATE_VERSION } } } } });

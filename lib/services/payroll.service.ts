@@ -11,6 +11,7 @@ import {
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export type PayrollActor = { userId: number; role: Role; name: string };
 export class PayrollError extends Error {}
@@ -49,7 +50,7 @@ export async function ensurePeriod(year: number, month: number) {
   )
     throw new PayrollError("INVALID_PERIOD");
   return prisma.payrollPeriod.upsert({
-    where: { year_month: { year, month } },
+    where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     create: { year, month },
     update: {},
   });
@@ -918,7 +919,7 @@ export async function payrollSummary(
       advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { name: "asc" },
-  }), prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: { paydayDayOfMonth: true } })]);
+  }), prisma.systemSettings.upsert({ where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true } })]);
   const rows = employees.map((employee) => {
     const accrued = employee.accruals.reduce(
       (sum, row) => sum + signedAccrual(row),

@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export type FinanceDirection = "INCOME" | "EXPENSE";
 export type FinanceSource =
@@ -120,6 +121,7 @@ function auditSnapshot(entry: {
 }
 
 export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
+  const companyId = requireTenantIdentity().companyId;
   const range = selectedRange(filters);
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
   const pageSize = Math.min(100, Math.max(10, Math.trunc(filters.pageSize ?? 50)));
@@ -162,7 +164,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
       LEFT JOIN "Order" orders ON orders.id = payment."orderId"
       LEFT JOIN "Client" clients ON clients.id = orders."clientId"
       LEFT JOIN "Partner" partners ON partners.id = payment."partnerId"
-      WHERE TRUE ${fromSql} ${toSql}
+      WHERE payment."companyId" = ${companyId} ${fromSql} ${toSql}
       UNION ALL
       SELECT
         'LEDGER'::text AS source,
@@ -190,6 +192,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
       LEFT JOIN "User" payroll_users ON payroll_users.id = payroll_employees."userId"
       LEFT JOIN "User" authors ON authors.id = ledger."authorId"
       WHERE ledger."voidedAt" IS NULL
+        AND ledger."companyId" = ${companyId}
         AND (ledger."payrollPaymentId" IS NOT NULL OR ledger."payrollAccrualId" IS NULL)
         ${range.from ? Prisma.sql`AND ledger."operationDate" >= ${range.from}` : Prisma.empty}
         ${range.to ? Prisma.sql`AND ledger."operationDate" <= ${range.to}` : Prisma.empty}

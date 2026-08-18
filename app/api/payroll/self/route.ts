@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { enterTenantFromSession, requireTenantIdentity } from "@/lib/tenant-context";
 import {
   payrollSummary,
   PayrollError,
@@ -13,8 +14,17 @@ import {
 
 async function authSelf() {
   const session = await getServerSession(authOptions);
-  return session?.user
-    ? { session }
+  return session?.user && enterTenantFromSession(session)
+    ? {
+        get response(): undefined {
+          enterTenantFromSession(session);
+          return undefined;
+        },
+        get session() {
+          enterTenantFromSession(session);
+          return session;
+        },
+      }
     : {
         response: NextResponse.json(
           { error: "Требуется авторизация" },
@@ -44,14 +54,15 @@ export async function GET(request: Request) {
     const p = new URL(request.url).searchParams;
     const period = await prisma.payrollPeriod.findUnique({
       where: {
-        year_month: {
+        companyId_year_month: {
+          companyId: requireTenantIdentity().companyId,
           year: Number(p.get("year")),
           month: Number(p.get("month")),
         },
       },
     });
     const settings = await prisma.systemSettings.upsert({
-      where: { id: 1 }, create: { id: 1 }, update: {}, select: { paydayDayOfMonth: true },
+      where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
     });
     if (!period)
       return NextResponse.json({

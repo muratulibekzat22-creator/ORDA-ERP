@@ -20,7 +20,7 @@ async function main() {
   for (const [role, permissions] of Object.entries(defaultPermissions) as Array<[Role, Permission[]]>) {
     for (const permission of permissions) {
       await prisma.rolePermission.upsert({
-        where: { role_permission: { role, permission } },
+        where: { companyId_role_permission: { companyId: 1, role, permission } },
         create: { role, permission },
         update: {},
       });

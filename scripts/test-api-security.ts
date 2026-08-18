@@ -242,7 +242,7 @@ async function main() {
     await ensureRolePermissions();
     for (const [role, permissions] of Object.entries(defaultPermissions) as Array<[Role, Permission[]]>) {
       for (const permission of permissions) {
-        const existing = await prisma.rolePermission.findUnique({ where: { role_permission: { role, permission } } });
+        const existing = await prisma.rolePermission.findFirst({ where: { role, permission } });
         if (!existing) {
           await prisma.rolePermission.create({ data: { role, permission } });
           temporarySeededRolePermissions.push({ role, permission });
@@ -314,7 +314,7 @@ async function main() {
     ]);
     productionUserIds.push(firstInstaller.id, secondInstaller.id, firstProductionUser.id, secondProductionUser.id, director.id, accountant.id);
     for (const permission of [Permission.settings, Permission.orders]) {
-      const existing = await prisma.rolePermission.findUnique({ where: { role_permission: { role: Role.ACCOUNTANT, permission } } });
+      const existing = await prisma.rolePermission.findFirst({ where: { role: Role.ACCOUNTANT, permission } });
       if (!existing) { await prisma.rolePermission.create({ data: { role: Role.ACCOUNTANT, permission } }); temporaryRolePermissions.push(permission); }
     }
     const workflowClients = await Promise.all(
@@ -1033,7 +1033,7 @@ async function main() {
       for (const row of temporarySeededRolePermissions) {
         await prisma.rolePermission.deleteMany({ where: { role: row.role, permission: row.permission } });
       }
-      if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.update({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
+      if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.updateMany({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
       console.log("cleanup completed");
       }
     } catch (error) {

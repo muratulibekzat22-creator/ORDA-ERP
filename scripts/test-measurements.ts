@@ -111,9 +111,9 @@ async function cleanup() {
 async function main() {
   await cleanupStaleRuns();
   console.log("measurement test: stale resources cleaned");
-  const previousSettings = await prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: { measurerOrderBonus: true } });
+  const previousSettings = await prisma.systemSettings.upsert({ where: { companyId: 1 }, create: {}, update: {}, select: { measurerOrderBonus: true } });
   try {
-    await prisma.systemSettings.update({ where: { id: 1 }, data: { measurerOrderBonus: 20_000 } });
+    await prisma.systemSettings.update({ where: { companyId: 1 }, data: { measurerOrderBonus: 20_000 } });
     const director = await prisma.user.create({ data: { name: `${tag}-director`, email: `${tag}-director@test.local`, password: "test", role: Role.DIRECTOR } });
     const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "test", role: Role.MANAGER } });
     const otherManager = await prisma.user.create({ data: { name: `${tag}-other-manager`, email: `${tag}-other-manager@test.local`, password: "test", role: Role.MANAGER } });
@@ -261,7 +261,7 @@ async function main() {
     console.log("measurement workspace workflow, RBAC, immutable snapshot, follow-ups and exactly-once payroll bonus passed");
   } finally {
     await cleanup();
-    await prisma.systemSettings.update({ where: { id: 1 }, data: { measurerOrderBonus: previousSettings.measurerOrderBonus } });
+    await prisma.systemSettings.update({ where: { companyId: 1 }, data: { measurerOrderBonus: previousSettings.measurerOrderBonus } });
     await prisma.$disconnect();
   }
 }

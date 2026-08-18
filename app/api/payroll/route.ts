@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 import {
   changeAllowance,
   changeSalary,
@@ -58,10 +59,10 @@ export async function GET(request: Request) {
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
     const period = await prisma.payrollPeriod.findUnique({
-      where: { year_month: { year, month } },
+      where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
     const settings = await prisma.systemSettings.upsert({
-      where: { id: 1 }, create: { id: 1 }, update: {}, select: { paydayDayOfMonth: true },
+      where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
     });
     const identity = actor(auth.session!);
     const unconfigured = identity.role === Role.DIRECTOR

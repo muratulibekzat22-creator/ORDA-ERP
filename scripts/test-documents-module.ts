@@ -1,12 +1,14 @@
 import "./require-test-database";
 
 import assert from "node:assert/strict";
-import { del } from "@vercel/blob";
+import path from "node:path";
 import { DocumentType, MeasurementPhotoType, Role } from "@prisma/client";
+import { del } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
 import { addDocumentVersion, allowedDocumentTypes, createDocument, getDocument, getDocuments, getDocumentVersionContent, MAX_DOCUMENT_SIZE } from "@/lib/services/document.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Documents integration requires DATABASE_URL=TEST_DATABASE_URL");
+process.env.TEST_BLOB_DIR ||= path.join(process.cwd(), "tmp", "test-blobs", "documents");
 
 const tag = `documents-${Date.now()}`;
 const emails = (role: string) => `${tag}-${role.toLowerCase()}@test.local`;

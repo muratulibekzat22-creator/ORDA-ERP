@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getCalculatorTariffs } from "@/lib/calculator/tariffs";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 async function authorize() {
   const auth = await requirePermission("settings");
@@ -44,7 +45,12 @@ export async function PATCH(request: Request) {
     });
     if (new Set(items.map((item) => item.code)).size !== items.length)
       return NextResponse.json({ error: "Коды позиций не должны повторяться" }, { status: 400 });
-    await prisma.$transaction(items.map((item) => prisma.calculatorTariff.upsert({ where: { code: item.code }, create: item, update: item })));
+    const companyId = requireTenantIdentity().companyId;
+    await prisma.$transaction(items.map((item) => prisma.calculatorTariff.upsert({
+      where: { companyId_code: { companyId, code: item.code } },
+      create: item,
+      update: item,
+    })));
     return NextResponse.json({ items: await getCalculatorTariffs(false) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Не удалось сохранить конфигурацию" }, { status: 400 });

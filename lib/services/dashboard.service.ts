@@ -13,6 +13,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 type DashboardScope = { role: Role; userId: number; period?: string };
 const percent = (value: number, total: number) =>
@@ -31,6 +32,7 @@ export function dashboardPeriodRange(period = "month", now = new Date()) {
 }
 
 async function salesProjection(scope: DashboardScope) {
+  const companyId = requireTenantIdentity().companyId;
   const { start, end } = dashboardPeriodRange(scope.period);
   const now = new Date();
   const { start: todayStart } = dashboardPeriodRange("today", now);
@@ -111,6 +113,7 @@ async function salesProjection(scope: DashboardScope) {
       LEFT JOIN "LeadConversion" conversion ON conversion."orderId" = orders.id
       LEFT JOIN "OrderInstallation" installation ON installation."orderId" = orders.id
       WHERE orders."deletedAt" IS NULL
+        AND orders."companyId" = ${companyId}
         AND orders.lifecycle NOT IN (
           'COMPLETED'::"OrderLifecycle",
           'CANCELLED'::"OrderLifecycle"
@@ -139,7 +142,7 @@ async function salesProjection(scope: DashboardScope) {
                 AND document.status NOT IN ('ARCHIVED'::"DocumentStatus", 'CANCELLED'::"DocumentStatus")
             ))::bigint AS without_contract
           FROM "Order"
-          WHERE "deletedAt" IS NULL AND lifecycle <> 'CANCELLED'::"OrderLifecycle"`
+          WHERE "companyId" = ${companyId} AND "deletedAt" IS NULL AND lifecycle <> 'CANCELLED'::"OrderLifecycle"`
       : Promise.resolve([]),
     prisma.measurement.count({
       where: {
@@ -171,7 +174,7 @@ async function salesProjection(scope: DashboardScope) {
             SELECT "employeeId", SUM(CASE WHEN type = 'EMPLOYEE_REFUND'::"PayrollPaymentType" THEN -amount ELSE amount END) AS total
             FROM "PayrollPayment" GROUP BY "employeeId"
           ) payment ON payment."employeeId" = employee.id
-          WHERE employee.active = true AND employee."payrollEnabled" = true`
+          WHERE employee."companyId" = ${companyId} AND employee.active = true AND employee."payrollEnabled" = true`
       : Promise.resolve([]),
   ]);
   const { start: monthStart } = dashboardPeriodRange("month", now);
@@ -210,6 +213,7 @@ async function salesProjection(scope: DashboardScope) {
           JOIN "Order" orders ON orders.id = production."orderId"
           WHERE production."completedAt" IS NULL
             AND production."archivedAt" IS NULL
+            AND production."companyId" = ${companyId}
             AND orders."deletedAt" IS NULL
           GROUP BY production.stage`
       : Promise.resolve([]),
@@ -363,7 +367,7 @@ async function salesProjection(scope: DashboardScope) {
 async function accountantProjection(scope: DashboardScope) {
   const { start, end } = dashboardPeriodRange(scope.period);
   const almaty = new Date(end.getTime() + 5 * 60 * 60 * 1000);
-  const period = await prisma.payrollPeriod.findUnique({ where: { year_month: { year: almaty.getUTCFullYear(), month: almaty.getUTCMonth() + 1 } } });
+  const period = await prisma.payrollPeriod.findUnique({ where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year: almaty.getUTCFullYear(), month: almaty.getUTCMonth() + 1 } } });
   const [ledgerTotals, recent, accruals, payments, pendingAdvances, partnerBalances] = await Promise.all([
     prisma.companyLedgerEntry.groupBy({ by: ["direction"], where: { operationDate: { gte: start, lte: end } }, _sum: { amount: true } }),
     prisma.companyLedgerEntry.findMany({ where: { operationDate: { gte: start, lte: end } }, orderBy: { operationDate: "desc" }, take: 12, select: { id: true, type: true, category: true, direction: true, amount: true, operationDate: true, comment: true } }),

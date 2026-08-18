@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { normalizeCompanyPhone } from "@/lib/company-contacts";
 import { getPermissionMatrix, replacePermissionMatrix } from "@/lib/services/permission.service";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "secondaryPhone", "whatsapp", "email", "bankDetails", "directorName", "directorFullName", "iik", "bank", "bik", "logoUrl"] as const;
 const systemStringFields = ["currency", "timezone", "dateFormat", "offerPrefix", "contractPrefix", "actPrefix", "invoicePrefix"] as const;
@@ -48,10 +49,11 @@ function nonNegativeIntegers(value: RecordValue, fields: readonly string[]) {
 }
 
 export async function getSettingsManagement() {
+  const companyId = requireTenantIdentity().companyId;
   const [company, system, calculator, materials, rolePermissions] = await Promise.all([
-    prisma.companySettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    prisma.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    prisma.settings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
+    prisma.companySettings.upsert({ where: { companyId }, create: {}, update: {} }),
+    prisma.systemSettings.upsert({ where: { companyId }, create: {}, update: {} }),
+    prisma.settings.upsert({ where: { companyId }, create: {}, update: {} }),
     prisma.material.findMany({ select: { id: true, name: true, category: true, unit: true, purchasePrice: true, warrantyMonths: true, active: true, _count: { select: { movements: true } } }, orderBy: { name: "asc" } }),
     getPermissionMatrix(),
   ]);
@@ -59,6 +61,7 @@ export async function getSettingsManagement() {
 }
 
 export async function patchSettingsManagement(payload: unknown) {
+  const companyId = requireTenantIdentity().companyId;
   const body = object(payload);
   if (!body) throw new Error("INVALID_SETTINGS");
   const company = body.company === undefined ? null : object(body.company);
@@ -73,9 +76,9 @@ export async function patchSettingsManagement(payload: unknown) {
     throw new Error("INVALID_SETTINGS");
 
   const [nextCompany, nextSystem, nextCalculator] = await prisma.$transaction(async (tx) => Promise.all([
-    company ? tx.companySettings.upsert({ where: { id: 1 }, create: { id: 1, ...companyStrings(company) }, update: companyStrings(company) as Prisma.CompanySettingsUpdateInput }) : tx.companySettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    system ? tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1, ...strings(system, systemStringFields), ...systemNumbers }, update: { ...strings(system, systemStringFields), ...systemNumbers } as Prisma.SystemSettingsUpdateInput }) : tx.systemSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
-    calculator ? tx.settings.upsert({ where: { id: 1 }, create: { id: 1, ...nonNegativeIntegers(calculator, calculatorFields) }, update: nonNegativeIntegers(calculator, calculatorFields) }) : tx.settings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} }),
+    company ? tx.companySettings.upsert({ where: { companyId }, create: { ...companyStrings(company) }, update: companyStrings(company) as Prisma.CompanySettingsUpdateInput }) : tx.companySettings.upsert({ where: { companyId }, create: {}, update: {} }),
+    system ? tx.systemSettings.upsert({ where: { companyId }, create: { ...strings(system, systemStringFields), ...systemNumbers }, update: { ...strings(system, systemStringFields), ...systemNumbers } as Prisma.SystemSettingsUpdateInput }) : tx.systemSettings.upsert({ where: { companyId }, create: {}, update: {} }),
+    calculator ? tx.settings.upsert({ where: { companyId }, create: { ...nonNegativeIntegers(calculator, calculatorFields) }, update: nonNegativeIntegers(calculator, calculatorFields) }) : tx.settings.upsert({ where: { companyId }, create: {}, update: {} }),
   ]));
   const rolePermissions = body.rolePermissions === undefined ? await getPermissionMatrix() : await replacePermissionMatrix(body.rolePermissions);
   return { company: nextCompany, system: nextSystem, calculator: nextCalculator, rolePermissions };

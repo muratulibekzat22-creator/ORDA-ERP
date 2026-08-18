@@ -22,6 +22,7 @@ import {
   encodeDateIdCursor,
 } from "@/lib/pagination/date-id-cursor";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 import { hasTrainingClearance } from "@/lib/services/training.service";
 
 export type MeasurementActor = { userId: number; role: Role; name: string };
@@ -601,11 +602,12 @@ export async function measurementWorkspace(
     manager_id: number | null;
     manager_name: string | null;
   };
+  const companyId = requireTenantIdentity().companyId;
   const summaryScopeSql = actor.role === Role.DIRECTOR
-    ? Prisma.sql`TRUE`
+    ? Prisma.sql`m."companyId" = ${companyId}`
     : actor.role === Role.MEASURER
-      ? Prisma.sql`m."measurerUserId" = ${actor.userId}`
-      : Prisma.sql`(
+      ? Prisma.sql`m."companyId" = ${companyId} AND m."measurerUserId" = ${actor.userId}`
+      : Prisma.sql`m."companyId" = ${companyId} AND (
           c."managerUserId" = ${actor.userId}
           OR (c."managerUserId" IS NULL AND c.manager = ${actor.name})
         )`;
@@ -666,7 +668,7 @@ export async function measurementWorkspace(
       },
     }),
     prisma.systemSettings.findUnique({
-      where: { id: 1 },
+      where: { companyId: requireTenantIdentity().companyId },
       select: { measurerOrderBonus: true },
     }),
     prisma.$queryRaw<MeasurementSummaryRow[]>(Prisma.sql`
@@ -735,7 +737,7 @@ export async function measurementWorkspace(
       select: { id: true },
     });
     const period = await prisma.payrollPeriod.findUnique({
-      where: { year_month: { year: month.year, month: month.month } },
+      where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year: month.year, month: month.month } },
       select: { id: true },
     });
     if (profile && period) {
@@ -831,7 +833,7 @@ export async function measurementWorkspace(
             ) AS orders
           FROM "Measurement" m
           LEFT JOIN "Order" o ON o.id = m."orderId"
-          WHERE m."measurerUserId" IS NOT NULL
+          WHERE m."companyId" = ${companyId} AND m."measurerUserId" IS NOT NULL
           GROUP BY m."measurerUserId"
         ), bonus_stats AS (
           SELECT
@@ -843,6 +845,7 @@ export async function measurementWorkspace(
           FROM "PayrollAccrual" pa
           JOIN "Measurement" m ON m.id = pa."measurementId"
           WHERE pa.type = 'MEASUREMENT_BONUS'::"PayrollAccrualType"
+            AND m."companyId" = ${companyId}
             AND pa."createdAt" >= ${month.start}
             AND pa."createdAt" < ${month.end}
             AND m."measurerUserId" IS NOT NULL
@@ -858,7 +861,7 @@ export async function measurementWorkspace(
         FROM "User" u
         LEFT JOIN measurement_stats ms ON ms.id = u.id
         LEFT JOIN bonus_stats bs ON bs.id = u.id
-        WHERE u.role = 'MEASURER'::"Role" AND u.active = true
+        WHERE u."companyId" = ${companyId} AND u.role = 'MEASURER'::"Role" AND u.active = true
         ORDER BY u.name ASC
       `).then((rows) => rows.map((row) => {
         const assigned = Number(row.assigned);
@@ -1923,8 +1926,8 @@ export async function ensureMeasurerBonusForOrder(
   });
   if (!user) return { created: false, reason: "MEASURER_NOT_ACTIVE" as const };
   const settings = await tx.systemSettings.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
+    where: { companyId: requireTenantIdentity().companyId },
+    create: {},
     update: {},
     select: { measurerOrderBonus: true },
   });
@@ -1951,7 +1954,7 @@ export async function ensureMeasurerBonusForOrder(
   const year = Number(parts.find((item) => item.type === "year")?.value),
     month = Number(parts.find((item) => item.type === "month")?.value);
   const period = await tx.payrollPeriod.upsert({
-    where: { year_month: { year, month } },
+    where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     create: { year, month },
     update: {},
   });
@@ -2054,7 +2057,7 @@ export async function reverseMeasurerBonusForCancelledOrder(
   let year = bounds.year,
     month = bounds.month;
   let period = await tx.payrollPeriod.upsert({
-    where: { year_month: { year, month } },
+    where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     create: { year, month },
     update: {},
   });
@@ -2065,7 +2068,7 @@ export async function reverseMeasurerBonusForCancelledOrder(
       year += 1;
     }
     period = await tx.payrollPeriod.upsert({
-      where: { year_month: { year, month } },
+      where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
       create: { year, month },
       update: {},
     });

@@ -3,6 +3,7 @@ import { Permission as PrismaPermission, Role as PrismaRole } from "@prisma/clie
 import { defaultPermissions, permissionKeys, type Permission } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { Role } from "@/lib/roles";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 const criticalDirectorPermissions: Permission[] = ["settings", "employees"];
 
@@ -20,7 +21,7 @@ export async function ensureRolePermissions() {
 
 export async function hasPermission(role: Role, permission: Permission) {
   await ensureRolePermissions();
-  return Boolean(await prisma.rolePermission.findUnique({ where: { role_permission: { role: role as PrismaRole, permission: permission as PrismaPermission } }, select: { id: true } }));
+  return Boolean(await prisma.rolePermission.findUnique({ where: { companyId_role_permission: { companyId: requireTenantIdentity().companyId, role: role as PrismaRole, permission: permission as PrismaPermission } }, select: { id: true } }));
 }
 
 export async function getPermissionMatrix() {

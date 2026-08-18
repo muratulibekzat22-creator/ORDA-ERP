@@ -6,44 +6,31 @@ import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
   CalendarDays,
-  Calculator,
   ClipboardList,
   Ruler,
   Factory,
   FileText,
-  Handshake,
   LayoutDashboard,
   Settings,
   UserCog,
   Users,
   Wallet,
   Banknote,
-  Landmark,
-  LockKeyhole,
   GraduationCap,
   Warehouse,
+  BarChart3,
   X,
 } from "lucide-react";
 import Header from "@/components/Header";
 import { hasDefaultPermission, type Permission } from "@/lib/permissions";
 import { type Role } from "@/lib/roles";
 
-const links = [
-  ["/", "Главная", LayoutDashboard],
-  ["/clients", "Заявки", Users],
-  ["/orders", "Заказы", ClipboardList],
-  ["/measurements", "Замеры", Ruler],
-  ["/calculator", "Калькулятор", Calculator],
-  ["/documents", "Документы и КП", FileText],
-  ["/partners", "Цех", Handshake],
-  ["/production", "Производство", Factory],
-  ["/warehouse", "Склад", Warehouse],
-  ["/finance", "Финансы", Wallet],
-  ["/calendar", "Календарь", CalendarDays],
-  ["/training", "Обучение", GraduationCap],
-  ["/employees", "Сотрудники", UserCog],
-  ["/payroll", "Зарплаты", Banknote],
-  ["/settings", "Настройки", Settings],
+const sections = [
+  { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
+  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler]] },
+  { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
+  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
+  { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
 export default function RouteShell({
@@ -58,12 +45,11 @@ export default function RouteShell({
     "/clients": "clients",
     "/orders": "orders",
     "/measurements": "measurements",
-    "/calculator": "orders",
     "/documents": "documents",
-    "/partners": "partners",
     "/production": "production",
     "/warehouse": "warehouse",
     "/finance": "finance",
+    "/reports": "reports",
     "/calendar": "calendar",
     "/employees": "employees",
     "/payroll": "payroll",
@@ -72,17 +58,15 @@ export default function RouteShell({
   const visible = (href: string) => {
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
-    if (href === "/training") return role === "DIRECTOR";
+    if (role === "MANAGER")
+      return ["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"].includes(href);
+    if (role === "DIRECTOR")
+      return ["/", "/clients", "/orders", "/calendar", "/production", "/warehouse", "/employees", "/payroll", "/finance", "/reports", "/documents", "/settings"].includes(href);
+    if (href === "/training" || href === "/measurements") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
       role &&
-      !(
-        role === "MANAGER" &&
-        ["/calculator", "/partners", "/production", "/warehouse"].includes(
-          href,
-        )
-      ) &&
       !(role === "PARTNER" && href === "/finance") &&
       permissionByHref[href] &&
       hasDefaultPermission(role, permissionByHref[href]!),
@@ -125,7 +109,8 @@ export default function RouteShell({
           <div className="flex items-center justify-between border-b border-slate-800 p-5">
             <div>
               <p className="text-xl font-bold text-yellow-400">ORDA ERP</p>
-              <p className="text-xs text-slate-400">ALTYN SAPA COMPANY</p>
+              <p className="max-w-48 truncate text-xs text-slate-400">{session?.user.companyName || "ALTYN SAPA COMPANY"}</p>
+              {session?.user.isDemo && <span className="mt-1 inline-flex rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-300">DEMO</span>}
             </div>
             <button
               type="button"
@@ -137,9 +122,12 @@ export default function RouteShell({
             </button>
           </div>
           <nav className="flex-1 space-y-1 overflow-y-auto p-4">
-            {links
-              .filter(([href]) => visible(href))
-              .map(([href, title, Icon]) => (
+            {sections.map((section) => {
+              const items = section.items.filter(([href]) => visible(href));
+              if (!items.length) return null;
+              return <div key={section.title} className="mb-6">
+                <p className="mb-2 px-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">{section.title}</p>
+                <div className="space-y-1">{items.map(([href, title, Icon]) => (
                 <Link
                   key={href}
                   href={href}
@@ -154,41 +142,9 @@ export default function RouteShell({
                       ? "Обучение сотрудников"
                       : title}
                 </Link>
-              ))}
-            {(session?.user.role === "DIRECTOR" ||
-              session?.user.role === "ACCOUNTANT") && (
-              <Link
-                href="/company-finance"
-                onClick={() => setOpen(false)}
-                aria-current={active("/company-finance") ? "page" : undefined}
-                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/company-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
-              >
-                <Landmark size={20} />
-                Финансы компании
-              </Link>
-            )}
-            {session?.user.role === "DIRECTOR" && (
-              <Link
-                href="/personal-finance"
-                onClick={() => setOpen(false)}
-                aria-current={active("/personal-finance") ? "page" : undefined}
-                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/personal-finance") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
-              >
-                <LockKeyhole size={20} />
-                Личные финансы
-              </Link>
-            )}
-            {session?.user.role === "DIRECTOR" && (
-              <Link
-                href="/calculator-config"
-                onClick={() => setOpen(false)}
-                aria-current={active("/calculator-config") ? "page" : undefined}
-                className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active("/calculator-config") ? "bg-blue-600" : "text-slate-300 hover:bg-slate-800"}`}
-              >
-                <Settings size={20} />
-                Конфигурация калькулятора
-              </Link>
-            )}
+                ))}</div>
+              </div>;
+            })}
           </nav>
         </aside>
         <div className="min-w-0 flex-1 overflow-auto">{children}</div>

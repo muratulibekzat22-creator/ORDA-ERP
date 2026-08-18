@@ -12,6 +12,7 @@ import { warrantyLabel } from "@/lib/contracts/domain";
 import { prisma } from "@/lib/prisma";
 import { PROPOSAL_VALIDITY_DAYS } from "@/lib/proposals/presentation";
 import { requirePermission } from "@/lib/server-auth";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 type Context = { params: Promise<{ id: string }> };
 const idOf = async (context: Context) => {
@@ -111,13 +112,14 @@ export async function POST(request: Request, context: Context) {
             proposalView(existing as unknown as Record<string, unknown>),
           )
         : idempotencyConflict();
+    const companyId = requireTenantIdentity().companyId;
     const [client, calculations, settings, system, materials] = await Promise.all([
       ownedClient(clientId, role, userId),
       prisma.leadCalculation.findMany({
         where: { id: { in: requestedIds }, clientId },
       }),
-      prisma.companySettings.findUnique({ where: { id: 1 } }),
-      prisma.systemSettings.findUnique({ where: { id: 1 } }),
+      prisma.companySettings.findUnique({ where: { companyId } }),
+      prisma.systemSettings.findUnique({ where: { companyId } }),
       prisma.material.findMany({
         where: {
           active: true,

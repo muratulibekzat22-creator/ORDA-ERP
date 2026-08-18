@@ -8,11 +8,12 @@ import { hasPermission } from "@/lib/services/permission.service";
 import { getOrder } from "@/lib/services/order.service";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
   const session = await getServerSession(authOptions);
-  if (!session?.user) return null;
+  if (!session?.user || !enterTenantFromSession(session)) return null;
   const role = session.user.role as Role;
   if (
     !Object.values(Role).includes(role) ||

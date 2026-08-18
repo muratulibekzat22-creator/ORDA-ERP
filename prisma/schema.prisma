@@ -17,6 +17,58 @@ enum Role {
   INSTALLER
 }
 
+enum CompanyMode {
+  LIVE
+  DEMO
+}
+
+model Company {
+  id       Int         @id @default(autoincrement())
+  slug     String      @unique
+  name     String
+  currency String      @default("KZT")
+  timezone String      @default("Asia/Almaty")
+  mode     CompanyMode @default(LIVE)
+  isDemo   Boolean     @default(false)
+  active   Boolean     @default(true)
+
+  users                    User[]
+  clients                  Client[]
+  commercialProposals      CommercialProposal[]
+  partners                 Partner[]
+  orders                   Order[]
+  calendarTasks            CalendarTask[]
+  companyLedgerEntries     CompanyLedgerEntry[]
+  financeCategories        FinanceCategory[]
+  employeePayrollProfiles  EmployeePayrollProfile[]
+  payrollPeriods           PayrollPeriod[]
+  personalLedgerEntries    PersonalLedgerEntry[]
+  documents                Document[]
+  attachments              Attachment[]
+  materials                Material[]
+  companySettings          CompanySettings[]
+  systemSettings           SystemSettings[]
+  materialMovements        MaterialMovement[]
+  suppliers                Supplier[]
+  purchaseBatches          PurchaseBatch[]
+  inventoryValuations      InventoryValuationEntry[]
+  inventoryCogsEntries     InventoryCogsEntry[]
+  materialReservations     MaterialReservation[]
+  warehouseMutations       WarehouseMutation[]
+  measurements             Measurement[]
+  payments                 Payment[]
+  cashShifts               CashShift[]
+  commercialAdjustments    CommercialAdjustment[]
+  productions              Production[]
+  settings                 Settings[]
+  calculatorTariffs        CalculatorTariff[]
+  orderEvents              OrderEvent[]
+  rolePermissions          RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 enum DocumentType {
   OFFER
   CONTRACT
@@ -316,6 +368,8 @@ enum TrainingAuditAction {
 
 model User {
   id                  Int       @id @default(autoincrement())
+  companyId           Int       @default(dbgenerated())
+  company             Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   name                String
   email               String    @unique
   password            String
@@ -394,6 +448,8 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([companyId, active, role])
 }
 
 model AuthAuditEvent {
@@ -417,6 +473,8 @@ model AuthAuditEvent {
 
 model Client {
   id              Int             @id @default(autoincrement())
+  companyId       Int             @default(dbgenerated())
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
   name            String
   phone           String
   whatsapp        String          @default("")
@@ -471,6 +529,7 @@ model Client {
   @@index([sourceCode, createdAt])
   @@index([deletedAt, managerUserId])
   @@index([active, deletedAt, updatedAt])
+  @@index([companyId, active, deletedAt])
 }
 
 model LeadActivity {
@@ -558,6 +617,8 @@ model LeadPriceAdjustment {
 
 model CommercialProposal {
   id                 Int                    @id @default(autoincrement())
+  companyId          Int                    @default(dbgenerated())
+  company            Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
   clientId           Int
   client             Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   calculationId      Int
@@ -590,6 +651,7 @@ model CommercialProposal {
   @@index([status, validUntil])
   @@index([rootNumber, version])
   @@index([createdById, createdAt])
+  @@index([companyId, createdAt])
 }
 
 model LeadFollowUp {
@@ -701,6 +763,8 @@ model ClientDeletionAudit {
 
 model Partner {
   id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   name  String
   phone String?
@@ -720,10 +784,14 @@ model Partner {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([companyId, active, archived])
 }
 
 model Order {
   id     Int    @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   number String @unique
 
   clientId Int
@@ -823,10 +891,13 @@ model Order {
   @@index([partnerId, partnerAgreedAt])
   @@index([deletedAt, createdAt, id])
   @@index([managerUserId, deletedAt, createdAt])
+  @@index([companyId, deletedAt, createdAt])
 }
 
 model CalendarTask {
   id            Int                  @id @default(autoincrement())
+  companyId     Int                  @default(dbgenerated())
+  company       Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
   title         String
   description   String?
   type          CalendarTaskType
@@ -854,6 +925,7 @@ model CalendarTask {
   @@index([status, dueAt])
   @@index([clientId, dueAt])
   @@index([orderId, dueAt])
+  @@index([companyId, dueAt, status])
 }
 
 model CalendarTaskAudit {
@@ -1025,6 +1097,8 @@ model OrderCalculationLine {
 
 model CompanyLedgerEntry {
   id               Int                     @id @default(autoincrement())
+  companyId        Int                     @default(dbgenerated())
+  company          Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
   type             String
   category         String
   categoryId       Int?
@@ -1066,10 +1140,13 @@ model CompanyLedgerEntry {
   @@index([partnerId])
   @@index([employeeId])
   @@index([direction, operationDate, id])
+  @@index([companyId, operationDate, id])
 }
 
 model FinanceCategory {
   id        Int                  @id @default(autoincrement())
+  companyId Int                  @default(dbgenerated())
+  company   Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
   code      String
   name      String
   direction String
@@ -1079,12 +1156,15 @@ model FinanceCategory {
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt
 
-  @@unique([direction, code])
+  @@unique([companyId, direction, code])
   @@index([direction, active, name])
+  @@index([companyId, direction, active])
 }
 
 model EmployeePayrollProfile {
   id                     Int                          @id @default(autoincrement())
+  companyId              Int                          @default(dbgenerated())
+  company                Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
   userId                 Int?                         @unique
   user                   User?                        @relation(fields: [userId], references: [id], onDelete: SetNull)
   name                   String                       @default("")
@@ -1107,6 +1187,8 @@ model EmployeePayrollProfile {
   companyLedgerEntries   CompanyLedgerEntry[]
   createdAt              DateTime                     @default(now())
   updatedAt              DateTime                     @updatedAt
+
+  @@index([companyId, active])
 }
 
 model EmployeeSalaryRate {
@@ -1126,6 +1208,8 @@ model EmployeeSalaryRate {
 
 model PayrollPeriod {
   id                   Int                          @id @default(autoincrement())
+  companyId            Int                          @default(dbgenerated())
+  company              Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
   year                 Int
   month                Int
   status               PayrollPeriodStatus          @default(OPEN)
@@ -1141,7 +1225,8 @@ model PayrollPeriod {
   createdAt            DateTime                     @default(now())
   updatedAt            DateTime                     @updatedAt
 
-  @@unique([year, month])
+  @@unique([companyId, year, month])
+  @@index([companyId, year, month])
 }
 
 model PayrollAuditEvent {
@@ -1283,6 +1368,8 @@ model PayrollAdvanceRequest {
 
 model PersonalLedgerEntry {
   id             Int      @id @default(autoincrement())
+  companyId      Int      @default(dbgenerated())
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   type           String
   category       String
   direction      String
@@ -1296,10 +1383,13 @@ model PersonalLedgerEntry {
   createdAt      DateTime @default(now())
 
   @@index([operationDate])
+  @@index([companyId, operationDate])
 }
 
 model Document {
   id                             Int                           @id @default(autoincrement())
+  companyId                      Int                           @default(dbgenerated())
+  company                        Company                       @relation(fields: [companyId], references: [id], onDelete: Restrict)
   orderId                        Int?
   order                          Order?                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
   clientId                       Int?
@@ -1348,6 +1438,7 @@ model Document {
   @@index([status, documentDate])
   @@index([authorId, documentDate])
   @@index([documentDate, id])
+  @@index([companyId, documentDate, id])
 }
 
 model DocumentVersion {
@@ -1414,6 +1505,8 @@ model DocumentAudit {
 
 model Attachment {
   id             Int       @id @default(autoincrement())
+  companyId      Int       @default(dbgenerated())
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   orderId        Int
   order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   documentId     Int?
@@ -1430,10 +1523,13 @@ model Attachment {
 
   @@index([orderId, createdAt])
   @@index([documentId, createdAt])
+  @@index([companyId, createdAt])
 }
 
 model Material {
   id               Int                 @id @default(autoincrement())
+  companyId        Int                 @default(dbgenerated())
+  company          Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
   name             String
   category         String
   unit             String
@@ -1470,6 +1566,8 @@ model Material {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([companyId, active, category])
 }
 
 model WarehouseCodeCounter {
@@ -1491,7 +1589,9 @@ model MaterialPriceHistory {
 }
 
 model CompanySettings {
-  id               Int    @id @default(1)
+  id               Int     @id @default(autoincrement())
+  companyId        Int     @default(dbgenerated())
+  company          Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   name             String @default("ALTYN SAPA COMPANY")
   bin              String @default("220540017969")
   legalAddress     String @default("")
@@ -1510,10 +1610,14 @@ model CompanySettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([companyId])
 }
 
 model SystemSettings {
-  id                   Int    @id @default(1)
+  id                   Int     @id @default(autoincrement())
+  companyId            Int     @default(dbgenerated())
+  company              Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   currency             String @default("KZT")
   timezone             String @default("Asia/Almaty")
   dateFormat           String @default("dd.MM.yyyy")
@@ -1532,22 +1636,29 @@ model SystemSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([companyId])
 }
 
 model RolePermission {
   id         Int        @id @default(autoincrement())
+  companyId  Int        @default(dbgenerated())
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
   role       Role
   permission Permission
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([role, permission])
+  @@unique([companyId, role, permission])
   @@index([role])
+  @@index([companyId, role])
 }
 
 model MaterialMovement {
   id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   materialId Int
   material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
@@ -1582,10 +1693,14 @@ model MaterialMovement {
   cogsEntry           InventoryCogsEntry?
 
   createdAt DateTime @default(now())
+
+  @@index([companyId, operationAt])
 }
 
 model Supplier {
   id              Int             @id @default(autoincrement())
+  companyId       Int             @default(dbgenerated())
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
   name            String
   country         String          @default("")
   defaultCurrency String          @default("KZT")
@@ -1597,10 +1712,13 @@ model Supplier {
   updatedAt       DateTime        @updatedAt
 
   @@index([active, name])
+  @@index([companyId, active, name])
 }
 
 model PurchaseBatch {
   id                   Int                      @id @default(autoincrement())
+  companyId            Int                      @default(dbgenerated())
+  company              Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   number               String                   @unique
   supplierId           Int
   supplier             Supplier                 @relation(fields: [supplierId], references: [id], onDelete: Restrict)
@@ -1631,6 +1749,7 @@ model PurchaseBatch {
 
   @@index([status, orderDate])
   @@index([supplierId, orderDate])
+  @@index([companyId, status, orderDate])
 }
 
 model PurchaseBatchLine {
@@ -1703,6 +1822,8 @@ model PurchaseCostRevision {
 
 model InventoryValuationEntry {
   id         Int                 @id @default(autoincrement())
+  companyId  Int                 @default(dbgenerated())
+  company    Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
   materialId Int
   material   Material            @relation(fields: [materialId], references: [id], onDelete: Restrict)
   quantity   Decimal             @db.Decimal(18, 3)
@@ -1717,10 +1838,13 @@ model InventoryValuationEntry {
   createdAt  DateTime            @default(now())
 
   @@index([materialId, createdAt])
+  @@index([companyId, createdAt])
 }
 
 model InventoryCogsEntry {
   id               Int                  @id @default(autoincrement())
+  companyId        Int                  @default(dbgenerated())
+  company          Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
   materialId       Int
   material         Material             @relation(fields: [materialId], references: [id], onDelete: Restrict)
   movementId       Int                  @unique
@@ -1740,10 +1864,13 @@ model InventoryCogsEntry {
 
   @@index([orderId, createdAt])
   @@index([materialId, createdAt])
+  @@index([companyId, createdAt])
 }
 
 model MaterialReservation {
   id          Int       @id @default(autoincrement())
+  companyId   Int       @default(dbgenerated())
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   materialId  Int
   material    Material  @relation(fields: [materialId], references: [id], onDelete: Restrict)
   orderId     Int
@@ -1760,10 +1887,13 @@ model MaterialReservation {
   @@unique([orderId, materialId])
   @@index([materialId, status])
   @@index([orderId, status])
+  @@index([companyId, status])
 }
 
 model WarehouseMutation {
   id          Int      @id @default(autoincrement())
+  companyId   Int      @default(dbgenerated())
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   key         String   @unique
   requestHash String
   action      String
@@ -1773,10 +1903,13 @@ model WarehouseMutation {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+  @@index([companyId, createdAt])
 }
 
 model Measurement {
   id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId        Int?
   order          Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -1840,6 +1973,7 @@ model Measurement {
   @@index([status, visitDate])
   @@index([measurerUserId, status, visitDate])
   @@index([completedAt])
+  @@index([companyId, status, visitDate])
 }
 
 model MeasurementAttachment {
@@ -1980,6 +2114,8 @@ model TrainingAudit {
 
 model Payment {
   id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int?
   order   Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -2017,10 +2153,13 @@ model Payment {
   @@index([partnerId, operationDate])
   @@index([cashShiftId, operationDate])
   @@index([registeredByUserId, operationDate])
+  @@index([companyId, operationDate, id])
 }
 
 model CashShift {
   id                   Int              @id @default(autoincrement())
+  companyId            Int              @default(dbgenerated())
+  company              Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
   shiftNumber          Int              @unique @default(autoincrement())
   businessDate         DateTime         @db.Date
   responsibleManagerId Int
@@ -2035,6 +2174,7 @@ model CashShift {
 
   @@index([responsibleManagerId, businessDate, status])
   @@index([businessDate, status])
+  @@index([companyId, businessDate, status])
 }
 
 model PaymentReceipt {
@@ -2068,6 +2208,8 @@ model PaymentReceipt {
 
 model CommercialAdjustment {
   id             Int      @id @default(autoincrement())
+  companyId      Int      @default(dbgenerated())
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   orderId        Int
   order          Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
   previousAmount Decimal  @db.Decimal(14, 2)
@@ -2081,6 +2223,7 @@ model CommercialAdjustment {
   createdAt      DateTime @default(now())
 
   @@index([orderId, createdAt])
+  @@index([companyId, createdAt])
 }
 
 model PartnerAssignmentHistory {
@@ -2123,6 +2266,8 @@ model FinanceAuditEvent {
 
 model Production {
   id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -2155,6 +2300,7 @@ model Production {
   @@index([archivedAt, stage])
   @@index([archivedAt, priority, createdAt, id])
   @@index([orderId])
+  @@index([companyId, archivedAt, stage])
 }
 
 model ProductionStageHistory {
@@ -2173,7 +2319,9 @@ model ProductionStageHistory {
 }
 
 model Settings {
-  id Int @id @default(1)
+  id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   pinePrice Int @default(65000)
   elmPrice  Int @default(85000)
@@ -2189,11 +2337,15 @@ model Settings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([companyId])
 }
 
 model CalculatorTariff {
   id                  Int      @id @default(autoincrement())
-  code                String   @unique
+  companyId           Int      @default(dbgenerated())
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code                String
   uiName              String
   kind                String
   unit                String
@@ -2208,10 +2360,14 @@ model CalculatorTariff {
   updatedAt           DateTime @updatedAt
 
   @@index([active, sortOrder])
+  @@index([companyId, active, sortOrder])
+  @@unique([companyId, code])
 }
 
 model OrderEvent {
   id Int @id @default(autoincrement())
+  companyId Int @default(dbgenerated())
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -2227,4 +2383,5 @@ model OrderEvent {
 
   @@index([createdAt])
   @@index([orderId, createdAt])
+  @@index([companyId, createdAt])
 }

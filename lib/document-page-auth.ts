@@ -5,10 +5,11 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { Role } from "@/lib/roles";
 import { getDocumentOrder } from "@/lib/services/document.service";
 import { hasPermission } from "@/lib/services/permission.service";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 export async function getAuthorizedDocumentOrder(id: number) {
   const session = await getServerSession(authOptions);
-  if (!session?.user) return null;
+  if (!session?.user || !enterTenantFromSession(session)) return null;
   const role = session.user.role as Role;
   if (!Object.values(Role).includes(role) || !await hasPermission(role, "documents")) return null;
   return getDocumentOrder(id, { role: role as unknown as PrismaRole, userId: Number(session.user.id), name: session.user.name ?? "" });

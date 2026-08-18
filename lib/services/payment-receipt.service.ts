@@ -22,6 +22,7 @@ import { ensureEmployeeCode } from "@/lib/employee-code";
 import { get, put } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
 import type { DocumentActor } from "@/lib/services/document.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 const CLIENT_PAYMENT_TYPES = new Set([
   "CLIENT_PAYMENT",
@@ -232,8 +233,8 @@ export async function createPaymentReceiptRecord(
   const overpayment = Math.max(paidAfter - total, 0);
   const verificationToken = randomBytes(32).toString("base64url");
   const company = await tx.companySettings.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
+    where: { companyId: requireTenantIdentity().companyId },
+    create: {},
     update: {},
   });
   const snapshot: PaymentReceiptSnapshot = {

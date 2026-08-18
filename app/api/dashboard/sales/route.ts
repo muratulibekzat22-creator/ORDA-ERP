@@ -4,10 +4,11 @@ import { NextResponse } from "next/server";
 
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { getDashboardSummary } from "@/lib/services/dashboard.service";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user)
+  if (!session?.user || !enterTenantFromSession(session))
     return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
   const role = session.user.role as Role;
   const allowed: Role[] = [Role.DIRECTOR, Role.MANAGER, Role.ACCOUNTANT, Role.PRODUCTION, Role.INSTALLER];

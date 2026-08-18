@@ -3,10 +3,11 @@ import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id || session.invalid) return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
+  if (!session?.user?.id || !enterTenantFromSession(session)) return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
   try {
     const body = await request.json() as Record<string, unknown>;
     if (!session.user.mustChangePassword) return NextResponse.json({ error: "Самостоятельное изменение пароля отключено" }, { status: 403 });
