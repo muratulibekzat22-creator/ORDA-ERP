@@ -3,6 +3,7 @@ import {
   BonusPaymentMode,
   PayrollConfirmationStatus,
   PayrollAccrualType,
+  PayrollBonusRule,
   PayrollDirection,
   PayrollPaymentType,
   PayrollPeriodStatus,
@@ -10,6 +11,10 @@ import {
   Role,
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
+import {
+  calculateOrderBonus,
+  calculatePayrollBreakdown,
+} from "@/lib/payroll-calculation";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -41,7 +46,11 @@ const payrollOperator = (actor: PayrollActor) => {
 };
 const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
 
-export async function ensurePeriod(year: number, month: number) {
+export async function ensurePeriod(
+  year: number,
+  month: number,
+  actor?: PayrollActor,
+) {
   if (
     !Number.isInteger(year) ||
     !Number.isInteger(month) ||
@@ -49,11 +58,45 @@ export async function ensurePeriod(year: number, month: number) {
     month > 12
   )
     throw new PayrollError("INVALID_PERIOD");
-  return prisma.payrollPeriod.upsert({
+  if (actor) director(actor);
+  const period = await prisma.payrollPeriod.upsert({
     where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     create: { year, month },
     update: {},
   });
+  if (!actor || period.status !== PayrollPeriodStatus.OPEN) return period;
+  const effectiveAt = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+  const employees = await prisma.employeePayrollProfile.findMany({
+    where: { active: true, payrollEnabled: true },
+    include: {
+      salaryRates: {
+        where: {
+          effectiveFrom: { lte: effectiveAt },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: effectiveAt } }],
+        },
+        orderBy: { effectiveFrom: "desc" },
+        take: 1,
+      },
+    },
+  });
+  for (const employee of employees) {
+    const amount = Number(employee.salaryRates[0]?.amount ?? employee.baseSalary);
+    if (amount <= 0) continue;
+    const key = `salary-period:${requireTenantIdentity().companyId}:${period.id}:${employee.id}`;
+    await createAccrual(
+      {
+        employeeId: employee.id,
+        periodId: period.id,
+        type: PayrollAccrualType.BASE_SALARY,
+        amount,
+        reason: `Оклад за ${String(month).padStart(2, "0")}.${year}`,
+        key,
+        requestHash: key,
+      },
+      actor,
+    );
+  }
+  return period;
 }
 
 async function openPeriod(tx: Prisma.TransactionClient, periodId: number) {
@@ -269,9 +312,69 @@ type AccrualInput = {
   orderId?: number;
   reason: string;
   paymentMode?: BonusPaymentMode;
+  bonusRule?: PayrollBonusRule;
+  bonusValue?: number;
   key: string;
   requestHash: string;
 };
+
+type OrderBonusSource = {
+  id: number;
+  number: string;
+  amount: Prisma.Decimal;
+  prepayment: Prisma.Decimal;
+  companyProfit: Prisma.Decimal;
+  managerUserId: number | null;
+  status: string;
+  client: { id: number; name: string };
+  documents: Array<{ id: number; number: string }>;
+};
+
+const orderBonusSelect = {
+  id: true,
+  number: true,
+  amount: true,
+  prepayment: true,
+  companyProfit: true,
+  managerUserId: true,
+  status: true,
+  client: { select: { id: true, name: true } },
+  documents: {
+    where: { type: "CONTRACT", archivedAt: null },
+    select: { id: true, number: true },
+    orderBy: { documentDate: "desc" },
+    take: 1,
+  },
+} satisfies Prisma.OrderSelect;
+
+function orderBonusCalculation(
+  order: OrderBonusSource,
+  rule: PayrollBonusRule,
+  value: number,
+) {
+  const calculation = calculateOrderBonus(rule, value, {
+    paidAmount: Number(order.prepayment),
+    orderAmount: Number(order.amount),
+    profitAmount: Number(order.companyProfit),
+  });
+  return {
+    ...calculation,
+    snapshot: {
+      orderId: order.id,
+      orderNumber: order.number,
+      orderAmount: Number(order.amount),
+      paidAmount: Number(order.prepayment),
+      profitAmount: Number(order.companyProfit),
+      clientId: order.client.id,
+      clientName: order.client.name,
+      contractDocumentId: order.documents[0]?.id ?? null,
+      contractNumber: order.documents[0]?.number ?? null,
+      rule,
+      value,
+      calculatedAt: new Date().toISOString(),
+    } satisfies Prisma.InputJsonObject,
+  };
+}
 
 export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
   director(actor);
@@ -301,12 +404,19 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
       )
         throw new PayrollError("ORDER_REQUIRED");
       let cancelledOrderWarning = false;
+      let order: OrderBonusSource | null = null;
       if (input.orderId) {
-        const order = await tx.order.findFirst({
+        order = await tx.order.findFirst({
           where: { id: input.orderId, deletedAt: null },
-          select: { status: true },
+          select: orderBonusSelect,
         });
         if (!order) throw new PayrollError("ORDER_NOT_FOUND");
+        if (
+          employee.userId &&
+          order.managerUserId &&
+          employee.userId !== order.managerUserId
+        )
+          throw new PayrollError("ORDER_MANAGER_MISMATCH");
         cancelledOrderWarning = /отмен|cancel/i.test(order.status);
       }
       const decreases: PayrollAccrualType[] = [
@@ -314,6 +424,29 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
         PayrollAccrualType.ADJUSTMENT_DECREASE,
         PayrollAccrualType.BONUS_REVERSAL,
       ];
+      const orderBonus = Boolean(
+        order &&
+        (input.type === PayrollAccrualType.ORDER_BONUS ||
+          input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS),
+      );
+      const bonusRule = orderBonus
+        ? input.bonusRule ?? PayrollBonusRule.FIXED
+        : undefined;
+      const bonusValue = orderBonus
+        ? Number(input.bonusValue ?? input.amount)
+        : undefined;
+      if (orderBonus && (!Number.isFinite(bonusValue) || bonusValue! <= 0))
+        throw new PayrollError("INVALID_BONUS_VALUE");
+      if (
+        orderBonus &&
+        bonusRule !== PayrollBonusRule.FIXED &&
+        bonusValue! > 100
+      )
+        throw new PayrollError("INVALID_BONUS_PERCENT");
+      const calculation = orderBonus
+        ? orderBonusCalculation(order!, bonusRule!, bonusValue!)
+        : null;
+      const accrualAmount = calculation?.calculatedAmount ?? input.amount;
       const accrual = await tx.payrollAccrual.create({
         data: {
           employeeId: input.employeeId,
@@ -323,44 +456,36 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
           direction: decreases.includes(input.type)
             ? PayrollDirection.DECREASE
             : PayrollDirection.INCREASE,
-          amount: money(input.amount),
+          amount: orderBonus
+            ? nonNegativeMoney(accrualAmount)
+            : money(accrualAmount),
           orderId: input.orderId,
           reason,
           paymentMode: input.paymentMode,
+          bonusRule,
+          bonusValue:
+            bonusValue == null ? undefined : new Prisma.Decimal(bonusValue),
+          bonusBasisAmount:
+            calculation == null
+              ? undefined
+              : new Prisma.Decimal(calculation.basisAmount),
+          bonusSnapshot: calculation?.snapshot,
           approvedById: actor.userId,
           createdById: actor.userId,
           idempotencyKey: input.key,
           requestHash: input.requestHash,
         },
       });
-      await tx.companyLedgerEntry.create({
-        data: {
-          type: "PAYROLL_ACCRUAL",
-          category: "SALARY",
-          source: "OTHER_SYSTEM",
-          direction:
-            accrual.direction === PayrollDirection.INCREASE
-              ? "EXPENSE"
-              : "INCOME",
-          amount: accrual.amount,
-          operationDate: accrual.createdAt,
-          comment: reason,
-          orderId: input.orderId,
-          authorId: actor.userId,
-          idempotencyKey: `payroll-accrual:${accrual.id}`,
-          requestHash: input.requestHash,
-          affectsProfit: true,
-          payrollAccrualId: accrual.id,
-        },
-      });
       let payment = null;
       if (input.paymentMode === BonusPaymentMode.IMMEDIATE) {
+        if (Number(accrual.amount) <= 0)
+          throw new PayrollError("BONUS_NOT_PAYABLE");
         payment = await createPaymentTx(
           tx,
           {
             employeeId: input.employeeId,
             periodId: period.id,
-            amount: input.amount,
+            amount: Number(accrual.amount),
             type: PayrollPaymentType.IMMEDIATE_BONUS,
             paymentDate: new Date(),
             relatedAccrualId: accrual.id,
@@ -512,7 +637,11 @@ export async function requestPaymentConfirmation(
   },
   actor: PayrollActor,
 ) {
-  if (actor.role === Role.PARTNER || input.type === PayrollPaymentType.EMPLOYEE_REFUND)
+  if (
+    actor.role === Role.PARTNER ||
+    (input.type !== PayrollPaymentType.ADVANCE &&
+      input.type !== PayrollPaymentType.SALARY_PAYMENT)
+  )
     throw new PayrollError("FORBIDDEN");
   if (Number.isNaN(input.claimedPaymentDate.getTime()))
     throw new PayrollError("INVALID_DATE");
@@ -558,16 +687,13 @@ export async function reviewPaymentConfirmation(
   id: number,
   input: {
     decision: "CONFIRM" | "REJECT";
-    amount?: number;
-    paymentDate?: Date;
-    method?: string;
     comment?: string;
     key: string;
     requestHash: string;
   },
   actor: PayrollActor,
 ) {
-  director(actor);
+  payrollOperator(actor);
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${20_000_000 + id})`;
     const confirmation = await tx.payrollPaymentConfirmation.findUnique({ where: { id } });
@@ -593,27 +719,20 @@ export async function reviewPaymentConfirmation(
       });
       return { confirmation: updated, payment: null };
     }
-    const paymentDate = input.paymentDate ?? confirmation.claimedPaymentDate;
-    if (Number.isNaN(paymentDate.getTime())) throw new PayrollError("INVALID_DATE");
-    const amount = input.amount ?? Number(confirmation.amount);
     const payment = await createPaymentTx(tx, {
       employeeId: confirmation.employeeId,
       periodId: confirmation.periodId,
-      amount,
+      amount: Number(confirmation.amount),
       type: confirmation.type,
-      paymentDate,
-      method: input.method ?? confirmation.method ?? undefined,
-      comment: input.comment?.trim() || confirmation.comment || undefined,
+      paymentDate: confirmation.claimedPaymentDate,
+      method: confirmation.method ?? undefined,
+      comment: confirmation.comment || undefined,
       key: `payroll-confirmation:${confirmation.id}`,
-      requestHash: input.requestHash,
+      requestHash: confirmation.requestHash,
     }, actor);
     const updated = await tx.payrollPaymentConfirmation.update({
       where: { id },
       data: {
-        amount: payment.amount,
-        claimedPaymentDate: payment.paymentDate,
-        method: payment.method,
-        comment: payment.comment,
         status: PayrollConfirmationStatus.CONFIRMED,
         reviewedById: actor.userId,
         reviewedAt: new Date(),
@@ -684,6 +803,7 @@ export async function requestAdvance(
   input: {
     periodId: number;
     amount: number;
+    method?: string;
     comment?: string;
     key: string;
     requestHash: string;
@@ -715,6 +835,7 @@ export async function requestAdvance(
       employeeId: employee.id,
       periodId: input.periodId,
       requestedAmount: money(input.amount),
+      method: input.method,
       comment: input.comment,
       idempotencyKey: input.key,
       requestHash: input.requestHash,
@@ -726,48 +847,91 @@ export async function reviewAdvance(
   id: number,
   input: {
     status: AdvanceRequestStatus;
-    approvedAmount?: number;
+    method?: string;
     comment?: string;
+    key: string;
+    requestHash: string;
   },
   actor: PayrollActor,
 ) {
-  director(actor);
+  payrollOperator(actor);
   if (!(
     input.status === AdvanceRequestStatus.APPROVED ||
     input.status === AdvanceRequestStatus.REJECTED
   ))
     throw new PayrollError("INVALID_STATUS");
   return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${25_000_000 + id})`;
     const request = await tx.payrollAdvanceRequest.findUnique({
       where: { id },
+      include: { payment: true },
     });
-    if (!request || request.status !== AdvanceRequestStatus.REQUESTED)
+    if (!request) throw new PayrollError("CONFLICT");
+    if (
+      input.status === AdvanceRequestStatus.APPROVED &&
+      request.status === AdvanceRequestStatus.PAID &&
+      request.payment
+    )
+      return { request, payment: request.payment };
+    if (
+      input.status === AdvanceRequestStatus.REJECTED &&
+      request.status === AdvanceRequestStatus.REJECTED
+    )
+      return { request, payment: null };
+    if (request.status !== AdvanceRequestStatus.REQUESTED)
       throw new PayrollError("CONFLICT");
     await openPeriod(tx, request.periodId);
+    const payment = input.status === AdvanceRequestStatus.APPROVED
+      ? await createPaymentTx(
+          tx,
+          {
+            employeeId: request.employeeId,
+            periodId: request.periodId,
+            amount: Number(request.requestedAmount),
+            type: PayrollPaymentType.ADVANCE,
+            paymentDate: new Date(),
+            method: request.method ?? input.method ?? "bank_transfer",
+            comment: request.comment ?? input.comment,
+            key: `payroll-advance:${request.id}`,
+            requestHash: request.requestHash,
+          },
+          actor,
+        )
+      : null;
     const updated = await tx.payrollAdvanceRequest.update({
       where: { id },
       data: {
-        status: input.status,
-        approvedAmount:
-          input.status === AdvanceRequestStatus.APPROVED
-            ? money(input.approvedAmount ?? Number(request.requestedAmount))
-            : null,
+        status: payment
+          ? AdvanceRequestStatus.PAID
+          : AdvanceRequestStatus.REJECTED,
+        approvedAmount: payment ? request.requestedAmount : null,
+        paymentId: payment?.id,
         reviewComment: input.comment,
         reviewedById: actor.userId,
         reviewedAt: new Date(),
       },
+      include: { payment: true },
     });
     await audit(tx, {
-      action: input.status === AdvanceRequestStatus.APPROVED ? "ADVANCE_APPROVED" : "ADVANCE_REJECTED",
+      action: payment ? "ADVANCE_CONFIRMED_AND_PAID" : "ADVANCE_REJECTED",
       actor,
       periodId: request.periodId,
       employeeId: request.employeeId,
       before: { status: request.status, requestedAmount: Number(request.requestedAmount) },
-      after: { status: updated.status, approvedAmount: updated.approvedAmount ? Number(updated.approvedAmount) : null },
-      reason: input.comment?.trim() || (input.status === AdvanceRequestStatus.APPROVED ? "Аванс одобрен" : "Аванс отклонён"),
+      after: {
+        status: updated.status,
+        approvedAmount: updated.approvedAmount
+          ? Number(updated.approvedAmount)
+          : null,
+        paymentId: payment?.id ?? null,
+      },
+      reason:
+        input.comment?.trim() ||
+        (payment ? "Аванс подтверждён и выплачен" : "Аванс отклонён"),
+      idempotencyKey: `${input.key}:audit`,
     });
-    return updated;
-  }, transactionOptions);
+    return { request: updated, payment };
+  }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function payAdvance(
@@ -780,7 +944,7 @@ export async function payAdvance(
   },
   actor: PayrollActor,
 ) {
-  director(actor);
+  payrollOperator(actor);
   return prisma.$transaction(
     async (tx) => {
       const request = await tx.payrollAdvanceRequest.findUnique({
@@ -877,17 +1041,64 @@ export async function transitionPeriod(
   }, transactionOptions);
 }
 
-const signedAccrual = (row: {
-  amount: Prisma.Decimal;
-  direction: PayrollDirection;
-}) =>
-  Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1);
-const signedPayment = (row: {
-  amount: Prisma.Decimal;
-  type: PayrollPaymentType;
-}) =>
-  Number(row.amount) *
-  (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1);
+async function refreshDynamicOrderBonuses(
+  periodId: number,
+  employeeId?: number,
+) {
+  const period = await prisma.payrollPeriod.findUnique({
+    where: { id: periodId },
+    select: { status: true },
+  });
+  if (period?.status !== PayrollPeriodStatus.OPEN) return;
+  const accruals = await prisma.payrollAccrual.findMany({
+    where: {
+      periodId,
+      ...(employeeId ? { employeeId } : {}),
+      reversedBy: null,
+      bonusRule: {
+        in: [PayrollBonusRule.PAID_PERCENT, PayrollBonusRule.PROFIT_PERCENT],
+      },
+      orderId: { not: null },
+    },
+    include: { order: { select: orderBonusSelect } },
+  });
+  const updates = accruals.flatMap((accrual) => {
+    if (!accrual.order || !accrual.bonusRule || accrual.bonusValue == null)
+      return [];
+    const calculation = orderBonusCalculation(
+      accrual.order,
+      accrual.bonusRule,
+      Number(accrual.bonusValue),
+    );
+    if (
+      Number(accrual.amount) === calculation.calculatedAmount &&
+      Number(accrual.bonusBasisAmount ?? 0) === calculation.basisAmount
+    )
+      return [];
+    return [
+      prisma.payrollAccrual.update({
+        where: { id: accrual.id },
+        data: {
+          amount: calculation.calculatedAmount,
+          bonusBasisAmount: calculation.basisAmount,
+          bonusSnapshot: calculation.snapshot,
+        },
+      }),
+    ];
+  });
+  if (updates.length) await prisma.$transaction(updates);
+}
+
+function plannedWorkDays(year: number, month: number) {
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  let result = 0;
+  for (let day = 1; day <= days; day += 1) {
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) result += 1;
+  }
+  return result;
+}
+
 export async function payrollSummary(
   periodId: number,
   actor: PayrollActor,
@@ -904,6 +1115,13 @@ export async function payrollSummary(
     : null;
   if (selfOnly && !self) throw new PayrollError("EMPLOYEE_NOT_FOUND");
   const employeeId = selfOnly ? self!.id : requestedEmployeeId;
+  const period = await prisma.payrollPeriod.findUnique({
+    where: { id: periodId },
+    select: { year: true, month: true },
+  });
+  if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
+  const plannedDays = plannedWorkDays(period.year, period.month);
+  await refreshDynamicOrderBonuses(periodId, employeeId);
   const [employees, settings] = await Promise.all([prisma.employeePayrollProfile.findMany({
     where: {
       ...(employeeId ? { id: employeeId } : {}),
@@ -913,31 +1131,66 @@ export async function payrollSummary(
     include: {
       user: { select: { id: true, name: true, role: true, active: true } },
       salaryRates: { include: { approvedBy: { select: { id: true, name: true } } }, orderBy: { effectiveFrom: "desc" } },
-      accruals: { where: { periodId }, include: { payments: true, reversedBy: { select: { id: true } } }, orderBy: { createdAt: "desc" } },
-      payments: { where: { periodId }, orderBy: { paymentDate: "desc" } },
-      paymentConfirmations: { where: { periodId }, orderBy: { createdAt: "desc" } },
-      advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
+      accruals: {
+        where: { periodId },
+        include: {
+          payments: true,
+          reversedBy: { select: { id: true } },
+          approvedBy: { select: { id: true, name: true } },
+          order: {
+            select: {
+              id: true,
+              number: true,
+              amount: true,
+              prepayment: true,
+              companyProfit: true,
+              client: { select: { id: true, name: true } },
+              documents: {
+                where: { type: "CONTRACT", archivedAt: null },
+                select: { id: true, number: true },
+                orderBy: { documentDate: "desc" },
+                take: 1,
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      payments: {
+        where: { periodId },
+        include: {
+          paidBy: { select: { id: true, name: true } },
+          reversalOf: { select: { id: true, type: true } },
+        },
+        orderBy: { paymentDate: "desc" },
+      },
+      paymentConfirmations: {
+        where: { periodId },
+        include: {
+          createdBy: { select: { id: true, name: true } },
+          reviewedBy: { select: { id: true, name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      advanceRequests: {
+        where: { periodId },
+        include: {
+          reviewedBy: { select: { id: true, name: true } },
+          payment: { select: { id: true, method: true, paymentDate: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
     },
     orderBy: { name: "asc" },
   }), prisma.systemSettings.upsert({ where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true } })]);
   const rows = employees.map((employee) => {
-    const accrued = employee.accruals.reduce(
-      (sum, row) => sum + signedAccrual(row),
-      0,
-    );
-    const paid = employee.payments.reduce(
-      (sum, row) => sum + signedPayment(row),
-      0,
+    const calculated = calculatePayrollBreakdown(
+      employee.accruals,
+      employee.payments,
     );
     const pending = employee.paymentConfirmations
       .filter((row) => row.status === PayrollConfirmationStatus.PENDING)
       .reduce((sum, row) => sum + Number(row.amount), 0);
-    const increase = (types: PayrollAccrualType[]) => employee.accruals
-      .filter((row) => row.direction === PayrollDirection.INCREASE && types.includes(row.type))
-      .reduce((sum, row) => sum + Number(row.amount), 0);
-    const advancesPaid = employee.payments
-      .filter((row) => row.type === PayrollPaymentType.ADVANCE)
-      .reduce((sum, row) => sum + signedPayment(row), 0);
     const activeRate = employee.salaryRates.find((rate) =>
       rate.effectiveFrom <= new Date() && (!rate.effectiveTo || rate.effectiveTo > new Date()),
     ) ?? employee.salaryRates[0];
@@ -963,6 +1216,21 @@ export async function payrollSummary(
           measurementId: row.measurementId,
           type: row.type,
           amount: Number(row.amount),
+          rule: row.bonusRule ?? PayrollBonusRule.FIXED,
+          ruleValue: Number(row.bonusValue ?? row.amount),
+          basisAmount: Number(row.bonusBasisAmount ?? 0),
+          order: row.order
+            ? {
+                id: row.order.id,
+                number: row.order.number,
+                amount: Number(row.order.amount),
+                paid: Number(row.order.prepayment),
+                profit: Number(row.order.companyProfit),
+                client: row.order.client,
+                contract: row.order.documents[0] ?? null,
+              }
+            : null,
+          approvedBy: row.approvedBy,
           accruedAt: row.createdAt,
           paid: bonusPaid,
           payable,
@@ -978,33 +1246,50 @@ export async function payrollSummary(
       hasOrdaAccess: Boolean(employee.userId),
       currentSalary: Number(activeRate?.amount ?? employee.baseSalary),
       salaryEffectiveFrom: activeRate?.effectiveFrom ?? employee.hiredAt,
+      plannedDays,
+      workedDays: plannedDays,
+      calculatedSalary: calculated.salaryAccrued,
       breakdown: {
-        salaryAccrued: increase([PayrollAccrualType.BASE_SALARY]),
-        bonusesAccrued: increase([
-          PayrollAccrualType.GUARANTEED_ORDER_BONUS,
-          PayrollAccrualType.ORDER_BONUS,
-          PayrollAccrualType.MEASUREMENT_BONUS,
-          PayrollAccrualType.EXTRA_BONUS,
-        ]),
-        premiumsAccrued: increase([PayrollAccrualType.PREMIUM]),
-        advancesPaid,
-        totalAccrued: accrued,
-        totalPaid: paid,
-        payable: accrued - paid,
+        ...calculated,
       },
       bonusAccruals,
-      totals: { accrued, paid, pending, payable: accrued - paid },
+      totals: {
+        accrued: calculated.totalAccrued,
+        paid: calculated.totalPaid,
+        received: calculated.totalPaid,
+        deductions: calculated.deductions,
+        pending,
+        payable: calculated.payable,
+      },
     };
   });
   const breakdown = rows.reduce((sum, row) => ({
     salaryAccrued: sum.salaryAccrued + row.breakdown.salaryAccrued,
     bonusesAccrued: sum.bonusesAccrued + row.breakdown.bonusesAccrued,
     premiumsAccrued: sum.premiumsAccrued + row.breakdown.premiumsAccrued,
+    otherAccruals: sum.otherAccruals + row.breakdown.otherAccruals,
     advancesPaid: sum.advancesPaid + row.breakdown.advancesPaid,
+    partialPayments: sum.partialPayments + row.breakdown.partialPayments,
+    finalPayments: sum.finalPayments + row.breakdown.finalPayments,
+    salaryPayments: sum.salaryPayments + row.breakdown.salaryPayments,
+    deductions: sum.deductions + row.breakdown.deductions,
     totalAccrued: sum.totalAccrued + row.breakdown.totalAccrued,
     totalPaid: sum.totalPaid + row.breakdown.totalPaid,
     payable: sum.payable + row.breakdown.payable,
-  }), { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 });
+  }), {
+    salaryAccrued: 0,
+    bonusesAccrued: 0,
+    premiumsAccrued: 0,
+    otherAccruals: 0,
+    advancesPaid: 0,
+    partialPayments: 0,
+    finalPayments: 0,
+    salaryPayments: 0,
+    deductions: 0,
+    totalAccrued: 0,
+    totalPaid: 0,
+    payable: 0,
+  });
   return {
     rows,
     settings,
@@ -1013,10 +1298,12 @@ export async function payrollSummary(
       (sum, row) => ({
         accrued: sum.accrued + row.totals.accrued,
         paid: sum.paid + row.totals.paid,
+        received: sum.received + row.totals.received,
+        deductions: sum.deductions + row.totals.deductions,
         pending: sum.pending + row.totals.pending,
         payable: sum.payable + row.totals.payable,
       }),
-      { accrued: 0, paid: 0, pending: 0, payable: 0 },
+      { accrued: 0, paid: 0, received: 0, deductions: 0, pending: 0, payable: 0 },
     ),
   };
 }

@@ -253,6 +253,12 @@ enum BonusPaymentMode {
   IMMEDIATE
 }
 
+enum PayrollBonusRule {
+  FIXED
+  PAID_PERCENT
+  PROFIT_PERCENT
+}
+
 enum OrderLifecycle {
   CREATED
   PREPARATION
@@ -1269,6 +1275,10 @@ model PayrollAccrual {
   measurement    Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
   reason         String
   paymentMode    BonusPaymentMode?
+  bonusRule      PayrollBonusRule?
+  bonusValue     Decimal?               @db.Decimal(14, 4)
+  bonusBasisAmount Decimal?             @db.Decimal(14, 2)
+  bonusSnapshot  Json?
   approvedAt     DateTime               @default(now())
   approvedById   Int
   approvedBy     User                   @relation("PayrollAccrualApprover", fields: [approvedById], references: [id], onDelete: Restrict)
@@ -1355,6 +1365,7 @@ model PayrollAdvanceRequest {
   requestedAmount Decimal                @db.Decimal(14, 2)
   approvedAmount  Decimal?               @db.Decimal(14, 2)
   comment         String?
+  method          String?
   reviewComment   String?
   status          AdvanceRequestStatus   @default(REQUESTED)
   reviewedById    Int?
