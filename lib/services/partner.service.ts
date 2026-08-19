@@ -51,8 +51,8 @@ function partnerStats(orders: PartnerOrderStatsSource[]) {
 export async function getPartners(options: { includeArchived?: boolean } = {}) {
   const partners = await prisma.partner.findMany({
     where: options.includeArchived
-      ? { isTest: false }
-      : { active: true, archived: false, isTest: false },
+      ? { isTest: false, managementDirectory: false }
+      : { active: true, archived: false, isTest: false, managementDirectory: false },
     include: {
       orders: {
         include: {
@@ -81,6 +81,7 @@ export async function getPartner(id: number) {
     where: {
       id,
       isTest: false,
+      managementDirectory: false,
     },
     include: {
       orders: {
@@ -138,6 +139,8 @@ export async function updatePartner(
     active?: boolean;
   },
 ) {
+  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true } });
+  if (!partner) throw new Error("PARTNER_NOT_FOUND");
   return prisma.partner.update({
     where: {
       id,
@@ -150,6 +153,8 @@ export async function updatePartner(
 }
 
 export async function deletePartner(id: number) {
+  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true } });
+  if (!partner) throw new Error("PARTNER_NOT_FOUND");
   const orders = await prisma.order.count({
     where: { partnerId: id, deletedAt: null },
   });
@@ -206,6 +211,7 @@ export async function assignPartnerToOrder(data: {
         active: true,
         archived: false,
         isTest: false,
+        managementDirectory: false,
       },
     });
     if (!order || !partner) return null;
