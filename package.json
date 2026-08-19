@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "npm run test:payroll:unit && npm run test:payroll && npm run test:tenant-isolation",
+    "test": "npm run test:payroll:unit && npm run test:payroll && npm run test:partner-management && npm run test:tenant-isolation",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -44,6 +44,8 @@
     "test:finance-integrity": "tsx scripts/test-finance-integrity.ts",
     "test:partner-settlements": "tsx scripts/test-partner-settlements.ts",
     "test:partner-finance": "tsx scripts/test-partner-finance-dashboard.ts",
+    "test:partner-management:unit": "tsx scripts/test-partner-management-calculation.ts",
+    "test:partner-management": "npm run test:partner-management:unit && tsx scripts/test-partner-management.ts",
     "test:finance-journal": "tsx scripts/test-finance-journal.ts",
     "test:finance-go-live": "tsx scripts/test-finance-go-live.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
