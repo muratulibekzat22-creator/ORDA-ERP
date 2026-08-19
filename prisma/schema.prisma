@@ -22,6 +22,59 @@ enum CompanyMode {
   DEMO
 }
 
+enum PartnerBusinessType {
+  REFERRER
+  SALES_AGENT
+  DEALER
+  DESIGNER
+  ARCHITECT
+  CONSTRUCTION_COMPANY
+  CONTRACTOR
+  OTHER
+}
+
+enum PartnerBusinessStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum PartnerRewardRule {
+  FIXED
+  ORDER_PERCENT
+  PAID_PERCENT
+  PROFIT_PERCENT
+  MANUAL
+}
+
+enum PartnerSettlementStatus {
+  NOT_CALCULATED
+  CALCULATED
+  PARTIALLY_PAID
+  CLOSED
+  PARTNER_OWES_COMPANY
+  COMPANY_OWES_PARTNER
+  DISPUTED
+  CANCELLED
+}
+
+enum PartnerSettlementOperationType {
+  CLIENT_TO_COMPANY
+  CLIENT_TO_PARTNER
+  PARTNER_TO_COMPANY
+  COMPANY_TO_PARTNER
+  CLIENT_REFUND
+  PARTNER_REFUND
+  ADJUSTMENT
+  REVERSAL
+}
+
+enum PartnerSettlementOperationStatus {
+  POSTED
+  REVERSED
+  DISPUTED
+}
+
 model Company {
   id       Int         @id @default(autoincrement())
   slug     String      @unique
@@ -36,6 +89,9 @@ model Company {
   clients                  Client[]
   commercialProposals      CommercialProposal[]
   partners                 Partner[]
+  partnerOrderRelations    PartnerOrderRelation[]
+  partnerOperations        PartnerSettlementOperation[]
+  partnerAuditEvents       PartnerAuditEvent[]
   orders                   Order[]
   calendarTasks            CalendarTask[]
   companyLedgerEntries     CompanyLedgerEntry[]
@@ -409,6 +465,10 @@ model User {
   financeAuditEvents           FinanceAuditEvent[]           @relation("FinanceAuditAuthor")
   commercialAdjustments        CommercialAdjustment[]        @relation("CommercialAdjustmentAuthor")
   partnerAssignments           PartnerAssignmentHistory[]    @relation("PartnerAssignmentAuthor")
+  partnersCreated              Partner[]                     @relation("PartnerCreatedBy")
+  partnerRelationsCreated      PartnerOrderRelation[]        @relation("PartnerRelationCreatedBy")
+  partnerOperationsCreated     PartnerSettlementOperation[]  @relation("PartnerOperationCreatedBy")
+  partnerAuditEvents           PartnerAuditEvent[]           @relation("PartnerAuditActor")
   authAuditEvents              AuthAuditEvent[]
   managedClients               Client[]                      @relation("ClientManager")
   deletedClients               Client[]                      @relation("ClientDeletedBy")
@@ -776,10 +836,25 @@ model Partner {
   companyId Int @default(dbgenerated())
   company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
-  name  String
-  phone String?
-  city  String?
-  email String?
+  name                     String
+  phone                    String?
+  city                     String?
+  email                    String?
+  secondaryPhone           String?
+  iinBin                   String?
+  address                  String?
+  bankDetails              String?
+  contactPerson            String?
+  cooperationStartedAt     DateTime?
+  kind                     PartnerBusinessType   @default(CONTRACTOR)
+  businessStatus           PartnerBusinessStatus @default(ACTIVE)
+  defaultRewardRule        PartnerRewardRule     @default(FIXED)
+  defaultRewardPercent     Decimal?              @db.Decimal(7, 4)
+  defaultRewardFixedAmount Decimal?              @db.Decimal(14, 2)
+  comment                  String?
+  managementDirectory      Boolean               @default(false)
+  createdById              Int?
+  createdBy                User?                 @relation("PartnerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   active   Boolean @default(true)
   archived Boolean @default(false)
@@ -791,11 +866,16 @@ model Partner {
   orders               Order[]
   payments             Payment[]
   companyLedgerEntries CompanyLedgerEntry[]
+  orderRelations       PartnerOrderRelation[]
+  settlementOperations PartnerSettlementOperation[]
+  auditEvents          PartnerAuditEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([companyId, active, archived])
+  @@index([companyId, businessStatus, name])
+  @@index([companyId, managementDirectory, businessStatus])
 }
 
 model Order {
@@ -875,6 +955,8 @@ model Order {
   leadConversion           LeadConversion?
   commercialAdjustments    CommercialAdjustment[]
   partnerAssignmentHistory PartnerAssignmentHistory[]
+  partnerRelation          PartnerOrderRelation?
+  partnerSettlementOperations PartnerSettlementOperation[]
   financeAuditEvents       FinanceAuditEvent[]
   inventoryCogsEntries     InventoryCogsEntry[]
   payrollAccruals          PayrollAccrual[]
@@ -2158,6 +2240,7 @@ model Payment {
   registeredBy       User?           @relation("PaymentRegisteredBy", fields: [registeredByUserId], references: [id], onDelete: SetNull)
   receipt            PaymentReceipt? @relation("PaymentReceiptPayment")
   voidedReceipt      PaymentReceipt? @relation("PaymentReceiptVoidingPayment")
+  partnerSettlementOperation PartnerSettlementOperation?
 
   createdAt DateTime   @default(now())
   documents Document[]
@@ -2259,6 +2342,95 @@ model PartnerAssignmentHistory {
   @@index([orderId, createdAt])
   @@index([previousPartnerId, createdAt])
   @@index([newPartnerId, createdAt])
+}
+
+model PartnerOrderRelation {
+  id               Int                          @id @default(autoincrement())
+  companyId        Int                          @default(dbgenerated())
+  company          Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  partnerId        Int
+  partner          Partner                      @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  orderId          Int                          @unique
+  order            Order                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  rewardRule       PartnerRewardRule
+  rewardPercent    Decimal?                     @db.Decimal(7, 4)
+  fixedAmount      Decimal?                     @db.Decimal(14, 2)
+  manualAmount     Decimal?                     @db.Decimal(14, 2)
+  profitBasis      Decimal                      @db.Decimal(14, 2)
+  startsAt         DateTime                     @default(now())
+  settlementStatus PartnerSettlementStatus      @default(NOT_CALCULATED)
+  comment          String?
+  closedAt         DateTime?
+  createdById      Int
+  createdBy        User                         @relation("PartnerRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  operations       PartnerSettlementOperation[]
+  auditEvents      PartnerAuditEvent[]
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+
+  @@unique([companyId, orderId])
+  @@index([companyId, partnerId, settlementStatus])
+  @@index([partnerId, createdAt])
+}
+
+model PartnerSettlementOperation {
+  id               Int                              @id @default(autoincrement())
+  companyId        Int                              @default(dbgenerated())
+  company          Company                          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  relationId       Int
+  relation         PartnerOrderRelation             @relation(fields: [relationId], references: [id], onDelete: Restrict)
+  partnerId        Int
+  partner          Partner                          @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  orderId          Int
+  order            Order                            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  type             PartnerSettlementOperationType
+  status           PartnerSettlementOperationStatus @default(POSTED)
+  amount           Decimal                          @db.Decimal(14, 2)
+  adjustmentEffect Decimal                          @default(0) @db.Decimal(14, 2)
+  operationDate    DateTime                         @default(now())
+  method           String?
+  account          String?
+  comment          String?
+  paymentId        Int?                             @unique
+  payment          Payment?                         @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  reversalOfId     Int?                             @unique
+  reversalOf       PartnerSettlementOperation?      @relation("PartnerOperationReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal         PartnerSettlementOperation?      @relation("PartnerOperationReversal")
+  createdById      Int
+  createdBy        User                             @relation("PartnerOperationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  idempotencyKey   String                           @unique
+  requestHash      String
+  createdAt        DateTime                         @default(now())
+  auditEvents      PartnerAuditEvent[]
+
+  @@index([companyId, operationDate, id])
+  @@index([partnerId, operationDate])
+  @@index([orderId, operationDate])
+  @@index([relationId, operationDate])
+}
+
+model PartnerAuditEvent {
+  id          Int                         @id @default(autoincrement())
+  companyId   Int                         @default(dbgenerated())
+  company     Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  partnerId   Int?
+  partner     Partner?                    @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  relationId  Int?
+  relation    PartnerOrderRelation?       @relation(fields: [relationId], references: [id], onDelete: Restrict)
+  operationId Int?
+  operation   PartnerSettlementOperation? @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  action      String
+  before      Json?
+  after       Json?
+  comment     String?
+  actorId     Int
+  actor       User                        @relation("PartnerAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  createdAt   DateTime                    @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([partnerId, createdAt])
+  @@index([relationId, createdAt])
+  @@index([operationId, createdAt])
 }
 
 model FinanceAuditEvent {
