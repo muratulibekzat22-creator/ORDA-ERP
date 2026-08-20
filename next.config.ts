@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: { authInterrupts: true },
   serverExternalPackages: ["pdfkit", "dejavu-fonts-ttf"],
   poweredByHeader: false,
   productionBrowserSourceMaps: false,

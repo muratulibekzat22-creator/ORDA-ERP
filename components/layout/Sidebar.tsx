@@ -16,6 +16,7 @@ import {
   UserCog,
   ChevronRight,
   X,
+  Megaphone,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -51,6 +52,11 @@ const menu = [
         id: "orders",
         title: "Заказы",
         icon: ClipboardList,
+      },
+      {
+        id: "marketing",
+        title: "Маркетинг",
+        icon: Megaphone,
       },
       {
         id: "partners",
@@ -124,9 +130,10 @@ export default function Sidebar({
   const { data: session } = useSession();
   const router = useRouter();
   const role = session?.user.role as Role | undefined;
-  const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", partners: "partners", production: "production", warehouse: "warehouse", payroll: "payroll", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
-  const visible = (id: string) =>
-    id === "dashboard" ||
+  const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", marketing: "marketing", partners: "partners", production: "production", warehouse: "warehouse", payroll: "payroll", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
+  const visible = (id: string) => {
+    if (id === "marketing") return role === "DIRECTOR" || role === "MARKETER";
+    return id === "dashboard" ||
     (id === "payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
       role &&
@@ -138,6 +145,7 @@ export default function Sidebar({
         permissionByPage[id] &&
         hasDefaultPermission(role, permissionByPage[id]!),
     );
+  };
   return (
     <aside aria-label="Основная навигация" className="flex h-dvh w-[min(18rem,88vw)] flex-col border-r border-slate-800 bg-[#0f172a] lg:h-full lg:w-72">
 
@@ -189,7 +197,7 @@ export default function Sidebar({
                 return (
                   <button
                     key={item.id}
-                    onClick={() => item.id === "payroll" ? router.push("/payroll") : setPage(item.id)}
+                    onClick={() => item.id === "payroll" ? router.push("/payroll") : item.id === "marketing" ? router.push("/marketing") : setPage(item.id)}
                     aria-current={active ? "page" : undefined}
                     className={`group flex min-h-12 w-full items-center justify-between rounded-xl px-4 py-3 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 ${
                       active

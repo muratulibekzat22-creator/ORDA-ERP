@@ -69,7 +69,8 @@
     "test:company-contacts": "tsx scripts/test-company-contacts.tsx",
     "test:documents": "tsx scripts/test-documents-module.ts",
     "test:contracts": "tsx scripts/test-contract-generation.ts",
-    "test:contract-package": "tsx scripts/test-contract-document-package.ts"
+    "test:contract-package": "tsx scripts/test-contract-document-package.ts",
+    "test:marketing": "tsx scripts/test-marketing-workspace.ts"
   },
   "engines": {
     "node": ">=20.9.0"
