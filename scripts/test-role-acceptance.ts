@@ -98,6 +98,13 @@ assert.match(sidebar, /role === "PARTNER" && id === "finance"/);
 assert.doesNotMatch(sidebar, /title: "Dashboard"|>\s*ONLINE\s*</);
 assert.doesNotMatch(sidebar, />\s*Version 1\.0\.0\s*</);
 
+const routeShell = read("components/layout/RouteShell.tsx");
+assert.match(
+  routeShell,
+  /role === "DIRECTOR"\)[\s\S]*?return \[[^\]]*"\/measurements"[^\]]*\]\.includes\(href\)/,
+  "DIRECTOR navigation must expose the existing measurements workspace",
+);
+
 const dashboard = read("components/dashboard/page.tsx");
 assert.match(dashboard, /can\("orders"\) && \{\s*href: "\/calculator"/);
 

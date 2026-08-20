@@ -68,7 +68,7 @@ export default function RouteShell({
       return ["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"].includes(href);
     if (role === "MARKETER") return ["/marketing", "/calendar"].includes(href);
     if (role === "DIRECTOR")
-      return ["/", "/clients", "/orders", "/marketing", "/calendar", "/production", "/warehouse", "/employees", "/payroll", "/finance", "/partner-management", "/reports", "/documents", "/settings"].includes(href);
+      return ["/", "/clients", "/orders", "/measurements", "/marketing", "/calendar", "/production", "/warehouse", "/employees", "/payroll", "/finance", "/partner-management", "/reports", "/documents", "/settings"].includes(href);
     if (href === "/training" || href === "/measurements") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
