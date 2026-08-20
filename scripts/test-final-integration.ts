@@ -29,6 +29,24 @@ assert.match(routeShell, /\/partner-management/u);
 assert.match(routeShell, /\/marketing/u);
 
 async function main() {
+  if (process.env.LIVE_RELEASE_CLONE_TEST === "true") {
+    const result = await runWithSystemAccess(async () => {
+      const company = await prisma.company.findUnique({ where: { id: 1 }, select: { slug: true, isDemo: true } });
+      const [payroll, partners, marketing] = await Promise.all([
+        prisma.employeePayrollProfile.count({ where: { companyId: 1 } }),
+        prisma.partnerOrderRelation.count({ where: { companyId: 1 } }),
+        prisma.marketingCampaign.count({ where: { companyId: 1 } }),
+      ]);
+      return { company, payroll, partners, marketing };
+    });
+    assert.deepEqual(result.company, { slug: "altyn-sapa-company", isDemo: false });
+    assert.ok(result.payroll >= 0, "Payroll LIVE read model is unavailable");
+    assert.ok(result.partners >= 0, "Partners LIVE read model is unavailable");
+    assert.ok(result.marketing >= 0, "Marketing LIVE read model is unavailable");
+    console.log(`Combined LIVE release clone passed: payroll=${result.payroll}; partners=${result.partners}; marketing=${result.marketing}`);
+    return;
+  }
+
   const result = await runWithSystemAccess(async () => {
     const company = await prisma.company.findUnique({ where: { id: 2 }, select: { slug: true, isDemo: true } });
     const [payroll, partners, marketing] = await Promise.all([

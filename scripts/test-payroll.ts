@@ -12,6 +12,11 @@ import {
 } from "@prisma/client";
 import { createRequestHash } from "../lib/idempotency";
 import { prisma } from "../lib/prisma";
+import {
+  runWithSystemAccess,
+  runWithTenant,
+  type TenantIdentity,
+} from "../lib/tenant-context";
 import { getFinanceDashboard } from "../lib/services/payment.service";
 import {
   changeAllowance,
@@ -807,7 +812,37 @@ async function main() {
       await prisma.payrollPeriod.deleteMany({ where: { id: { in: ids.periods }, accruals: { none: {} }, payments: { none: {} } } });
       await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
     }
+  }
+}
+
+async function run() {
+  const company = await runWithSystemAccess(() =>
+    prisma.company.create({
+      data: {
+        slug: `${tag}-tenant`,
+        name: `Payroll integration ${tag}`,
+        isDemo: false,
+      },
+    }),
+  );
+  const tenant: TenantIdentity = {
+    companyId: company.id,
+    companySlug: company.slug,
+    companyName: company.name,
+    isDemo: false,
+  };
+  try {
+    await runWithTenant(tenant, main);
+  } finally {
+    await runWithSystemAccess(async () => {
+      await prisma.systemSettings.deleteMany({ where: { companyId: company.id } });
+      await prisma.companySettings.deleteMany({ where: { companyId: company.id } });
+      await prisma.settings.deleteMany({ where: { companyId: company.id } });
+      await prisma.rolePermission.deleteMany({ where: { companyId: company.id } });
+      await prisma.company.delete({ where: { id: company.id } });
+    });
     await prisma.$disconnect();
   }
 }
-void main();
+
+void run();

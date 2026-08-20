@@ -1633,6 +1633,7 @@ model DocumentVersion {
 
   @@unique([documentId, version])
   @@index([documentId, createdAt])
+  @@map("DocumentVersionCanonical")
 }
 
 model CustomerMemoAcknowledgement {

@@ -18,6 +18,7 @@ import { seedPartnerManagementDemo } from "./seed-partner-management-demo";
 
 const live: TenantIdentity = { companyId: 1, companySlug: "altyn-sapa-company", companyName: "ALTYN SAPA TEST", isDemo: false };
 const demo: TenantIdentity = { companyId: 2, companySlug: "orda-demo", companyName: "ORDA DEMO", isDemo: true };
+const liveReleaseCloneTest = process.env.LIVE_RELEASE_CLONE_TEST === "true";
 const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const phone = `+7709${String(Date.now()).slice(-7)}`;
 
@@ -37,7 +38,8 @@ async function ensureDemoDirector() {
 }
 
 async function main() {
-  await ensureCompanies(); await ensureDemoDirector();
+  await ensureCompanies();
+  if (!liveReleaseCloneTest) await ensureDemoDirector();
   await runWithTenant(live, async () => {
     const directorUser = await prisma.user.create({ data: { name: `Partner Director ${nonce}`, email: `partner-director-${nonce}@test.local`, password: "not-a-login-hash", role: Role.DIRECTOR, active: true } });
     const managerUser = await prisma.user.create({ data: { name: `Partner Manager ${nonce}`, email: `partner-manager-${nonce}@test.local`, password: "not-a-login-hash", role: Role.MANAGER, active: true } });
@@ -136,13 +138,17 @@ async function main() {
     });
   });
 
-  const demoFirst = await seedPartnerManagementDemo();
-  const demoSecond = await seedPartnerManagementDemo();
-  assert.deepEqual(demoSecond, demoFirst, "Demo seed is idempotent");
-  assert.equal(demoSecond.partners, 8, "Demo seed has eight partners");
-  assert.equal(demoSecond.orders, 16, "Demo seed has sixteen partner orders");
-  assert.equal(demoSecond.existingLinked, 4, "Demo seed links four pre-existing canonical orders");
-  console.log(`Partner management integration PASS; demo partners=${demoSecond.partners}; demo orders=${demoSecond.orders}; existing-linked=${demoSecond.existingLinked}; operations=${demoSecond.operations}`);
+  if (liveReleaseCloneTest) {
+    console.log("Partner management integration PASS; Demo seed skipped for LIVE release clone");
+  } else {
+    const demoFirst = await seedPartnerManagementDemo();
+    const demoSecond = await seedPartnerManagementDemo();
+    assert.deepEqual(demoSecond, demoFirst, "Demo seed is idempotent");
+    assert.equal(demoSecond.partners, 8, "Demo seed has eight partners");
+    assert.equal(demoSecond.orders, 16, "Demo seed has sixteen partner orders");
+    assert.equal(demoSecond.existingLinked, 4, "Demo seed links four pre-existing canonical orders");
+    console.log(`Partner management integration PASS; demo partners=${demoSecond.partners}; demo orders=${demoSecond.orders}; existing-linked=${demoSecond.existingLinked}; operations=${demoSecond.operations}`);
+  }
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => prisma.$disconnect());
