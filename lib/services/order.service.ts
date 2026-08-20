@@ -159,13 +159,15 @@ export async function getOrder(id: number) {
       },
       payrollAccruals: {
         include: {
-          employee: { include: { user: { select: { name: true } } } },
+          employee: { include: { user: { select: { name: true, role: true } } } },
           payments: true,
           reversedBy: { select: { id: true } },
         },
         orderBy: { createdAt: "desc" },
       },
       productions: true,
+      commercialAdjustments: { orderBy: { createdAt: "asc" } },
+      companyLedgerEntries: { orderBy: { operationDate: "asc" } },
       documents: true,
       calculations: {
         orderBy: { createdAt: "desc" },
@@ -339,11 +341,15 @@ export async function createOrder(data: CreateOrderInput) {
 
           let clientId = data.clientId;
           if (data.client) {
+            const clientName = data.client.name.trim();
+            const clientCity = data.client.city.trim();
+            if (!clientId && !clientName) throw new Error("CLIENT_NAME_REQUIRED");
+            if (!clientCity) throw new Error("CLIENT_CITY_REQUIRED");
             const phone = normalizePhone(data.client.phone);
             if (!phone) throw new Error("INVALID_CLIENT_PHONE");
             const existing = await tx.client.findFirst({
               where: { active: true, OR: [{ phone }, { whatsapp: phone }] },
-              select: { id: true, managerUserId: true, manager: true },
+              select: { id: true, name: true, city: true, address: true, managerUserId: true, manager: true },
             });
             if (existing) {
               if (
@@ -360,12 +366,14 @@ export async function createOrder(data: CreateOrderInput) {
                 existing.manager !== data.manager
               )
                 throw new Error("FORBIDDEN_CLIENT_OWNERSHIP");
-              if (!existing.managerUserId)
+              if (!existing.managerUserId || (!existing.name.trim() && clientName) || (!existing.city.trim() && clientCity) || (!existing.address.trim() && data.client.address.trim()))
                 await tx.client.update({
                   where: { id: existing.id },
                   data: {
-                    managerUserId: data.managerUserId,
-                    manager: data.manager,
+                    ...(!existing.managerUserId ? { managerUserId: data.managerUserId, manager: data.manager } : {}),
+                    ...(!existing.name.trim() && clientName ? { name: clientName } : {}),
+                    ...(!existing.city.trim() && clientCity ? { city: clientCity } : {}),
+                    ...(!existing.address.trim() && data.client.address.trim() ? { address: data.client.address.trim() } : {}),
                   },
                 });
               if (clientId && clientId !== existing.id)
@@ -376,11 +384,11 @@ export async function createOrder(data: CreateOrderInput) {
             } else {
               const createdClient = await tx.client.create({
                 data: {
-                  name: data.client.name,
+                  name: clientName,
                   phone,
                   whatsapp: phone,
-                  city: data.client.city,
-                  address: data.client.address,
+                  city: clientCity,
+                  address: data.client.address.trim(),
                   manager: data.manager,
                   managerUserId: data.managerUserId,
                   amount: money(data.amount),
@@ -398,9 +406,11 @@ export async function createOrder(data: CreateOrderInput) {
           if (!clientId) throw new Error("CLIENT_REQUIRED");
           const ownedClient = await tx.client.findUnique({
             where: { id: clientId },
-            select: { managerUserId: true, manager: true },
+            select: { name: true, city: true, managerUserId: true, manager: true },
           });
           if (!ownedClient) throw new Error("CLIENT_NOT_FOUND");
+          if (data.enforceClientOwnership && !ownedClient.name.trim()) throw new Error("CLIENT_NAME_REQUIRED");
+          if (data.enforceClientOwnership && !ownedClient.city.trim()) throw new Error("CLIENT_CITY_REQUIRED");
           if (
             (data.actorRole === Role.MANAGER || data.enforceClientOwnership) &&
             ownedClient.managerUserId &&

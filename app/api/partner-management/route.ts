@@ -20,6 +20,7 @@ import {
   reversePartnerSettlementOperation,
   searchPartnerClients,
   searchPartnerOrders,
+  setPartnerAgreedCost,
   setPartnerSettlementState,
   updateManagedPartner,
   type PartnerManagementActor,
@@ -185,6 +186,16 @@ export async function POST(request: Request) {
         operationDate: asDate(body.operationDate) ?? new Date(), method: asString(body.method), account: asString(body.account), comment: asString(body.comment),
         idempotencyKey: key.key, requestHash: createRequestHash(body),
       }, user), { status: 201 });
+    }
+    if (action === "set-agreed-cost") {
+      const relationId = asNumber(body.relationId);
+      if (!relationId) throw new PartnerManagementError("RELATION_NOT_FOUND");
+      return NextResponse.json(await setPartnerAgreedCost(
+        relationId,
+        String(body.amount ?? "0"),
+        asString(body.comment) ?? "",
+        user,
+      ));
     }
     if (action === "reverse-operation") {
       const key = readIdempotencyKey(request); if ("response" in key) return key.response;

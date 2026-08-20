@@ -19,12 +19,14 @@ async function main() {
   const { createFinanceOperation } = await import("@/lib/services/payment.service");
   const { assignPartnerToOrder } = await import("@/lib/services/partner.service");
   const { buildOrderSettlement } = await import("@/lib/services/order-settlement.service");
-  let userId = 0, clientId = 0, partnerId = 0, orderId = 0;
+  let userId = 0, managerId = 0, clientId = 0, partnerId = 0, orderId = 0;
   try {
     userId = (await prisma.user.create({ data: { name: tag, email: `${tag}@test.local`, password: "not-used", role: Role.DIRECTOR } })).id;
-    clientId = (await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "TEST", manager: tag, amount: "3000000", status: "New" } })).id;
+    const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "not-used", role: Role.MANAGER } });
+    managerId = manager.id;
+    clientId = (await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "TEST", manager: manager.name, managerUserId: manager.id, amount: "3000000", status: "New" } })).id;
     partnerId = (await prisma.partner.create({ data: { name: tag } })).id;
-    orderId = (await prisma.order.create({ data: { number: tag, clientId, address: "TEST", staircase: "Straight", material: "Oak", amount: "3000000", balance: "3000000", manager: tag, status: "New" } })).id;
+    orderId = (await prisma.order.create({ data: { number: tag, clientId, address: "TEST", staircase: "Straight", material: "Oak", amount: "3000000", balance: "3000000", manager: manager.name, managerUserId: manager.id, status: "New" } })).id;
     await createFinanceOperation({ type: "CLIENT_PAYMENT", orderId, amount: 2_000_000, method: "bank_transfer", idempotencyKey: `${tag}-client`, requestHash: hash("client") });
     const agreedAt = new Date("2026-08-09T00:00:00.000Z");
     await assignPartnerToOrder({ orderId, partnerId, partnerPrice: 1_500_000, partnerAgreedAt: agreedAt, authorId: userId, manager: tag, reason: "Signed partner agreement" });
@@ -46,10 +48,18 @@ async function main() {
     ensure(await prisma.partnerAssignmentHistory.count({ where: { orderId } }) === 2, "workshop agreement history is incomplete");
     console.log("PARTNER SETTLEMENT SUMMARY: client=3m/2m/1m; partner=1.5m/800k/700k; payouts=300k+200k+300k; idempotency=passed");
   } finally {
-    if (orderId) { await prisma.financeAuditEvent.deleteMany({ where: { orderId } }); await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId } }); await prisma.orderEvent.deleteMany({ where: { orderId } }); await prisma.production.deleteMany({ where: { orderId } }); await prisma.payment.deleteMany({ where: { orderId } }); await prisma.order.deleteMany({ where: { id: orderId } }); }
+    if (orderId) {
+      const cashShiftIds = (await prisma.payment.findMany({ where: { orderId, cashShiftId: { not: null } }, select: { cashShiftId: true } })).flatMap((item) => item.cashShiftId == null ? [] : [item.cashShiftId]);
+      const receiptDocumentIds = (await prisma.paymentReceipt.findMany({ where: { orderId }, select: { documentId: true } })).map((item) => item.documentId);
+      if (receiptDocumentIds.length) { await prisma.documentAudit.deleteMany({ where: { documentId: { in: receiptDocumentIds } } }); await prisma.documentVersion.deleteMany({ where: { documentId: { in: receiptDocumentIds } } }); await prisma.paymentReceipt.deleteMany({ where: { orderId } }); await prisma.document.deleteMany({ where: { id: { in: receiptDocumentIds } } }); }
+      await prisma.companyLedgerEntry.deleteMany({ where: { orderId } }); await prisma.financeAuditEvent.deleteMany({ where: { orderId } }); await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId } }); await prisma.orderEvent.deleteMany({ where: { orderId } }); await prisma.production.deleteMany({ where: { orderId } }); await prisma.payment.deleteMany({ where: { orderId } });
+      if (cashShiftIds.length) await prisma.cashShift.deleteMany({ where: { id: { in: cashShiftIds }, payments: { none: {} }, receipts: { none: {} } } });
+      await prisma.order.deleteMany({ where: { id: orderId } });
+    }
     if (partnerId) await prisma.partner.deleteMany({ where: { id: partnerId } });
     if (clientId) await prisma.client.deleteMany({ where: { id: clientId } });
     if (userId) await prisma.user.deleteMany({ where: { id: userId } });
+    if (managerId) await prisma.user.deleteMany({ where: { id: managerId } });
     await prisma.$disconnect();
   }
 }

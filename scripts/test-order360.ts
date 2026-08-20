@@ -1,11 +1,12 @@
 import "./require-test-database";
 
 import assert from "node:assert/strict";
-import { OrderBlockerSeverity, OrderLifecycle, Role } from "@prisma/client";
+import { CalendarTaskStatus, CalendarTaskType, MeasurementStatus, OrderBlockerSeverity, OrderLifecycle, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import {
   assignInstallation,
   completeInstallation,
+  completeControlMeasurement,
   confirmMilestone,
   evaluateGate,
   openBlocker,
@@ -31,15 +32,16 @@ async function code(run: () => Promise<unknown>, expected: string) {
 async function main() {
   const userIds: number[] = [], orderIds: number[] = [], clientIds: number[] = [], partnerIds: number[] = [];
   try {
-    const [director, manager, production, installer, partnerUser, otherManager] = await Promise.all([
+    const [director, manager, production, installer, partnerUser, otherManager, measurer] = await Promise.all([
       prisma.user.create({ data: { name: `${tag}-director`, email: `${tag}-director@test.local`, password: "test", role: Role.DIRECTOR } }),
       prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "test", role: Role.MANAGER } }),
       prisma.user.create({ data: { name: `${tag}-production`, email: `${tag}-production@test.local`, password: "test", role: Role.PRODUCTION } }),
       prisma.user.create({ data: { name: `${tag}-installer`, email: `${tag}-installer@test.local`, password: "test", role: Role.INSTALLER } }),
       prisma.user.create({ data: { name: `${tag}-partner`, email: `${tag}-partner@test.local`, password: "test", role: Role.PARTNER } }),
       prisma.user.create({ data: { name: `${tag}-other`, email: `${tag}-other@test.local`, password: "test", role: Role.MANAGER } }),
+      prisma.user.create({ data: { name: `${tag}-measurer`, email: `${tag}-measurer@test.local`, password: "test", role: Role.MEASURER } }),
     ]);
-    userIds.push(director.id, manager.id, production.id, installer.id, partnerUser.id, otherManager.id);
+    userIds.push(director.id, manager.id, production.id, installer.id, partnerUser.id, otherManager.id, measurer.id);
     const partner = await prisma.partner.create({ data: { name: tag, phone: "77000000000", city: "Test", userId: partnerUser.id } });
     partnerIds.push(partner.id);
     const client = await prisma.client.create({ data: { name: tag, phone: "77000000001", city: "Test", manager: manager.name, managerUserId: manager.id, amount: "1000", status: "WON", stage: "WON" } });
@@ -54,7 +56,26 @@ async function main() {
       installer: { userId: installer.id, role: Role.INSTALLER, name: installer.name },
       partner: { userId: partnerUser.id, role: Role.PARTNER, name: partnerUser.name },
       other: { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name },
+      measurer: { userId: measurer.id, role: Role.MEASURER, name: measurer.name },
     };
+    const measurementOrder = await prisma.order.create({ data: { number: `O360-MEASURE-${Date.now()}`, clientId: client.id, address: "Measurement", staircase: "Straight", material: "Oak", amount: 5200000, balance: 5200000, manager: manager.name, managerUserId: manager.id } });
+    orderIds.push(measurementOrder.id);
+    const calendarTask = await prisma.calendarTask.create({ data: { title: "Контрольный замер", type: CalendarTaskType.MEASUREMENT, dueAt: new Date(), assigneeId: measurer.id, creatorId: manager.id, clientId: client.id, orderId: measurementOrder.id } });
+    await prisma.measurement.create({ data: { orderId: measurementOrder.id, clientId: client.id, calendarTaskId: calendarTask.id, measurer: measurer.name, measurerUserId: measurer.id, visitDate: new Date(), status: MeasurementStatus.ASSIGNED, city: "Караганда", address: "Measurement" } });
+    await code(() => completeControlMeasurement({ orderId: measurementOrder.id, expectedVersion: 1, completedAt: new Date("2026-08-19T12:00:00Z"), key: key("foreign-control-measurement"), requestHash: hash("foreign-control-measurement") }, actors.other), "NOT_FOUND");
+    const measured = await completeControlMeasurement({ orderId: measurementOrder.id, expectedVersion: 1, completedAt: new Date("2026-08-19T12:00:00Z"), comment: "Размеры подтверждены", key: key("control-measurement"), requestHash: hash("control-measurement") }, actors.measurer);
+    assert.equal(measured.created, true, "control measurement action created");
+    const measuredOrder = await prisma.order.findUniqueOrThrow({ where: { id: measurementOrder.id } });
+    assert.equal(measuredOrder.lifecycle, OrderLifecycle.READY_FOR_PRODUCTION, "control measurement did not move order to preparation");
+    assert.equal((await prisma.calendarTask.findUniqueOrThrow({ where: { id: calendarTask.id } })).status, CalendarTaskStatus.COMPLETED, "measurement calendar task not completed");
+    assert.equal((await prisma.production.findFirstOrThrow({ where: { orderId: measurementOrder.id } })).stage, "Подготовка", "production task not created");
+    assert.equal(await prisma.orderBlocker.count({ where: { orderId: measurementOrder.id, status: "OPEN" } }), 2, "missing partner/cost tasks not created");
+    assert.equal(await prisma.calendarTask.count({ where: { orderId: measurementOrder.id, type: CalendarTaskType.TASK, assigneeId: manager.id } }), 1, "next manager calendar task not created");
+    assert.equal(await prisma.measurementAudit.count({ where: { measurement: { orderId: measurementOrder.id }, action: "COMPLETED_FROM_ORDER" } }), 1, "measurement audit not created");
+    assert.equal(await prisma.orderEvent.count({ where: { orderId: measurementOrder.id, title: "Замер снят" } }), 1, "timeline event not created");
+    const measuredReplay = await completeControlMeasurement({ orderId: measurementOrder.id, expectedVersion: 1, completedAt: new Date("2026-08-19T12:00:00Z"), comment: "Размеры подтверждены", key: key("control-measurement"), requestHash: hash("control-measurement") }, actors.measurer);
+    assert.equal(measuredReplay.created, false, "control measurement idempotency replay");
+    assert.equal(await prisma.orderEvent.count({ where: { orderId: measurementOrder.id, title: "Замер снят" } }), 1, "duplicate timeline event created");
     assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, false, "empty production gate passed");
     await code(() => orderOverview(order.id, actors.other), "NOT_FOUND");
     const managerOverview = await orderOverview(order.id, actors.manager);
@@ -119,6 +140,9 @@ async function main() {
     const overridden = await transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: 2, override: true, reason: "Director accepted documented risk", key: key("override-ready"), requestHash: hash("override-ready") }, actors.director);
     assert.equal(overridden.created, true);
     assert.equal(await prisma.orderGateOverride.count({ where: { orderId: overrideOrder.id } }), 1);
+    await code(() => transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.PREPARATION, expectedVersion: 3, key: key("back-without-reason"), requestHash: hash("back-without-reason") }, actors.director), "REASON_REQUIRED");
+    const returned = await transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.PREPARATION, expectedVersion: 3, reason: "Возврат на уточнение", key: key("back-with-reason"), requestHash: hash("back-with-reason") }, actors.director);
+    assert.equal(returned.created, true, "director backward transition with reason");
 
     const raceOrder = await prisma.order.create({ data: { number: `O360-RACE-${Date.now()}`, clientId: client.id, address: "Race", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id, lifecycle: OrderLifecycle.PREPARATION, version: 2 } });
     orderIds.push(raceOrder.id);
@@ -128,6 +152,11 @@ async function main() {
     console.log("Order 360 lifecycle, gates, blockers, RBAC, timeline and concurrency checks passed");
   } finally {
     if (orderIds.length) {
+      await prisma.calendarTaskAudit.deleteMany({ where: { task: { orderId: { in: orderIds } } } });
+      await prisma.measurementAudit.deleteMany({ where: { measurement: { orderId: { in: orderIds } } } });
+      await prisma.measurement.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.calendarTask.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.orderEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderGateOverride.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderBlocker.deleteMany({ where: { orderId: { in: orderIds } } });

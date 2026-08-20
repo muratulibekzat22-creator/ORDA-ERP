@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import CityCombobox from "@/components/clients/CityCombobox";
 
 type Option = { id: number; name: string };
 type RegistrationOptions = {
@@ -122,9 +123,9 @@ export default function NewOrderForm() {
     </header>
 
     <Block title="Клиент" description="Телефон проверяется по существующим клиентам, чтобы не создавать дубль.">
-      <Field label="ФИО клиента"><input className={input} value={form.clientName} onChange={(e) => set("clientName", e.target.value)} /></Field>
+      <Field label="ФИО клиента" required><input className={input} required value={form.clientName} onChange={(e) => set("clientName", e.target.value)} /></Field>
       <Field label="Телефон / WhatsApp" required><input className={input} required inputMode="tel" value={form.phone} onChange={(e) => { set("phone", e.target.value); setExistingClient(null); }} onBlur={() => void lookupClient()} /></Field>
-      <Field label="Город" required><input className={input} required value={form.city} onChange={(e) => set("city", e.target.value)} /></Field>
+      <Field label="Город" required><CityCombobox value={form.city} onChange={(value) => set("city", value)} className={input}/></Field>
       <Field label="Адрес объекта"><input className={input} value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
       <Field label="Ссылка на карту" wide><input className={input} type="url" placeholder="https://…" value={form.mapUrl} onChange={(e) => set("mapUrl", e.target.value)} /></Field>
       {existingClient ? <p className="sm:col-span-2 flex items-center gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-300"><CheckCircle2 size={17} /> Будет привязан существующий клиент #{existingClient.id}. Новый клиент не создаётся.</p> : null}

@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma";
 import {
   createManagedPartner, createPartnerOrder, createPartnerSettlementOperation, getManagedPartner,
   getPartnerManagementReadModel, linkPartnerOrder, PartnerManagementError, reversePartnerSettlementOperation,
-  searchPartnerClients, searchPartnerOrders, type PartnerManagementActor,
+  searchPartnerClients, searchPartnerOrders, setPartnerAgreedCost, type PartnerManagementActor,
 } from "@/lib/services/partner-management.service";
 import { getPartners as getWorkshopPartners } from "@/lib/services/partner.service";
 import { runWithSystemAccess, runWithTenant, type TenantIdentity } from "@/lib/tenant-context";
@@ -97,7 +97,7 @@ async function main() {
     assert.ok(model.orders.some((item) => item.id === created.relation.id), "partner order in read model");
     const createdRow = model.orders.find((item) => item.id === created.relation.id)!;
     assert.equal(createdRow.order.companyProfit.toFixed(2), "1200000.10", "gross profit basis remains immutable after canonical payment mirrors");
-    assert.equal(model.partners[0].totals.profit.toFixed(2), "1880000.09", "partner profit is not deducted twice");
+    assert.equal(model.partners[0].totals.profit.toFixed(2), "1980000.09", "partner profit follows sale minus partner accrual without a second legacy deduction");
     assert.ok(model.audits.some((item) => item.action === "SETTLEMENT_OPERATION_REVERSED"), "audit log contains reversal");
     assert.equal((await getPartnerManagementReadModel({ query: `Integration Partner ${nonce}` })).partners[0]?.id, partner.id, "partner search by name");
     const detail = await getManagedPartner(partner.id);
@@ -119,6 +119,15 @@ async function main() {
     const paidClient = await prisma.client.findUniqueOrThrow({ where: { id: paidOrder.order.clientId } });
     assert.notEqual(paidClient.whatsapp, paidClient.phone, "secondary phone is preserved in canonical Client whatsapp field");
     assert.equal(paidClient.comment, "Partner client comment", "new client comment is preserved");
+
+    const paymentsBeforeAgreedCost = await prisma.payment.count({ where: { orderId: existingOrder.id } });
+    const ledgerBeforeAgreedCost = await prisma.companyLedgerEntry.count({ where: { orderId: existingOrder.id } });
+    const agreed = await setPartnerAgreedCost(linked.relation.id, "370000", "Integration agreed cost", actor);
+    assert.equal(agreed.economy.partner.agreed.toFixed(2), "370000.00", "agreed partner cost is visible in order economy");
+    assert.equal(agreed.economy.partner.paid.toFixed(2), "0.00", "agreed cost is not treated as payout");
+    assert.equal(agreed.economy.partner.remaining.toFixed(2), "370000.00", "full agreed cost remains before payout");
+    assert.equal(await prisma.payment.count({ where: { orderId: existingOrder.id } }), paymentsBeforeAgreedCost, "agreed cost created a Payment");
+    assert.equal(await prisma.companyLedgerEntry.count({ where: { orderId: existingOrder.id } }), ledgerBeforeAgreedCost, "agreed cost created a Finance ledger entry");
 
     await runWithTenant(demo, async () => {
       await assert.rejects(() => getManagedPartner(partner.id), (error: unknown) => error instanceof PartnerManagementError && error.message === "PARTNER_NOT_FOUND");
