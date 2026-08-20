@@ -14,12 +14,12 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   const browserErrors: string[] = []; const failedResponses: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
-  page.on("response", (response) => { if (response.status() >= 500) failedResponses.push(`${response.status()} ${response.url()}`); });
+  page.on("response", (response) => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`); });
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, playwrightUsers.director);
   await page.goto("/partner-management");
   await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toBeVisible();
-  for (const label of ["Обзор", "Партнёры", "Заказы партнёров", "Взаиморасчёты", "Операции", "Отчёты"])
+  for (const label of ["Обзор", "Партнёры", "Заказы партнёров", "Взаиморасчёты", "Выплаты", "Отчёты"])
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   const api = await page.request.get("/api/partner-management");
   expect(api.status()).toBe(200);
@@ -34,7 +34,38 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   }
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
-  expect(browserErrors).toEqual([]); expect(failedResponses).toEqual([]);
+  await page.goto("/orders");
+  await expect(page.getByRole("heading", { name: "Заказы", exact: true })).toBeVisible();
+  await expect(page.getByText("Быстрые фильтры", { exact: true })).toBeVisible();
+  await expect(page.getByText("Этап производства", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Финансы и проблемы", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const ordersResponse = await page.request.get("/api/orders?limit=10");
+  expect(ordersResponse.status()).toBe(200);
+  const ordersPayload = await ordersResponse.json() as {
+    data: Array<{ id: number; balance: string | number; partnerBalance: string | number }>;
+    filterMetrics: Record<string, { count: number; amount: string }>;
+  };
+  for (const [filter, field] of [["client-payable", "balance"], ["partner-payable", "partnerBalance"]] as const) {
+    const filteredResponse = await page.request.get(`/api/orders?limit=100&filter=${filter}`);
+    expect(filteredResponse.status()).toBe(200);
+    const filtered = await filteredResponse.json() as {
+      data: Array<{ balance: string | number; partnerBalance: string | number }>;
+      pagination: { total: number };
+    };
+    expect(filtered.pagination.total).toBe(ordersPayload.filterMetrics[filter].count);
+    expect(filtered.data.reduce((sum, item) => sum + Number(item[field]), 0)).toBeCloseTo(Number(ordersPayload.filterMetrics[filter].amount), 2);
+  }
+  if (ordersPayload.data[0]) {
+    await page.goto(`/orders/${ordersPayload.data[0].id}`);
+    await expect(page.getByRole("heading", { name: "Экономика заказа", exact: true })).toBeVisible();
+    for (const label of ["Сумма продажи", "Получено от клиента", "Остаток клиента", "Согласованная стоимость", "Выплачено партнёру", "Осталось выплатить", "Маржа до зарплаты", "Зарплата по заказу", "Чистая прибыль"])
+      await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/orders");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect({ browserErrors, failedResponses }).toEqual({ browserErrors: [], failedResponses: [] });
 });
 
 for (const [role, email] of [["MANAGER", playwrightUsers.manager], ["ACCOUNTANT", playwrightUsers.accountant]] as const) {
@@ -45,5 +76,16 @@ for (const [role, email] of [["MANAGER", playwrightUsers.manager], ["ACCOUNTANT"
     await page.goto("/partner-management");
     await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toHaveCount(0);
     await expect(page.getByText("404")).toBeVisible();
+    await page.goto("/orders");
+    await expect(page.getByRole("link", { name: "Партнёры", exact: true })).toHaveCount(0);
+    if (role === "MANAGER") {
+      const orders = await page.request.get("/api/orders?limit=10");
+      expect(orders.status()).toBe(200);
+      const body = await orders.text();
+      expect(body).not.toContain("companyProfit");
+      expect(body).not.toContain("partnerBalance");
+      expect(body).not.toContain("partnerPrice");
+      expect(body).not.toContain("netProfit");
+    }
   });
 }

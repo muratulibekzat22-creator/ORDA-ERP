@@ -87,7 +87,7 @@ async function main() {
     assert.equal(future.cards.customerReceivable, sum(amounts) - sum(received), "current receivable was incorrectly limited by period");
     assert.equal(future.cards.partnerPayable, sum(agreed) - sum(paid), "current partner payable was incorrectly limited by period");
 
-    const directorReport = await getReportsReadModel(new URLSearchParams("period=month"), { id: director.id, role: Role.DIRECTOR });
+    const directorReport = await getReportsReadModel(new URLSearchParams(`period=month&managerId=${manager.id}`), { id: director.id, role: Role.DIRECTOR });
     assert(directorReport.finance, "Director report is missing internal finance aggregates");
     assert.equal(directorReport.finance.customerRemaining, sum(amounts) - sum(received));
     assert.equal(directorReport.finance.partnerRemaining, sum(agreed) - sum(paid));
@@ -98,11 +98,31 @@ async function main() {
     console.log("PARTNER FINANCE SUMMARY: 6 orders; sales/receivables/partner payable/gross margin=passed; cash-vs-accrual=passed; archive/test filtering=passed; Reports RBAC=passed");
   } finally {
     if (ids.orders.length) {
+      const cashShiftIds = (await prisma.payment.findMany({
+        where: { orderId: { in: ids.orders }, cashShiftId: { not: null } },
+        select: { cashShiftId: true },
+      })).flatMap((item) => item.cashShiftId == null ? [] : [item.cashShiftId]);
+      const receiptDocumentIds = (await prisma.paymentReceipt.findMany({
+        where: { orderId: { in: ids.orders } },
+        select: { documentId: true },
+      })).map((item) => item.documentId);
+      if (receiptDocumentIds.length) {
+        await prisma.documentAudit.deleteMany({ where: { documentId: { in: receiptDocumentIds } } });
+        await prisma.documentVersion.deleteMany({ where: { documentId: { in: receiptDocumentIds } } });
+        await prisma.paymentReceipt.deleteMany({ where: { orderId: { in: ids.orders } } });
+        await prisma.document.deleteMany({ where: { id: { in: receiptDocumentIds } } });
+      }
       await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: ids.orders } } });
+      await prisma.companyLedgerEntry.deleteMany({ where: { orderId: { in: ids.orders } } });
       await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId: { in: ids.orders } } });
       await prisma.orderEvent.deleteMany({ where: { orderId: { in: ids.orders } } });
       await prisma.production.deleteMany({ where: { orderId: { in: ids.orders } } });
       await prisma.payment.deleteMany({ where: { orderId: { in: ids.orders } } });
+      if (cashShiftIds.length) {
+        await prisma.cashShift.deleteMany({
+          where: { id: { in: cashShiftIds }, payments: { none: {} }, receipts: { none: {} } },
+        });
+      }
       await prisma.order.deleteMany({ where: { id: { in: ids.orders } } });
     }
     if (ids.clients.length) await prisma.client.deleteMany({ where: { id: { in: ids.clients } } });

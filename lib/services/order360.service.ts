@@ -1,4 +1,8 @@
 import {
+  CalendarTaskPriority,
+  CalendarTaskStatus,
+  CalendarTaskType,
+  MeasurementStatus,
   OrderBlockerSeverity,
   OrderBlockerStatus,
   OrderLifecycle,
@@ -7,6 +11,7 @@ import {
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { INITIAL_PRODUCTION_STAGE } from "@/lib/production/stage-policy";
 import { reverseMeasurerBonusForCancelledOrder } from "@/lib/services/measurement.service";
 
 export type Order360Actor = { userId: number; role: Role; name: string };
@@ -236,7 +241,7 @@ function roleCanTransition(
   from: OrderLifecycle,
   to: OrderLifecycle,
 ) {
-  if (role === Role.DIRECTOR) return true;
+  if (role === Role.DIRECTOR) return from !== to;
   if (to === OrderLifecycle.CANCELLED)
     return role === Role.MANAGER && from !== OrderLifecycle.COMPLETED;
   const next = LIFECYCLE.indexOf(to) === LIFECYCLE.indexOf(from) + 1;
@@ -275,9 +280,13 @@ export async function availableTransitions(
     where: { id: orderId },
     select: { lifecycle: true, version: true },
   });
-  const candidates = [...LIFECYCLE, OrderLifecycle.CANCELLED].filter((to) =>
-    roleCanTransition(actor.role, order.lifecycle, to),
-  );
+  const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
+  const preferred = [
+    LIFECYCLE[currentIndex + 1],
+    ...(actor.role === Role.DIRECTOR ? [LIFECYCLE[currentIndex - 1]] : []),
+    OrderLifecycle.CANCELLED,
+  ].filter((value): value is OrderLifecycle => Boolean(value));
+  const candidates = [...new Set(preferred)].filter((to) => roleCanTransition(actor.role, order.lifecycle, to));
   return {
     version: order.version,
     transitions: await Promise.all(
@@ -318,6 +327,15 @@ export async function transitionLifecycle(
         throw new Order360Error("STALE_VERSION");
       if (!roleCanTransition(actor.role, order.lifecycle, input.to))
         throw new Order360Error("TRANSITION_FORBIDDEN");
+      const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
+      const targetIndex = LIFECYCLE.indexOf(input.to);
+      if (
+        actor.role === Role.DIRECTOR &&
+        targetIndex >= 0 &&
+        targetIndex < currentIndex &&
+        !input.reason?.trim()
+      )
+        throw new Order360Error("REASON_REQUIRED");
       const gate = await evaluateGate(input.orderId, input.to);
       if (!gate.passed) {
         if (!(
@@ -376,6 +394,190 @@ export async function transitionLifecycle(
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
+}
+
+export async function completeControlMeasurement(
+  input: {
+    orderId: number;
+    expectedVersion: number;
+    completedAt: Date;
+    comment?: string;
+    key: string;
+    requestHash: string;
+  },
+  actor: Order360Actor,
+) {
+  await assertAccess(input.orderId, actor);
+  if (!(new Set<Role>([Role.DIRECTOR, Role.MANAGER, Role.MEASURER])).has(actor.role))
+    throw new Order360Error("FORBIDDEN");
+  if (Number.isNaN(input.completedAt.getTime())) throw new Order360Error("INVALID_DATE");
+  const comment = input.comment?.trim().slice(0, 2000) || null;
+  return prisma.$transaction(async (tx) => {
+    const replay = await tx.orderLifecycleEvent.findUnique({ where: { idempotencyKey: input.key } });
+    if (replay) {
+      if (!compareRequestHash(replay.requestHash, input.requestHash)) throw new Order360Error("IDEMPOTENCY_CONFLICT");
+      return { event: replay, created: false };
+    }
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: {
+        measurements: { orderBy: [{ visitDate: "desc" }, { id: "desc" }], take: 1 },
+        productions: { where: { archivedAt: null }, orderBy: { createdAt: "desc" }, take: 1 },
+      },
+    });
+    if (!order) throw new Order360Error("NOT_FOUND");
+    if (order.version !== input.expectedVersion) throw new Order360Error("STALE_VERSION");
+    if (!(new Set<OrderLifecycle>([OrderLifecycle.CREATED, OrderLifecycle.PREPARATION])).has(order.lifecycle))
+      throw new Order360Error("INVALID_TRANSITION");
+
+    const updated = await tx.order.updateMany({
+      where: { id: order.id, version: input.expectedVersion },
+      data: {
+        controlMeasurementCompletedAt: input.completedAt,
+        lifecycle: OrderLifecycle.READY_FOR_PRODUCTION,
+        status: "Заготовка",
+        version: { increment: 1 },
+      },
+    });
+    if (updated.count !== 1) throw new Order360Error("STALE_VERSION");
+
+    const calendarTasks = await tx.calendarTask.findMany({
+      where: {
+        orderId: order.id,
+        type: CalendarTaskType.MEASUREMENT,
+        status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
+      },
+      select: { id: true, status: true },
+    });
+    for (const task of calendarTasks) {
+      await tx.calendarTask.update({
+        where: { id: task.id },
+        data: { status: CalendarTaskStatus.COMPLETED, completedAt: input.completedAt, completedById: actor.userId },
+      });
+      await tx.calendarTaskAudit.create({
+        data: {
+          taskId: task.id,
+          action: "MEASUREMENT_COMPLETED_FROM_ORDER",
+          before: { status: task.status },
+          after: { status: CalendarTaskStatus.COMPLETED },
+          actorId: actor.userId,
+        },
+      });
+    }
+
+    const measurement = order.measurements[0];
+    if (measurement && (new Set<MeasurementStatus>([MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS])).has(measurement.status)) {
+      await tx.measurement.update({
+        where: { id: measurement.id },
+        data: { status: MeasurementStatus.COMPLETED, completedAt: input.completedAt, comment: comment ?? measurement.comment },
+      });
+      await tx.measurementAudit.create({
+        data: {
+          measurementId: measurement.id,
+          action: "COMPLETED_FROM_ORDER",
+          actorId: actor.userId,
+          before: { status: measurement.status },
+          after: { status: MeasurementStatus.COMPLETED, orderLifecycle: OrderLifecycle.READY_FOR_PRODUCTION },
+          comment,
+        },
+      });
+    }
+
+    const production = order.productions[0]
+      ? await tx.production.update({
+          where: { id: order.productions[0].id },
+          data: { stage: INITIAL_PRODUCTION_STAGE, startDate: order.productions[0].startDate ?? input.completedAt, comment: comment ?? order.productions[0].comment },
+        })
+      : await tx.production.create({
+          data: {
+            orderId: order.id,
+            stage: INITIAL_PRODUCTION_STAGE,
+            percent: 0,
+            master: order.manager,
+            masterUserId: order.managerUserId,
+            startDate: input.completedAt,
+            comment,
+            idempotencyKey: `${input.key}:production`,
+            requestHash: input.requestHash,
+          },
+        });
+    await tx.productionStageHistory.create({
+      data: {
+        productionId: production.id,
+        fromStage: order.productions[0]?.stage ?? null,
+        toStage: INITIAL_PRODUCTION_STAGE,
+        changedByUserId: actor.userId,
+        comment,
+        idempotencyKey: `${input.key}:production-history`,
+        requestHash: input.requestHash,
+      },
+    });
+
+    for (const missing of [
+      ...(!order.partnerId ? [{ type: "PARTNER_REQUIRED", title: "Назначить партнёра/цех", suffix: "partner" }] : []),
+      ...(!order.partnerAgreedAt ? [{ type: "PARTNER_COST_REQUIRED", title: "Указать стоимость партнёра", suffix: "partner-cost" }] : []),
+    ]) {
+      await tx.orderBlocker.create({
+        data: {
+          orderId: order.id,
+          type: missing.type,
+          severity: OrderBlockerSeverity.WARNING,
+          title: missing.title,
+          comment: "Создано автоматически после контрольного замера",
+          responsibleUserId: order.managerUserId,
+          openedById: actor.userId,
+          idempotencyKey: `${input.key}:${missing.suffix}`,
+          requestHash: input.requestHash,
+        },
+      });
+    }
+
+    if (order.managerUserId) {
+      const dueAt = new Date(input.completedAt);
+      dueAt.setDate(dueAt.getDate() + 1);
+      await tx.calendarTask.create({
+        data: {
+          title: `Подготовить заказ ${order.number} к заготовке`,
+          description: comment,
+          type: CalendarTaskType.TASK,
+          dueAt,
+          status: CalendarTaskStatus.PLANNED,
+          priority: CalendarTaskPriority.IMPORTANT,
+          assigneeId: order.managerUserId,
+          creatorId: actor.userId,
+          clientId: order.clientId,
+          orderId: order.id,
+        },
+      });
+    }
+
+    const event = await tx.orderLifecycleEvent.create({
+      data: {
+        orderId: order.id,
+        type: "CONTROL_MEASUREMENT_COMPLETED",
+        fromLifecycle: order.lifecycle,
+        toLifecycle: OrderLifecycle.READY_FOR_PRODUCTION,
+        message: comment,
+        actorId: actor.userId,
+        actorName: actor.name,
+        role: actor.role,
+        metadata: { completedAt: input.completedAt.toISOString(), calendarTasksCompleted: calendarTasks.length, productionId: production.id },
+        idempotencyKey: input.key,
+        requestHash: input.requestHash,
+      },
+    });
+    await tx.orderEvent.create({
+      data: {
+        orderId: order.id,
+        title: "Замер снят",
+        description: comment ?? "Контрольный замер завершён, заказ передан в заготовку",
+        user: actor.name,
+        idempotencyKey: `${input.key}:timeline`,
+        requestHash: input.requestHash,
+      },
+    });
+    return { event, created: true, version: input.expectedVersion + 1, warnings: { partnerMissing: !order.partnerId, partnerCostMissing: !order.partnerAgreedAt } };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function openBlocker(

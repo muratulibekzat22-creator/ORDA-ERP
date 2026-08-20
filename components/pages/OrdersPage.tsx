@@ -11,14 +11,7 @@ import { Plus } from "lucide-react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import OrderTable, { type OrderListItem } from "@/components/orders/OrderTable";
-import {
-  ORDER_STAGE_KEYS,
-  ORDER_STAGE_LABELS,
-  isOrderOverdue,
-  orderDeadline,
-  projectOrderStage,
-  type OrderStageKey,
-} from "@/lib/orders/presentation";
+import { ORDER_STAGE_KEYS, ORDER_STAGE_LABELS, isOrderOverdue, orderDeadline, type OrderStageKey } from "@/lib/orders/presentation";
 
 type SettlementFilter =
   | "partner-payable"
@@ -27,8 +20,10 @@ type SettlementFilter =
   | "overdue-client"
   | "overdue-partner"
   | "client-payable"
-  | "without-contract";
-type Filter = "all" | OrderStageKey | "overdue" | SettlementFilter;
+  | "without-contract"
+  | "overdue-order";
+type Filter = "all" | "active" | "today" | OrderStageKey | "overdue" | SettlementFilter;
+type FilterMetric = { count: number; amount: string };
 const settlementFilters: SettlementFilter[] = [
   "partner-payable",
   "without-partner",
@@ -40,28 +35,6 @@ const settlementFilters: SettlementFilter[] = [
 ];
 const money = (value?: string) =>
   value == null ? "—" : `${Number(value).toLocaleString("ru-RU")} ₸`;
-
-function hasSettlementFilter(order: OrderListItem, filter: SettlementFilter) {
-  if (order.lifecycle === "CANCELLED") return false;
-  if (filter === "partner-payable")
-    return Boolean(order.partnerAgreedAt) && Number(order.partnerBalance) > 0;
-  if (filter === "without-partner") return !order.partner;
-  if (filter === "without-partner-price")
-    return Boolean(order.partner) && !order.partnerAgreedAt;
-  if (filter === "client-payable") return Number(order.balance) > 0;
-  if (filter === "without-contract") return order.documents.length === 0;
-  if (filter === "overdue-client")
-    return Boolean(
-      order.promisedAt &&
-      new Date(order.promisedAt) < new Date() &&
-      Number(order.balance) > 0,
-    );
-  return Boolean(
-    order.partnerPlannedReadyAt &&
-    new Date(order.partnerPlannedReadyAt) < new Date() &&
-    Number(order.partnerBalance) > 0,
-  );
-}
 
 function PartnerPayableTable({ orders }: { orders: OrderListItem[] }) {
   return (
@@ -76,7 +49,7 @@ function PartnerPayableTable({ orders }: { orders: OrderListItem[] }) {
               <div className="min-w-0">
                 <strong className="text-white">Заказ {order.number}</strong>
                 <p className="mt-1 break-words text-sm text-slate-300">
-                  {order.client.name}
+                  {order.client.name.trim() || "Клиент не указан"}
                 </p>
               </div>
               <span className="rounded-full bg-amber-500/10 px-2 py-1 text-xs text-amber-300">
@@ -148,7 +121,7 @@ function PartnerPayableTable({ orders }: { orders: OrderListItem[] }) {
                 <td className="px-4 py-4 font-semibold text-white">
                   {order.number}
                 </td>
-                <td className="px-4 py-4">{order.client.name}</td>
+                <td className="px-4 py-4">{order.client.name.trim() || "Клиент не указан"}</td>
                 <td className="px-4 py-4">{order.partner?.name ?? "—"}</td>
                 <td className="px-4 py-4">{money(order.partnerPrice)}</td>
                 <td className="px-4 py-4 text-emerald-300">
@@ -185,7 +158,7 @@ function WithoutPartnerTable({ orders }: { orders: OrderListItem[] }) {
           >
             <strong className="text-white">Заказ {order.number}</strong>
             <p className="mt-1 text-sm text-slate-300">
-              {order.client.name} · {order.material}
+              {order.client.name.trim() || "Клиент не указан"} · {order.material}
             </p>
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
               <p className="text-slate-400">
@@ -249,7 +222,7 @@ function WithoutPartnerTable({ orders }: { orders: OrderListItem[] }) {
                 <td className="px-4 py-4 font-semibold text-white">
                   {order.number}
                 </td>
-                <td className="px-4 py-4">{order.client.name}</td>
+                <td className="px-4 py-4">{order.client.name.trim() || "Клиент не указан"}</td>
                 <td className="px-4 py-4">{money(order.amount)}</td>
                 <td className="px-4 py-4 text-emerald-300">
                   {money(order.prepayment)}
@@ -276,15 +249,35 @@ function WithoutPartnerTable({ orders }: { orders: OrderListItem[] }) {
   );
 }
 
+function FilterGroup({ title, items, active, counts, metrics, onSelect, showAmount = false }: {
+  title: string;
+  items: Array<[Filter, string]>;
+  active: Filter;
+  counts: Record<Filter, number>;
+  metrics: Partial<Record<Filter, FilterMetric>>;
+  onSelect: (filter: Filter) => void;
+  showAmount?: boolean;
+}) {
+  return <div>
+    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {items.map(([key, label]) => <button key={key} type="button" onClick={() => onSelect(key)} className={`min-h-11 min-w-0 rounded-xl border px-3 py-2 text-left text-sm ${active === key ? "border-blue-500 bg-blue-500/10 text-white" : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700"}`}>
+        <span className="block break-words font-medium">{label}</span>
+        <span className="mt-0.5 block text-xs text-slate-500">{counts[key]} заказов{showAmount ? ` · ${money(metrics[key]?.amount ?? "0")}` : ""}</span>
+      </button>)}
+    </div>
+  </div>;
+}
+
 export default function OrdersPage({
   initialSettlementFilter,
 }: {
   initialSettlementFilter?: string;
 }) {
   const { data: session } = useSession();
-  const initial =
-    initialSettlementFilter === "overdue" ||
-    settlementFilters.includes(initialSettlementFilter as SettlementFilter)
+  const initial = initialSettlementFilter === "overdue"
+    ? "overdue-order"
+    : settlementFilters.includes(initialSettlementFilter as SettlementFilter)
       ? (initialSettlementFilter as Filter)
       : "all";
   const [orders, setOrders] = useState<OrderListItem[]>([]),
@@ -298,7 +291,9 @@ export default function OrdersPage({
     [page, setPage] = useState(1),
     [totalPages, setTotalPages] = useState(1),
     [totalOrders, setTotalOrders] = useState(0),
-    [filterTotals, setFilterTotals] = useState<Partial<Record<Filter, number>>>({});
+    [filterMetrics, setFilterMetrics] = useState<Partial<Record<Filter, FilterMetric>>>({}),
+    [cities, setCities] = useState<string[]>([]),
+    [city, setCity] = useState("");
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const internalSettlement = ["DIRECTOR", "ACCOUNTANT"].includes(
     session?.user.role ?? "",
@@ -323,6 +318,7 @@ export default function OrdersPage({
       });
       if (view === "deleted") params.set("deletedOnly", "true");
       if (serverQuery) params.set("query", serverQuery);
+      if (city) params.set("city", city);
       if (requestFilter !== "all") params.set("filter", requestFilter);
       const response = await fetch(`/api/orders?${params}`),
         payload = (await response.json()) as
@@ -335,6 +331,8 @@ export default function OrdersPage({
                 totalPages: number;
               };
               error?: string;
+              filterMetrics?: Partial<Record<Filter, FilterMetric>>;
+              filters?: { cities?: string[] };
             };
       if (!response.ok || Array.isArray(payload) || !Array.isArray(payload.data))
         throw new Error(
@@ -348,11 +346,8 @@ export default function OrdersPage({
       setPage(payload.pagination?.page ?? targetPage);
       setTotalPages(payload.pagination?.totalPages ?? 1);
       setTotalOrders(payload.pagination?.total ?? payload.data.length);
-      if (!serverQuery)
-        setFilterTotals((current) => ({
-          ...current,
-          [requestFilter]: payload.pagination?.total ?? payload.data!.length,
-        }));
+      setFilterMetrics(payload.filterMetrics ?? {});
+      setCities(payload.filters?.cities ?? []);
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Не удалось загрузить заказы",
@@ -360,7 +355,7 @@ export default function OrdersPage({
     } finally {
       setLoading(false);
     }
-  }, [requestFilter, serverQuery, view]);
+  }, [city, requestFilter, serverQuery, view]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
@@ -368,29 +363,10 @@ export default function OrdersPage({
   const director = session?.user.role === "DIRECTOR";
   const canManage = ["DIRECTOR", "MANAGER"].includes(session?.user.role ?? "");
   const activeFilter = requestFilter;
-  const counts = useMemo(() => {
-    const result = Object.fromEntries(
-      ORDER_STAGE_KEYS.map((key) => [key, 0]),
-    ) as Record<OrderStageKey, number>;
-    let overdue = 0;
-    for (const order of orders) {
-      result[projectOrderStage(order.lifecycle, order.productions[0]?.stage)] +=
-        1;
-      if (isOrderOverdue(orderDeadline(order), order.lifecycle)) overdue += 1;
-    }
-    return {
-      ...result,
-      ...filterTotals,
-      all: filterTotals.all ?? Math.max(totalOrders, orders.length),
-      overdue,
-      ...Object.fromEntries(
-        settlementFilters.map((key) => [
-          key,
-          orders.filter((order) => hasSettlementFilter(order, key)).length,
-        ]),
-      ),
-    } as Record<Filter, number>;
-  }, [filterTotals, orders, totalOrders]);
+  const counts = useMemo(() => Object.fromEntries(
+    (["all", "active", "today", "overdue", "overdue-order", ...ORDER_STAGE_KEYS, ...settlementFilters] as Filter[])
+      .map((key) => [key, filterMetrics[key]?.count ?? (key === activeFilter ? totalOrders : 0)]),
+  ) as Record<Filter, number>, [activeFilter, filterMetrics, totalOrders]);
   const filtered = useMemo(
     () =>
       orders
@@ -398,15 +374,7 @@ export default function OrdersPage({
           const haystack =
             `${order.number} ${order.client.name} ${order.client.phone} ${order.client.city}`.toLowerCase();
           if (deferredQuery && !haystack.includes(deferredQuery)) return false;
-          if (activeFilter === "overdue")
-            return isOrderOverdue(orderDeadline(order), order.lifecycle);
-          if (settlementFilters.includes(activeFilter as SettlementFilter))
-            return hasSettlementFilter(order, activeFilter as SettlementFilter);
-          return (
-            activeFilter === "all" ||
-            projectOrderStage(order.lifecycle, order.productions[0]?.stage) ===
-              activeFilter
-          );
+          return true;
         })
         .sort((a, b) => {
           if (
@@ -426,23 +394,13 @@ export default function OrdersPage({
         }),
     [orders, deferredQuery, activeFilter],
   );
-  const tabs: Array<[Filter, string]> = [
-    ["all", "Все"],
-    ...ORDER_STAGE_KEYS.map(
-      (key) => [key, ORDER_STAGE_LABELS[key]] as [Filter, string],
-    ),
-    ["overdue", "Просрочены"],
-    ...(internalSettlement
-      ? ([
-          ["without-partner", "Без партнёра"],
-          ["without-partner-price", "Без стоимости цеха"],
-          ["partner-payable", "К выплате цеху"],
-          ["client-payable", "К получению от клиентов"],
-          ["without-contract", "Без договора"],
-          ["overdue-client", "Просрочен клиент"],
-          ["overdue-partner", "Просрочен цех"],
-        ] as Array<[Filter, string]>)
-      : []),
+  const quickFilters: Array<[Filter, string]> = [["all", "Все"], ["active", "Активные"], ["today", "Сегодня"], ["overdue-order", "Просроченные"], ["completed", "Завершённые"]];
+  const stageFilters = ORDER_STAGE_KEYS.map((key) => [key, ORDER_STAGE_LABELS[key]] as [Filter, string]);
+  const financeFilters: Array<[Filter, string]> = [
+    ["client-payable", "К получению от клиентов"], ["partner-payable", "К выплате партнёрам"],
+    ["without-partner", "Без партнёра"], ["without-partner-price", "Без стоимости партнёра"],
+    ["without-contract", "Без договора"], ["overdue-client", "Просрочена оплата клиента"],
+    ["overdue-partner", "Просрочен срок партнёра"], ["overdue-order", "Просрочен срок заказа"],
   ];
   const summaryCards: Array<[Filter, string]> = [
     ["all", "Все"],
@@ -450,7 +408,7 @@ export default function OrdersPage({
     ["preparation", "В работе"],
     ["ready", "Готовы к установке"],
     ["installation", "На установке"],
-    ["overdue", "Просрочены"],
+    ["overdue-order", "Просрочены"],
   ];
   if (internalSettlement)
     summaryCards.push(
@@ -521,7 +479,7 @@ export default function OrdersPage({
             <span className="block text-xs text-slate-400">{label}</span>
             <strong
               className={
-                (key === "overdue" ||
+                (key === "overdue-order" ||
                   settlementFilters.includes(key as SettlementFilter)) &&
                 counts[key]
                   ? "text-amber-300"
@@ -534,29 +492,20 @@ export default function OrdersPage({
         ))}
       </div>
       <div className="rounded-2xl border border-slate-800 bg-[#101827] p-3">
-        <input
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setVisibleCount(30);
-          }}
-          placeholder="Номер заказа, клиент, телефон или город"
-          className="min-h-11 w-full rounded-xl bg-slate-950 px-4 text-white outline-none sm:max-w-md"
-        />
-        <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-          {tabs.map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => {
-                setFilter(key);
-                setVisibleCount(30);
-              }}
-              className={`whitespace-nowrap rounded-full px-4 py-2 text-sm ${activeFilter === key ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`}
-            >
-              {label} {counts[key]}
-            </button>
-          ))}
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
+          <input value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(30); }} placeholder="Номер заказа, клиент, телефон или город" className="min-h-11 min-w-0 rounded-xl bg-slate-950 px-4 text-white outline-none" />
+          <select value={city} onChange={(event) => { setCity(event.target.value); setVisibleCount(30); }} className="min-h-11 min-w-0 rounded-xl bg-slate-950 px-3 text-white outline-none" aria-label="Фильтр по городу">
+            <option value="">Все города</option>{cities.map((value) => <option key={value}>{value}</option>)}
+          </select>
         </div>
+        <details className="mt-3 rounded-xl border border-slate-800 p-3" open>
+          <summary className="min-h-8 cursor-pointer font-semibold text-blue-300">Фильтры</summary>
+          <div className="mt-3 grid gap-5">
+            <FilterGroup title="Быстрые фильтры" items={quickFilters} active={activeFilter} counts={counts} metrics={filterMetrics} onSelect={(value) => { setFilter(value); setVisibleCount(30); }}/>
+            <FilterGroup title="Этап производства" items={stageFilters} active={activeFilter} counts={counts} metrics={filterMetrics} onSelect={(value) => { setFilter(value); setVisibleCount(30); }}/>
+            {internalSettlement ? <FilterGroup title="Финансы и проблемы" items={financeFilters} active={activeFilter} counts={counts} metrics={filterMetrics} showAmount onSelect={(value) => { setFilter(value); setVisibleCount(30); }}/> : null}
+          </div>
+        </details>
       </div>
       {error ? (
         <p role="alert" className="text-red-300">

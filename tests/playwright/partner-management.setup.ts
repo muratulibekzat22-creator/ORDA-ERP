@@ -18,11 +18,16 @@ export default async function setup() {
   await runWithSystemAccess(() => prisma.company.upsert({ where: { id: 1 }, update: { active: true }, create: { id: 1, slug: company.companySlug, name: company.companyName, isDemo: false } }));
   const hash = await bcrypt.hash(playwrightPassword, 8);
   await runWithTenant(company, async () => {
-    for (const role of [Role.DIRECTOR, Role.MANAGER, Role.ACCOUNTANT]) {
+    for (const [role, permission] of [
+      [Role.DIRECTOR, Permission.partners],
+      [Role.DIRECTOR, Permission.orders],
+      [Role.DIRECTOR, Permission.documents],
+      [Role.MANAGER, Permission.orders],
+    ] as const) {
       await prisma.rolePermission.upsert({
-        where: { companyId_role_permission: { companyId: company.companyId, role, permission: Permission.partners } },
+        where: { companyId_role_permission: { companyId: company.companyId, role, permission } },
         update: {},
-        create: { role, permission: Permission.partners },
+        create: { role, permission },
       });
     }
     for (const [key, email] of Object.entries(playwrightUsers)) {

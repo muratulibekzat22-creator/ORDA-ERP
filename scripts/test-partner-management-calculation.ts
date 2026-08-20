@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 
-import { PartnerRewardRule, PartnerSettlementOperationStatus, PartnerSettlementOperationType, PartnerSettlementStatus } from "@prisma/client";
+import { PartnerRewardRule, PartnerSettlementOperationStatus, PartnerSettlementOperationType, PartnerSettlementStatus, PayrollAccrualType, PayrollDirection, Role } from "@prisma/client";
 
+import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { calculatePartnerSettlement, calculateReward } from "@/lib/partners/settlement";
 
 const equal = (actual: { toFixed(scale: number): string }, expected: string, label: string) =>
@@ -38,4 +39,27 @@ const refunded = calculatePartnerSettlement({ orderAmount: "1000000", companyPro
 ] });
 equal(refunded.received, "250000.00", "partner refund reduces received");
 equal(refunded.partnerBalance, "-150000.00", "partner refund reduces money held by partner");
+
+const economy = calculateOrderEconomy({
+  totalSale: "5200000",
+  payments: [{ type: "CLIENT_PAYMENT", amount: "3000000" }],
+  partnerId: 1,
+  partnerAgreed: "3700000",
+  partnerAgreedAt: new Date("2026-08-19T00:00:00Z"),
+  ledgerEntries: [{ direction: "EXPENSE", amount: "20000", source: "MANUAL", category: "MATERIALS", type: "DIRECT_EXPENSE", affectsProfit: true }],
+  payrollAccruals: [
+    { type: PayrollAccrualType.ORDER_BONUS, direction: PayrollDirection.INCREASE, amount: "50000", employee: { user: { role: Role.MANAGER }, position: "Менеджер" } },
+    { type: PayrollAccrualType.MEASUREMENT_BONUS, direction: PayrollDirection.INCREASE, amount: "30000", employee: { user: { role: Role.MEASURER }, position: "Замерщик" } },
+    { type: PayrollAccrualType.EXTRA_BONUS, direction: PayrollDirection.INCREASE, amount: "100000", employee: { user: { role: Role.INSTALLER }, position: "Установщик" } },
+  ],
+});
+equal(economy.client.netReceived, "3000000.00", "client payments are counted once");
+equal(economy.client.remaining, "2200000.00", "client remaining is independent from partner payment");
+equal(economy.partner.accrued, "3700000.00", "agreed partner cost creates full accrual");
+equal(economy.partner.paid, "0.00", "agreed cost is not a payout");
+equal(economy.partner.remaining, "3700000.00", "partner remaining before payout");
+equal(economy.profit.marginBeforePayroll, "1480000.00", "margin before payroll acceptance example");
+equal(economy.profit.payrollAccrued, "180000.00", "order-linked payroll accruals");
+equal(economy.profit.netProfit, "1300000.00", "net profit acceptance example");
+equal(economy.profit.netMarginPercent, "25.00", "net margin acceptance example");
 console.log("Partner calculations: fixed/order/paid/profit/manual, Decimal precision, debt and reversal PASS");

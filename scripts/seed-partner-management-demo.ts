@@ -22,6 +22,7 @@ const partnerNames = [
 ];
 const kinds = Object.values(PartnerBusinessType);
 const rules = [PartnerRewardRule.FIXED, PartnerRewardRule.ORDER_PERCENT, PartnerRewardRule.PAID_PERCENT, PartnerRewardRule.PROFIT_PERCENT] as const;
+const cities = ["Алматы", "Караганда", "Астана", "Шымкент", "Отеген батыр", "Конаев", "Талдыкорган", "Каскелен"];
 
 export async function seedPartnerManagementDemo() {
   const setup = await runWithSystemAccess(async () => {
@@ -44,7 +45,7 @@ export async function seedPartnerManagementDemo() {
       partners.push(managed ?? await createManagedPartner({
         name: partnerNames[index], kind: kinds[index] ?? PartnerBusinessType.OTHER,
         phone: `+7700020${String(index).padStart(4, "0")}`,
-        city: "Алматы", contactPerson: `Demo Contact ${index + 1}`,
+        city: cities[index % cities.length], contactPerson: `Demo Contact ${index + 1}`,
         defaultRewardRule: index % 4 === 0 ? PartnerRewardRule.FIXED : rules[index % rules.length],
         defaultRewardFixedAmount: index % 4 === 0 ? "100000" : null,
         defaultRewardPercent: index % 4 === 0 ? null : "10",
@@ -58,7 +59,7 @@ export async function seedPartnerManagementDemo() {
       const amount = 1_000_000 + index * 25_000;
       const key = `${seedVersion}:order:${index}`;
       const requestHash = createRequestHash({ key, amount, partnerId: partner.id });
-      const client = { name: `Demo Partner Client ${String(index + 1).padStart(2, "0")}`, phone: `+7701200${String(index).padStart(4, "0")}`, city: "Алматы", address: `Demo object ${index + 1}` };
+      const client = { name: `Demo Partner Client ${String(index + 1).padStart(2, "0")}`, phone: `+7701200${String(index).padStart(4, "0")}`, city: cities[index % cities.length], address: `Demo object ${index + 1}` };
       const staircase = index % 2 ? "П-образная лестница" : "Прямая лестница";
       const material = index % 3 ? "Ясень" : "Дуб";
       const reward = rule === PartnerRewardRule.FIXED ? { rewardRule: rule, fixedAmount: "100000" } : { rewardRule: rule, rewardPercent: "10" };
@@ -82,6 +83,8 @@ export async function seedPartnerManagementDemo() {
         relations.push(result.relation);
       }
     }
+    for (let index = 0; index < relations.length; index += 1)
+      await prisma.client.update({ where: { id: relations[index].order.client.id }, data: { name: `Demo Partner Client ${String(index + 1).padStart(2, "0")}`, city: cities[index % cities.length] } });
     for (let index = 0; index < relations.length; index += 1) {
       const relation = relations[index];
       const firstType = index % 3 === 1 ? PartnerSettlementOperationType.CLIENT_TO_PARTNER : PartnerSettlementOperationType.CLIENT_TO_COMPANY;

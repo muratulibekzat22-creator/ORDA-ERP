@@ -9,6 +9,7 @@ import { getOrder } from "@/lib/services/order.service";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 import { enterTenantFromSession } from "@/lib/tenant-context";
+import { calculateOrderEconomy } from "@/lib/orders/economy";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -66,6 +67,19 @@ export async function getAuthorizedOrder(id: number) {
         _count.payrollAccruals > 0,
     },
     settlement: buildOrderSettlement(source),
+    economy: calculateOrderEconomy({
+      totalSale: source.amount,
+      commercialAdjustments: source.commercialAdjustments,
+      payments: source.payments,
+      partnerId: source.partnerId,
+      partnerAgreed: source.partnerPrice,
+      partnerAgreedAt: source.partnerAgreedAt,
+      partnerAgreedBy: source.partnerAssignmentHistory[0]?.author?.name ?? null,
+      partnerDueAt: source.partnerPlannedReadyAt,
+      clientDueAt: source.promisedAt,
+      payrollAccruals: source.payrollAccruals,
+      ledgerEntries: source.companyLedgerEntries,
+    }),
   };
   if (role === Role.DIRECTOR) return order;
   if (role === Role.ACCOUNTANT)
@@ -91,6 +105,9 @@ export async function getAuthorizedOrder(id: number) {
       payments: [],
       partnerAssignmentHistory: [],
       payrollAccruals: [],
+      commercialAdjustments: [],
+      companyLedgerEntries: [],
+      economy: undefined,
       measurements: order.measurements.map((measurement) => {
         const safe = { ...measurement } as Partial<typeof measurement>;
         delete safe.measurerUser;
@@ -122,14 +139,19 @@ export async function getAuthorizedOrder(id: number) {
     payments: [],
     partnerAssignmentHistory: [],
     payrollAccruals: [],
+    commercialAdjustments: [],
+    companyLedgerEntries: [],
+    economy: undefined,
     measurements: order.measurements.map((measurement) => {
       const safe = { ...measurement } as Partial<typeof measurement>;
       delete safe.measurerUser;
       return safe;
     }),
-    settlement: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
-      ? undefined
-      : { client: order.settlement.client },
+    settlement: role === Role.MANAGER
+      ? { client: order.settlement.client, manager: order.settlement.manager }
+      : [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
+        ? undefined
+        : { client: order.settlement.client },
     amount: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
       ? undefined
       : order.amount,

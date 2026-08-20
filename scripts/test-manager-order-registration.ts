@@ -50,7 +50,7 @@ async function main() {
       managerUserId: managerA.id,
       actorRole: Role.MANAGER,
     };
-    const first = await createOrder({ ...base, client: { name: "Иван", phone, city: "Алматы", address: "Алматы, тестовый адрес" }, idempotencyKey: `${tag}-first`, requestHash: hash("first") });
+    const first = await createOrder({ ...base, client: { name: "Иван", phone, city: "Караганда", address: "Караганда, тестовый адрес" }, idempotencyKey: `${tag}-first`, requestHash: hash("first") });
     orderIds.push(first.order.id);
     clientIds.push(first.order.clientId);
     assert.equal(Number(first.order.balance), 2_000_000);
@@ -65,6 +65,22 @@ async function main() {
     orderIds.push(second.order.id);
     assert.equal(second.order.clientId, first.order.clientId);
     assert.equal(await prisma.client.count({ where: { OR: [{ phone }, { whatsapp: phone }] } }), 1);
+    const canonicalClient = await prisma.client.findUniqueOrThrow({ where: { id: first.order.clientId } });
+    assert.equal(canonicalClient.name, "Иван", "duplicate lookup overwrote canonical client name");
+    assert.equal(canonicalClient.city, "Караганда", "duplicate lookup overwrote canonical client city");
+
+    const arbitraryPhone = `+7701${String(Date.now() + 1).slice(-7)}`;
+    const arbitrary = await createOrder({ ...base, prepayment: 0, client: { name: "Айгуль", phone: arbitraryPhone, city: "Отеген батыр", address: "Отеген батыр" }, idempotencyKey: `${tag}-arbitrary`, requestHash: hash("arbitrary") });
+    orderIds.push(arbitrary.order.id); clientIds.push(arbitrary.order.clientId);
+    assert.equal((await prisma.client.findUniqueOrThrow({ where: { id: arbitrary.order.clientId } })).city, "Отеген батыр", "arbitrary city was not persisted");
+    const astanaPhone = `+7702${String(Date.now() + 2).slice(-7)}`;
+    const astana = await createOrder({ ...base, prepayment: 0, client: { name: "Болат", phone: astanaPhone, city: "Астана", address: "Астана" }, idempotencyKey: `${tag}-astana`, requestHash: hash("astana") });
+    orderIds.push(astana.order.id); clientIds.push(astana.order.clientId);
+    assert.equal((await prisma.client.findUniqueOrThrow({ where: { id: astana.order.clientId } })).city, "Астана", "Astana city was not persisted");
+    await assert.rejects(
+      () => createOrder({ ...base, prepayment: 0, client: { name: " ", phone: `+7703${String(Date.now() + 3).slice(-7)}`, city: "Шымкент", address: "" }, idempotencyKey: `${tag}-blank-name`, requestHash: hash("blank-name") }),
+      /CLIENT_NAME_REQUIRED/,
+    );
 
     await assert.rejects(
       () => createOrder({ ...base, prepayment: 0, manager: managerB.name, managerUserId: managerB.id, client: { name: "Иван", phone, city: "Алматы", address: "" }, idempotencyKey: `${tag}-foreign`, requestHash: hash("foreign") }),
@@ -79,10 +95,21 @@ async function main() {
     console.log("manager order registration: ownership, client deduplication, backend balance and canonical initial payment passed");
   } finally {
     if (orderIds.length) {
+      const cashShiftIds = (await prisma.payment.findMany({ where: { orderId: { in: orderIds }, cashShiftId: { not: null } }, select: { cashShiftId: true } })).flatMap((item) => item.cashShiftId == null ? [] : [item.cashShiftId]);
+      const receiptDocumentIds = (await prisma.paymentReceipt.findMany({ where: { orderId: { in: orderIds } }, select: { documentId: true } })).map((item) => item.documentId);
+      if (receiptDocumentIds.length) {
+        await prisma.documentAudit.deleteMany({ where: { documentId: { in: receiptDocumentIds } } });
+        await prisma.documentVersion.deleteMany({ where: { documentId: { in: receiptDocumentIds } } });
+        await prisma.paymentReceipt.deleteMany({ where: { orderId: { in: orderIds } } });
+        await prisma.document.deleteMany({ where: { id: { in: receiptDocumentIds } } });
+      }
+      await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.companyLedgerEntry.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.payment.deleteMany({ where: { orderId: { in: orderIds } } });
+      if (cashShiftIds.length) await prisma.cashShift.deleteMany({ where: { id: { in: cashShiftIds }, payments: { none: {} }, receipts: { none: {} } } });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
     }
     if (clientIds.length) await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
