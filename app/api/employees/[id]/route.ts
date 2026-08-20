@@ -24,6 +24,13 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if ("password" in body) return NextResponse.json({ error: "Используйте защищённое действие изменения пароля" }, { status: auth.session!.user.role === Role.DIRECTOR ? 400 : 403 });
     const role = body.role === undefined ? undefined : Object.values(Role).includes(body.role as Role) ? body.role as Role : null;
     if (role === null) return NextResponse.json({ error: "Некорректная роль" }, { status: 400 });
+    const email = body.email === undefined
+      ? undefined
+      : typeof body.email === "string"
+        ? body.email.trim().toLowerCase()
+        : null;
+    if (email !== undefined && (!email || !email.includes("@")))
+      return NextResponse.json({ error: "Некорректный email" }, { status: 400 });
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return NextResponse.json({ error: "Сотрудник не найден" }, { status: 404 });
     const partnerId = Number(body.partnerId);
@@ -38,11 +45,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         await tx.partner.update({ where: { id: partnerId }, data: { userId: id } });
       } else if (role && user.role === Role.PARTNER) await tx.partner.updateMany({ where: { userId: id }, data: { userId: null } });
       const accessChanged = (typeof body.active === "boolean" && body.active !== user.active) || (role !== undefined && role !== user.role);
-      const result = await tx.user.update({ where: { id }, data: { ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}), ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}), ...(typeof body.active === "boolean" ? { active: body.active } : {}), ...(role ? { role } : {}), ...(accessChanged ? { sessionVersion: { increment: 1 } } : {}) }, select });
+      const result = await tx.user.update({ where: { id }, data: { ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}), ...(email !== undefined ? { email } : {}), ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}), ...(typeof body.active === "boolean" ? { active: body.active } : {}), ...(role ? { role } : {}), ...(accessChanged || email !== undefined && email !== user.email ? { sessionVersion: { increment: 1 } } : {}) }, select });
       await tx.employeePayrollProfile.updateMany({
         where: { userId: id },
         data: {
           ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
+          ...(email !== undefined ? { email } : {}),
           ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}),
           ...(role ? { position: role } : {}),
         },
@@ -54,6 +62,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return NextResponse.json(updated);
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002")
+      return NextResponse.json({ error: "Аккаунт с таким email уже существует" }, { status: 409 });
     const message = code === "LAST_DIRECTOR" ? "Нельзя отключить или изменить последнего активного директора" : code === "PARTNER_REQUIRED" ? "Для роли PARTNER требуется partnerId" : code === "PARTNER_NOT_FOUND" ? "Партнёр не найден" : code === "PARTNER_ALREADY_LINKED" ? "Партнёр уже связан с пользователем" : "Не удалось обновить сотрудника";
     return NextResponse.json({ error: message }, { status: code === "LAST_DIRECTOR" || code === "PARTNER_ALREADY_LINKED" || error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" ? 409 : code.startsWith("PARTNER_") ? 400 : 500 });
   }
