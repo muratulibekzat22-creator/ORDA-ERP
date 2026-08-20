@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import {
@@ -35,8 +36,11 @@ type Payment = {
   type: string;
   amount: string;
   paymentDate: string;
+  method?: string | null;
   comment?: string | null;
+  paidBy?: { id: number; name: string } | null;
   reversalOfId?: number | null;
+  reversalOf?: { id: number; type: string } | null;
   reversedAt?: string | null;
   reversal?: { id: number } | null;
 };
@@ -50,6 +54,8 @@ type Confirmation = {
   status: "PENDING" | "CONFIRMED" | "REJECTED";
   reviewComment?: string | null;
   confirmedPaymentId?: number | null;
+  createdBy?: { id: number; name: string } | null;
+  reviewedBy?: { id: number; name: string } | null;
   createdAt: string;
 };
 type Advance = {
@@ -57,7 +63,10 @@ type Advance = {
   status: string;
   requestedAmount: string;
   approvedAmount?: string | null;
+  method?: string | null;
   comment?: string | null;
+  reviewedBy?: { id: number; name: string } | null;
+  payment?: { id: number; method?: string | null; paymentDate: string } | null;
   createdAt: string;
 };
 type PayrollRow = {
@@ -78,19 +87,22 @@ type PayrollRow = {
   }>;
   currentSalary: number;
   salaryEffectiveFrom: string;
+  plannedDays: number;
+  workedDays: number;
+  calculatedSalary: number;
   accruals: Accrual[];
   payments: Payment[];
   paymentConfirmations: Confirmation[];
   advanceRequests: Advance[];
-  totals: { accrued: number; paid: number; pending: number; payable: number };
-  breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
-  bonusAccruals: Array<{ id: number; orderId?: number | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
+  totals: { accrued: number; paid: number; received: number; deductions: number; pending: number; payable: number };
+  breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; otherAccruals: number; advancesPaid: number; partialPayments: number; finalPayments: number; salaryPayments: number; deductions: number; totalAccrued: number; totalPaid: number; payable: number };
+  bonusAccruals: Array<{ id: number; orderId?: number | null; measurementId?: number | null; type: string; amount: number; rule: "FIXED" | "PAID_PERCENT" | "PROFIT_PERCENT"; ruleValue: number; basisAmount: number; order: { id: number; number: string; amount: number; paid: number; profit: number; client: { id: number; name: string }; contract: { id: number; number: string } | null } | null; approvedBy?: { id: number; name: string } | null; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
 };
 type Payload = {
   period: { id: number; year: number; month: number; status: string } | null;
   rows: PayrollRow[];
-  totals: { accrued: number; paid: number; pending: number; payable: number };
-  breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
+  totals: { accrued: number; paid: number; received: number; deductions: number; pending: number; payable: number };
+  breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; otherAccruals: number; advancesPaid: number; partialPayments: number; finalPayments: number; salaryPayments: number; deductions: number; totalAccrued: number; totalPaid: number; payable: number };
   settings: { paydayDayOfMonth: number };
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
@@ -104,6 +116,7 @@ type Form = {
   type: string;
   accrualId: string;
   method: string;
+  bonusRule: "FIXED" | "PAID_PERCENT" | "PROFIT_PERCENT";
 };
 
 const months = [
@@ -159,6 +172,12 @@ const labels: Record<string, string> = {
   REVIEW: "На проверке",
   CLOSED: "Закрыт",
 };
+const methodLabels: Record<string, string> = {
+  cash: "Наличные",
+  kaspi: "Kaspi",
+  bank_transfer: "Банковский перевод",
+  other: "Другое",
+};
 const currency = (value: number | string) =>
   `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`;
 const dateLabel = (value: string) =>
@@ -175,6 +194,9 @@ const errorLabels: Record<string, string> = {
   EMPLOYEE_NOT_FOUND: "Сотрудник не найден",
   ORDER_REQUIRED: "Для бонуса за заказ укажите заказ",
   ORDER_NOT_FOUND: "Заказ не найден",
+  ORDER_MANAGER_MISMATCH: "Заказ закреплён за другим сотрудником",
+  INVALID_BONUS_VALUE: "Укажите корректное правило и значение бонуса",
+  INVALID_BONUS_PERCENT: "Процент бонуса должен быть от 0 до 100",
   INVALID_ACTION: "Операция не поддерживается",
 };
 const emptyForm = (): Form => ({
@@ -185,6 +207,7 @@ const emptyForm = (): Form => ({
   type: "SALARY_PAYMENT",
   accrualId: "",
   method: "bank_transfer",
+  bonusRule: "FIXED",
 });
 
 export default function PayrollPage() {
@@ -197,8 +220,8 @@ export default function PayrollPage() {
   const [data, setData] = useState<Payload>({
     period: null,
     rows: [],
-    totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
-    breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+    totals: { accrued: 0, paid: 0, received: 0, deductions: 0, pending: 0, payable: 0 },
+    breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, otherAccruals: 0, advancesPaid: 0, partialPayments: 0, finalPayments: 0, salaryPayments: 0, deductions: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
     settings: { paydayDayOfMonth: 1 },
   });
   const [loading, setLoading] = useState(true),
@@ -208,7 +231,9 @@ export default function PayrollPage() {
     [operation, setOperation] = useState<Operation | null>(null),
     [target, setTarget] = useState<PayrollRow | null>(null);
   const [form, setForm] = useState<Form>(emptyForm),
-    [advanceAmount, setAdvanceAmount] = useState("");
+    [advanceAmount, setAdvanceAmount] = useState(""),
+    [advanceMethod, setAdvanceMethod] = useState("bank_transfer"),
+    [advanceComment, setAdvanceComment] = useState("");
   const [receipt, setReceipt] = useState({
     amount: "",
     type: "SALARY_PAYMENT",
@@ -347,6 +372,10 @@ export default function PayrollPage() {
                 ? "ORDER_BONUS"
                 : "EXTRA_BONUS",
         orderId: form.orderId ? Number(form.orderId) : undefined,
+        bonusRule:
+          operation === "bonus" && form.orderId ? form.bonusRule : undefined,
+        bonusValue:
+          operation === "bonus" && form.orderId ? amount : undefined,
       };
     if (await run(body)) {
       setOperation(null);
@@ -371,10 +400,10 @@ export default function PayrollPage() {
         action: "review-advance",
         id: item.id,
         status: decision,
-        approvedAmount:
-          decision === "APPROVED" ? Number(item.requestedAmount) : undefined,
       },
-      decision === "APPROVED" ? "Аванс одобрен" : "Запрос отклонён",
+      decision === "APPROVED"
+        ? "Аванс подтверждён, выплата и финансовая операция созданы"
+        : "Запрос отклонён",
     );
   const payAdvance = (item: Advance) =>
     run(
@@ -384,13 +413,7 @@ export default function PayrollPage() {
   const reviewConfirmation = async (
     item: Confirmation,
     decision: "CONFIRM" | "REJECT",
-    editAmount = false,
   ) => {
-    const amount = editAmount
-      ? Number(window.prompt("Подтверждённая сумма", String(item.amount)))
-      : Number(item.amount);
-    if (decision === "CONFIRM" && (!Number.isFinite(amount) || amount <= 0))
-      return setError("Введите корректную сумму");
     const comment = decision === "REJECT"
       ? window.prompt("Причина отклонения", "Выплата не подтверждена")?.trim()
       : item.comment ?? "";
@@ -400,9 +423,6 @@ export default function PayrollPage() {
         action: "review-payment-confirmation",
         id: item.id,
         decision,
-        amount: decision === "CONFIRM" ? amount : undefined,
-        paymentDate: item.claimedPaymentDate,
-        method: item.method,
         comment,
       },
       decision === "CONFIRM" ? "Выплата подтверждена" : "Сообщение отклонено",
@@ -440,6 +460,8 @@ export default function PayrollPage() {
         body: JSON.stringify({
           periodId: data.period.id,
           amount: Number(advanceAmount),
+          method: advanceMethod,
+          comment: advanceComment,
         }),
       }),
       result = await response.json().catch(() => ({}));
@@ -447,6 +469,7 @@ export default function PayrollPage() {
       setError(errorLabels[result.error] ?? "Не удалось отправить запрос");
     else {
       setAdvanceAmount("");
+      setAdvanceComment("");
       setNotice("Запрос на аванс отправлен");
       await load();
     }
@@ -483,12 +506,15 @@ export default function PayrollPage() {
     [data.rows],
   );
   const stats: Array<[string, number, LucideIcon, string]> = [
-    ["Оклад начислено", data.breakdown.salaryAccrued, CircleDollarSign, "text-blue-300"],
-    ["Бонусы начислено", data.breakdown.bonusesAccrued, Receipt, "text-cyan-300"],
+    ["Оклад", data.breakdown.salaryAccrued, CircleDollarSign, "text-blue-300"],
+    ["Бонусы", data.breakdown.bonusesAccrued, Receipt, "text-cyan-300"],
     ["Премии", data.breakdown.premiumsAccrued, Receipt, "text-violet-300"],
-    ["Авансы выплачено", data.breakdown.advancesPaid, Check, "text-orange-300"],
+    ["Другие начисления", data.breakdown.otherAccruals, Plus, "text-slate-300"],
     ["Всего начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
-    ["Всего выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
+    ["Авансы", data.breakdown.advancesPaid, Check, "text-orange-300"],
+    ["Выплачено", data.breakdown.salaryPayments, Check, "text-emerald-300"],
+    ["Всего получено", data.breakdown.totalPaid, Banknote, "text-emerald-300"],
+    ["Удержания", data.breakdown.deductions, Receipt, "text-red-300"],
     ["К выплате", data.breakdown.payable, Banknote, "text-amber-300"],
   ];
 
@@ -561,7 +587,7 @@ export default function PayrollPage() {
             )}
             {director && data.period?.status === "REVIEW" && <><button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Вернуть в работу</button><button onClick={() => void transitionPeriod("CLOSED")} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300">Закрыть месяц</button></>}
             {director && data.period?.status === "CLOSED" && <button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 font-semibold text-blue-200">Открыть месяц снова</button>}
-            {director && data.period && !locked && (
+            {adminView && data.period && !locked && (
               <button
                 onClick={() => openOperation("payment")}
                 disabled={!data.rows.length}
@@ -589,7 +615,7 @@ export default function PayrollPage() {
             </button>
           </div>
         )}
-        <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
           {stats.map(([label, value, Icon, color]) => (
             <article
               key={label}
@@ -605,7 +631,7 @@ export default function PayrollPage() {
             </article>
           ))}
         </section>
-        {director && pendingConfirmations.length > 0 && (
+        {adminView && pendingConfirmations.length > 0 && (
           <section className="mt-5 rounded-2xl border border-orange-500/30 bg-orange-500/5 p-4">
             <div className="mb-3 flex items-center gap-2">
               <Clock3 size={19} className="text-orange-300" />
@@ -619,9 +645,8 @@ export default function PayrollPage() {
                     <strong className="text-orange-200">{currency(item.amount)}</strong>
                   </div>
                   <p className="mt-2 break-words text-sm text-slate-400">{dateLabel(item.claimedPaymentDate)}{item.comment ? ` · ${item.comment}` : ""}</p>
-                  {!locked && <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  {!locked && <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <button onClick={() => void reviewConfirmation(item, "CONFIRM")} className="min-h-11 rounded-lg bg-emerald-700 px-3 text-sm font-semibold">Подтвердить выплату</button>
-                    <button onClick={() => void reviewConfirmation(item, "CONFIRM", true)} className="min-h-11 rounded-lg bg-blue-700 px-3 text-sm font-semibold">Изменить сумму</button>
                     <button onClick={() => void reviewConfirmation(item, "REJECT")} className="min-h-11 rounded-lg bg-red-900 px-3 text-sm font-semibold">Отклонить</button>
                   </div>}
                 </article>
@@ -648,7 +673,7 @@ export default function PayrollPage() {
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    {director && !locked && item.status === "REQUESTED" && (
+                    {adminView && !locked && item.status === "REQUESTED" && (
                       <>
                         <button
                           onClick={() => void reviewAdvance(item, "APPROVED")}
@@ -664,7 +689,7 @@ export default function PayrollPage() {
                         </button>
                       </>
                     )}
-                    {director && !locked && item.status === "APPROVED" && (
+                    {adminView && !locked && item.status === "APPROVED" && (
                       <button
                         onClick={() => void payAdvance(item)}
                         className="rounded-lg bg-blue-600 px-3 py-2 text-sm"
@@ -684,7 +709,7 @@ export default function PayrollPage() {
             <p className="mt-1 text-sm text-slate-400">Это создаст запрос со статусом «Ожидает подтверждения директора», а не финансовую выплату.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <input type="number" min="1" inputMode="decimal" value={receipt.amount} onChange={(e) => setReceipt({ ...receipt, amount: e.target.value })} placeholder="Сумма, ₸" className="control min-w-0" />
-              <select value={receipt.type} onChange={(e) => setReceipt({ ...receipt, type: e.target.value })} className="control min-w-0"><option value="SALARY_PAYMENT">Зарплата</option><option value="GUARANTEED_BONUS_PAYMENT">Гарантированный бонус</option><option value="ORDER_BONUS_PAYMENT">Бонус за заказ</option><option value="PREMIUM_PAYMENT">Премия</option><option value="ADVANCE">Аванс</option><option value="FINAL_SETTLEMENT">Окончательный расчёт</option><option value="OTHER_PAYROLL_PAYMENT">Другое</option></select>
+              <select value={receipt.type} onChange={(e) => setReceipt({ ...receipt, type: e.target.value })} className="control min-w-0"><option value="SALARY_PAYMENT">Выплата зарплаты</option><option value="ADVANCE">Аванс</option></select>
               <input type="date" value={receipt.paymentDate} onChange={(e) => setReceipt({ ...receipt, paymentDate: e.target.value })} className="control min-w-0" />
               <select value={receipt.method} onChange={(e) => setReceipt({ ...receipt, method: e.target.value })} className="control min-w-0"><option value="cash">Наличные</option><option value="kaspi">Kaspi</option><option value="bank_transfer">Банковский перевод</option><option value="other">Другое</option></select>
               <button onClick={() => void reportReceipt()} disabled={Number(receipt.amount) <= 0} className="min-h-11 rounded-xl bg-orange-700 px-4 font-semibold disabled:opacity-40">Отметить как полученное</button>
@@ -695,15 +720,22 @@ export default function PayrollPage() {
         {!adminView && data.period && !locked && (
           <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
             <h2 className="font-semibold">Запросить аванс</h2>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               <input
                 type="number"
                 min={operation === "allowance" ? "0" : "1"}
                 value={advanceAmount}
                 onChange={(e) => setAdvanceAmount(e.target.value)}
                 placeholder="Сумма, ₸"
-                className="control flex-1"
+                className="control min-w-0"
               />
+              <select value={advanceMethod} onChange={(event) => setAdvanceMethod(event.target.value)} className="control min-w-0">
+                <option value="cash">Наличные</option>
+                <option value="kaspi">Kaspi</option>
+                <option value="bank_transfer">Банковский перевод</option>
+                <option value="other">Другое</option>
+              </select>
+              <input value={advanceComment} onChange={(event) => setAdvanceComment(event.target.value)} placeholder="Комментарий" className="control min-w-0" />
               <button
                 onClick={() => void requestAdvance()}
                 className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold"
@@ -751,10 +783,12 @@ export default function PayrollPage() {
                         "Оклад",
                         "Бонусы",
                         "Премии",
-                        "Аванс",
+                        "Другие начисления",
                         "Начислено",
-                        "Подтверждено выплат",
-                        "Ожидает подтверждения",
+                        "Авансы",
+                        "Частичные выплаты",
+                        "Всего получено",
+                        "Удержания",
                         "К выплате",
                         "Статус",
                       ].map((title) => (
@@ -795,8 +829,8 @@ export default function PayrollPage() {
                     </div>
                     <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                       <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Подтверждено" value={row.totals.paid} />
-                      <Metric label="Ожидает" value={row.totals.pending} />
+                      <Metric label="Получено" value={row.totals.received} />
+                      <Metric label="Удержания" value={row.totals.deductions} />
                       <Metric
                         label="К выплате"
                         value={row.totals.payable}
@@ -850,22 +884,6 @@ function PayrollTableRow({
   row: PayrollRow;
   onOpen: () => void;
 }) {
-  const bonuses = row.accruals
-      .filter(
-        (x) =>
-          [
-            "GUARANTEED_ORDER_BONUS",
-            "ORDER_BONUS",
-            "EXTRA_BONUS",
-          ].includes(x.type) && x.direction === "INCREASE",
-      )
-      .reduce((s, x) => s + Number(x.amount), 0),
-    premiums = row.accruals
-      .filter((x) => x.type === "PREMIUM" && x.direction === "INCREASE")
-      .reduce((s, x) => s + Number(x.amount), 0),
-    advances = row.payments
-      .filter((x) => x.type === "ADVANCE")
-      .reduce((s, x) => s + Number(x.amount), 0);
   return (
     <tr
       onClick={onOpen}
@@ -878,15 +896,17 @@ function PayrollTableRow({
         {employeePosition(row)}
       </td>
       <td className="px-4 py-4">{currency(row.currentSalary)}</td>
-      <td className="px-4 py-4">{currency(bonuses)}</td>
-      <td className="px-4 py-4">{currency(premiums)}</td>
-      <td className="px-4 py-4">{currency(advances)}</td>
+      <td className="px-4 py-4">{currency(row.breakdown.bonusesAccrued)}</td>
+      <td className="px-4 py-4">{currency(row.breakdown.premiumsAccrued)}</td>
+      <td className="px-4 py-4">{currency(row.breakdown.otherAccruals)}</td>
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
+      <td className="px-4 py-4">{currency(row.breakdown.advancesPaid)}</td>
+      <td className="px-4 py-4">{currency(row.breakdown.partialPayments)}</td>
       <td className="px-4 py-4 text-emerald-300">
-        {currency(row.totals.paid)}
+        {currency(row.totals.received)}
       </td>
-      <td className="px-4 py-4 text-orange-300">
-        {currency(row.totals.pending)}
+      <td className="px-4 py-4 text-red-300">
+        {currency(row.totals.deductions)}
       </td>
       <td className="px-4 py-4 font-bold text-amber-300">
         {currency(row.totals.payable)}
@@ -971,13 +991,6 @@ function EmployeeDrawer({
   onPayAdvance: (item: Advance) => Promise<unknown>;
   onReversePayment: (item: Payment) => Promise<unknown>;
 }) {
-  const accrualTotal = (types: string[]) =>
-    row.accruals
-      .filter((x) => types.includes(x.type))
-      .reduce(
-        (s, x) => s + Number(x.amount) * (x.direction === "DECREASE" ? -1 : 1),
-        0,
-      );
   const history = [
     ...row.accruals.map((item) => ({
       id: `a-${item.id}`,
@@ -990,7 +1003,10 @@ function EmployeeDrawer({
       id: `p-${item.id}`,
       date: item.paymentDate,
       title: labels[item.type] ?? item.type,
-      amount: -Number(item.amount),
+      amount:
+        item.type === "EMPLOYEE_REFUND"
+          ? Number(item.amount)
+          : -Number(item.amount),
       reason: item.comment ?? "",
     })),
   ].sort((a, b) => +new Date(b.date) - +new Date(a.date));
@@ -1030,37 +1046,41 @@ function EmployeeDrawer({
         </div>
         <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Metric label="Начислено" value={row.totals.accrued} />
-          <Metric label="Подтверждено выплат" value={row.totals.paid} />
+          <Metric label="Всего получено" value={row.totals.received} />
           <Metric label="Ожидает подтверждения" value={row.totals.pending} />
           <Metric label="К выплате" value={row.totals.payable} accent />
         </div>
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
+          <h3 className="font-semibold">Оклад</h3>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {[
+              ["Размер оклада", currency(row.currentSalary)],
+              ["Плановые дни", String(row.plannedDays)],
+              ["Отработанные дни", String(row.workedDays)],
+              ["Рассчитанная окладная часть", currency(row.calculatedSalary)],
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between rounded-xl bg-slate-950 px-3 py-2 text-sm">
+                <span className="text-slate-400">{label}</span>
+                <b>{value}</b>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
           <h3 className="font-semibold">Структура зарплаты</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {[
-              ["Оклад", accrualTotal(["BASE_SALARY"])],
-              [
-                "Гарантированный бонус",
-                accrualTotal(["GUARANTEED_ORDER_BONUS"]),
-              ],
-              ["Бонусы за заказы", accrualTotal(["ORDER_BONUS"])],
-              ["Премии и бонусы", accrualTotal(["PREMIUM", "EXTRA_BONUS"])],
-              [
-                "Авансы",
-                row.payments
-                  .filter((x) => x.type === "ADVANCE")
-                  .reduce((s, x) => s + Number(x.amount), 0),
-              ],
-              [
-                "Удержания и сторно",
-                Math.abs(
-                  accrualTotal([
-                    "DEDUCTION",
-                    "ADJUSTMENT_DECREASE",
-                    "BONUS_REVERSAL",
-                  ]),
-                ),
-              ],
+              ["Оклад", row.breakdown.salaryAccrued],
+              ["Бонусы по заказам", row.breakdown.bonusesAccrued],
+              ["Премии", row.breakdown.premiumsAccrued],
+              ["Другие начисления", row.breakdown.otherAccruals],
+              ["Всего начислено", row.breakdown.totalAccrued],
+              ["Авансы", row.breakdown.advancesPaid],
+              ["Частичные выплаты", row.breakdown.partialPayments],
+              ["Полные выплаты", row.breakdown.finalPayments],
+              ["Всего получено", row.breakdown.totalPaid],
+              ["Удержания и сторно", row.breakdown.deductions],
+              ["Осталось выплатить", row.breakdown.payable],
             ].map(([label, amount]) => (
               <div
                 key={String(label)}
@@ -1080,10 +1100,6 @@ function EmployeeDrawer({
                   <Action
                     label="Изменить оклад"
                     onClick={() => onOperation("salary", row)}
-                  />
-                  <Action
-                    label="Начислить оклад"
-                    onClick={() => onOperation("salaryAccrual", row)}
                   />
                   <Action
                     label="Гарантированный бонус"
@@ -1130,7 +1146,7 @@ function EmployeeDrawer({
                   </div>
                   {!closed && (
                     <div className="mt-2 flex gap-2">
-                      {director && item.status === "REQUESTED" && (
+                      {(director || accountant) && item.status === "REQUESTED" && (
                         <>
                           <button
                             onClick={() => void onReview(item, "APPROVED")}
@@ -1146,7 +1162,7 @@ function EmployeeDrawer({
                           </button>
                         </>
                       )}
-                      {director && item.status === "APPROVED" && (
+                      {(director || accountant) && item.status === "APPROVED" && (
                         <button
                           onClick={() => void onPayAdvance(item)}
                           className="rounded-lg bg-blue-600 px-3 py-2 text-sm"
@@ -1165,7 +1181,28 @@ function EmployeeDrawer({
           <section className="mt-5">
             <h3 className="font-semibold">Бонусы</h3>
             <div className="mt-2 space-y-2">
-              {row.bonusAccruals.map((item) => <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span>{labels[item.type] ?? item.type}{item.orderId ? ` · заказ ${item.orderId}` : ""}</span><b>{currency(item.amount)}</b></div><div className="mt-1 flex flex-wrap justify-between gap-2 text-slate-400"><span>{item.status === "PAID" ? "Выплачено" : item.status === "PARTIALLY_PAID" ? "Частично выплачено" : "Начислено"}</span><span>Выплачено {currency(item.paid)} · к выплате {currency(item.payable)}</span></div></div>)}
+              {row.bonusAccruals.map((item) => (
+                <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <span>{labels[item.type] ?? item.type}</span>
+                    <b>{currency(item.amount)}</b>
+                  </div>
+                  {item.order && (
+                    <div className="mt-2 grid gap-1 text-slate-400 sm:grid-cols-2">
+                      <Link href={`/orders/${item.order.id}`} className="font-medium text-blue-300 hover:text-blue-200">Заказ {item.order.number}</Link>
+                      <span>Клиент: {item.order.client.name}</span>
+                      <span>Сумма заказа: {currency(item.order.amount)}</span>
+                      <span>Оплачено клиентом: {currency(item.order.paid)}</span>
+                      <span>Договор: {item.order.contract?.number ?? "не сформирован"}</span>
+                      <span>Правило: {item.rule === "FIXED" ? `фиксированная сумма ${currency(item.ruleValue)}` : `${item.rule === "PAID_PERCENT" ? "% от оплаченной суммы" : "% от реализованной прибыли"} · ${item.ruleValue}%`}</span>
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap justify-between gap-2 text-slate-400">
+                    <span>{item.status === "PAID" ? "Выплачено" : item.status === "PARTIALLY_PAID" ? "Частично выплачено" : "Начислено"}{item.approvedBy ? ` · подтвердил ${item.approvedBy.name}` : ""}</span>
+                    <span>Выплачено {currency(item.paid)} · к выплате {currency(item.payable)}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         )}
@@ -1179,7 +1216,7 @@ function EmployeeDrawer({
                     <span>{labels[item.type] ?? item.type} · {dateLabel(item.claimedPaymentDate)}</span>
                     <b>{currency(item.amount)}</b>
                   </div>
-                  <p className="mt-1 text-sm text-slate-400">{labels[item.status] ?? item.status}{item.comment ? ` · ${item.comment}` : ""}{item.reviewComment ? ` · ${item.reviewComment}` : ""}</p>
+                  <p className="mt-1 text-sm text-slate-400">{labels[item.status] ?? item.status}{item.createdBy ? ` · внёс ${item.createdBy.name}` : ""}{item.reviewedBy ? ` · подтвердил ${item.reviewedBy.name}` : ""}{item.method ? ` · ${methodLabels[item.method] ?? item.method}` : ""}{item.comment ? ` · ${item.comment}` : ""}{item.reviewComment ? ` · ${item.reviewComment}` : ""}</p>
                 </div>
               ))}
             </div>
@@ -1195,7 +1232,7 @@ function EmployeeDrawer({
                 return (
                   <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div><p>{labels[item.type] ?? item.type}</p><p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.comment ? ` · ${item.comment}` : ""}</p></div>
+                      <div><p>{labels[item.type] ?? item.type}</p><p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.method ? ` · ${methodLabels[item.method] ?? item.method}` : ""}{item.paidBy ? ` · провёл ${item.paidBy.name}` : ""}{item.comment ? ` · ${item.comment}` : ""}</p></div>
                       <b className={reversal ? "text-red-300" : "text-emerald-300"}>{reversal ? "−" : ""}{currency(item.amount)}</b>
                     </div>
                     {director && !closed && !reversal && !reversed && (
@@ -1342,11 +1379,24 @@ function OperationModal({
               </select>
             </Field>
           ) : (
-            <Field label="Сумма, ₸">
+            <Field
+              label={
+                operation === "bonus" &&
+                form.orderId &&
+                form.bonusRule !== "FIXED"
+                  ? "Процент, %"
+                  : "Сумма, ₸"
+              }
+            >
               <input
                 autoFocus
                 type="number"
                 min="1"
+                max={
+                  operation === "bonus" && form.bonusRule !== "FIXED"
+                    ? "100"
+                    : undefined
+                }
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 className="control"
@@ -1398,6 +1448,24 @@ function OperationModal({
                 placeholder="ID заказа"
                 className="control"
               />
+            </Field>
+          )}
+          {operation === "bonus" && form.orderId && (
+            <Field label="Правило бонуса">
+              <select
+                value={form.bonusRule}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    bonusRule: event.target.value as Form["bonusRule"],
+                  })
+                }
+                className="control"
+              >
+                <option value="FIXED">Фиксированная сумма</option>
+                <option value="PAID_PERCENT">Процент от оплаченной суммы</option>
+                <option value="PROFIT_PERCENT">Процент от прибыли</option>
+              </select>
             </Field>
           )}
           {(operation === "salary" || operation === "payment") && (

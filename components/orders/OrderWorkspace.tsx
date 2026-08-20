@@ -27,6 +27,7 @@ import ProjectPayments from "@/components/project/ProjectPayments";
 import OrderActionsMenu from "./OrderActionsMenu";
 import OrderProcess from "./OrderProcess";
 import OrderSettlementPanel from "./OrderSettlementPanel";
+import OrderEconomy from "./OrderEconomy";
 import {
   ORDER_STAGE_LABELS,
   projectOrderStage,
@@ -120,6 +121,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   });
   const archived = Boolean(order.deletedAt);
   const role = session?.user.role ?? "";
+  const director = role === "DIRECTOR";
   const canEdit = !archived && ["DIRECTOR", "MANAGER"].includes(role);
   const canAddPayment =
     !archived && ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
@@ -199,7 +201,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               </span>
             </div>
             <p className="mt-2 flex items-center gap-2 text-slate-300">
-              <UserRound size={16} aria-hidden="true" /> {order.client.name}
+              <UserRound size={16} aria-hidden="true" /> {order.client.name.trim() || "Клиент не указан"}
               <span className="text-slate-600">·</span> {order.manager}
             </p>
           </div>
@@ -311,7 +313,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               description="Контакты и основная информация по заказу"
             />
             <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 md:p-5">
-              <Field title="ФИО" value={order.client.name} />
+              <Field title="ФИО" value={order.client.name.trim() || "Клиент не указан"} />
               <Field
                 title="Телефон"
                 value={
@@ -416,6 +418,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             </section>
           )}
 
+          {director && <OrderEconomy order={order} />}
+
           {canSeeClientFinance && (
             <section id="calculation" className={panel}>
               <SectionTitle
@@ -511,7 +515,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             </section>
           )}
 
-          <OrderSettlementPanel order={order} readOnly={archived} />
+          {!director && <OrderSettlementPanel order={order} readOnly={archived} />}
 
           <section id="documents" className={panel}>
             <SectionTitle
@@ -640,18 +644,15 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             <SectionTitle
               icon={<Factory size={20} />}
               title="Производство"
-              description="Статус, понятный для общения с клиентом"
+              description="Только текущий производственный этап"
             />
             <div className="p-4 md:p-5">
               <div className="rounded-xl bg-blue-500/10 p-4">
-                <p className={label}>Текущий клиентский статус</p>
+                <p className={label}>Этап производства</p>
                 <p className="mt-2 text-lg font-bold text-blue-300">
-                  {order.status}
+                  {ORDER_STAGE_LABELS[projectOrderStage(order.lifecycle, production?.stage)]}
                 </p>
               </div>
-              <p className="mt-3 text-xs leading-5 text-slate-500">
-                Внутренние технические этапы производства здесь не показываются.
-              </p>
             </div>
           </section>
 

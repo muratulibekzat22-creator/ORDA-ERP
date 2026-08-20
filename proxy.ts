@@ -23,6 +23,11 @@ export async function proxy(request: NextRequest) {
     response.headers.set("x-request-id", requestId);
     return response;
   };
+  const rewrite = (url: URL) => {
+    const response = NextResponse.rewrite(url, { request: { headers: requestHeaders } });
+    response.headers.set("x-request-id", requestId);
+    return response;
+  };
 
   if (request.nextUrl.pathname.startsWith("/api/")) return next();
 
@@ -53,6 +58,7 @@ export async function proxy(request: NextRequest) {
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
+    MARKETER: ["marketing", "calendar"],
     MANAGER: [
       "clients",
       "orders",
@@ -78,6 +84,10 @@ export async function proxy(request: NextRequest) {
   };
   const firstSegment =
     request.nextUrl.pathname.split("/").filter(Boolean)[0] ?? "";
+  if (role === "MARKETER" && /^\/clients\/\d+$/.test(request.nextUrl.pathname)) {
+    const id = request.nextUrl.pathname.split("/").at(-1);
+    return rewrite(new URL(`/marketing/applications/${id}`, request.url));
+  }
   if (role === "PARTNER" && firstSegment === "finance")
     return redirect(new URL("/partner", request.url));
   const protectedSegment = [
@@ -102,7 +112,10 @@ export async function proxy(request: NextRequest) {
     "payroll",
     "training",
     "change-password",
+    "marketing",
   ].includes(firstSegment);
+  if (firstSegment === "marketing" && role !== "DIRECTOR" && role !== "MARKETER")
+    return new NextResponse("Доступ запрещён", { status: 403, headers: { "x-request-id": requestId } });
   if (
     firstSegment === "training" &&
     role !== "MEASURER" &&

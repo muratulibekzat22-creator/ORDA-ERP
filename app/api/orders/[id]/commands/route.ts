@@ -5,6 +5,7 @@ import { requireOrder360Actor } from "@/lib/order360-auth";
 import {
   assignInstallation,
   completeInstallation,
+  completeControlMeasurement,
   confirmMilestone,
   openBlocker,
   Order360Error,
@@ -40,6 +41,14 @@ export async function POST(request: Request, { params }: Context) {
     if (action === "resolve-blocker") return NextResponse.json(await resolveBlocker({ blockerId: Number(body.blockerId), resolution: String(body.resolution ?? ""), key: key.key, requestHash }, auth.actor!));
     if (action === "assign-installation") return NextResponse.json(await assignInstallation({ orderId, scheduledAt: new Date(String(body.scheduledAt)), installerUserId: Number(body.installerUserId), packageConfirmed: body.packageConfirmed === true, comment: typeof body.comment === "string" ? body.comment : undefined, expectedVersion: Number(body.expectedVersion), key: key.key, requestHash }, auth.actor!));
     if (action === "complete-installation") return NextResponse.json(await completeInstallation(orderId, Number(body.expectedVersion), key.key, requestHash, auth.actor!));
+    if (action === "complete-control-measurement") return NextResponse.json(await completeControlMeasurement({
+      orderId,
+      expectedVersion: Number(body.expectedVersion),
+      completedAt: body.completedAt ? new Date(String(body.completedAt)) : new Date(),
+      comment: typeof body.comment === "string" ? body.comment : undefined,
+      key: key.key,
+      requestHash,
+    }, auth.actor!));
     return NextResponse.json(await confirmMilestone({ orderId, action, expectedVersion: Number(body.expectedVersion), value: body.value as string | number | boolean | undefined, userId: body.userId == null ? undefined : Number(body.userId), key: key.key, requestHash }, auth.actor!));
   } catch (error) { return failure(error); }
 }

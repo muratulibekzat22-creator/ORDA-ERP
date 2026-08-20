@@ -58,6 +58,32 @@ export type OrderTabData = {
     manager?: EmployeeSettlement;
     measurer?: EmployeeSettlement;
   };
+  economy?: {
+    client: {
+      contractAmount: NumericValue; additionalWorks: NumericValue; discounts: NumericValue;
+      totalSale: NumericValue; receivedGross: NumericValue; refunds: NumericValue;
+      netReceived: NumericValue; remaining: NumericValue; dueAt: Date | string | null;
+      overdueAmount: NumericValue; status: string;
+    };
+    partner: {
+      agreed: NumericValue; agreedAt: Date | string | null; agreedBy: string | null;
+      accrued: NumericValue; paid: NumericValue; remaining: NumericValue;
+      dueAt: Date | string | null; status: string;
+    };
+    profit: {
+      totalSale: NumericValue; partnerCost: NumericValue; directExpenses: NumericValue;
+      materials: NumericValue; delivery: NumericValue; contractors: NumericValue;
+      bankFees: NumericValue; otherDirectExpenses: NumericValue;
+      marginBeforePayroll: NumericValue; managerBonus: NumericValue; measurer: NumericValue;
+      installers: NumericValue; driver: NumericValue; expediter: NumericValue;
+      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue;
+      netMarginPercent: NumericValue;
+    };
+    cash: {
+      clientReceived: NumericValue; partnerPaid: NumericValue; payrollPaid: NumericValue;
+      otherExpensesPaid: NumericValue; balance: NumericValue;
+    };
+  };
   measurements: Array<{
     id: number;
     measurer: string;

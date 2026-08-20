@@ -86,7 +86,7 @@ export default function OrderTable({
                 <div>
                   <strong className="text-white">Заказ {order.number}</strong>
                   <p className="mt-1 text-sm text-slate-300">
-                    {order.client.name} ·{" "}
+                    {order.client.name.trim() || "Клиент не указан"} ·{" "}
                     {order.client.city || "Город не указан"}
                   </p>
                 </div>
@@ -178,7 +178,7 @@ export default function OrderTable({
                   <td className="px-4 py-4 font-semibold text-white">
                     {order.number}
                   </td>
-                  <td className="px-4 py-4">{order.client.name}</td>
+                  <td className="px-4 py-4">{order.client.name.trim() || "Клиент не указан"}</td>
                   <td className="px-4 py-4">{order.client.city || "—"}</td>
                   <td className="px-4 py-4">{money(order.amount)}</td>
                   <td className="px-4 py-4 text-emerald-300">

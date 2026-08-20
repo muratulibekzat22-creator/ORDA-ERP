@@ -8,6 +8,7 @@ datasource db {
 
 enum Role {
   DIRECTOR
+  MARKETER
   MANAGER
   ACCOUNTANT
   MEASURER
@@ -22,6 +23,59 @@ enum CompanyMode {
   DEMO
 }
 
+enum PartnerBusinessType {
+  REFERRER
+  SALES_AGENT
+  DEALER
+  DESIGNER
+  ARCHITECT
+  CONSTRUCTION_COMPANY
+  CONTRACTOR
+  OTHER
+}
+
+enum PartnerBusinessStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum PartnerRewardRule {
+  FIXED
+  ORDER_PERCENT
+  PAID_PERCENT
+  PROFIT_PERCENT
+  MANUAL
+}
+
+enum PartnerSettlementStatus {
+  NOT_CALCULATED
+  CALCULATED
+  PARTIALLY_PAID
+  CLOSED
+  PARTNER_OWES_COMPANY
+  COMPANY_OWES_PARTNER
+  DISPUTED
+  CANCELLED
+}
+
+enum PartnerSettlementOperationType {
+  CLIENT_TO_COMPANY
+  CLIENT_TO_PARTNER
+  PARTNER_TO_COMPANY
+  COMPANY_TO_PARTNER
+  CLIENT_REFUND
+  PARTNER_REFUND
+  ADJUSTMENT
+  REVERSAL
+}
+
+enum PartnerSettlementOperationStatus {
+  POSTED
+  REVERSED
+  DISPUTED
+}
+
 model Company {
   id       Int         @id @default(autoincrement())
   slug     String      @unique
@@ -32,38 +86,54 @@ model Company {
   isDemo   Boolean     @default(false)
   active   Boolean     @default(true)
 
-  users                    User[]
-  clients                  Client[]
-  commercialProposals      CommercialProposal[]
-  partners                 Partner[]
-  orders                   Order[]
-  calendarTasks            CalendarTask[]
-  companyLedgerEntries     CompanyLedgerEntry[]
-  financeCategories        FinanceCategory[]
-  employeePayrollProfiles  EmployeePayrollProfile[]
-  payrollPeriods           PayrollPeriod[]
-  personalLedgerEntries    PersonalLedgerEntry[]
-  documents                Document[]
-  attachments              Attachment[]
-  materials                Material[]
-  companySettings          CompanySettings[]
-  systemSettings           SystemSettings[]
-  materialMovements        MaterialMovement[]
-  suppliers                Supplier[]
-  purchaseBatches          PurchaseBatch[]
-  inventoryValuations      InventoryValuationEntry[]
-  inventoryCogsEntries     InventoryCogsEntry[]
-  materialReservations     MaterialReservation[]
-  warehouseMutations       WarehouseMutation[]
-  measurements             Measurement[]
-  payments                 Payment[]
-  cashShifts               CashShift[]
-  commercialAdjustments    CommercialAdjustment[]
-  productions              Production[]
-  settings                 Settings[]
-  calculatorTariffs        CalculatorTariff[]
-  orderEvents              OrderEvent[]
-  rolePermissions          RolePermission[]
+  users                   User[]
+  clients                 Client[]
+  commercialProposals     CommercialProposal[]
+  partners                Partner[]
+  partnerOrderRelations   PartnerOrderRelation[]
+  partnerOperations       PartnerSettlementOperation[]
+  partnerAuditEvents      PartnerAuditEvent[]
+  orders                  Order[]
+  calendarTasks           CalendarTask[]
+  companyLedgerEntries    CompanyLedgerEntry[]
+  financeCategories       FinanceCategory[]
+  employeePayrollProfiles EmployeePayrollProfile[]
+  payrollPeriods          PayrollPeriod[]
+  personalLedgerEntries   PersonalLedgerEntry[]
+  documents               Document[]
+  attachments             Attachment[]
+  materials               Material[]
+  companySettings         CompanySettings[]
+  systemSettings          SystemSettings[]
+  materialMovements       MaterialMovement[]
+  suppliers               Supplier[]
+  purchaseBatches         PurchaseBatch[]
+  inventoryValuations     InventoryValuationEntry[]
+  inventoryCogsEntries    InventoryCogsEntry[]
+  materialReservations    MaterialReservation[]
+  warehouseMutations      WarehouseMutation[]
+  measurements            Measurement[]
+  payments                Payment[]
+  cashShifts              CashShift[]
+  commercialAdjustments   CommercialAdjustment[]
+  productions             Production[]
+  settings                Settings[]
+  calculatorTariffs       CalculatorTariff[]
+  orderEvents             OrderEvent[]
+  rolePermissions         RolePermission[]
+  marketingSources        MarketingSource[]
+  marketingChannels       MarketingContactChannel[]
+  marketingCampaigns      MarketingCampaign[]
+  marketingAdSets         MarketingAdSet[]
+  marketingAds            MarketingAd[]
+  marketingCreatives      MarketingCreative[]
+  marketingInquiries      MarketingInquiry[]
+  leadAttributions        LeadAttribution[]
+  marketingTouches        MarketingTouch[]
+  marketingMetrics        MarketingMetric[]
+  marketingSpends         MarketingSpend[]
+  marketingBudgets        MarketingBudget[]
+  marketingAuditLogs      MarketingAuditLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -136,6 +206,46 @@ enum Permission {
   installation
   warehouse
   payroll
+  marketing
+}
+
+enum MarketingCampaignStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum MarketingInquiryStatus {
+  NEW
+  IN_PROGRESS
+  LINKED
+  CONVERTED
+  DUPLICATE
+  CLOSED
+}
+
+enum MarketingSpendStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  RECONCILED
+  REVERSED
+}
+
+enum MarketingAttributionStatus {
+  AUTOMATIC
+  MANUAL
+  REVIEW_REQUIRED
+}
+
+enum MarketingVerificationStatus {
+  UNVERIFIED
+  VERIFIED
+  DISPUTED
 }
 
 enum LeadStage {
@@ -251,6 +361,12 @@ enum AdvanceRequestStatus {
 enum BonusPaymentMode {
   ACCUMULATE
   IMMEDIATE
+}
+
+enum PayrollBonusRule {
+  FIXED
+  PAID_PERCENT
+  PROFIT_PERCENT
 }
 
 enum OrderLifecycle {
@@ -388,67 +504,80 @@ model User {
   sessionVersion      Int       @default(1)
   employeeCode        String?   @unique
 
-  partnerProfile               Partner?
-  assignedMeasurements         Measurement[]
-  assignedProductions          Production[]
-  uploadedAttachments          Attachment[]                  @relation("AttachmentUploadedBy")
-  clientInteractions           ClientInteraction[]           @relation("ClientInteractionAuthor")
-  clientAttachments            ClientAttachment[]            @relation("ClientAttachmentUploader")
-  warehouseMovements           MaterialMovement[]            @relation("WarehouseMovementEmployee")
-  warehouseReservations        MaterialReservation[]         @relation("WarehouseReservationCreator")
-  warehouseMutations           WarehouseMutation[]           @relation("WarehouseMutationActor")
-  materialPriceChanges         MaterialPriceHistory[]        @relation("MaterialPriceChangedBy")
-  companyLedgerEntries         CompanyLedgerEntry[]          @relation("CompanyLedgerAuthor")
-  personalLedgerEntries        PersonalLedgerEntry[]         @relation("PersonalLedgerAuthor")
-  financeAuditEvents           FinanceAuditEvent[]           @relation("FinanceAuditAuthor")
-  commercialAdjustments        CommercialAdjustment[]        @relation("CommercialAdjustmentAuthor")
-  partnerAssignments           PartnerAssignmentHistory[]    @relation("PartnerAssignmentAuthor")
-  authAuditEvents              AuthAuditEvent[]
-  managedClients               Client[]                      @relation("ClientManager")
-  deletedClients               Client[]                      @relation("ClientDeletedBy")
-  changedLeadStages            LeadStatusHistory[]           @relation("LeadStageChangedBy")
-  createdLeadActions           LeadNextAction[]              @relation("LeadActionCreatedBy")
-  completedLeadActions         LeadNextAction[]              @relation("LeadActionCompletedBy")
-  responsiblePurchaseBatches   PurchaseBatch[]               @relation("PurchaseBatchResponsible")
-  finalizedPurchaseBatches     PurchaseBatch[]               @relation("PurchaseBatchFinalizer")
-  purchaseAdditionalCosts      PurchaseAdditionalCost[]
-  purchaseCostRevisions        PurchaseCostRevision[]
-  payrollProfile               EmployeePayrollProfile?
-  approvedSalaryRates          EmployeeSalaryRate[]          @relation("SalaryRateApprover")
-  approvedPayrollAccruals      PayrollAccrual[]              @relation("PayrollAccrualApprover")
-  createdPayrollAccruals       PayrollAccrual[]              @relation("PayrollAccrualCreator")
-  payrollPayments              PayrollPayment[]              @relation("PayrollPaymentAuthor")
-  payrollConfirmationsCreated  PayrollPaymentConfirmation[]  @relation("PayrollConfirmationCreator")
-  payrollConfirmationsReviewed PayrollPaymentConfirmation[]  @relation("PayrollConfirmationReviewer")
-  reviewedAdvanceRequests      PayrollAdvanceRequest[]       @relation("AdvanceReviewer")
-  closedPayrollPeriods         PayrollPeriod[]               @relation("PayrollPeriodCloser")
-  payrollAuditEvents           PayrollAuditEvent[]           @relation("PayrollAuditActor")
-  managedOrders                Order[]                       @relation("OrderResponsibleManager")
-  deletedOrders                Order[]                       @relation("OrderDeletedBy")
-  openedOrderBlockers          OrderBlocker[]                @relation("OrderBlockerOpenedBy")
-  responsibleOrderBlockers     OrderBlocker[]                @relation("OrderBlockerResponsible")
-  resolvedOrderBlockers        OrderBlocker[]                @relation("OrderBlockerResolvedBy")
-  orderGateOverrides           OrderGateOverride[]           @relation("OrderGateOverrideAuthor")
-  orderLifecycleEvents         OrderLifecycleEvent[]         @relation("OrderLifecycleEventActor")
-  assignedInstallations        OrderInstallation[]           @relation("OrderInstallationInstaller")
-  assignedCalendarTasks        CalendarTask[]                @relation("CalendarTaskAssignee")
-  createdCalendarTasks         CalendarTask[]                @relation("CalendarTaskCreator")
-  completedCalendarTasks       CalendarTask[]                @relation("CalendarTaskCompleter")
-  calendarTaskAuditEvents      CalendarTaskAudit[]           @relation("CalendarTaskAuditActor")
-  uploadedMeasurementPhotos    MeasurementAttachment[]       @relation("MeasurementAttachmentUploader")
-  measurementAuditEvents       MeasurementAudit[]            @relation("MeasurementAuditActor")
-  authoredDocuments            Document[]                    @relation("DocumentAuthor")
-  archivedDocuments            Document[]                    @relation("DocumentArchivedBy")
-  uploadedDocumentVersions     DocumentVersion[]             @relation("DocumentVersionUploader")
-  documentAuditEvents          DocumentAudit[]               @relation("DocumentAuditActor")
-  memoAcknowledgements         CustomerMemoAcknowledgement[] @relation("MemoAcknowledgedBy")
-  responsibleCashShifts        CashShift[]                   @relation("CashShiftResponsibleManager")
-  closedCashShifts             CashShift[]                   @relation("CashShiftClosedBy")
-  registeredPayments           Payment[]                     @relation("PaymentRegisteredBy")
-  clientDeletionAudits         ClientDeletionAudit[]         @relation("ClientDeletionAuditActor")
-  trainingAssignments          TrainingAssignment[]          @relation("TrainingAssignmentUser")
-  trainingOverrides            TrainingAssignment[]          @relation("TrainingAssignmentOverrideBy")
-  trainingAuditEvents          TrainingAudit[]               @relation("TrainingAuditActor")
+  partnerProfile                Partner?
+  assignedMeasurements          Measurement[]
+  assignedProductions           Production[]
+  uploadedAttachments           Attachment[]                  @relation("AttachmentUploadedBy")
+  clientInteractions            ClientInteraction[]           @relation("ClientInteractionAuthor")
+  clientAttachments             ClientAttachment[]            @relation("ClientAttachmentUploader")
+  warehouseMovements            MaterialMovement[]            @relation("WarehouseMovementEmployee")
+  warehouseReservations         MaterialReservation[]         @relation("WarehouseReservationCreator")
+  warehouseMutations            WarehouseMutation[]           @relation("WarehouseMutationActor")
+  materialPriceChanges          MaterialPriceHistory[]        @relation("MaterialPriceChangedBy")
+  companyLedgerEntries          CompanyLedgerEntry[]          @relation("CompanyLedgerAuthor")
+  personalLedgerEntries         PersonalLedgerEntry[]         @relation("PersonalLedgerAuthor")
+  financeAuditEvents            FinanceAuditEvent[]           @relation("FinanceAuditAuthor")
+  commercialAdjustments         CommercialAdjustment[]        @relation("CommercialAdjustmentAuthor")
+  partnerAssignments            PartnerAssignmentHistory[]    @relation("PartnerAssignmentAuthor")
+  partnersCreated               Partner[]                     @relation("PartnerCreatedBy")
+  partnerRelationsCreated       PartnerOrderRelation[]        @relation("PartnerRelationCreatedBy")
+  partnerOperationsCreated      PartnerSettlementOperation[]  @relation("PartnerOperationCreatedBy")
+  partnerAuditEvents            PartnerAuditEvent[]           @relation("PartnerAuditActor")
+  authAuditEvents               AuthAuditEvent[]
+  managedClients                Client[]                      @relation("ClientManager")
+  deletedClients                Client[]                      @relation("ClientDeletedBy")
+  changedLeadStages             LeadStatusHistory[]           @relation("LeadStageChangedBy")
+  createdLeadActions            LeadNextAction[]              @relation("LeadActionCreatedBy")
+  completedLeadActions          LeadNextAction[]              @relation("LeadActionCompletedBy")
+  responsiblePurchaseBatches    PurchaseBatch[]               @relation("PurchaseBatchResponsible")
+  finalizedPurchaseBatches      PurchaseBatch[]               @relation("PurchaseBatchFinalizer")
+  purchaseAdditionalCosts       PurchaseAdditionalCost[]
+  purchaseCostRevisions         PurchaseCostRevision[]
+  payrollProfile                EmployeePayrollProfile?
+  approvedSalaryRates           EmployeeSalaryRate[]          @relation("SalaryRateApprover")
+  approvedPayrollAccruals       PayrollAccrual[]              @relation("PayrollAccrualApprover")
+  createdPayrollAccruals        PayrollAccrual[]              @relation("PayrollAccrualCreator")
+  payrollPayments               PayrollPayment[]              @relation("PayrollPaymentAuthor")
+  payrollConfirmationsCreated   PayrollPaymentConfirmation[]  @relation("PayrollConfirmationCreator")
+  payrollConfirmationsReviewed  PayrollPaymentConfirmation[]  @relation("PayrollConfirmationReviewer")
+  reviewedAdvanceRequests       PayrollAdvanceRequest[]       @relation("AdvanceReviewer")
+  closedPayrollPeriods          PayrollPeriod[]               @relation("PayrollPeriodCloser")
+  payrollAuditEvents            PayrollAuditEvent[]           @relation("PayrollAuditActor")
+  managedOrders                 Order[]                       @relation("OrderResponsibleManager")
+  deletedOrders                 Order[]                       @relation("OrderDeletedBy")
+  openedOrderBlockers           OrderBlocker[]                @relation("OrderBlockerOpenedBy")
+  responsibleOrderBlockers      OrderBlocker[]                @relation("OrderBlockerResponsible")
+  resolvedOrderBlockers         OrderBlocker[]                @relation("OrderBlockerResolvedBy")
+  orderGateOverrides            OrderGateOverride[]           @relation("OrderGateOverrideAuthor")
+  orderLifecycleEvents          OrderLifecycleEvent[]         @relation("OrderLifecycleEventActor")
+  assignedInstallations         OrderInstallation[]           @relation("OrderInstallationInstaller")
+  assignedCalendarTasks         CalendarTask[]                @relation("CalendarTaskAssignee")
+  createdCalendarTasks          CalendarTask[]                @relation("CalendarTaskCreator")
+  completedCalendarTasks        CalendarTask[]                @relation("CalendarTaskCompleter")
+  calendarTaskAuditEvents       CalendarTaskAudit[]           @relation("CalendarTaskAuditActor")
+  uploadedMeasurementPhotos     MeasurementAttachment[]       @relation("MeasurementAttachmentUploader")
+  measurementAuditEvents        MeasurementAudit[]            @relation("MeasurementAuditActor")
+  authoredDocuments             Document[]                    @relation("DocumentAuthor")
+  archivedDocuments             Document[]                    @relation("DocumentArchivedBy")
+  uploadedDocumentVersions      DocumentVersion[]             @relation("DocumentVersionUploader")
+  documentAuditEvents           DocumentAudit[]               @relation("DocumentAuditActor")
+  memoAcknowledgements          CustomerMemoAcknowledgement[] @relation("MemoAcknowledgedBy")
+  responsibleCashShifts         CashShift[]                   @relation("CashShiftResponsibleManager")
+  closedCashShifts              CashShift[]                   @relation("CashShiftClosedBy")
+  registeredPayments            Payment[]                     @relation("PaymentRegisteredBy")
+  clientDeletionAudits          ClientDeletionAudit[]         @relation("ClientDeletionAuditActor")
+  trainingAssignments           TrainingAssignment[]          @relation("TrainingAssignmentUser")
+  trainingOverrides             TrainingAssignment[]          @relation("TrainingAssignmentOverrideBy")
+  trainingAuditEvents           TrainingAudit[]               @relation("TrainingAuditActor")
+  responsibleMarketingCampaigns MarketingCampaign[]           @relation("MarketingCampaignResponsible")
+  assignedMarketingInquiries    MarketingInquiry[]            @relation("MarketingInquiryManager")
+  createdMarketingInquiries     MarketingInquiry[]            @relation("MarketingInquiryCreator")
+  attributedMarketingLeads      LeadAttribution[]             @relation("LeadAttributionActor")
+  createdMarketingTouches       MarketingTouch[]              @relation("MarketingTouchCreator")
+  createdMarketingMetrics       MarketingMetric[]             @relation("MarketingMetricCreator")
+  createdMarketingSpends        MarketingSpend[]              @relation("MarketingSpendCreator")
+  reviewedMarketingSpends       MarketingSpend[]              @relation("MarketingSpendReviewer")
+  marketingAuditLogs            MarketingAuditLog[]           @relation("MarketingAuditActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -520,6 +649,9 @@ model Client {
   measurements         Measurement[]
   documents            Document[]
   companyLedgerEntries CompanyLedgerEntry[]
+  leadAttribution      LeadAttribution?
+  marketingInquiries   MarketingInquiry[]
+  marketingTouches     MarketingTouch[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -766,14 +898,29 @@ model ClientDeletionAudit {
 }
 
 model Partner {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
-  name  String
-  phone String?
-  city  String?
-  email String?
+  name                     String
+  phone                    String?
+  city                     String?
+  email                    String?
+  secondaryPhone           String?
+  iinBin                   String?
+  address                  String?
+  bankDetails              String?
+  contactPerson            String?
+  cooperationStartedAt     DateTime?
+  kind                     PartnerBusinessType   @default(CONTRACTOR)
+  businessStatus           PartnerBusinessStatus @default(ACTIVE)
+  defaultRewardRule        PartnerRewardRule     @default(FIXED)
+  defaultRewardPercent     Decimal?              @db.Decimal(7, 4)
+  defaultRewardFixedAmount Decimal?              @db.Decimal(14, 2)
+  comment                  String?
+  managementDirectory      Boolean               @default(false)
+  createdById              Int?
+  createdBy                User?                 @relation("PartnerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   active   Boolean @default(true)
   archived Boolean @default(false)
@@ -785,18 +932,23 @@ model Partner {
   orders               Order[]
   payments             Payment[]
   companyLedgerEntries CompanyLedgerEntry[]
+  orderRelations       PartnerOrderRelation[]
+  settlementOperations PartnerSettlementOperation[]
+  auditEvents          PartnerAuditEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([companyId, active, archived])
+  @@index([companyId, businessStatus, name])
+  @@index([companyId, managementDirectory, businessStatus])
 }
 
 model Order {
-  id     Int    @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  number String @unique
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  number    String  @unique
 
   clientId Int
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -855,29 +1007,31 @@ model Order {
   completedAt                   DateTime?
   status                        String         @default("Новая заявка")
 
-  measurements             Measurement[]
-  payments                 Payment[]
-  productions              Production[]
-  events                   OrderEvent[]
-  materialMovements        MaterialMovement[]
-  documents                Document[]
-  attachments              Attachment[]
-  materialReservations     MaterialReservation[]
-  statusHistory            OrderStatusHistory[]
-  calculations             OrderCalculation[]
-  companyLedgerEntries     CompanyLedgerEntry[]
-  leadConversion           LeadConversion?
-  commercialAdjustments    CommercialAdjustment[]
-  partnerAssignmentHistory PartnerAssignmentHistory[]
-  financeAuditEvents       FinanceAuditEvent[]
-  inventoryCogsEntries     InventoryCogsEntry[]
-  payrollAccruals          PayrollAccrual[]
-  blockers                 OrderBlocker[]
-  gateOverrides            OrderGateOverride[]
-  lifecycleEvents          OrderLifecycleEvent[]
-  installation             OrderInstallation?
-  calendarTasks            CalendarTask[]
-  paymentReceipts          PaymentReceipt[]
+  measurements                Measurement[]
+  payments                    Payment[]
+  productions                 Production[]
+  events                      OrderEvent[]
+  materialMovements           MaterialMovement[]
+  documents                   Document[]
+  attachments                 Attachment[]
+  materialReservations        MaterialReservation[]
+  statusHistory               OrderStatusHistory[]
+  calculations                OrderCalculation[]
+  companyLedgerEntries        CompanyLedgerEntry[]
+  leadConversion              LeadConversion?
+  commercialAdjustments       CommercialAdjustment[]
+  partnerAssignmentHistory    PartnerAssignmentHistory[]
+  partnerRelation             PartnerOrderRelation?
+  partnerSettlementOperations PartnerSettlementOperation[]
+  financeAuditEvents          FinanceAuditEvent[]
+  inventoryCogsEntries        InventoryCogsEntry[]
+  payrollAccruals             PayrollAccrual[]
+  blockers                    OrderBlocker[]
+  gateOverrides               OrderGateOverride[]
+  lifecycleEvents             OrderLifecycleEvent[]
+  installation                OrderInstallation?
+  calendarTasks               CalendarTask[]
+  paymentReceipts             PaymentReceipt[]
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -1131,6 +1285,7 @@ model CompanyLedgerEntry {
   payrollAccrual   PayrollAccrual?         @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
   payrollPaymentId Int?                    @unique
   payrollPayment   PayrollPayment?         @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
+  marketingSpend   MarketingSpend?
   voidedAt         DateTime?
   voidReason       String?
   createdAt        DateTime                @default(now())
@@ -1254,34 +1409,38 @@ model PayrollAuditEvent {
 }
 
 model PayrollAccrual {
-  id             Int                    @id @default(autoincrement())
-  employeeId     Int
-  employee       EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  periodId       Int
-  period         PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  earnedPeriodId Int?
-  type           PayrollAccrualType
-  direction      PayrollDirection
-  amount         Decimal                @db.Decimal(14, 2)
-  orderId        Int?
-  order          Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  measurementId  Int?                   @unique
-  measurement    Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
-  reason         String
-  paymentMode    BonusPaymentMode?
-  approvedAt     DateTime               @default(now())
-  approvedById   Int
-  approvedBy     User                   @relation("PayrollAccrualApprover", fields: [approvedById], references: [id], onDelete: Restrict)
-  createdById    Int
-  createdBy      User                   @relation("PayrollAccrualCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  reversalOfId   Int?                   @unique
-  reversalOf     PayrollAccrual?        @relation("PayrollReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy     PayrollAccrual?        @relation("PayrollReversal")
-  idempotencyKey String                 @unique
-  requestHash    String
-  ledgerEntry    CompanyLedgerEntry?
-  payments       PayrollPayment[]
-  createdAt      DateTime               @default(now())
+  id               Int                    @id @default(autoincrement())
+  employeeId       Int
+  employee         EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId         Int
+  period           PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  earnedPeriodId   Int?
+  type             PayrollAccrualType
+  direction        PayrollDirection
+  amount           Decimal                @db.Decimal(14, 2)
+  orderId          Int?
+  order            Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  measurementId    Int?                   @unique
+  measurement      Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
+  reason           String
+  paymentMode      BonusPaymentMode?
+  bonusRule        PayrollBonusRule?
+  bonusValue       Decimal?               @db.Decimal(14, 4)
+  bonusBasisAmount Decimal?               @db.Decimal(14, 2)
+  bonusSnapshot    Json?
+  approvedAt       DateTime               @default(now())
+  approvedById     Int
+  approvedBy       User                   @relation("PayrollAccrualApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdById      Int
+  createdBy        User                   @relation("PayrollAccrualCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reversalOfId     Int?                   @unique
+  reversalOf       PayrollAccrual?        @relation("PayrollReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy       PayrollAccrual?        @relation("PayrollReversal")
+  idempotencyKey   String                 @unique
+  requestHash      String
+  ledgerEntry      CompanyLedgerEntry?
+  payments         PayrollPayment[]
+  createdAt        DateTime               @default(now())
 
   @@index([employeeId, periodId])
   @@index([orderId])
@@ -1355,6 +1514,7 @@ model PayrollAdvanceRequest {
   requestedAmount Decimal                @db.Decimal(14, 2)
   approvedAmount  Decimal?               @db.Decimal(14, 2)
   comment         String?
+  method          String?
   reviewComment   String?
   status          AdvanceRequestStatus   @default(REQUESTED)
   reviewedById    Int?
@@ -1596,21 +1756,21 @@ model CompanySettings {
   id               Int     @id @default(autoincrement())
   companyId        Int     @default(dbgenerated())
   company          Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  name             String @default("ALTYN SAPA COMPANY")
-  bin              String @default("220540017969")
-  legalAddress     String @default("")
-  actualAddress    String @default("")
-  phone            String @default("+77085750881")
-  secondaryPhone   String @default("+77760027555")
-  whatsapp         String @default("")
-  email            String @default("")
-  bankDetails      String @default("")
-  directorName     String @default("")
-  directorFullName String @default("")
-  iik              String @default("")
-  bank             String @default("")
-  bik              String @default("")
-  logoUrl          String @default("")
+  name             String  @default("ALTYN SAPA COMPANY")
+  bin              String  @default("220540017969")
+  legalAddress     String  @default("")
+  actualAddress    String  @default("")
+  phone            String  @default("+77085750881")
+  secondaryPhone   String  @default("+77760027555")
+  whatsapp         String  @default("")
+  email            String  @default("")
+  bankDetails      String  @default("")
+  directorName     String  @default("")
+  directorFullName String  @default("")
+  iik              String  @default("")
+  bank             String  @default("")
+  bik              String  @default("")
+  logoUrl          String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1622,21 +1782,21 @@ model SystemSettings {
   id                   Int     @id @default(autoincrement())
   companyId            Int     @default(dbgenerated())
   company              Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  currency             String @default("KZT")
-  timezone             String @default("Asia/Almaty")
-  dateFormat           String @default("dd.MM.yyyy")
-  minimumPrepayment    Int    @default(0)
-  measurementLeadDays  Int    @default(3)
-  measurerOrderBonus   Int    @default(20000)
-  productionLeadDays   Int    @default(40)
-  installationLeadDays Int    @default(7)
-  paydayDayOfMonth     Int    @default(1)
-  nextDocumentNumber   Int    @default(1)
-  nextContractNumber   Int    @default(1)
-  offerPrefix          String @default("КП")
-  contractPrefix       String @default("ДОГ")
-  actPrefix            String @default("АКТ")
-  invoicePrefix        String @default("СЧ")
+  currency             String  @default("KZT")
+  timezone             String  @default("Asia/Almaty")
+  dateFormat           String  @default("dd.MM.yyyy")
+  minimumPrepayment    Int     @default(0)
+  measurementLeadDays  Int     @default(3)
+  measurerOrderBonus   Int     @default(20000)
+  productionLeadDays   Int     @default(40)
+  installationLeadDays Int     @default(7)
+  paydayDayOfMonth     Int     @default(1)
+  nextDocumentNumber   Int     @default(1)
+  nextContractNumber   Int     @default(1)
+  offerPrefix          String  @default("КП")
+  contractPrefix       String  @default("ДОГ")
+  actPrefix            String  @default("АКТ")
+  invoicePrefix        String  @default("СЧ")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1660,9 +1820,9 @@ model RolePermission {
 }
 
 model MaterialMovement {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   materialId Int
   material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
@@ -1911,9 +2071,9 @@ model WarehouseMutation {
 }
 
 model Measurement {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId        Int?
   order          Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -2117,9 +2277,9 @@ model TrainingAudit {
 }
 
 model Payment {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int?
   order   Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -2132,21 +2292,22 @@ model Payment {
   type   String
   method String
 
-  comment            String?
-  operationDate      DateTime        @default(now())
-  author             String?
-  idempotencyKey     String?         @unique
-  requestHash        String?
-  reversalOfId       Int?            @unique
-  reversalOf         Payment?        @relation("PaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversal           Payment?        @relation("PaymentReversal")
-  reversalReason     String?
-  cashShiftId        Int?
-  cashShift          CashShift?      @relation(fields: [cashShiftId], references: [id], onDelete: Restrict)
-  registeredByUserId Int?
-  registeredBy       User?           @relation("PaymentRegisteredBy", fields: [registeredByUserId], references: [id], onDelete: SetNull)
-  receipt            PaymentReceipt? @relation("PaymentReceiptPayment")
-  voidedReceipt      PaymentReceipt? @relation("PaymentReceiptVoidingPayment")
+  comment                    String?
+  operationDate              DateTime                    @default(now())
+  author                     String?
+  idempotencyKey             String?                     @unique
+  requestHash                String?
+  reversalOfId               Int?                        @unique
+  reversalOf                 Payment?                    @relation("PaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal                   Payment?                    @relation("PaymentReversal")
+  reversalReason             String?
+  cashShiftId                Int?
+  cashShift                  CashShift?                  @relation(fields: [cashShiftId], references: [id], onDelete: Restrict)
+  registeredByUserId         Int?
+  registeredBy               User?                       @relation("PaymentRegisteredBy", fields: [registeredByUserId], references: [id], onDelete: SetNull)
+  receipt                    PaymentReceipt?             @relation("PaymentReceiptPayment")
+  voidedReceipt              PaymentReceipt?             @relation("PaymentReceiptVoidingPayment")
+  partnerSettlementOperation PartnerSettlementOperation?
 
   createdAt DateTime   @default(now())
   documents Document[]
@@ -2250,6 +2411,95 @@ model PartnerAssignmentHistory {
   @@index([newPartnerId, createdAt])
 }
 
+model PartnerOrderRelation {
+  id               Int                          @id @default(autoincrement())
+  companyId        Int                          @default(dbgenerated())
+  company          Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  partnerId        Int
+  partner          Partner                      @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  orderId          Int                          @unique
+  order            Order                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  rewardRule       PartnerRewardRule
+  rewardPercent    Decimal?                     @db.Decimal(7, 4)
+  fixedAmount      Decimal?                     @db.Decimal(14, 2)
+  manualAmount     Decimal?                     @db.Decimal(14, 2)
+  profitBasis      Decimal                      @db.Decimal(14, 2)
+  startsAt         DateTime                     @default(now())
+  settlementStatus PartnerSettlementStatus      @default(NOT_CALCULATED)
+  comment          String?
+  closedAt         DateTime?
+  createdById      Int
+  createdBy        User                         @relation("PartnerRelationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  operations       PartnerSettlementOperation[]
+  auditEvents      PartnerAuditEvent[]
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+
+  @@unique([companyId, orderId])
+  @@index([companyId, partnerId, settlementStatus])
+  @@index([partnerId, createdAt])
+}
+
+model PartnerSettlementOperation {
+  id               Int                              @id @default(autoincrement())
+  companyId        Int                              @default(dbgenerated())
+  company          Company                          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  relationId       Int
+  relation         PartnerOrderRelation             @relation(fields: [relationId], references: [id], onDelete: Restrict)
+  partnerId        Int
+  partner          Partner                          @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  orderId          Int
+  order            Order                            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  type             PartnerSettlementOperationType
+  status           PartnerSettlementOperationStatus @default(POSTED)
+  amount           Decimal                          @db.Decimal(14, 2)
+  adjustmentEffect Decimal                          @default(0) @db.Decimal(14, 2)
+  operationDate    DateTime                         @default(now())
+  method           String?
+  account          String?
+  comment          String?
+  paymentId        Int?                             @unique
+  payment          Payment?                         @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  reversalOfId     Int?                             @unique
+  reversalOf       PartnerSettlementOperation?      @relation("PartnerOperationReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal         PartnerSettlementOperation?      @relation("PartnerOperationReversal")
+  createdById      Int
+  createdBy        User                             @relation("PartnerOperationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  idempotencyKey   String                           @unique
+  requestHash      String
+  createdAt        DateTime                         @default(now())
+  auditEvents      PartnerAuditEvent[]
+
+  @@index([companyId, operationDate, id])
+  @@index([partnerId, operationDate])
+  @@index([orderId, operationDate])
+  @@index([relationId, operationDate])
+}
+
+model PartnerAuditEvent {
+  id          Int                         @id @default(autoincrement())
+  companyId   Int                         @default(dbgenerated())
+  company     Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  partnerId   Int?
+  partner     Partner?                    @relation(fields: [partnerId], references: [id], onDelete: Restrict)
+  relationId  Int?
+  relation    PartnerOrderRelation?       @relation(fields: [relationId], references: [id], onDelete: Restrict)
+  operationId Int?
+  operation   PartnerSettlementOperation? @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  action      String
+  before      Json?
+  after       Json?
+  comment     String?
+  actorId     Int
+  actor       User                        @relation("PartnerAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  createdAt   DateTime                    @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([partnerId, createdAt])
+  @@index([relationId, createdAt])
+  @@index([operationId, createdAt])
+}
+
 model FinanceAuditEvent {
   id         Int      @id @default(autoincrement())
   orderId    Int?
@@ -2269,9 +2519,9 @@ model FinanceAuditEvent {
 }
 
 model Production {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -2323,9 +2573,9 @@ model ProductionStageHistory {
 }
 
 model Settings {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   pinePrice Int @default(65000)
   elmPrice  Int @default(85000)
@@ -2363,15 +2613,15 @@ model CalculatorTariff {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  @@unique([companyId, code])
   @@index([active, sortOrder])
   @@index([companyId, active, sortOrder])
-  @@unique([companyId, code])
 }
 
 model OrderEvent {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -2388,4 +2638,390 @@ model OrderEvent {
   @@index([createdAt])
   @@index([orderId, createdAt])
   @@index([companyId, createdAt])
+}
+
+model MarketingSource {
+  id        Int      @id @default(autoincrement())
+  companyId Int      @default(dbgenerated())
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code      String
+  name      String
+  platform  String
+  isPaid    Boolean  @default(false)
+  system    Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns              MarketingCampaign[]
+  inquiries              MarketingInquiry[]
+  sourceAttributions     LeadAttribution[]   @relation("LeadAttributionSource")
+  firstTouchAttributions LeadAttribution[]   @relation("LeadAttributionFirstSource")
+  lastTouchAttributions  LeadAttribution[]   @relation("LeadAttributionLastSource")
+  primaryAttributions    LeadAttribution[]   @relation("LeadAttributionPrimarySource")
+  touches                MarketingTouch[]
+  budgets                MarketingBudget[]
+
+  @@unique([companyId, code])
+  @@index([companyId, active, name])
+}
+
+model MarketingContactChannel {
+  id        Int      @id @default(autoincrement())
+  companyId Int      @default(dbgenerated())
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code      String
+  name      String
+  system    Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inquiries    MarketingInquiry[]
+  attributions LeadAttribution[]
+  touches      MarketingTouch[]
+
+  @@unique([companyId, code])
+  @@index([companyId, active, name])
+}
+
+model MarketingCampaign {
+  id                 Int                     @id @default(autoincrement())
+  companyId          Int                     @default(dbgenerated())
+  company            Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sourceId           Int?
+  source             MarketingSource?        @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  name               String
+  platform           String
+  advertisingAccount String?
+  objective          String?
+  region             String?
+  audience           String?
+  startsAt           DateTime
+  endsAt             DateTime?
+  plannedBudget      Decimal                 @default(0) @db.Decimal(14, 2)
+  dailyBudget        Decimal                 @default(0) @db.Decimal(14, 2)
+  responsibleId      Int?
+  responsible        User?                   @relation("MarketingCampaignResponsible", fields: [responsibleId], references: [id], onDelete: SetNull)
+  status             MarketingCampaignStatus @default(DRAFT)
+  utmSource          String?
+  utmMedium          String?
+  utmCampaign        String?
+  comment            String?
+  externalId         String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  adSets       MarketingAdSet[]
+  ads          MarketingAd[]
+  creatives    MarketingCreative[]
+  inquiries    MarketingInquiry[]
+  attributions LeadAttribution[]
+  touches      MarketingTouch[]
+  metrics      MarketingMetric[]
+  spends       MarketingSpend[]
+  budgets      MarketingBudget[]
+
+  @@unique([companyId, platform, externalId])
+  @@index([companyId, status, startsAt])
+}
+
+model MarketingAdSet {
+  id         Int               @id @default(autoincrement())
+  companyId  Int               @default(dbgenerated())
+  company    Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  campaignId Int
+  campaign   MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  name       String
+  externalId String?
+  audience   String?
+  status     String            @default("ACTIVE")
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  ads          MarketingAd[]
+  inquiries    MarketingInquiry[]
+  attributions LeadAttribution[]
+  touches      MarketingTouch[]
+  metrics      MarketingMetric[]
+  spends       MarketingSpend[]
+
+  @@unique([companyId, campaignId, externalId])
+  @@index([companyId, campaignId, status])
+}
+
+model MarketingAd {
+  id         Int               @id @default(autoincrement())
+  companyId  Int               @default(dbgenerated())
+  company    Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  campaignId Int
+  campaign   MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSetId    Int?
+  adSet      MarketingAdSet?   @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  name       String
+  externalId String?
+  status     String            @default("ACTIVE")
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  creatives    MarketingCreative[]
+  inquiries    MarketingInquiry[]
+  attributions LeadAttribution[]
+  touches      MarketingTouch[]
+  metrics      MarketingMetric[]
+  spends       MarketingSpend[]
+
+  @@unique([companyId, campaignId, externalId])
+  @@index([companyId, campaignId, adSetId])
+}
+
+model MarketingCreative {
+  id         Int               @id @default(autoincrement())
+  companyId  Int               @default(dbgenerated())
+  company    Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  campaignId Int
+  campaign   MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adId       Int?
+  ad         MarketingAd?      @relation(fields: [adId], references: [id], onDelete: Restrict)
+  name       String
+  format     String?
+  assetUrl   String?
+  externalId String?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  inquiries    MarketingInquiry[]
+  attributions LeadAttribution[]
+  touches      MarketingTouch[]
+
+  @@unique([companyId, campaignId, externalId])
+  @@index([companyId, campaignId, adId])
+}
+
+model MarketingInquiry {
+  id                     Int                     @id @default(autoincrement())
+  companyId              Int                     @default(dbgenerated())
+  company                Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  receivedAt             DateTime                @default(now())
+  name                   String
+  phone                  String
+  normalizedPhone        String
+  additionalPhone        String?
+  instagramUsername      String?
+  city                   String
+  sourceId               Int
+  source                 MarketingSource         @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  channelId              Int
+  channel                MarketingContactChannel @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  campaignId             Int?
+  campaign               MarketingCampaign?      @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSetId                Int?
+  adSet                  MarketingAdSet?         @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  adId                   Int?
+  ad                     MarketingAd?            @relation(fields: [adId], references: [id], onDelete: Restrict)
+  creativeId             Int?
+  creative               MarketingCreative?      @relation(fields: [creativeId], references: [id], onDelete: Restrict)
+  message                String?
+  externalLeadId         String?
+  platformConversationId String?
+  status                 MarketingInquiryStatus  @default(NEW)
+  assignedManagerId      Int?
+  assignedManager        User?                   @relation("MarketingInquiryManager", fields: [assignedManagerId], references: [id], onDelete: SetNull)
+  firstResponseAt        DateTime?
+  isDuplicate            Boolean                 @default(false)
+  applicationId          Int?
+  application            Client?                 @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  sourceChangeComment    String?
+  createdById            Int
+  createdBy              User                    @relation("MarketingInquiryCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  @@unique([companyId, externalLeadId])
+  @@index([companyId, receivedAt])
+  @@index([companyId, normalizedPhone, receivedAt])
+  @@index([companyId, status, assignedManagerId])
+}
+
+model LeadAttribution {
+  id                     Int                         @id @default(autoincrement())
+  companyId              Int                         @default(dbgenerated())
+  company                Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  applicationId          Int                         @unique
+  application            Client                      @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  sourceId               Int
+  source                 MarketingSource             @relation("LeadAttributionSource", fields: [sourceId], references: [id], onDelete: Restrict)
+  channelId              Int
+  channel                MarketingContactChannel     @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  campaignId             Int?
+  campaign               MarketingCampaign?          @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSetId                Int?
+  adSet                  MarketingAdSet?             @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  adId                   Int?
+  ad                     MarketingAd?                @relation(fields: [adId], references: [id], onDelete: Restrict)
+  creativeId             Int?
+  creative               MarketingCreative?          @relation(fields: [creativeId], references: [id], onDelete: Restrict)
+  firstTouchSourceId     Int
+  firstTouchSource       MarketingSource             @relation("LeadAttributionFirstSource", fields: [firstTouchSourceId], references: [id], onDelete: Restrict)
+  lastTouchSourceId      Int
+  lastTouchSource        MarketingSource             @relation("LeadAttributionLastSource", fields: [lastTouchSourceId], references: [id], onDelete: Restrict)
+  primarySourceId        Int
+  primarySource          MarketingSource             @relation("LeadAttributionPrimarySource", fields: [primarySourceId], references: [id], onDelete: Restrict)
+  externalLeadId         String?
+  platformConversationId String?
+  utmSource              String?
+  utmMedium              String?
+  utmCampaign            String?
+  utmContent             String?
+  utmTerm                String?
+  fbclid                 String?
+  gclid                  String?
+  ttclid                 String?
+  referrer               String?
+  landingPage            String?
+  firstContactAt         DateTime
+  attributedById         Int
+  attributedBy           User                        @relation("LeadAttributionActor", fields: [attributedById], references: [id], onDelete: Restrict)
+  attributionStatus      MarketingAttributionStatus  @default(AUTOMATIC)
+  verificationStatus     MarketingVerificationStatus @default(UNVERIFIED)
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+
+  @@index([companyId, primarySourceId, createdAt])
+  @@index([companyId, campaignId, createdAt])
+}
+
+model MarketingTouch {
+  id            Int                      @id @default(autoincrement())
+  companyId     Int                      @default(dbgenerated())
+  company       Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  applicationId Int
+  application   Client                   @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  sourceId      Int
+  source        MarketingSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  channelId     Int?
+  channel       MarketingContactChannel? @relation(fields: [channelId], references: [id], onDelete: Restrict)
+  campaignId    Int?
+  campaign      MarketingCampaign?       @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSetId       Int?
+  adSet         MarketingAdSet?          @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  adId          Int?
+  ad            MarketingAd?             @relation(fields: [adId], references: [id], onDelete: Restrict)
+  creativeId    Int?
+  creative      MarketingCreative?       @relation(fields: [creativeId], references: [id], onDelete: Restrict)
+  occurredAt    DateTime                 @default(now())
+  note          String?
+  createdById   Int
+  createdBy     User                     @relation("MarketingTouchCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime                 @default(now())
+
+  @@index([companyId, applicationId, occurredAt])
+}
+
+model MarketingMetric {
+  id             Int               @id @default(autoincrement())
+  companyId      Int               @default(dbgenerated())
+  company        Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  metricDate     DateTime          @db.Date
+  periodEnd      DateTime?         @db.Date
+  platform       String
+  campaignId     Int
+  campaign       MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSetId        Int?
+  adSet          MarketingAdSet?   @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  adId           Int?
+  ad             MarketingAd?      @relation(fields: [adId], references: [id], onDelete: Restrict)
+  reportedSpend  Decimal           @default(0) @db.Decimal(14, 2)
+  impressions    Int               @default(0)
+  reach          Int               @default(0)
+  clicks         Int               @default(0)
+  linkClicks     Int               @default(0)
+  messages       Int               @default(0)
+  platformLeads  Int               @default(0)
+  videoViews     Int               @default(0)
+  saves          Int               @default(0)
+  comments       Int               @default(0)
+  externalReport String?
+  importKey      String
+  dedupeKey      String            @unique
+  inputMethod    String            @default("MANUAL")
+  createdById    Int
+  createdBy      User              @relation("MarketingMetricCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([companyId, campaignId, adSetId, adId, metricDate, importKey])
+  @@index([companyId, metricDate, campaignId])
+}
+
+model MarketingSpend {
+  id                Int                  @id @default(autoincrement())
+  companyId         Int                  @default(dbgenerated())
+  company           Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  spendDate         DateTime             @db.Date
+  platform          String
+  campaignId        Int?
+  campaign          MarketingCampaign?   @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  adSetId           Int?
+  adSet             MarketingAdSet?      @relation(fields: [adSetId], references: [id], onDelete: Restrict)
+  adId              Int?
+  ad                MarketingAd?         @relation(fields: [adId], references: [id], onDelete: Restrict)
+  amount            Decimal              @db.Decimal(14, 2)
+  status            MarketingSpendStatus @default(DRAFT)
+  evidenceUrl       String?
+  comment           String?
+  financeCategoryId Int?
+  paymentAccount    String?
+  financeEntryId    Int?                 @unique
+  financeEntry      CompanyLedgerEntry?  @relation(fields: [financeEntryId], references: [id], onDelete: Restrict)
+  createdById       Int
+  createdBy         User                 @relation("MarketingSpendCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  submittedAt       DateTime?
+  reviewedById      Int?
+  reviewedBy        User?                @relation("MarketingSpendReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt        DateTime?
+  reviewComment     String?
+  idempotencyKey    String               @unique
+  requestHash       String
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([companyId, status, spendDate])
+  @@index([companyId, campaignId, spendDate])
+}
+
+model MarketingBudget {
+  id         Int                @id @default(autoincrement())
+  companyId  Int                @default(dbgenerated())
+  company    Company            @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  month      DateTime           @db.Date
+  sourceId   Int?
+  source     MarketingSource?   @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  campaignId Int?
+  campaign   MarketingCampaign? @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  planned    Decimal            @db.Decimal(14, 2)
+  comment    String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@unique([companyId, month, sourceId, campaignId])
+  @@index([companyId, month])
+}
+
+model MarketingAuditLog {
+  id             Int      @id @default(autoincrement())
+  companyId      Int      @default(dbgenerated())
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  action         String
+  entityType     String
+  entityId       Int?
+  actorId        Int
+  actor          User     @relation("MarketingAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  before         Json?
+  after          Json?
+  comment        String?
+  idempotencyKey String?  @unique
+  createdAt      DateTime @default(now())
+
+  @@index([companyId, entityType, entityId, createdAt])
 }

@@ -89,6 +89,14 @@ type ClientDetail = {
   interactions: Interaction[];
   attachments: Attachment[];
   orders: Order[];
+  leadAttribution?: {
+    firstContactAt: string;
+    primarySource: { name: string };
+    channel: { name: string };
+    campaign?: { name: string } | null;
+    adSet?: { name: string } | null;
+    ad?: { name: string } | null;
+  } | null;
 };
 
 const inputClass =
@@ -454,6 +462,15 @@ export default function ClientCard({ clientId }: { clientId: number }) {
               <Field label="Статус">
                 <input value={client.stage} disabled className={inputClass} />
               </Field>
+              {client.leadAttribution && <div className="sm:col-span-2 rounded-xl border border-blue-500/20 bg-blue-950/20 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-blue-300">Маркетинговая атрибуция</p>
+                <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                  <p><span className="text-slate-500">Источник:</span> {client.leadAttribution.primarySource.name}</p>
+                  <p><span className="text-slate-500">Канал:</span> {client.leadAttribution.channel.name}</p>
+                  <p><span className="text-slate-500">Кампания:</span> {client.leadAttribution.campaign?.name ?? "—"}</p>
+                  <p><span className="text-slate-500">Группа / объявление:</span> {[client.leadAttribution.adSet?.name, client.leadAttribution.ad?.name].filter(Boolean).join(" · ") || "—"}</p>
+                </div>
+              </div>}
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
               <a
