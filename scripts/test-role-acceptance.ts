@@ -28,7 +28,9 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "installation",
     "warehouse",
     "payroll",
+    "marketing",
   ],
+  [Role.MARKETER]: ["marketing", "calendar"],
   [Role.MANAGER]: [
     "clients",
     "orders",
@@ -46,6 +48,7 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "reports",
     "warehouse",
     "payroll",
+    "marketing",
   ],
   [Role.MEASURER]: ["measurements", "calendar", "documents"],
   [Role.PRODUCTION]: ["production", "calendar", "documents", "warehouse"],
@@ -68,6 +71,7 @@ for (const [role, permissions] of Object.entries(expectedPermissions))
 
 assert.deepEqual(roleHome, {
   PARTNER: "/partner",
+  MARKETER: "/marketing",
 });
 
 const roleDashboard = read("components/dashboard/Dashboard.tsx");

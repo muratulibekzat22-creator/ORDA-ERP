@@ -11,6 +11,7 @@ export default async function Home() {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
   const role = session.user.role as Role;
+  if (role === Role.MARKETER) redirect("/marketing");
   if (role === Role.PARTNER) redirect("/partner");
   if (role === Role.MEASURER) return <MeasurerHome />;
   if (role === Role.DIRECTOR || role === Role.MANAGER || role === Role.ACCOUNTANT || role === Role.PRODUCTION || role === Role.INSTALLER) return <DirectorCockpit />;
