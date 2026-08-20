@@ -23,13 +23,21 @@ const partnerNames = [
 const kinds = Object.values(PartnerBusinessType);
 const rules = [PartnerRewardRule.FIXED, PartnerRewardRule.ORDER_PERCENT, PartnerRewardRule.PAID_PERCENT, PartnerRewardRule.PROFIT_PERCENT] as const;
 
-export async function seedPartnerManagementDemo() {
+export async function seedPartnerManagementDemo(options: { directorId?: number; managerId?: number } = {}) {
   const setup = await runWithSystemAccess(async () => {
     const company = await prisma.company.findUnique({ where: { id: DEMO_COMPANY_ID }, select: { id: true, slug: true, name: true, isDemo: true } });
     if (!company?.isDemo) throw new Error("DEMO_COMPANY_ID_2_REQUIRED");
-    const director = await prisma.user.findFirst({ where: { companyId: DEMO_COMPANY_ID, role: Role.DIRECTOR, active: true }, orderBy: { id: "asc" }, select: { id: true, name: true } });
+    const director = await prisma.user.findFirst({
+      where: { companyId: DEMO_COMPANY_ID, role: Role.DIRECTOR, active: true, ...(options.directorId ? { id: options.directorId } : {}) },
+      orderBy: { id: "asc" },
+      select: { id: true, name: true },
+    });
     if (!director) throw new Error("ACTIVE_DEMO_DIRECTOR_REQUIRED");
-    const manager = await prisma.user.findFirst({ where: { companyId: DEMO_COMPANY_ID, role: Role.MANAGER, active: true }, orderBy: { id: "asc" }, select: { id: true, name: true } });
+    const manager = await prisma.user.findFirst({
+      where: { companyId: DEMO_COMPANY_ID, role: Role.MANAGER, active: true, ...(options.managerId ? { id: options.managerId } : {}) },
+      orderBy: { id: "asc" },
+      select: { id: true, name: true },
+    });
     if (!manager) throw new Error("ACTIVE_DEMO_MANAGER_REQUIRED");
     return { company, director, manager };
   });

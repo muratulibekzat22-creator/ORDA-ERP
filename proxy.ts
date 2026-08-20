@@ -99,10 +99,16 @@ export async function proxy(request: NextRequest) {
     "calculator",
     "calculator-config",
     "partner",
+    "partner-management",
     "payroll",
     "training",
     "change-password",
   ].includes(firstSegment);
+  if (firstSegment === "partner-management" && role !== "DIRECTOR") {
+    const response = new NextResponse("Недостаточно прав", { status: 403 });
+    response.headers.set("x-request-id", requestId);
+    return response;
+  }
   if (
     firstSegment === "training" &&
     role !== "MEASURER" &&

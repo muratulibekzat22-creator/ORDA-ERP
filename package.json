@@ -13,6 +13,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "seed:director": "tsx scripts/seed-director.ts",
     "seed:training": "tsx scripts/seed-training.ts",
+    "seed:payroll-partners:demo": "tsx scripts/seed-payroll-partners-demo.ts",
     "verify:database-restore": "tsx scripts/verify-database-restore.ts",
     "test:idempotency": "tsx scripts/test-idempotency.ts",
     "test:e2e:business": "tsx scripts/test-e2e-business-flow.ts",

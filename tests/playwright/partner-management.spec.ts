@@ -14,15 +14,22 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   const browserErrors: string[] = []; const failedResponses: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") browserErrors.push(message.text()); });
-  page.on("response", (response) => { if (response.status() >= 500) failedResponses.push(`${response.status()} ${response.url()}`); });
-  await page.setViewportSize({ width: 390, height: 844 });
+  page.on("response", (response) => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`); });
   await login(page, playwrightUsers.director);
-  await page.goto("/partner-management");
-  await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toBeVisible();
-  for (const label of ["Обзор", "Партнёры", "Заказы партнёров", "Взаиморасчёты", "Операции", "Отчёты"])
-    await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Партнёры", exact: true })).toBeVisible();
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/partner-management");
+    await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toBeVisible();
+    for (const label of ["Обзор", "Партнёры", "Заказы партнёров", "Взаиморасчёты", "Операции", "Отчёты"])
+      await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+  }
   const api = await page.request.get("/api/partner-management");
   expect(api.status()).toBe(200);
+  const ordersApi = await page.request.get("/api/orders");
+  expect(ordersApi.status()).toBe(200);
   const payload = await api.json() as { partners: Array<{ id: number }> };
   if (payload.partners[0]) {
     const detail = await page.request.get(`/api/partner-management/${payload.partners[0].id}`);
@@ -32,18 +39,24 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
     expect(statement.headers()["content-type"]).toContain("application/pdf");
     expect((await statement.body()).subarray(0, 5).toString("ascii")).toBe("%PDF-");
   }
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
   expect(browserErrors).toEqual([]); expect(failedResponses).toEqual([]);
 });
 
-for (const [role, email] of [["MANAGER", playwrightUsers.manager], ["ACCOUNTANT", playwrightUsers.accountant]] as const) {
+for (const [role, email] of [
+  ["MANAGER", playwrightUsers.manager],
+  ["ACCOUNTANT", playwrightUsers.accountant],
+  ["MEASURER", playwrightUsers.measurer],
+  ["PRODUCTION", playwrightUsers.production],
+  ["INSTALLER", playwrightUsers.installer],
+] as const) {
   test(`${role} receives 403 and cannot open direct route`, async ({ page }) => {
     await login(page, email);
+    await expect(page.getByRole("link", { name: "Партнёры", exact: true })).toHaveCount(0);
     const api = await page.request.get("/api/partner-management");
     expect(api.status()).toBe(403);
-    await page.goto("/partner-management");
+    const response = await page.goto("/partner-management");
+    expect(response?.status()).toBe(403);
     await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toHaveCount(0);
-    await expect(page.getByText("404")).toBeVisible();
+    await expect(page.getByText("Недостаточно прав")).toBeVisible();
   });
 }
