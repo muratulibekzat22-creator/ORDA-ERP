@@ -11,6 +11,7 @@ import {
   Factory,
   FileText,
   LayoutDashboard,
+  SlidersHorizontal,
   Settings,
   UserCog,
   Users,
@@ -32,7 +33,7 @@ const sections = [
   { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
   { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Партнёры", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
-  { title: "Система", items: [["/settings", "Настройки", Settings]] },
+  { title: "Система", items: [["/settings", "Настройки", Settings], ["/calculator-config", "Конфигурация калькулятора", SlidersHorizontal]] },
 ] as const;
 
 export default function RouteShell({
@@ -60,6 +61,7 @@ export default function RouteShell({
     "/marketing": "marketing",
   };
   const visible = (href: string) => {
+    if (href === "/calculator-config") return session?.user.role === "DIRECTOR";
     if (href === "/partner-management") return role === "DIRECTOR";
     if (href === "/marketing") return role === "DIRECTOR" || role === "MARKETER";
     if (role === "MEASURER")

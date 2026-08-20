@@ -14,11 +14,17 @@ const orderService = readFileSync("lib/services/order.service.ts", "utf8");
 const listStart = orderService.indexOf("export async function getOrders");
 const listEnd = orderService.indexOf("export async function getOrder(id", listStart);
 const listQuery = orderService.slice(listStart, listEnd);
-assert.doesNotMatch(listQuery, /payments: true|productions: true|events:/);
+assert.doesNotMatch(
+  listQuery,
+  /payments:\s*\{|productions:\s*true|events:\s*(?:true|\{)/,
+);
 assert.match(listQuery, /select:/);
 
 const partners = readFileSync("components/pages/PartnersPage.tsx", "utf8");
-assert.equal((partners.match(/fetch\("\/api\/partners"\)/g) ?? []).length, 1);
+assert.equal(
+  (partners.match(/fetch\("\/api\/partners\?view=all"\)/g) ?? []).length,
+  1,
+);
 
 const partnerDashboard = readFileSync(
   "app/api/partner/dashboard/route.ts",

@@ -653,6 +653,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                   {ORDER_STAGE_LABELS[projectOrderStage(order.lifecycle, production?.stage)]}
                 </p>
               </div>
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                Внутренние технические этапы доступны в производственном кабинете.
+              </p>
             </div>
           </section>
 
