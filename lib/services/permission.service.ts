@@ -12,7 +12,6 @@ function isRole(value: string): value is Role {
 }
 
 export async function ensureRolePermissions() {
-  if (await prisma.rolePermission.count()) return;
   await prisma.rolePermission.createMany({
     data: Object.entries(defaultPermissions).flatMap(([role, values]) => values.map((permission) => ({ role: role as PrismaRole, permission: permission as PrismaPermission }))),
     skipDuplicates: true,

@@ -28,7 +28,9 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "installation",
     "warehouse",
     "payroll",
+    "marketing",
   ],
+  [Role.MARKETER]: ["marketing", "calendar"],
   [Role.MANAGER]: [
     "clients",
     "orders",
@@ -46,6 +48,7 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "reports",
     "warehouse",
     "payroll",
+    "marketing",
   ],
   [Role.MEASURER]: ["measurements", "calendar", "documents"],
   [Role.PRODUCTION]: ["production", "calendar", "documents", "warehouse"],
@@ -68,6 +71,7 @@ for (const [role, permissions] of Object.entries(expectedPermissions))
 
 assert.deepEqual(roleHome, {
   PARTNER: "/partner",
+  MARKETER: "/marketing",
 });
 
 const roleDashboard = read("components/dashboard/Dashboard.tsx");
@@ -93,6 +97,13 @@ const sidebar = read("components/layout/Sidebar.tsx");
 assert.match(sidebar, /role === "PARTNER" && id === "finance"/);
 assert.doesNotMatch(sidebar, /title: "Dashboard"|>\s*ONLINE\s*</);
 assert.doesNotMatch(sidebar, />\s*Version 1\.0\.0\s*</);
+
+const routeShell = read("components/layout/RouteShell.tsx");
+assert.match(
+  routeShell,
+  /role === "DIRECTOR"\)[\s\S]*?return \[[^\]]*"\/measurements"[^\]]*\]\.includes\(href\)/,
+  "DIRECTOR navigation must expose the existing measurements workspace",
+);
 
 const dashboard = read("components/dashboard/page.tsx");
 assert.match(dashboard, /can\("orders"\) && \{\s*href: "\/calculator"/);

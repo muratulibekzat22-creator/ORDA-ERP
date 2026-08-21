@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from "lucide-react";
 import { getSession, signIn } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
@@ -8,6 +8,8 @@ const INVALID_CREDENTIALS = "Не удалось войти. Проверьте 
 const LOCKED = "Слишком много попыток входа. Подождите и попробуйте снова.";
 const SESSION_ENDED = "Сессия завершена. Войдите снова.";
 const CONNECTION_ERROR = "Не удалось связаться с сервером. Проверьте интернет и повторите.";
+const LIVE_URL = process.env.NEXT_PUBLIC_LIVE_APP_URL || "https://orda-erp-staging.vercel.app";
+const DEMO_URL = process.env.NEXT_PUBLIC_DEMO_APP_URL || "https://orda-erp-unified-preview.vercel.app";
 
 function authMessage(code?: string | null) {
   const value = decodeURIComponent(code ?? "").toUpperCase();
@@ -23,6 +25,15 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isDemoHost, setIsDemoHost] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setIsDemoHost(window.location.hostname.includes("unified-preview")),
+      0,
+    );
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!loading) return;
@@ -81,7 +92,9 @@ export default function LoginPage() {
       >
         <div className="text-center">
           <h1 className="text-3xl font-bold text-yellow-400 sm:text-4xl">ORDA ERP</h1>
-          <p className="mt-2 text-sm text-slate-400 sm:text-base">Вход для сотрудников ALTYN SAPA</p>
+          <p className="mt-2 text-sm text-slate-400 sm:text-base">
+            {isDemoHost ? "Вход в демо-кабинет" : "Вход в рабочую компанию"}
+          </p>
         </div>
 
         <label className="block text-sm font-medium text-slate-300">
@@ -160,6 +173,14 @@ export default function LoginPage() {
             Ответ занимает больше времени. Не закрывайте страницу.
           </p>
         )}
+
+        <a
+          href={isDemoHost ? LIVE_URL : DEMO_URL}
+          className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"
+        >
+          {isDemoHost ? "Открыть рабочую компанию" : "Открыть демо-кабинет"}
+          <ExternalLink aria-hidden="true" size={16} />
+        </a>
       </form>
     </main>
   );

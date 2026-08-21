@@ -109,8 +109,14 @@ export async function GET(request: Request) {
             : { deletedAt: null }),
       };
     const query = params.get("query")?.trim().slice(0, 120);
+    const city = params.get("city")?.trim().slice(0, 120);
     const lifecycle = params.get("lifecycle");
     const filter = params.get("filter") ?? "all";
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(todayStart);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     const paintStage: Prisma.ProductionWhereInput = {
       OR: [
         { stage: { contains: "paint", mode: "insensitive" } },
@@ -119,6 +125,8 @@ export async function GET(request: Request) {
     };
     const filterWhere: Record<string, Prisma.OrderWhereInput> = {
       all: {},
+      active: { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+      today: { orderReceivedAt: { gte: todayStart, lt: tomorrow } },
       measurement: { lifecycle: { in: [OrderLifecycle.CREATED, OrderLifecycle.PREPARATION] } },
       preparation: {
         OR: [
@@ -131,10 +139,17 @@ export async function GET(request: Request) {
       installation: { lifecycle: { in: [OrderLifecycle.INSTALLATION, OrderLifecycle.ACCEPTANCE] } },
       completed: { lifecycle: OrderLifecycle.COMPLETED },
       overdue: {
-        lifecycle: { not: OrderLifecycle.COMPLETED },
+        lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
         OR: [
-          { productionDeadline: { lt: new Date() } },
-          { installation: { scheduledAt: { lt: new Date() } } },
+          { productionDeadline: { lt: now } },
+          { installation: { scheduledAt: { lt: now } } },
+        ],
+      },
+      "overdue-order": {
+        lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+        OR: [
+          { productionDeadline: { lt: now } },
+          { installation: { scheduledAt: { lt: now } } },
         ],
       },
       "partner-payable": { partnerAgreedAt: { not: null }, partnerBalance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
@@ -145,15 +160,14 @@ export async function GET(request: Request) {
         lifecycle: { not: OrderLifecycle.CANCELLED },
         documents: { none: { type: "CONTRACT", status: { notIn: ["ARCHIVED", "CANCELLED"] } } },
       },
-      "overdue-client": { promisedAt: { lt: new Date() }, balance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
-      "overdue-partner": { partnerPlannedReadyAt: { lt: new Date() }, partnerBalance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "overdue-client": { promisedAt: { lt: now }, balance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      "overdue-partner": { partnerPlannedReadyAt: { lt: now }, partnerBalance: { gt: 0 }, lifecycle: { notIn: [OrderLifecycle.READY_FOR_INSTALLATION, OrderLifecycle.INSTALLATION, OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
     };
     if (!Object.hasOwn(filterWhere, filter))
       return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
-    const where: Prisma.OrderWhereInput = {
+    const searchWhere: Prisma.OrderWhereInput = {
       AND: [
         baseWhere,
-        filterWhere[filter],
         ...(query
           ? [{ OR: [
               { number: { contains: query, mode: "insensitive" as const } },
@@ -162,19 +176,47 @@ export async function GET(request: Request) {
               { client: { city: { contains: query, mode: "insensitive" as const } } },
             ] }]
           : []),
+        ...(city ? [{ client: { city: { equals: city, mode: "insensitive" as const } } }] : []),
         ...(lifecycle && Object.values(OrderLifecycle).includes(lifecycle as OrderLifecycle)
           ? [{ lifecycle: lifecycle as OrderLifecycle }]
           : []),
       ],
     };
-    const [orders, total] = await Promise.all([
+    const where: Prisma.OrderWhereInput = { AND: [searchWhere, filterWhere[filter]] };
+    const metricEntries = Object.entries(filterWhere);
+    const [orders, total, metricRows, cityRows] = await Promise.all([
       getOrders(where, {
         includeDeleted,
         skip: (requestedPage - 1) * requestedLimit,
         take: requestedLimit,
       }),
       countOrders(where),
+      Promise.all(metricEntries.map(async ([key, scope]) => {
+        const aggregate = await prisma.order.aggregate({
+          where: { AND: [searchWhere, scope] },
+          _count: { _all: true },
+          _sum: key === "client-payable" || key === "overdue-client"
+            ? { balance: true }
+            : key === "partner-payable" || key === "overdue-partner"
+              ? { partnerBalance: true }
+              : { amount: true },
+        });
+        const sum = "balance" in aggregate._sum
+          ? aggregate._sum.balance
+          : "partnerBalance" in aggregate._sum
+            ? aggregate._sum.partnerBalance
+            : aggregate._sum.amount;
+        return [key, { count: aggregate._count._all, amount: String(sum ?? 0) }] as const;
+      })),
+      prisma.order.findMany({
+        where: baseWhere,
+        select: { client: { select: { city: true } } },
+        distinct: ["clientId"],
+      }),
     ]);
+    const filterMetrics = Object.fromEntries(metricRows);
+    const cities = [...new Set(cityRows.map((row) => row.client.city.trim()).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, "ru"));
     if (role !== Role.DIRECTOR && role !== Role.ACCOUNTANT) {
       const projected = orders.map((order) => {
           const result = { ...order } as Record<string, unknown>;
@@ -204,11 +246,15 @@ export async function GET(request: Request) {
       return NextResponse.json({
         data: projected,
         pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
+        filterMetrics: Object.fromEntries(Object.entries(filterMetrics).filter(([key]) => !["partner-payable", "without-partner", "without-partner-price", "without-contract", "overdue-client", "overdue-partner"].includes(key))),
+        filters: { cities },
       });
     }
     return NextResponse.json({
       data: orders,
       pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
+      filterMetrics,
+      filters: { cities },
     });
   } catch {
     return NextResponse.json(
@@ -245,6 +291,7 @@ export async function POST(request: Request) {
       "orderReceivedAt" in body ||
       "frameType" in body;
     const clientId = positiveInteger(body.clientId);
+    const clientName = requiredText(body.clientName);
     const phone = requiredText(body.phone);
     const city = requiredText(body.city);
     const address =
@@ -288,7 +335,7 @@ export async function POST(request: Request) {
 
     if (
       (!enhanced && !clientId) ||
-      (enhanced && (!phone || !city || !orderReceivedAt || !managerUserId)) ||
+      (enhanced && (!phone || !city || !orderReceivedAt || !managerUserId || (!clientId && !clientName))) ||
       !address ||
       !staircase ||
       !material ||
@@ -366,7 +413,7 @@ export async function POST(request: Request) {
       ...(enhanced
         ? {
             client: {
-              name: requiredText(body.clientName) ?? "",
+              name: clientName ?? "",
               phone: phone!,
               city: city!,
               address: requiredText(body.address) ?? "",
@@ -459,7 +506,7 @@ export async function POST(request: Request) {
       );
     if (
       error instanceof Error &&
-      ["INVALID_CLIENT_PHONE", "CLIENT_REQUIRED", "MANAGER_REQUIRED"].includes(
+      ["INVALID_CLIENT_PHONE", "CLIENT_NAME_REQUIRED", "CLIENT_CITY_REQUIRED", "CLIENT_REQUIRED", "MANAGER_REQUIRED"].includes(
         error.message,
       )
     )

@@ -65,7 +65,7 @@ export function lifecycleEventLabel(type: string, to?: string | null) {
   if (type === "ORDER_COMPLETED") return "Заказ завершён";
   if (type === "BLOCKER_OPENED") return "Добавлена проблема";
   if (type === "BLOCKER_RESOLVED") return "Проблема решена";
-  if (type === "COMPLETE_MEASUREMENT") return "Контрольный замер выполнен";
+  if (type === "COMPLETE_MEASUREMENT" || type === "CONTROL_MEASUREMENT_COMPLETED") return "Контрольный замер выполнен";
   if (type === "INSTALLATION_COMPLETED") return "Установка завершена";
   if (type === "LIFECYCLE_TRANSITION" && to)
     return `Этап изменён: ${ORDER_STAGE_LABELS[projectOrderStage(to)]}`;

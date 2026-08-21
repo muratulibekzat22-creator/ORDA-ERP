@@ -76,13 +76,15 @@ if (
 )
   throw new Error("Sales analytics must use leads, not orders");
 for (const field of [
-  "Имя клиента (необязательно)",
+  "Имя клиента",
   "WhatsApp / телефон",
   "Город",
   "Ответственный менеджер",
 ])
   if (!modal.includes(field))
     throw new Error(`Minimal application field missing: ${field}`);
+if (!clientApi.includes("Укажите имя клиента") || !modal.includes("if (!name.trim())"))
+  throw new Error("Client name must be enforced by UI and API");
 for (const forbidden of ["Предварительная сумма", "Источник заявки", "Статус"])
   if (modal.includes(forbidden))
     throw new Error(

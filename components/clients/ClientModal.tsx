@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, LoaderCircle, X } from "lucide-react";
+import CityCombobox from "@/components/clients/CityCombobox";
 
 export type ClientDraft = { name: string; phone: string; city: string; managerUserId: string };
 type CreatedClient = { id: number; name: string; phone: string; city: string };
@@ -19,8 +20,7 @@ const money = (value: string | number) => `${Math.round(Number(value) || 0).toLo
 export default function ClientModal({ open, onClose, onSave, saving = false }: Props) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("+7");
-  const [cityMode, setCityMode] = useState<"ALMATY" | "OTHER">("ALMATY");
-  const [otherCity, setOtherCity] = useState("");
+  const [city, setCity] = useState("Алматы");
   const [managerUserId, setManagerUserId] = useState("");
   const [managers, setManagers] = useState<Manager[]>([]);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
@@ -53,24 +53,24 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
     add("METAL_RAILING", railingMeters);
     if (installation) add("INSTALLATION", 1);
     if (measurement) add("MEASUREMENT", 1);
-    if (cityMode === "ALMATY" && almatyDelivery) add("DELIVERY", 1);
+    if (city.trim().toLocaleLowerCase("ru") === "алматы" && almatyDelivery) add("DELIVERY", 1);
     add("BRASS_BALUSTERS", brassCount);
     add("HANDRAIL", handrailMeters);
     if (painting) add("PAINTING", steps + platforms * 2);
     return result;
-  }, [almatyDelivery, brassCount, cityMode, handrailMeters, installation, measurement, painting, platforms, railingMeters, risers, steps, tariffs]);
+  }, [almatyDelivery, brassCount, city, handrailMeters, installation, measurement, painting, platforms, railingMeters, risers, steps, tariffs]);
 
   const calculationInput = useMemo(() => ({
     regularSteps: steps,
     platformEquivalents: Array.from({ length: platforms }, () => 2),
     installationRequired: installation,
-    deliveryRequired: cityMode === "OTHER" ? deliveryOption !== "NONE" : almatyDelivery,
+    deliveryRequired: city.trim().toLocaleLowerCase("ru") !== "алматы" ? deliveryOption !== "NONE" : almatyDelivery,
     measurementRequired: measurement,
-    otherCity: cityMode === "OTHER",
-    pickup: cityMode === "OTHER" ? deliveryOption === "NONE" : !almatyDelivery,
-    deliveryOption: cityMode === "OTHER" ? deliveryOption : "NONE",
+    otherCity: city.trim().toLocaleLowerCase("ru") !== "алматы",
+    pickup: city.trim().toLocaleLowerCase("ru") !== "алматы" ? deliveryOption === "NONE" : !almatyDelivery,
+    deliveryOption: city.trim().toLocaleLowerCase("ru") !== "алматы" ? deliveryOption : "NONE",
     lines,
-  }), [almatyDelivery, cityMode, deliveryOption, installation, lines, measurement, platforms, steps]);
+  }), [almatyDelivery, city, deliveryOption, installation, lines, measurement, platforms, steps]);
 
   useEffect(() => {
     if (!open) return;
@@ -125,12 +125,13 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
     setError("");
     if (phone.replace(/\D/g, "").length < 10) return setError("Укажите корректный номер WhatsApp");
     if (!managerUserId) return setError("Выберите ответственного менеджера");
-    const city = cityMode === "OTHER" ? otherCity.trim() : "Алматы";
-    if (!city) return setError("Укажите город");
+    const normalizedCity = city.trim();
+    if (!name.trim()) return setError("Укажите имя клиента");
+    if (!normalizedCity) return setError("Укажите город");
     if (preview.length !== 3) return setError("Дождитесь расчёта трёх вариантов");
     setWorking(true);
     try {
-      const client = await onSave({ name, phone, city, managerUserId });
+      const client = await onSave({ name: name.trim(), phone, city: normalizedCity, managerUserId });
       const options = await Promise.all(materials.map(async (material) => {
         const response = await fetch(`/api/clients/${client.id}/calculations`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...calculationInput, material }) });
         const payload = await response.json() as Option & { error?: string };
@@ -154,11 +155,11 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
       <div className="flex items-start justify-between gap-3"><div><h2 id="new-lead-title" className="text-2xl font-bold text-white">Новая заявка</h2><p className="mt-1 text-sm text-slate-400">Клиент, расчёт трёх вариантов и КП — в одном окне</p></div><button type="button" onClick={onClose} disabled={working} className="grid size-11 shrink-0 place-items-center rounded-xl text-slate-300" aria-label="Закрыть"><X /></button></div>
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-950/50 p-3 text-sm text-red-300">{error}</p>}
       {proposal ? <Success proposal={proposal} onClose={onClose} /> : <form onSubmit={submit}>
-        <section className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Имя клиента (необязательно)"><input autoFocus value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field><Field label="WhatsApp / телефон"><input required type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className={input} /></Field><Field label="Город"><select required value={cityMode} onChange={(event) => setCityMode(event.target.value as "ALMATY" | "OTHER")} className={input}><option value="ALMATY">Алматы</option><option value="OTHER">Другой город</option></select></Field>{cityMode === "OTHER" && <Field label="Название города"><input required value={otherCity} onChange={(event) => setOtherCity(event.target.value)} className={input} /></Field>}<Field label="Ответственный менеджер"><select required value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)} className={input}><option value="">Выберите менеджера</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field></section>
+        <section className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Имя клиента"><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field><Field label="WhatsApp / телефон"><input required type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className={input} /></Field><Field label="Город"><CityCombobox value={city} onChange={setCity} className={input}/></Field><Field label="Ответственный менеджер"><select required value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)} className={input}><option value="">Выберите менеджера</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field></section>
 
-        <section className="mt-6 rounded-xl border border-slate-700 p-4"><h3 className="font-semibold text-white">Калькулятор лестницы</h3><div className="mt-4 grid gap-3 sm:grid-cols-2"><Counter label="Количество ступеней" value={steps} min={0} onChange={setSteps} /><Counter label="Количество площадок" value={platforms} min={0} onChange={setPlatforms} /><NumberField label="Ограждение, м" value={railingMeters} onChange={setRailingMeters} /><Toggle label="Подступенки" value={risers} onChange={setRisers} /></div><div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><Toggle label="Монтаж" value={installation} onChange={setInstallation} /><Toggle label="Замер" value={measurement} onChange={setMeasurement} />{cityMode === "ALMATY" && <Toggle label="Доставка по Алматы" value={almatyDelivery} onChange={setAlmatyDelivery} />}</div>
+        <section className="mt-6 rounded-xl border border-slate-700 p-4"><h3 className="font-semibold text-white">Калькулятор лестницы</h3><div className="mt-4 grid gap-3 sm:grid-cols-2"><Counter label="Количество ступеней" value={steps} min={0} onChange={setSteps} /><Counter label="Количество площадок" value={platforms} min={0} onChange={setPlatforms} /><NumberField label="Ограждение, м" value={railingMeters} onChange={setRailingMeters} /><Toggle label="Подступенки" value={risers} onChange={setRisers} /></div><div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><Toggle label="Монтаж" value={installation} onChange={setInstallation} /><Toggle label="Замер" value={measurement} onChange={setMeasurement} />{city.trim().toLocaleLowerCase("ru") === "алматы" && <Toggle label="Доставка по Алматы" value={almatyDelivery} onChange={setAlmatyDelivery} />}</div>
 
-          {cityMode === "OTHER" && <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"><h4 className="font-semibold text-white">Доставка</h4><div className="mt-3 grid gap-2">{(["OPTION_1", "OPTION_2", "NONE"] as DeliveryOption[]).map((option) => <label key={option} className="flex min-h-11 items-center gap-3 rounded-lg bg-slate-900 px-3 text-sm text-slate-200"><input type="radio" name="deliveryOption" checked={deliveryOption === option} onChange={() => setDeliveryOption(option)} className="size-5" /><span>{option === "NONE" ? "Без доставки" : `${option === "OPTION_1" ? "Вариант 1" : "Вариант 2"} — ${money(deliveryPrices[option])}`}</span></label>)}</div></div>}
+          {city.trim().toLocaleLowerCase("ru") !== "алматы" && <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4"><h4 className="font-semibold text-white">Доставка</h4><div className="mt-3 grid gap-2">{(["OPTION_1", "OPTION_2", "NONE"] as DeliveryOption[]).map((option) => <label key={option} className="flex min-h-11 items-center gap-3 rounded-lg bg-slate-900 px-3 text-sm text-slate-200"><input type="radio" name="deliveryOption" checked={deliveryOption === option} onChange={() => setDeliveryOption(option)} className="size-5" /><span>{option === "NONE" ? "Без доставки" : `${option === "OPTION_1" ? "Вариант 1" : "Вариант 2"} — ${money(deliveryPrices[option])}`}</span></label>)}</div></div>}
 
           <button type="button" onClick={() => setAdvanced((value) => !value)} className="mt-4 min-h-11 text-sm font-semibold text-blue-300">{advanced ? "Скрыть дополнительные параметры" : "Дополнительные параметры"}</button>{advanced && <div className="mt-3 grid gap-3 rounded-lg bg-slate-900 p-3 sm:grid-cols-2"><NumberField label="Латунные балясины, шт." value={brassCount} onChange={setBrassCount} /><NumberField label="Поручень, м" value={handrailMeters} onChange={setHandrailMeters} /><Toggle label="Покраска" value={painting} onChange={setPainting} /></div>}
 
