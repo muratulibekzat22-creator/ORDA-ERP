@@ -93,24 +93,24 @@ export function calculatePartnerSettlement(input: PartnerSettlementInput) {
     fixedAmount: input.fixedAmount,
     manualAmount: input.manualAmount,
   });
+  const partnerAccrued = money(zeroFloor(reward.accrued.add(adjustment)));
   const partnerBalance = money(
-    reward.accrued
+    partnerAccrued
       .sub(companyPaidPartner)
       .sub(clientPaidToPartner)
       .add(partnerReturned)
-      .add(partnerTransferred)
-      .add(adjustment),
+      .add(partnerTransferred),
   );
   const orderAmount = decimal(input.orderAmount);
   const clientRemaining = money(zeroFloor(orderAmount.sub(received)));
   const clientOverpayment = money(zeroFloor(received.sub(orderAmount)));
-  const companyAmount = money(received.sub(reward.accrued));
+  const companyAmount = money(received.sub(partnerAccrued));
   const companyDebt = money(zeroFloor(partnerBalance));
   const partnerDebt = money(zeroFloor(partnerBalance.negated()));
   let status: PartnerSettlementStatus = PartnerSettlementStatus.CALCULATED;
   if (input.cancelled) status = PartnerSettlementStatus.CANCELLED;
   else if (input.disputed) status = PartnerSettlementStatus.DISPUTED;
-  else if (partnerBalance.eq(0) && (received.gt(0) || reward.accrued.eq(0)))
+  else if (partnerBalance.eq(0) && (received.gt(0) || partnerAccrued.eq(0)))
     status = PartnerSettlementStatus.CLOSED;
   else if (partnerBalance.lt(0)) status = PartnerSettlementStatus.PARTNER_OWES_COMPANY;
   else if (companyPaidPartner.gt(0)) status = PartnerSettlementStatus.PARTIALLY_PAID;
@@ -125,7 +125,7 @@ export function calculatePartnerSettlement(input: PartnerSettlementInput) {
     clientRemaining,
     clientOverpayment,
     partnerPlanned: reward.planned,
-    partnerAccrued: reward.accrued,
+    partnerAccrued,
     rewardBasis: reward.basis,
     companyPaidPartner: money(companyPaidPartner),
     partnerRemaining: companyDebt,

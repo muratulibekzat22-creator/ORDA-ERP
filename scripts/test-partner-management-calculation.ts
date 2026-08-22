@@ -25,8 +25,8 @@ const settlement = calculatePartnerSettlement({
 });
 equal(settlement.received, "700000.07", "received includes direct partner payment exactly once");
 equal(settlement.clientRemaining, "300000.03", "client remaining");
-equal(settlement.partnerAccrued, "70000.01", "paid-percent accrual");
-equal(settlement.companyAmount, "630000.06", "company amount");
+equal(settlement.partnerAccrued, "70010.12", "paid-percent accrual includes confirmed adjustment");
+equal(settlement.companyAmount, "629989.95", "company share includes confirmed adjustment");
 equal(settlement.partnerBalance, "-179989.91", "partner balance formula");
 equal(settlement.partnerDebt, "179989.91", "partner debt");
 assert.equal(settlement.status, PartnerSettlementStatus.PARTNER_OWES_COMPANY);
@@ -42,7 +42,10 @@ equal(refunded.partnerBalance, "-150000.00", "partner refund reduces money held 
 
 const economy = calculateOrderEconomy({
   totalSale: "5200000",
-  payments: [{ type: "CLIENT_PAYMENT", amount: "3000000" }],
+  payments: [
+    { type: "CLIENT_PAYMENT", amount: "3000000" },
+    { type: "PARTNER_PAYOUT", amount: "1500000", partnerId: 1 },
+  ],
   partnerId: 1,
   partnerAgreed: "3700000",
   partnerAgreedAt: new Date("2026-08-19T00:00:00Z"),
@@ -56,10 +59,37 @@ const economy = calculateOrderEconomy({
 equal(economy.client.netReceived, "3000000.00", "client payments are counted once");
 equal(economy.client.remaining, "2200000.00", "client remaining is independent from partner payment");
 equal(economy.partner.accrued, "3700000.00", "agreed partner cost creates full accrual");
-equal(economy.partner.paid, "0.00", "agreed cost is not a payout");
-equal(economy.partner.remaining, "3700000.00", "partner remaining before payout");
+equal(economy.partner.paid, "1500000.00", "canonical partner payout is counted once");
+equal(economy.partner.remaining, "2200000.00", "partner remaining after partial payout");
 equal(economy.profit.marginBeforePayroll, "1480000.00", "margin before payroll acceptance example");
 equal(economy.profit.payrollAccrued, "180000.00", "order-linked payroll accruals");
 equal(economy.profit.netProfit, "1300000.00", "net profit acceptance example");
 equal(economy.profit.netMarginPercent, "25.00", "net margin acceptance example");
+assert.equal(economy.client.status, "PARTIAL", "client status in acceptance example");
+assert.equal(economy.partner.status, "PARTIALLY_PAID", "partner status in acceptance example");
+
+const statusCase = (payments: Array<{ type: string; amount: string; partnerId?: number }>, dueAt?: Date) => calculateOrderEconomy({
+  totalSale: "1000", payments, partnerId: 1, partnerAgreed: "600", partnerAgreedAt: new Date("2026-01-01"),
+  clientDueAt: dueAt, now: new Date("2026-08-22"),
+});
+assert.equal(statusCase([]).client.status, "UNPAID", "unpaid client status");
+assert.equal(statusCase([{ type: "CLIENT_PAYMENT", amount: "400" }]).client.status, "PARTIAL", "partial client status");
+assert.equal(statusCase([{ type: "CLIENT_PAYMENT", amount: "1000" }]).client.status, "PAID", "paid client status");
+assert.equal(statusCase([{ type: "CLIENT_PAYMENT", amount: "1100" }]).client.status, "OVERPAID", "client overpayment status");
+assert.equal(statusCase([], new Date("2026-08-01")).client.status, "OVERDUE", "overdue client status");
+equal(statusCase([{ type: "CLIENT_PAYMENT", amount: "700" }, { type: "REFUND", amount: "200" }]).client.remaining, "500.00", "refund restores client outstanding");
+assert.equal(calculateOrderEconomy({ totalSale: "1000", partnerId: 1, partnerDisputed: true }).partner.status, "DISPUTED", "manual dispute has priority");
+assert.equal(calculateOrderEconomy({ totalSale: "1000", partnerId: 1, partnerAgreed: "0", partnerAgreedAt: new Date() }).partner.status, "NOT_ACCRUED", "zero accrual is explicit");
+assert.equal(calculateOrderEconomy({ totalSale: "1000", lifecycle: "COMPLETED" }).profit.mode, "ACTUAL", "completed order profit mode");
+assert.equal(calculateOrderEconomy({ totalSale: "1000", lifecycle: "IN_PRODUCTION" }).profit.mode, "PLANNED", "active order profit mode");
+
+const payrollPaid = calculateOrderEconomy({
+  totalSale: "1000", partnerId: 1, partnerAgreed: "400", partnerAgreedAt: new Date(),
+  payrollAccruals: [{
+    type: PayrollAccrualType.EXTRA_BONUS, direction: PayrollDirection.INCREASE, amount: "100",
+    payments: [{ amount: "100" }],
+  }],
+});
+equal(payrollPaid.profit.netProfit, "500.00", "payroll accrual reduces profit once");
+equal(payrollPaid.cash.payrollPaid, "100.00", "payroll payment affects cash position only");
 console.log("Partner calculations: fixed/order/paid/profit/manual, Decimal precision, debt and reversal PASS");

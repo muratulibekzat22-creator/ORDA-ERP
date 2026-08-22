@@ -2426,7 +2426,10 @@ model PartnerOrderRelation {
   manualAmount     Decimal?                     @db.Decimal(14, 2)
   profitBasis      Decimal                      @db.Decimal(14, 2)
   startsAt         DateTime                     @default(now())
+  workDueAt        DateTime?
+  paymentDueAt     DateTime?
   settlementStatus PartnerSettlementStatus      @default(NOT_CALCULATED)
+  disputeReason    String?
   comment          String?
   closedAt         DateTime?
   createdById      Int
@@ -2438,6 +2441,7 @@ model PartnerOrderRelation {
 
   @@unique([companyId, orderId])
   @@index([companyId, partnerId, settlementStatus])
+  @@index([companyId, paymentDueAt, settlementStatus])
   @@index([partnerId, createdAt])
 }
 

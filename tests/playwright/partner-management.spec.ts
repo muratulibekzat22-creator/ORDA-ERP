@@ -19,11 +19,16 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   await login(page, playwrightUsers.director);
   await page.goto("/partner-management");
   await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toBeVisible();
-  for (const label of ["Обзор", "Партнёры", "Заказы партнёров", "Взаиморасчёты", "Выплаты", "Отчёты"])
+  for (const label of ["Обзор", "Партнёры", "Заказы", "Взаиморасчёты", "Выплаты", "Отчёты"])
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
-  const api = await page.request.get("/api/partner-management");
+  const api = await page.request.get("/api/partner-management?pageSize=100&scope=active");
   expect(api.status()).toBe(200);
-  const payload = await api.json() as { partners: Array<{ id: number }> };
+  const payload = await api.json() as { partners: Array<{ id: number }>; counts: { active: number }; orders: Array<{ order: { id: number } }> };
+  expect(payload.orders).toHaveLength(payload.counts.active);
+  for (const chart of ["Продажи и клиентские оплаты", "Начислено и выплачено партнёрам", "Остатки клиентов и долги партнёрам", "Чистая прибыль по месяцам", "Чистая маржа по месяцам", "Прибыль по партнёрам", "Количество заказов по партнёрам", "Структура расходов партнёрских заказов"])
+    await expect(page.getByRole("heading", { name: chart, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Заказы", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Канонические заказы", exact: true })).toBeVisible();
   if (payload.partners[0]) {
     const detail = await page.request.get(`/api/partner-management/${payload.partners[0].id}`);
     expect(detail.status()).toBe(200);
@@ -75,7 +80,7 @@ for (const [role, email] of [["MANAGER", playwrightUsers.manager], ["ACCOUNTANT"
     expect(api.status()).toBe(403);
     await page.goto("/partner-management");
     await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toHaveCount(0);
-    await expect(page.getByText("404")).toBeVisible();
+    await expect(page.getByText("403")).toBeVisible();
     await page.goto("/orders");
     await expect(page.getByRole("link", { name: "Партнёры", exact: true })).toHaveCount(0);
     if (role === "MANAGER") {

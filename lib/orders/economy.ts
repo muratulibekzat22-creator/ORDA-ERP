@@ -8,10 +8,13 @@ export type OrderEconomyInput = {
   payments?: Array<{ type: string; amount: DecimalValue; partnerId?: number | null }>;
   partnerId?: number | null;
   partnerAgreed?: DecimalValue | null;
+  partnerAccrued?: DecimalValue | null;
   partnerAgreedAt?: Date | string | null;
   partnerAgreedBy?: string | null;
   partnerDueAt?: Date | string | null;
   clientDueAt?: Date | string | null;
+  partnerDisputed?: boolean;
+  lifecycle?: string | null;
   now?: Date;
   payrollAccruals?: Array<{
     type: PayrollAccrualType | string;
@@ -65,8 +68,11 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
   }
   const netReceived = money(clientReceived.sub(clientRefunds));
   const clientRemaining = money(positive(totalSale.sub(netReceived)));
+  const clientOverpayment = money(positive(netReceived.sub(totalSale)));
   const partnerAgreed = input.partnerAgreedAt ? money(input.partnerAgreed ?? 0) : money(0);
-  const partnerRemaining = money(positive(partnerAgreed.sub(partnerPaid)));
+  const partnerAccrued = input.partnerAgreedAt ? money(input.partnerAccrued ?? partnerAgreed) : money(0);
+  const partnerRemaining = money(positive(partnerAccrued.sub(partnerPaid)));
+  const partnerOverpayment = money(positive(partnerPaid.sub(partnerAccrued)));
 
   const payroll = (input.payrollAccruals ?? []).filter(
     (row) => !row.reversalOfId && !row.reversedBy,
@@ -119,7 +125,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
   const bankFees = directCategory(/BANK|COMMISSION|БАНК|КОМИСС/i);
   const categorizedDirect = materials.add(delivery).add(contractors).add(bankFees);
   const otherDirectExpenses = money(positive(directExpenses.sub(categorizedDirect)));
-  const marginBeforePayroll = money(totalSale.sub(partnerAgreed).sub(directExpenses));
+  const marginBeforePayroll = money(totalSale.sub(partnerAccrued).sub(directExpenses));
   const netProfit = money(marginBeforePayroll.sub(payrollAccrued));
   const netMarginPercent = totalSale.eq(0)
     ? new Prisma.Decimal(0)
@@ -127,26 +133,61 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
   const cashBalance = money(netReceived.sub(partnerPaid).sub(payrollPaid).sub(paidDirectExpenses));
   const now = input.now ?? new Date();
   const overdue = (value: Date | string | null | undefined) => value ? new Date(value).getTime() < now.getTime() : false;
+  const clientStatus = clientOverpayment.gt(0)
+    ? "OVERPAID"
+    : clientRemaining.eq(0)
+      ? "PAID"
+      : overdue(input.clientDueAt)
+        ? "OVERDUE"
+        : netReceived.gt(0)
+          ? "PARTIAL"
+          : "UNPAID";
+  const partnerStatus = !input.partnerId
+    ? "NOT_ASSIGNED"
+    : input.partnerDisputed
+      ? "DISPUTED"
+      : !input.partnerAgreedAt
+        ? "COST_MISSING"
+        : partnerOverpayment.gt(0)
+          ? "OVERPAID"
+          : partnerAccrued.eq(0)
+            ? "NOT_ACCRUED"
+          : partnerRemaining.eq(0)
+            ? "PAID"
+            : overdue(input.partnerDueAt)
+              ? "OVERDUE"
+              : partnerPaid.gt(0)
+                ? "PARTIALLY_PAID"
+                : "PAYABLE";
+  const profitComplete = Boolean(input.partnerId && input.partnerAgreedAt);
+  const profitWarning = !input.partnerId
+    ? "Партнёр не назначен"
+    : !input.partnerAgreedAt
+      ? "Прибыль не рассчитана: не указана стоимость партнёра"
+      : null;
 
   return {
     client: {
       contractAmount, additionalWorks, discounts, totalSale,
       receivedGross: money(clientReceived), refunds: money(clientRefunds), netReceived,
-      remaining: clientRemaining,
+      remaining: clientRemaining, overpayment: clientOverpayment,
       dueAt: input.clientDueAt ?? null,
       overdueAmount: overdue(input.clientDueAt) ? clientRemaining : money(0),
-      status: clientRemaining.eq(0) ? "PAID" : netReceived.gt(0) ? "PARTIAL" : "UNPAID",
+      status: clientStatus,
     },
     partner: {
       agreed: partnerAgreed, agreedAt: input.partnerAgreedAt ?? null, agreedBy: input.partnerAgreedBy ?? null,
-      accrued: partnerAgreed, paid: money(partnerPaid), remaining: partnerRemaining,
+      accrued: partnerAccrued, paid: money(partnerPaid), remaining: partnerRemaining, overpayment: partnerOverpayment,
       dueAt: input.partnerDueAt ?? null,
-      status: !input.partnerId ? "NOT_ASSIGNED" : !input.partnerAgreedAt ? "NOT_CALCULATED" : partnerRemaining.eq(0) ? "CLOSED" : partnerPaid.gt(0) ? "PARTIALLY_PAID" : "COMPANY_OWES_PARTNER",
+      status: partnerStatus,
     },
     profit: {
-      totalSale, partnerCost: partnerAgreed, directExpenses, materials, delivery, contractors, bankFees, otherDirectExpenses, marginBeforePayroll,
+      totalSale, partnerCost: partnerAccrued, directExpenses, materials, delivery, contractors, bankFees, otherDirectExpenses, marginBeforePayroll,
       managerBonus, measurer, installers, driver, expediter, otherPayroll,
       payrollAccrued, netProfit, netMarginPercent,
+      complete: profitComplete,
+      warning: profitWarning,
+      mode: input.lifecycle === "COMPLETED" ? "ACTUAL" : "PLANNED",
     },
     cash: {
       clientReceived: netReceived, partnerPaid: money(partnerPaid), payrollPaid,
