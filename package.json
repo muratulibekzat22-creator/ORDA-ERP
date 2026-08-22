@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "npm run test:payroll:unit && npm run test:payroll && npm run test:partner-management && npm run test:marketing && npm run test:final-integration && npm run test:tenant-isolation && npm run test:role-acceptance && npm run test:database-safety",
+    "test": "npm run test:payroll:unit && npm run test:order-economy:ui && npm run test:payroll && npm run test:partner-management && npm run test:marketing && npm run test:final-integration && npm run test:tenant-isolation && npm run test:role-acceptance && npm run test:database-safety",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -47,6 +47,7 @@
     "test:partner-settlements": "tsx scripts/test-partner-settlements.ts",
     "test:partner-finance": "tsx scripts/test-partner-finance-dashboard.ts",
     "test:partner-management:unit": "tsx scripts/test-partner-management-calculation.ts",
+    "test:order-economy:ui": "tsx scripts/test-order-economy-ui.ts",
     "test:partner-management": "npm run test:partner-management:unit && tsx scripts/test-partner-management.ts",
     "test:final-integration": "tsx scripts/test-final-integration.ts",
     "test:finance-journal": "tsx scripts/test-finance-journal.ts",

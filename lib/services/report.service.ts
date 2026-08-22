@@ -2,6 +2,7 @@ import { Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { getCompanyProfitability } from "@/lib/services/profitability.service";
 
 type Actor = { id: number; role: Role };
 type Scope = { managerUserId?: number };
@@ -36,6 +37,9 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
   const internalFinance = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const profitability = internalFinance
+    ? await getCompanyProfitability({ from: period.start, to: period.end, managerUserId: scope.managerUserId })
+    : null;
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
   const [customerBalance, partnerBalance, payrollTotals] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
@@ -73,7 +77,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const day = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: period.timezone }).format(date);
   orders.forEach((item) => { const key = day(item.createdAt); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.salesAmount += money(item.amount); trendMap.set(key, value); });
   payments.forEach((item) => { const key = day(item.operationDate); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.received += paymentEffect(item.type, item.amount); trendMap.set(key, value); });
-  const grossMargin = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.amount) - money(item.partnerPrice), 0);
+  const grossMargin = Number(profitability?.totals.orderProfit ?? 0);
   const currentCustomerRemaining = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
   const currentPartnerRemaining = Math.max(Number(partnerBalance._sum.partnerBalance ?? 0), 0);
   const payrollAccruedRow = payrollTotals.find((row) => row.kind === "accrual");

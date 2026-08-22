@@ -1,17 +1,24 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 import type { EmployeeSettlement, OrderTabData } from "./tabs/types";
 
-const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
+const money = (value: number) =>
+  `${(Math.abs(value) < 0.005 ? 0 : value).toLocaleString("ru-RU")} ₸`;
 const statuses: Record<string, string> = {
-  NOT_ASSIGNED: "Не назначен",
+  NOT_ASSIGNED: "Не передан в цех",
+  COST_MISSING: "Стоимость не указана",
   UNPAID: "Не оплачено",
-  PARTIAL: "Частично",
+  PARTIAL: "Частично оплачено",
+  PARTIALLY_PAID: "Частично оплачено",
   PAID: "Оплачено",
   OVERPAID: "Переплата",
+  OVERDUE: "Просрочено",
+  PAYABLE: "Не оплачено",
+  NOT_ACCRUED: "Не начислено",
+  DISPUTED: "Спорный расчёт",
 };
 const payrollStatuses: Record<string, string> = {
   ACCRUED: "Начислено",
@@ -38,20 +45,34 @@ export default function OrderSettlementPanel({
   order,
   readOnly = false,
 }: {
-  order: Pick<OrderTabData, "id" | "partner" | "settlement">;
+  order: Pick<
+    OrderTabData,
+    "id" | "number" | "client" | "partner" | "settlement" | "defaultWorkshop"
+  >;
   readOnly?: boolean;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
   const role = session?.user.role ?? "";
   const [partners, setPartners] = useState<
     Array<{ id: number; name: string; active: boolean }>
   >([]);
-  const [partnerId, setPartnerId] = useState(String(order.partner?.id ?? ""));
+  const [employees, setEmployees] = useState<
+    Array<{ id: number; name: string; position: string; user: { role: string } | null }>
+  >([]);
+  const [defaultWorkshop, setDefaultWorkshop] = useState(
+    order.defaultWorkshop ?? null,
+  );
+  const [partnerId, setPartnerId] = useState(
+    String(order.partner?.id ?? order.defaultWorkshop?.id ?? ""),
+  );
   const [agreed, setAgreed] = useState(
     String(order.settlement?.partner?.agreed ?? ""),
   );
   const [agreedAt, setAgreedAt] = useState(today());
+  const [workDueAt, setWorkDueAt] = useState("");
+  const [paymentDueAt, setPaymentDueAt] = useState("");
   const [reason, setReason] = useState("");
   const [amount, setAmount] = useState("");
   const [operationDate, setOperationDate] = useState(today());
@@ -59,25 +80,33 @@ export default function OrderSettlementPanel({
   const [comment, setComment] = useState("");
   const [bonusAmount, setBonusAmount] = useState("");
   const [bonusReason, setBonusReason] = useState("");
+  const [accrualKind, setAccrualKind] = useState<
+    "manager" | "measurer" | "driver" | "other"
+  >("manager");
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [assignOpen, setAssignOpen] = useState(
+    searchParams.get("action") === "assign-workshop",
+  );
 
   useEffect(() => {
     if (role !== "DIRECTOR") return;
-    const now = new Date();
-    void Promise.all([
-      fetch("/api/partners").then((response) =>
-        response.ok ? response.json() : [],
-      ),
-      fetch(
-        `/api/payroll?year=${now.getFullYear()}&month=${now.getMonth() + 1}`,
-      ).then((response) => (response.ok ? response.json() : null)),
-    ]).then(
-      ([partnerRows, payroll]: [
-        unknown,
-        { period?: { id: number } | null } | null,
-      ]) => {
+    void fetch(`/api/orders/${order.id}/economy`, { cache: "no-store" })
+      .then(async (response) =>
+        response.ok
+          ? ((await response.json()) as {
+              partners?: unknown;
+              employees?: unknown;
+              period?: { id: number } | null;
+              defaultWorkshop?: { id: number; name: string } | null;
+            })
+          : null,
+      )
+      .then((payload) => {
+        if (!payload) return;
+        const partnerRows = payload.partners;
         setPartners(
           Array.isArray(partnerRows)
             ? partnerRows.filter(
@@ -90,10 +119,24 @@ export default function OrderSettlementPanel({
               )
             : [],
         );
-        setPeriodId(payroll?.period?.id ?? null);
-      },
-    );
-  }, [role]);
+        setPeriodId(payload.period?.id ?? null);
+        setEmployees(
+          Array.isArray(payload.employees)
+            ? payload.employees.filter(
+                (item): item is {
+                  id: number;
+                  name: string;
+                  position: string;
+                  user: { role: string } | null;
+                } => Boolean(item) && typeof item === "object" && "id" in item && "name" in item,
+              )
+            : [],
+        );
+        setDefaultWorkshop(payload.defaultWorkshop ?? null);
+        if (!order.partner && payload.defaultWorkshop)
+          setPartnerId(String(payload.defaultWorkshop.id));
+      });
+  }, [order.id, order.partner, role]);
 
   async function request(
     url: string,
@@ -135,13 +178,15 @@ export default function OrderSettlementPanel({
 
   async function assign(event: FormEvent) {
     event.preventDefault();
-    await request(
+    const saved = await request(
       `/api/orders/${order.id}`,
       {
         action: "assignPartner",
         partnerId: Number(partnerId),
         partnerPrice: Number(agreed),
         partnerAgreedAt: agreedAt,
+        workDueAt: workDueAt || null,
+        paymentDueAt: paymentDueAt || null,
         reason,
         directorConfirmed: Boolean(
           order.partner && order.partner.id !== Number(partnerId),
@@ -149,6 +194,7 @@ export default function OrderSettlementPanel({
       },
       "PATCH",
     );
+    if (saved) setAssignOpen(false);
   }
   async function payout(event: FormEvent) {
     event.preventDefault();
@@ -160,14 +206,18 @@ export default function OrderSettlementPanel({
       comment,
     });
   }
-  async function accrueManagerBonus(event: FormEvent) {
+  async function accrueOrderPayroll(event: FormEvent) {
     event.preventDefault();
-    const employeeId = order.settlement?.manager?.employeeId;
+    const employeeId = accrualKind === "manager"
+      ? order.settlement?.manager?.employeeId
+      : accrualKind === "measurer"
+        ? order.settlement?.measurer?.employeeId
+        : Number(selectedEmployeeId);
     if (!employeeId || !periodId) return;
     await request(`/api/orders/${order.id}/payroll-bonuses`, {
       employeeId,
       periodId,
-      type: "ORDER_BONUS",
+      type: accrualKind === "manager" ? "ORDER_BONUS" : "EXTRA_BONUS",
       amount: Number(bonusAmount),
       reason: bonusReason,
       paymentMode: "ACCUMULATE",
@@ -218,6 +268,37 @@ export default function OrderSettlementPanel({
         >
           {error}
         </p>
+      )}
+      {role === "DIRECTOR" && !readOnly && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (!order.partner && defaultWorkshop)
+                setPartnerId(String(defaultWorkshop.id));
+              setAssignOpen(true);
+            }}
+            className="min-h-11 rounded-xl bg-amber-300 px-4 font-semibold text-slate-950"
+          >
+            {order.partner
+              ? "Изменить цех или стоимость"
+              : defaultWorkshop
+                ? `Передать в основной цех — ${defaultWorkshop.name}`
+                : "Назначить цех"}
+          </button>
+          {!order.partner && defaultWorkshop && (
+            <button
+              type="button"
+              onClick={() => {
+                setPartnerId("");
+                setAssignOpen(true);
+              }}
+              className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-4 font-semibold text-white"
+            >
+              Выбрать другой цех
+            </button>
+          )}
+        </div>
       )}
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         {client && (
@@ -320,14 +401,33 @@ export default function OrderSettlementPanel({
           />
         )}
       </div>
-      {role === "DIRECTOR" && !readOnly && (
+      {role === "DIRECTOR" && !readOnly && assignOpen && (
+        <div
+          role="presentation"
+          className="fixed inset-0 z-50 bg-black/70"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setAssignOpen(false);
+          }}
+        >
         <form
+          aria-label="Передать заказ в цех"
           onSubmit={assign}
-          className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2"
+          className="absolute inset-y-0 right-0 grid w-full max-w-xl content-start gap-3 overflow-y-auto border-l border-slate-700 bg-[#101827] p-5 shadow-2xl sm:grid-cols-2 sm:p-7"
         >
           <h3 className="font-semibold text-white sm:col-span-2">
-            Указать стоимость цеха
+            {order.partner ? "Изменить цех" : "Передать заказ в цех"}
           </h3>
+          <div className="rounded-xl bg-slate-950/60 p-3 text-sm sm:col-span-2">
+            <p className="text-slate-400">Заказ</p>
+            <p className="font-semibold text-white">{order.number}</p>
+            <p className="mt-2 text-slate-400">Клиент</p>
+            <p className="font-semibold text-white">{order.client.name}</p>
+            {defaultWorkshop && (
+              <p className="mt-2 text-amber-200">
+                Основной цех: {defaultWorkshop.name}
+              </p>
+            )}
+          </div>
           <label className="grid gap-1 text-sm text-slate-300">
             <span>Партнёр / цех</span>
             <select
@@ -349,11 +449,29 @@ export default function OrderSettlementPanel({
             <input
               required
               type="number"
-              min="0"
+              min="0.01"
               step="0.01"
               value={agreed}
               onChange={(event) => setAgreed(event.target.value)}
               placeholder="0 ₸"
+              className={control}
+            />
+          </label>
+          <label className="grid gap-1 text-sm text-slate-300">
+            <span>Срок готовности</span>
+            <input
+              type="date"
+              value={workDueAt}
+              onChange={(event) => setWorkDueAt(event.target.value)}
+              className={control}
+            />
+          </label>
+          <label className="grid gap-1 text-sm text-slate-300">
+            <span>Срок выплаты</span>
+            <input
+              type="date"
+              value={paymentDueAt}
+              onChange={(event) => setPaymentDueAt(event.target.value)}
               className={control}
             />
           </label>
@@ -377,35 +495,67 @@ export default function OrderSettlementPanel({
               className={control}
             />
           </label>
-          <button
-            disabled={busy}
-            className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50 sm:col-span-2"
-          >
-            Указать стоимость цеха
-          </button>
+          <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row">
+            <button
+              disabled={busy}
+              className="min-h-11 flex-1 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50"
+            >
+              {order.partner ? "Сохранить без выплаты" : "Передать в цех"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setAssignOpen(false)}
+              className="min-h-11 rounded-xl border border-slate-700 px-4 font-semibold text-white"
+            >
+              Отмена
+            </button>
+          </div>
         </form>
+        </div>
       )}
-      {role === "DIRECTOR" && !readOnly && manager && (
+      {role === "DIRECTOR" && !readOnly && (
         <form
-          onSubmit={accrueManagerBonus}
+          onSubmit={accrueOrderPayroll}
           className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2"
         >
           <h3 className="font-semibold text-white sm:col-span-2">
-            Начислить бонус менеджеру
+            Начисления сотрудникам по заказу
           </h3>
-          {!manager.employeeId ? (
-            <p className="text-sm text-amber-300 sm:col-span-2">
-              Сначала настройте зарплатный профиль сотрудника в разделе
-              «Зарплаты».
-            </p>
-          ) : !periodId ? (
+          <label className="grid gap-1 text-sm text-slate-300 sm:col-span-2">
+            <span>Вид начисления</span>
+            <select value={accrualKind} onChange={(event) => setAccrualKind(event.target.value as typeof accrualKind)} className={control}>
+              <option value="manager">Бонус менеджера</option>
+              <option value="measurer">Замерщик</option>
+              <option value="driver">Водитель</option>
+              <option value="other">Другое начисление</option>
+            </select>
+          </label>
+          {!periodId ? (
             <p className="text-sm text-amber-300 sm:col-span-2">
               Откройте текущий расчётный месяц в разделе «Зарплаты».
             </p>
+          ) : accrualKind === "manager" && !manager?.employeeId ? (
+            <p className="text-sm text-amber-300 sm:col-span-2">
+              Для менеджера заказа не настроен активный зарплатный профиль.
+            </p>
+          ) : accrualKind === "measurer" && !measurer?.employeeId ? (
+            <p className="text-sm text-amber-300 sm:col-span-2">
+              В заказе нет завершённого замера с зарплатным профилем замерщика.
+            </p>
           ) : (
             <>
+              {(accrualKind === "driver" || accrualKind === "other") && (
+                <label className="grid gap-1 text-sm text-slate-300">
+                  <span>Реальный сотрудник</span>
+                  <select required value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)} className={control}>
+                    <option value="">Выберите сотрудника</option>
+                    {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}{employee.position ? ` · ${employee.position}` : ""}</option>)}
+                  </select>
+                </label>
+              )}
               <label className="grid gap-1 text-sm text-slate-300">
-                <span>Сумма бонуса</span>
+                <span>Сумма начисления</span>
                 <input
                   required
                   type="number"
@@ -422,7 +572,7 @@ export default function OrderSettlementPanel({
                   required
                   value={bonusReason}
                   onChange={(event) => setBonusReason(event.target.value)}
-                  placeholder="Бонус за оформленный заказ"
+                  placeholder="Основание начисления по заказу"
                   className={control}
                 />
               </label>
@@ -430,8 +580,9 @@ export default function OrderSettlementPanel({
                 disabled={busy}
                 className="min-h-11 rounded-xl bg-violet-700 px-4 font-semibold text-white disabled:opacity-50 sm:col-span-2"
               >
-                Начислить бонус
+                Создать начисление без выплаты
               </button>
+              <p className="text-xs text-slate-500 sm:col-span-2">Начисление влияет на прибыль заказа, но не создаёт расход денег до фактической выплаты через Payroll.</p>
             </>
           )}
         </form>
@@ -500,7 +651,15 @@ export default function OrderSettlementPanel({
               }
               className="min-h-11 rounded-xl bg-emerald-700 px-4 font-semibold text-white disabled:opacity-50 sm:col-span-2"
             >
-              Выплатить цеху
+              Выплатить указанную сумму
+            </button>
+            <button
+              type="button"
+              disabled={busy || partner.remaining <= 0}
+              onClick={() => setAmount(String(partner.remaining))}
+              className="min-h-11 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-4 font-semibold text-emerald-200 disabled:opacity-50 sm:col-span-2"
+            >
+              Оплатить весь остаток
             </button>
           </form>
         )}

@@ -5,9 +5,20 @@ import { forbidden, redirect } from "next/navigation";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import PartnerSettlementWorkspace from "@/components/partners/PartnerSettlementWorkspace";
 
-export default async function PartnerManagementPage() {
+export default async function PartnerManagementPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string; orderId?: string }>;
+}) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
   if (session.user.role !== Role.DIRECTOR) forbidden();
-  return <PartnerSettlementWorkspace />;
+  const query = await searchParams;
+  const orderId = Number(query.orderId);
+  return (
+    <PartnerSettlementWorkspace
+      initialTab={query.tab === "orders" ? "orders" : undefined}
+      initialOrderId={Number.isInteger(orderId) && orderId > 0 ? orderId : undefined}
+    />
+  );
 }

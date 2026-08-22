@@ -13,7 +13,7 @@ import {
 
 import { compareRequestHash } from "@/lib/idempotency";
 import { normalizePhone } from "@/lib/leads/domain";
-import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { calculateOrderProfitability } from "@/lib/services/profitability.service";
 import { calculatePartnerSettlement, calculateReward } from "@/lib/partners/settlement";
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation, reverseFinanceOperation } from "@/lib/services/payment.service";
@@ -33,6 +33,7 @@ const relationInclude = {
       payments: true,
       commercialAdjustments: { orderBy: { createdAt: "asc" } },
       companyLedgerEntries: { orderBy: { operationDate: "asc" } },
+      costPlan: true,
       payrollAccruals: {
         include: {
           employee: { include: { user: { select: { role: true } } } },
@@ -71,6 +72,11 @@ const clientPaymentTypes = new Set(["CLIENT_PAYMENT", "payment", "PREPAYMENT", "
 const cancelledOrder = new Set(["CANCELLED", "Отменён", "Отменен", "Потерян"]);
 const money = (value: Prisma.Decimal.Value) => new Prisma.Decimal(value).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 const percent = (value: Prisma.Decimal.Value) => new Prisma.Decimal(value).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+async function sequentialQueries<T extends readonly (() => Promise<unknown>)[]>(tasks: T) {
+  const values: unknown[] = [];
+  for (const task of tasks) values.push(await task());
+  return values as { [K in keyof T]: Awaited<ReturnType<T[K]>> };
+}
 const positiveMoney = (value: Prisma.Decimal.Value, code = "INVALID_AMOUNT") => {
   const result = money(value);
   if (!result.gt(0)) throw new PartnerManagementError(code);
@@ -119,7 +125,7 @@ export function calculateLoadedPartnerRelation(relation: LoadedRelation) {
 
 function relationView(relation: LoadedRelation) {
   const metrics = calculateLoadedPartnerRelation(relation);
-  const economy = calculateOrderEconomy({
+  const economy = calculateOrderProfitability({
     totalSale: relation.order.amount,
     commercialAdjustments: relation.order.commercialAdjustments,
     payments: relation.order.payments,
@@ -134,6 +140,7 @@ function relationView(relation: LoadedRelation) {
     lifecycle: relation.order.lifecycle,
     payrollAccruals: relation.order.payrollAccruals,
     ledgerEntries: relation.order.companyLedgerEntries,
+    costPlan: relation.order.costPlan,
   });
   return {
     id: relation.id,
@@ -458,11 +465,11 @@ export async function linkPartnerOrder(input: {
 }, actor: PartnerManagementActor) {
   director(actor);
   const tenant = companyId();
-  const [partner, order, existing] = await Promise.all([
-    prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, isTest: false, active: true, archived: false, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } }),
-    prisma.order.findFirst({ where: { id: input.orderId, companyId: tenant, deletedAt: null } }),
-    prisma.partnerOrderRelation.findFirst({ where: { companyId: tenant, orderId: input.orderId }, include: relationInclude }),
-  ]);
+  const [partner, order, existing] = await sequentialQueries([
+    () => prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, isTest: false, active: true, archived: false, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } }),
+    () => prisma.order.findFirst({ where: { id: input.orderId, companyId: tenant, deletedAt: null } }),
+    () => prisma.partnerOrderRelation.findFirst({ where: { companyId: tenant, orderId: input.orderId }, include: relationInclude }),
+  ] as const);
   if (!partner) throw new PartnerManagementError("PARTNER_NOT_FOUND");
   if (!order) throw new PartnerManagementError("ORDER_NOT_FOUND");
   if (existing) {
@@ -497,7 +504,7 @@ export async function linkPartnerOrder(input: {
       },
     });
     return created;
-  });
+  }, { maxWait: 5_000, timeout: 15_000 });
   return { relation: await refreshRelation(relation.id), created: true };
 }
 
@@ -512,13 +519,13 @@ export async function setOrderPartnerAgreement(input: {
 }, actor: PartnerManagementActor) {
   director(actor);
   const tenant = companyId();
-  const [order, existing] = await Promise.all([
-    prisma.order.findFirst({
+  const [order, existing] = await sequentialQueries([
+    () => prisma.order.findFirst({
       where: { id: input.orderId, companyId: tenant, deletedAt: null },
       include: { payments: { where: { companyId: tenant } }, partnerRelation: true },
     }),
-    prisma.partnerOrderRelation.findFirst({ where: { companyId: tenant, orderId: input.orderId } }),
-  ]);
+    () => prisma.partnerOrderRelation.findFirst({ where: { companyId: tenant, orderId: input.orderId } }),
+  ] as const);
   if (!order) throw new PartnerManagementError("ORDER_NOT_FOUND");
   const partner = await prisma.partner.findFirst({
     where: { id: input.partnerId, companyId: tenant, isTest: false, active: true, archived: false },
@@ -939,19 +946,19 @@ export async function linkHistoricalPartnerPayment(input: {
       throw new PartnerManagementError("IDEMPOTENCY_CONFLICT");
     return { operation: replay, relation: await refreshRelation(replay.relationId), created: false };
   }
-  const [payment, order, partner] = await Promise.all([
-    prisma.payment.findFirst({
+  const [payment, order, partner] = await sequentialQueries([
+    () => prisma.payment.findFirst({
       where: { id: input.paymentId, companyId: tenant, type: "PARTNER_PAYOUT" },
       include: { partnerSettlementOperation: true },
     }),
-    prisma.order.findFirst({
+    () => prisma.order.findFirst({
       where: { id: input.orderId, companyId: tenant, deletedAt: null },
       include: { partnerRelation: true },
     }),
-    prisma.partner.findFirst({
+    () => prisma.partner.findFirst({
       where: { id: input.partnerId, companyId: tenant, isTest: false, active: true, archived: false },
     }),
-  ]);
+  ] as const);
   if (!payment) throw new PartnerManagementError("PAYMENT_NOT_FOUND");
   if (payment.partnerSettlementOperation) throw new PartnerManagementError("PAYMENT_ALREADY_LINKED");
   if (!order) throw new PartnerManagementError("ORDER_NOT_FOUND");
@@ -1144,6 +1151,7 @@ export async function searchPartnerOrders(query: string) {
         { number: { contains: search, mode: "insensitive" } },
         { client: { name: { contains: search, mode: "insensitive" } } },
         { client: { phone: { contains: digits || search } } },
+        { client: { city: { contains: search, mode: "insensitive" } } },
         { address: { contains: search, mode: "insensitive" } },
         { documents: { some: { type: DocumentType.CONTRACT, number: { contains: search, mode: "insensitive" } } } },
         ...(numeric ? [{ amount: numeric }] : []),
@@ -1152,7 +1160,7 @@ export async function searchPartnerOrders(query: string) {
     select: {
       id: true, number: true, amount: true, prepayment: true, balance: true, status: true,
       address: true, staircase: true, material: true, partnerId: true,
-      client: { select: { id: true, name: true, phone: true } },
+      client: { select: { id: true, name: true, phone: true, city: true } },
       documents: { where: { type: DocumentType.CONTRACT }, select: { id: true, number: true }, take: 1 },
       partnerRelation: { select: { id: true, partnerId: true, partner: { select: { name: true } } } },
     },
@@ -1180,6 +1188,7 @@ export async function searchPartnerClients(query: string) {
 }
 
 export type PartnerManagementFilters = {
+  orderId?: number;
   partnerId?: number;
   query?: string;
   scope?: "active" | "completed" | "all" | "with_partner" | "without_partner" | "without_cost";
@@ -1204,6 +1213,7 @@ const orderPartnerReadInclude = (tenant: number) => ({
   payments: { where: { companyId: tenant }, orderBy: [{ operationDate: "asc" as const }, { id: "asc" as const }] },
   commercialAdjustments: { where: { companyId: tenant }, orderBy: { createdAt: "asc" as const } },
   companyLedgerEntries: { where: { companyId: tenant }, orderBy: { operationDate: "asc" as const } },
+  costPlan: true,
   payrollAccruals: {
     where: { employee: { companyId: tenant } },
     include: {
@@ -1296,7 +1306,7 @@ function buildOrderRow(order: PartnerReadOrder) {
   const partnerAccrued = order.partnerAgreedAt
     ? relationAccrued?.partnerAccrued ?? order.partnerPrice
     : new Prisma.Decimal(0);
-  const economy = calculateOrderEconomy({
+  const economy = calculateOrderProfitability({
     totalSale: order.amount,
     commercialAdjustments: order.commercialAdjustments,
     payments: order.payments,
@@ -1311,6 +1321,7 @@ function buildOrderRow(order: PartnerReadOrder) {
     lifecycle: order.lifecycle,
     payrollAccruals: order.payrollAccruals,
     ledgerEntries: order.companyLedgerEntries,
+    costPlan: order.costPlan,
   });
   const partnerBalance = economy.partner.remaining.sub(economy.partner.overpayment);
   return {
@@ -1433,8 +1444,8 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
   const tenant = companyId();
   const query = filters.query?.trim().slice(0, 120) ?? "";
   const digits = query.replace(/\D/g, "");
-  const [partners, canonicalOrders, managers, audits, unallocatedPayments] = await Promise.all([
-    prisma.partner.findMany({
+  const [partners, canonicalOrders, managers, audits, unallocatedPayments] = await sequentialQueries([
+    () => prisma.partner.findMany({
       where: {
         companyId: tenant,
         isTest: false,
@@ -1457,9 +1468,10 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
       include: { createdBy: { select: { id: true, name: true } } },
       orderBy: [{ businessStatus: "asc" }, { name: "asc" }],
     }),
-    prisma.order.findMany({
+    () => prisma.order.findMany({
       where: {
         companyId: tenant,
+        ...(filters.orderId ? { id: filters.orderId } : {}),
         deletedAt: null,
         client: { companyId: tenant },
         ...(filters.partnerId ? { OR: [{ partnerId: filters.partnerId }, { partnerRelation: { partnerId: filters.partnerId, companyId: tenant } }] } : {}),
@@ -1477,18 +1489,18 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
       include: orderPartnerReadInclude(tenant),
       orderBy: [{ orderReceivedAt: "desc" }, { id: "desc" }],
     }),
-    prisma.user.findMany({
+    () => prisma.user.findMany({
       where: { companyId: tenant, role: Role.MANAGER, active: true },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
-    prisma.partnerAuditEvent.findMany({
+    () => prisma.partnerAuditEvent.findMany({
       where: { companyId: tenant, ...(filters.partnerId ? { partnerId: filters.partnerId } : {}) },
       include: { actor: { select: { id: true, name: true } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: 300,
     }),
-    prisma.payment.findMany({
+    () => prisma.payment.findMany({
       where: {
         companyId: tenant,
         type: "PARTNER_PAYOUT",
@@ -1501,7 +1513,7 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
       },
       orderBy: [{ operationDate: "desc" }, { id: "desc" }],
     }),
-  ]);
+  ] as const);
 
   const allRows = canonicalOrders.map(buildOrderRow);
   const activeRows = allRows.filter((item) => item.order.lifecycle !== "COMPLETED" && item.order.lifecycle !== "CANCELLED");

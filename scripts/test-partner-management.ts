@@ -13,6 +13,7 @@ import {
   searchPartnerClients, searchPartnerOrders, setPartnerAgreedCost, type PartnerManagementActor,
 } from "@/lib/services/partner-management.service";
 import { getPartners as getWorkshopPartners } from "@/lib/services/partner.service";
+import { saveOrderCostPlan } from "@/lib/services/profitability.service";
 import { runWithSystemAccess, runWithTenant, type TenantIdentity } from "@/lib/tenant-context";
 import { seedPartnerManagementDemo } from "./seed-partner-management-demo";
 
@@ -48,9 +49,15 @@ async function main() {
     await assert.rejects(() => createManagedPartner({ name: "Forbidden", kind: PartnerBusinessType.OTHER, defaultRewardRule: PartnerRewardRule.FIXED, defaultRewardFixedAmount: "1" }, forbiddenActor), (error: unknown) => error instanceof PartnerManagementError && error.message === "FORBIDDEN");
 
     const partner = await createManagedPartner({ name: `Integration Partner ${nonce}`, kind: PartnerBusinessType.SALES_AGENT, phone, city: "Алматы", defaultRewardRule: PartnerRewardRule.FIXED, defaultRewardFixedAmount: "100000", comment: nonce }, actor);
+    await prisma.companySettings.upsert({
+      where: { companyId: live.companyId },
+      create: { defaultWorkshopPartnerId: partner.id },
+      update: { defaultWorkshopPartnerId: partner.id },
+    });
     assert.equal((await getWorkshopPartners({ includeArchived: true })).some((item) => item.id === partner.id), false, "director partner directory is not exposed through workshop API service");
     const client = await prisma.client.create({ data: { name: `Existing Client ${nonce}`, phone: `+7708${String(Date.now() + 1).slice(-7)}`, city: "Алматы", address: "Абая 1", manager: managerUser.name, managerUserId: managerUser.id, amount: "1000000", status: "Новая" } });
     const existingOrder = await prisma.order.create({ data: { number: `PARTNER-EXISTING-${nonce}`, clientId: client.id, address: "Абая 1", staircase: "Прямая", material: "Дуб", amount: "1000000", balance: "1000000", companyProfit: "900000", manager: managerUser.name, managerUserId: managerUser.id, status: "Новый" } });
+    assert.equal(existingOrder.partnerId, null, "default workshop is preselected in UI but never assigned without confirmation");
     const relationsBeforeRead = await prisma.partnerOrderRelation.count({ where: { orderId: existingOrder.id } });
     const unlinkedRead = await getPartnerManagementReadModel({ scope: "active", pageSize: 100 });
     assert.ok(unlinkedRead.orders.some((item) => item.order.id === existingOrder.id && item.relationId === null), "canonical order without partner relation is visible");
@@ -140,6 +147,22 @@ async function main() {
     assert.equal(agreed.economy.partner.remaining.toFixed(2), "395000.00", "confirmed partner adjustment remains part of accrued payable");
     assert.equal(await prisma.payment.count({ where: { orderId: existingOrder.id } }), paymentsBeforeAgreedCost, "agreed cost created a Payment");
     assert.equal(await prisma.companyLedgerEntry.count({ where: { orderId: existingOrder.id } }), ledgerBeforeAgreedCost, "agreed cost created a Finance ledger entry");
+    console.log("Partner integration stage: agreed cost PASS");
+    const paymentsBeforePlan = await prisma.payment.count({ where: { orderId: existingOrder.id } });
+    const ledgerBeforePlan = await prisma.companyLedgerEntry.count({ where: { orderId: existingOrder.id } });
+    const plan = await saveOrderCostPlan(existingOrder.id, {
+      materialOutsideWorkshop: "50000",
+      delivery: "20000",
+      bankFees: "10000",
+      otherDirect: "20000",
+      confirmed: true,
+    }, { userId: actor.userId, name: actor.name });
+    assert.equal(plan.materialOutsideWorkshop.toFixed(2), "50000.00", "planned direct costs saved Decimal-safe");
+    assert.ok(plan.confirmedAt, "direct costs confirmation stored");
+    assert.equal(await prisma.payment.count({ where: { orderId: existingOrder.id } }), paymentsBeforePlan, "planned costs do not create Payment");
+    assert.equal(await prisma.companyLedgerEntry.count({ where: { orderId: existingOrder.id } }), ledgerBeforePlan, "planned costs do not create Finance cash expense");
+    assert.equal(await prisma.orderCostPlanRevision.count({ where: { orderId: existingOrder.id } }), 1, "cost plan audit revision created");
+    console.log("Partner integration stage: order cost plan PASS");
 
     const historicalPayment = await prisma.payment.create({ data: {
       orderId: existingOrder.id, partnerId: partner.id, amount: "10000", type: "PARTNER_PAYOUT", method: "bank",
@@ -160,12 +183,14 @@ async function main() {
       requestHash: createRequestHash({ nonce, historicalLink: true }),
     }, actor)).created, false, "historical allocation is idempotent");
     assert.ok((await prisma.partnerAuditEvent.findMany({ where: { relationId: linked.relation.id } })).some((event) => event.action === "HISTORICAL_PARTNER_PAYMENT_LINKED"), "historical allocation creates audit log");
+    console.log("Partner integration stage: historical payout link PASS");
 
     await runWithTenant(demo, async () => {
       await assert.rejects(() => getManagedPartner(partner.id), (error: unknown) => error instanceof PartnerManagementError && error.message === "PARTNER_NOT_FOUND");
       assert.equal((await searchPartnerOrders(existingOrder.number)).length, 0, "cross-tenant order search blocked");
       assert.equal((await searchPartnerClients(phone)).length, 0, "cross-tenant client search blocked");
     });
+    console.log("Partner integration stage: tenant isolation PASS");
   });
 
   if (liveReleaseCloneTest) {

@@ -12,7 +12,10 @@ import {
   ORDER_STATUSES,
 } from "@/lib/orders/lifecycle";
 import { prisma } from "@/lib/prisma";
-import { assignPartnerToOrder } from "@/lib/services/partner.service";
+import {
+  PartnerManagementError,
+  setOrderPartnerAgreement,
+} from "@/lib/services/partner-management.service";
 import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
@@ -343,31 +346,32 @@ export async function PATCH(request: Request, { params }: Context) {
           { error: "Некорректные данные цеха" },
           { status: 400 },
         );
-      const updated = await assignPartnerToOrder({
+      const workDueAt = body.workDueAt ? new Date(String(body.workDueAt)) : null;
+      const paymentDueAt = body.paymentDueAt
+        ? new Date(String(body.paymentDueAt))
+        : null;
+      if (
+        (workDueAt && Number.isNaN(workDueAt.getTime())) ||
+        (paymentDueAt && Number.isNaN(paymentDueAt.getTime()))
+      )
+        return NextResponse.json(
+          { error: "Некорректный срок" },
+          { status: 400 },
+        );
+      const updated = await setOrderPartnerAgreement({
         orderId: id,
         partnerId,
-        partnerPrice,
-        partnerAgreedAt,
-        manager: auth.session!.user.name ?? undefined,
-        authorId: Number(auth.session!.user.id),
-        reason: partnerReason,
-        directorConfirmed:
-          role === Role.DIRECTOR && body.directorConfirmed === true,
+        amount: partnerPrice,
+        agreedAt: partnerAgreedAt,
+        workDueAt,
+        paymentDueAt,
+        comment: partnerReason,
+      }, {
+        userId: Number(auth.session!.user.id),
+        role,
+        name: auth.session!.user.name ?? "Директор",
       });
-      return updated
-        ? NextResponse.json(
-            redactForRole(
-              {
-                ...updated,
-                settlement: buildOrderSettlement(updated),
-              } as unknown as Record<string, unknown>,
-              role,
-            ),
-          )
-        : NextResponse.json(
-            { error: "Заказ или цех не найден" },
-            { status: 404 },
-          );
+      return NextResponse.json(updated);
     }
 
     const idempotency = readIdempotencyKey(request);
@@ -543,6 +547,16 @@ export async function PATCH(request: Request, { params }: Context) {
         )
       : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   } catch (error) {
+    if (error instanceof PartnerManagementError) {
+      const conflict = [
+        "PARTNER_REASSIGNMENT_WITH_PAYMENTS",
+        "PARTNER_REASSIGNMENT_REASON_REQUIRED",
+      ].includes(error.message);
+      return NextResponse.json(
+        { error: conflict ? "Сначала урегулируйте выплаты прежнему цеху" : "Не удалось передать заказ в цех" },
+        { status: conflict ? 409 : 400 },
+      );
+    }
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
       return idempotencyConflict();
     if (error instanceof Error && error.message === "TRANSITION_FORBIDDEN")

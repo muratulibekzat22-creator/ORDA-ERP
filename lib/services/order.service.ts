@@ -157,6 +157,17 @@ export async function getOrder(id: number) {
         include: { author: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
       },
+      partnerRelation: {
+        include: {
+          createdBy: { select: { name: true } },
+          operations: {
+            where: { status: "POSTED" },
+            orderBy: { operationDate: "asc" },
+          },
+        },
+      },
+      costPlan: true,
+      costPlanRevisions: { orderBy: { createdAt: "desc" }, take: 20 },
       payrollAccruals: {
         include: {
           employee: { include: { user: { select: { name: true, role: true } } } },

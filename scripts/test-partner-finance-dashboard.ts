@@ -25,7 +25,7 @@ const sum = (values: number[]) => values.reduce((total, value) => total + value,
 async function main() {
   const financeUi = readFileSync("components/finance/FinanceJournalPage.tsx", "utf8");
   const financeService = readFileSync("lib/services/payment.service.ts", "utf8");
-  for (const field of ["+ Доход", "+ Расход", "Разница доходов и расходов", "Доходы по категориям", "Расходы по категориям"])
+  for (const field of ["+ Доход", "+ Расход", "Денежный результат", "фактическое движение денег, а не чистая прибыль", "Доходы по категориям", "Расходы по категориям"])
     assert(financeUi.includes(field), `Finance journal UI is missing ${field}`);
   for (const field of ["managerBonusPayable", "measurerBonusPayable"])
     assert(financeService.includes(field), `Finance aggregation is missing ${field}`);

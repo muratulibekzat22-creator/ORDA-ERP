@@ -38,10 +38,25 @@ type SalesMetrics = {
   activeEmployees?: number; clientsWithBalance?: number; partnerPayableOrders?: number;
   ordersWithoutContract?: number; productionPreparation?: number; productionPainting?: number;
   productionReady?: number; productionOverdue?: number;
+  orderProfit?: number; profitBeforeMandatory?: number; companyNetProfit?: number;
+  averageOrderMargin?: number; cashResult?: number; incompleteProfitOrders?: number;
+  completedProfitOrders?: number;
 };
 type ManagerRow = { managerUserId: number; manager: string; newLeads: number; orders: number; totalSales: number; conversion: number };
 type MeasurementAttention = { id: number; nextActionAt: string; nextActionComment?: string | null; client: { id: number; name: string; phone: string } };
-type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; measurementAttention?: MeasurementAttention[]; activities: ActivityItem[] };
+type DashboardProfitability = {
+  totals: { partnerPaid: string | number; payrollPaid: string | number; otherExpensesPaid: string | number };
+  highlights: {
+    highestProfit?: { number: string; economy: { profit: { netProfit: string | number } } } | null;
+    highestMargin?: { number: string; economy: { profit: { netMarginPercent: string | number } } } | null;
+    lowestProfit?: { number: string; economy: { profit: { netProfit: string | number } } } | null;
+    mostPopularProduct?: { product: string; material: string; orders: number } | null;
+    mostProfitableProduct?: { product: string; material: string; profit: string | number } | null;
+    mostProfitablePartner?: { name: string; profit: string | number } | null;
+    mostEffectiveManager?: { name: string; profit: string | number } | null;
+  };
+};
+type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; profitability?: DashboardProfitability; measurementAttention?: MeasurementAttention[]; activities: ActivityItem[] };
 type AccountantPayload = { role: "ACCOUNTANT"; metrics: { receipts: number; expenses: number; partnerPayable: number; payrollPayable: number; pendingPayrollPayments: number; attentionOperations: number }; recentFinance: Array<{ id: number; type: string; category: string; direction: string; amount: string; operationDate: string; comment?: string | null }> };
 type ProductionPayload = { role: "PRODUCTION"; metrics: { preparation: number; painting: number; readyForInstallation: number; overdue: number; tasksToday: number; attentionOrders: number; missingMaterials: number; readyMaterials: number }; jobs: Array<{ id: number; stage: string; percent: number; href: string; order: { number: string; client: { name: string; city: string } } }> };
 type InstallationItem = { id: number; scheduledAt: string; href: string; order: { number: string; address: string; client: { name: string; city: string } } };
@@ -150,7 +165,7 @@ function Projection({ data }: { data: Payload }) {
 
 function SalesDashboard({ data }: { data: SalesPayload }) {
   if (data.role === "DIRECTOR") return <>
-    <DirectorSalesDashboard metrics={data.metrics} managers={data.managers ?? []}/>
+    <DirectorSalesDashboard metrics={data.metrics} managers={data.managers ?? []} profitability={data.profitability}/>
     <DirectorActivityFeed activities={data.activities}/>
   </>;
   return <>
@@ -159,7 +174,8 @@ function SalesDashboard({ data }: { data: SalesPayload }) {
   </>;
 }
 
-function DirectorSalesDashboard({ metrics: m, managers }: { metrics: SalesMetrics; managers: ManagerRow[] }) {
+function DirectorSalesDashboard({ metrics: m, managers, profitability }: { metrics: SalesMetrics; managers: ManagerRow[]; profitability?: DashboardProfitability }) {
+  const [economyView, setEconomyView] = useState<"plan" | "fact" | "money">("plan");
   const overdueTotal = m.overdueNextActions + m.overdueOrders + m.overdueTasks + m.measurementsOverdue;
   const sortedManagers = [...managers].sort((left, right) => right.totalSales - left.totalSales || right.orders - left.orders);
   const maxManagerSales = Math.max(...sortedManagers.map((manager) => manager.totalSales), 1);
@@ -172,6 +188,23 @@ function DirectorSalesDashboard({ metrics: m, managers }: { metrics: SalesMetric
   const productionTotal = Math.max(production.reduce((sum, item) => sum + item.value, 0), 1);
 
   return <div className="space-y-5">
+    <section className="rounded-2xl border border-amber-300/20 bg-[#0b1220] p-4 sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Экономика компании</p><h2 className="mt-1 text-xl font-semibold text-white">План, факт и деньги</h2></div>
+        <div className="grid grid-cols-3 rounded-xl border border-white/10 bg-black/20 p-1">{([['plan','План'],['fact','Факт'],['money','Деньги']] as const).map(([value,label]) => <button type="button" key={value} onClick={() => setEconomyView(value)} className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${economyView === value ? 'bg-amber-300 text-slate-950' : 'text-slate-300'}`}>{label}</button>)}</div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {economyView === "plan" && <><DashboardEconomyMetric label="Активные заказы" value={m.activeOrders}/><DashboardEconomyMetric label="Плановая прибыль заказов" value={money(m.orderProfit ?? 0)}/><DashboardEconomyMetric label="Неполный расчёт" value={m.incompleteProfitOrders ?? 0} alert={(m.incompleteProfitOrders ?? 0) > 0}/><DashboardEconomyMetric label="Сумма продаж" value={money(m.totalSales)}/><DashboardEconomyMetric label="Средняя маржа" value={`${(m.averageOrderMargin ?? 0).toLocaleString("ru-RU")}%`}/></>}
+        {economyView === "fact" && <><DashboardEconomyMetric label="Завершённые заказы" value={m.completedProfitOrders ?? 0}/><DashboardEconomyMetric label="Прибыль заказов" value={money(m.orderProfit ?? 0)}/><DashboardEconomyMetric label="До обязательных платежей" value={money(m.profitBeforeMandatory ?? 0)}/><DashboardEconomyMetric label="Чистая прибыль" value={money(m.companyNetProfit ?? 0)} alert={(m.companyNetProfit ?? 0) < 0}/><DashboardEconomyMetric label="Рентабельность продаж" value={`${m.totalSales ? ((m.companyNetProfit ?? 0) / m.totalSales * 100).toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : 0}%`}/></>}
+        {economyView === "money" && <><DashboardEconomyMetric label="Получено от клиентов" value={money(m.receivedPrepayment)}/><DashboardEconomyMetric label="Выплачено партнёрам" value={money(profitability?.totals.partnerPaid ?? 0)}/><DashboardEconomyMetric label="Выплачено сотрудникам" value={money(profitability?.totals.payrollPaid ?? 0)}/><DashboardEconomyMetric label="Другие выплаты" value={money(profitability?.totals.otherExpensesPaid ?? 0)}/><DashboardEconomyMetric label="Денежный результат" value={money(m.cashResult ?? 0)} alert={(m.cashResult ?? 0) < 0}/></>}
+      </div>
+    </section>
+    {profitability && <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <DashboardHighlight label="Самый прибыльный заказ" value={profitability.highlights.highestProfit ? `${profitability.highlights.highestProfit.number} · ${money(profitability.highlights.highestProfit.economy.profit.netProfit)}` : "Нет полного расчёта"}/>
+      <DashboardHighlight label="Самый маржинальный заказ" value={profitability.highlights.highestMargin ? `${profitability.highlights.highestMargin.number} · ${Number(profitability.highlights.highestMargin.economy.profit.netMarginPercent).toLocaleString("ru-RU")}%` : "Нет полного расчёта"}/>
+      <DashboardHighlight label="Самый ходовой товар" value={profitability.highlights.mostPopularProduct ? `${profitability.highlights.mostPopularProduct.product} · ${profitability.highlights.mostPopularProduct.material} · ${profitability.highlights.mostPopularProduct.orders}` : "Нет данных"}/>
+      <DashboardHighlight label="Самый прибыльный товар" value={profitability.highlights.mostProfitableProduct ? `${profitability.highlights.mostProfitableProduct.product} · ${money(profitability.highlights.mostProfitableProduct.profit)}` : "Нет полного расчёта"}/>
+    </section>}
     <section aria-label="Ключевые показатели" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <OperationalMetric icon={<ClipboardList size={19}/>} href="/clients" label="Заявки" value={m.newLeads} detail={`${m.activeLeads} активных`} progress={m.conversion}/>
       <OperationalMetric icon={<ShoppingBag size={19}/>} href="/orders" label="Заказы" value={m.orders} detail={`${m.activeOrders} в работе`} progress={m.orders ? Math.round(m.readyForInstallation / m.orders * 100) : 0}/>
@@ -236,6 +269,14 @@ function DirectorActivityFeed({ activities }: { activities: ActivityItem[] }) {
       <time className="col-start-2 text-xs text-slate-500 sm:col-start-3 sm:row-start-1">{new Date(item.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time>
     </Link>)}</div> : <StableState text="Важных действий пока нет — новые события появятся здесь."/>}
   </SectionShell>;
+}
+
+function DashboardEconomyMetric({ label, value, alert = false }: { label: string; value: ReactNode; alert?: boolean }) {
+  return <Link href="/finance" className={`min-w-0 rounded-xl border p-3 ${alert ? "border-red-500/30 bg-red-950/20" : "border-white/8 bg-black/15"}`}><span className="block text-xs text-slate-500">{label}</span><strong className={`mt-1 block break-words text-lg ${alert ? "text-red-200" : "text-white"}`}>{value}</strong></Link>;
+}
+
+function DashboardHighlight({ label, value }: { label: string; value: string }) {
+  return <article className="min-w-0 rounded-2xl border border-white/8 bg-[#0b1220] p-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-2 break-words font-semibold text-white">{value}</p></article>;
 }
 
 function ManagerSalesDashboard({ metrics: m, attention }: { metrics: SalesMetrics; attention: MeasurementAttention[] }) {

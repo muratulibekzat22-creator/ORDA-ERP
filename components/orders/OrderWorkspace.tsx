@@ -418,6 +418,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             </section>
           )}
 
+          {director && (
+            <OrderSettlementPanel order={order} readOnly={archived} />
+          )}
           {director && <OrderEconomy order={order} />}
 
           {canSeeClientFinance && (

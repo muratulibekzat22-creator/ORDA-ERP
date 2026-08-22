@@ -17,6 +17,10 @@ async function main() {
   const userIds: number[] = [], clientIds: number[] = [], orderIds: number[] = [], paymentIds: number[] = [];
   let partnerId = 0;
   try {
+    const directorBaseline = await getDashboardSummary({ role: Role.DIRECTOR, userId: -2147483001, period: "month" });
+    const baselineMetrics = directorBaseline.metrics as Record<string, number | undefined>;
+    const baselinePartnerPayable = Number(baselineMetrics.partnerBalancePayable ?? 0);
+    const baselineWithoutPartner = Number(baselineMetrics.ordersWithoutPartner ?? 0);
     const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "not-used", role: Role.MANAGER } });
     const other = await prisma.user.create({ data: { name: `${tag}-other`, email: `${tag}-other@test.local`, password: "not-used", role: Role.MANAGER } });
     const inactive = await prisma.user.create({ data: { name: `${tag}-inactive`, email: `${tag}-inactive@test.local`, password: "not-used", role: Role.MANAGER, active: false } });
@@ -42,8 +46,8 @@ async function main() {
     const scopedMetrics = scopedManager.metrics as Record<string, number | undefined>;
     const emptyMetrics = emptyManager.metrics as Record<string, number | undefined>;
     assert("managers" in director && "partnerBalancePayable" in director.metrics, "director projection is incomplete");
-    assert.equal(director.metrics.partnerBalancePayable, 400, "director partner payable is not based on the agreed partner price");
-    assert.equal(director.metrics.ordersWithoutPartner, 1, "director orders-without-workshop count is incorrect");
+    assert.equal(director.metrics.partnerBalancePayable, baselinePartnerPayable + 400, "director partner payable is not based on the agreed partner price");
+    assert.equal(director.metrics.ordersWithoutPartner, baselineWithoutPartner + 1, "director orders-without-workshop count is incorrect");
     assert.equal(scopedMetrics.newLeads, 1, "manager received another manager's leads");
     assert.equal(scopedMetrics.orders, 1, "cancelled or foreign order entered manager sales");
     assert.equal(scopedMetrics.totalSales, 1000, "manager sales are not based on real non-cancelled orders");
@@ -61,7 +65,7 @@ async function main() {
 
     const route = readFileSync("app/api/dashboard/sales/route.ts", "utf8");
     assert(!route.includes("searchParams.get(\"role\")"), "dashboard accepts a role override");
-    assert(route.includes("if (!session?.user)") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
+    assert(route.includes("if (!session?.user || !enterTenantFromSession(session))") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
     for (const label of ["Продажи", "Получено", "К получению от клиентов", "К выплате партнёрам", "К выплате сотрудникам", "Мои новые заявки", "Мои отправленные КП", "Payroll к выплате", "Активные сотрудники", "Расходы за месяц", "Требует внимания", "Конверсия", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);

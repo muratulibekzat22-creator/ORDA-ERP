@@ -100,6 +100,7 @@ export async function GET(request: Request) {
     if (view === "search-orders") return NextResponse.json(await searchPartnerOrders(query), { headers: { "cache-control": "no-store" } });
     if (view === "search-clients") return NextResponse.json(await searchPartnerClients(query), { headers: { "cache-control": "no-store" } });
     const partnerId = asNumber(url.searchParams.get("partnerId"));
+    const orderId = asNumber(url.searchParams.get("orderId"));
     const settlementStatus = enumValue(Object.values(PartnerSettlementStatus), url.searchParams.get("settlementStatus"));
     const debt = enumValue(["company", "partner", "any"] as const, url.searchParams.get("debt"));
     const scope = enumValue(["active", "completed", "all", "with_partner", "without_partner", "without_cost"] as const, url.searchParams.get("scope"));
@@ -111,6 +112,7 @@ export async function GET(request: Request) {
     const sort = enumValue(["newest", "oldest", "sale_desc", "client_debt_desc", "partner_debt_desc", "profit_desc", "margin_desc", "margin_asc"] as const, url.searchParams.get("sort"));
     return NextResponse.json(await getPartnerManagementReadModel({
       partnerId,
+      orderId,
       query: query || undefined,
       from: asDate(url.searchParams.get("from")),
       to: asDate(url.searchParams.get("to")),
