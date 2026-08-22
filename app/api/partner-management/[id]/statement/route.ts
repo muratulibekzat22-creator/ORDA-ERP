@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { partnerStatementCsv, partnerStatementPdf } from "@/lib/partners/statement";
 import { requirePermission } from "@/lib/server-auth";
 import { getManagedPartner, PartnerManagementError } from "@/lib/services/partner-management.service";
+import { enterTenantFromSession } from "@/lib/tenant-context";
 
 type Context = { params: Promise<{ id: string }> };
 const parsedDate = (value: string | null) => {
@@ -16,6 +17,7 @@ export async function GET(request: Request, { params }: Context) {
   if (auth.response) return auth.response;
   if (auth.session!.user.role !== Role.DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!enterTenantFromSession(auth.session)) return NextResponse.json({ error: "Сессия завершена" }, { status: 401 });
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {

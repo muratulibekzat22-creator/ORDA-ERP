@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role, type Order, type Payment } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
@@ -15,7 +15,7 @@ export const financeOperationTypes = [
 export type FinanceOperationType = (typeof financeOperationTypes)[number];
 export type AdjustmentDirection = "INCOME" | "EXPENSE";
 
-type CreateOperationInput = {
+export type CreateOperationInput = {
   type: FinanceOperationType;
   amount: number;
   method: string;
@@ -28,6 +28,11 @@ type CreateOperationInput = {
   adjustmentDirection?: AdjustmentDirection;
   idempotencyKey?: string;
   requestHash?: string;
+  transactionEffect?: (
+    tx: Prisma.TransactionClient,
+    payment: Payment,
+    order: Order | null,
+  ) => Promise<void>;
 };
 
 const SERIALIZABLE_RETRIES = 5;
@@ -157,6 +162,7 @@ export async function createFinanceOperation(input: CreateOperationInput) {
           authorId: input.authorId,
         } });
       }
+      if (input.transactionEffect) await input.transactionEffect(tx, payment, order);
       const mirrors = order && (affectsClient || affectsPartner) ? await calculatedMirrors(tx, order.id) : null;
       const updatedOrder = mirrors ? await tx.order.update({ where: { id: order!.id }, data: { prepayment: mirrors.paid, balance: mirrors.balance, partnerPaid: mirrors.partnerPaid, partnerBalance: mirrors.partnerBalance, companyProfit: mirrors.companyProfit } }) : order;
       if (mirrors && order) {

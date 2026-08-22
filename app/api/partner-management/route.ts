@@ -13,14 +13,17 @@ import { requirePermission } from "@/lib/server-auth";
 import {
   createManagedPartner,
   createPartnerOrder,
+  createPartnerPayoutForOrder,
   createPartnerSettlementOperation,
   getPartnerManagementReadModel,
   linkPartnerOrder,
+  linkHistoricalPartnerPayment,
   PartnerManagementError,
   reversePartnerSettlementOperation,
   searchPartnerClients,
   searchPartnerOrders,
   setPartnerAgreedCost,
+  setOrderPartnerAgreement,
   setPartnerSettlementState,
   updateManagedPartner,
   type PartnerManagementActor,
@@ -71,8 +74,12 @@ function reward(body: Body) {
 
 function errorResponse(error: unknown) {
   if (error instanceof PartnerManagementError) {
-    const notFound = ["PARTNER_NOT_FOUND", "ORDER_NOT_FOUND", "RELATION_NOT_FOUND", "OPERATION_NOT_FOUND", "MANAGER_NOT_FOUND"];
-    const conflict = ["ORDER_ALREADY_LINKED", "ORDER_ALREADY_HAS_PRIMARY_PARTNER", "IDEMPOTENCY_CONFLICT", "ALREADY_REVERSED", "SETTLEMENT_HAS_BALANCE"];
+    const notFound = ["PARTNER_NOT_FOUND", "ORDER_NOT_FOUND", "RELATION_NOT_FOUND", "OPERATION_NOT_FOUND", "MANAGER_NOT_FOUND", "PAYMENT_NOT_FOUND"];
+    const conflict = [
+      "ORDER_ALREADY_LINKED", "ORDER_ALREADY_HAS_PRIMARY_PARTNER", "IDEMPOTENCY_CONFLICT", "ALREADY_REVERSED",
+      "SETTLEMENT_HAS_BALANCE", "PAYMENT_ALREADY_LINKED", "PAYMENT_ORDER_MISMATCH", "PAYMENT_PARTNER_MISMATCH",
+      "ORDER_PARTNER_MISMATCH", "PARTNER_REASSIGNMENT_WITH_PAYMENTS",
+    ];
     return NextResponse.json(
       { error: error.message },
       { status: error.message === "FORBIDDEN" ? 403 : notFound.includes(error.message) ? 404 : conflict.includes(error.message) ? 409 : 400 },
@@ -95,6 +102,13 @@ export async function GET(request: Request) {
     const partnerId = asNumber(url.searchParams.get("partnerId"));
     const settlementStatus = enumValue(Object.values(PartnerSettlementStatus), url.searchParams.get("settlementStatus"));
     const debt = enumValue(["company", "partner", "any"] as const, url.searchParams.get("debt"));
+    const scope = enumValue(["active", "completed", "all", "with_partner", "without_partner", "without_cost"] as const, url.searchParams.get("scope"));
+    const clientStatus = enumValue(["UNPAID", "PARTIAL", "PAID", "OVERPAID", "OVERDUE"] as const, url.searchParams.get("clientStatus"));
+    const partnerStatus = enumValue(["NOT_ASSIGNED", "COST_MISSING", "NOT_ACCRUED", "PAYABLE", "PARTIALLY_PAID", "PAID", "OVERPAID", "OVERDUE", "DISPUTED"] as const, url.searchParams.get("partnerStatus"));
+    const profit = enumValue(["profitable", "loss", "highest_profit", "highest_margin", "lowest_margin"] as const, url.searchParams.get("profit"));
+    const period = enumValue(["current_month", "previous_month", "quarter", "year", "custom", "all"] as const, url.searchParams.get("period"));
+    const periodBasis = enumValue(["order", "completion", "finance"] as const, url.searchParams.get("periodBasis"));
+    const sort = enumValue(["newest", "oldest", "sale_desc", "client_debt_desc", "partner_debt_desc", "profit_desc", "margin_desc", "margin_asc"] as const, url.searchParams.get("sort"));
     return NextResponse.json(await getPartnerManagementReadModel({
       partnerId,
       query: query || undefined,
@@ -102,6 +116,15 @@ export async function GET(request: Request) {
       to: asDate(url.searchParams.get("to")),
       settlementStatus,
       debt,
+      scope,
+      clientStatus,
+      partnerStatus,
+      profit,
+      period,
+      periodBasis,
+      sort,
+      page: asNumber(url.searchParams.get("page")),
+      pageSize: asNumber(url.searchParams.get("pageSize")),
     }), { headers: { "cache-control": "no-store" } });
   } catch (error) {
     return errorResponse(error);
@@ -157,8 +180,30 @@ export async function POST(request: Request) {
     if (action === "link-order") {
       const partnerId = asNumber(body.partnerId); const orderId = asNumber(body.orderId);
       if (!partnerId || !orderId) throw new PartnerManagementError("INVALID_LINK");
-      const result = await linkPartnerOrder({ partnerId, orderId, reward: reward(body), startsAt: asDate(body.startsAt), comment: asString(body.comment) }, user);
+      const result = await linkPartnerOrder({
+        partnerId,
+        orderId,
+        reward: reward(body),
+        startsAt: asDate(body.startsAt) ?? asDate(body.agreedAt),
+        workDueAt: asDate(body.workDueAt) ?? null,
+        paymentDueAt: asDate(body.paymentDueAt) ?? null,
+        comment: asString(body.comment),
+      }, user);
       return NextResponse.json(result, { status: result.created ? 201 : 200 });
+    }
+    if (action === "set-order-agreement") {
+      const orderId = asNumber(body.orderId);
+      const partnerId = asNumber(body.partnerId);
+      if (!orderId || !partnerId) throw new PartnerManagementError("INVALID_LINK");
+      return NextResponse.json(await setOrderPartnerAgreement({
+        orderId,
+        partnerId,
+        amount: String(body.amount ?? "0"),
+        agreedAt: asDate(body.agreedAt),
+        workDueAt: asDate(body.workDueAt) ?? null,
+        paymentDueAt: asDate(body.paymentDueAt) ?? null,
+        comment: asString(body.comment),
+      }, user));
     }
     if (action === "create-order") {
       const key = readIdempotencyKey(request); if ("response" in key) return key.response;
@@ -187,6 +232,36 @@ export async function POST(request: Request) {
         idempotencyKey: key.key, requestHash: createRequestHash(body),
       }, user), { status: 201 });
     }
+    if (action === "partner-payout") {
+      const key = readIdempotencyKey(request); if ("response" in key) return key.response;
+      const orderId = asNumber(body.orderId);
+      if (!orderId) throw new PartnerManagementError("ORDER_NOT_FOUND");
+      return NextResponse.json(await createPartnerPayoutForOrder({
+        orderId,
+        amount: String(body.amount ?? "0"),
+        operationDate: asDate(body.operationDate) ?? new Date(),
+        method: asString(body.method) ?? "other",
+        account: asString(body.account),
+        comment: asString(body.comment),
+        idempotencyKey: key.key,
+        requestHash: createRequestHash(body),
+      }, user), { status: 201 });
+    }
+    if (action === "link-historical-payment") {
+      const key = readIdempotencyKey(request); if ("response" in key) return key.response;
+      const paymentId = asNumber(body.paymentId);
+      const orderId = asNumber(body.orderId);
+      const partnerId = asNumber(body.partnerId);
+      if (!paymentId || !orderId || !partnerId) throw new PartnerManagementError("INVALID_LINK");
+      return NextResponse.json(await linkHistoricalPartnerPayment({
+        paymentId,
+        orderId,
+        partnerId,
+        comment: asString(body.comment) ?? "",
+        idempotencyKey: key.key,
+        requestHash: createRequestHash(body),
+      }, user), { status: 201 });
+    }
     if (action === "set-agreed-cost") {
       const relationId = asNumber(body.relationId);
       if (!relationId) throw new PartnerManagementError("RELATION_NOT_FOUND");
@@ -195,6 +270,11 @@ export async function POST(request: Request) {
         String(body.amount ?? "0"),
         asString(body.comment) ?? "",
         user,
+        {
+          agreedAt: asDate(body.agreedAt),
+          workDueAt: asDate(body.workDueAt) ?? null,
+          paymentDueAt: asDate(body.paymentDueAt) ?? null,
+        },
       ));
     }
     if (action === "reverse-operation") {
