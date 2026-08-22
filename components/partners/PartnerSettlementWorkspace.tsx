@@ -361,8 +361,14 @@ const initialFilters = {
   page: 1,
 };
 
-export default function PartnerSettlementWorkspace() {
-  const [tab, setTab] = useState<Tab>("overview");
+export default function PartnerSettlementWorkspace({
+  initialTab,
+  initialOrderId,
+}: {
+  initialTab?: Tab;
+  initialOrderId?: number;
+}) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
   const [data, setData] = useState<Payload | null>(null);
   const [filters, setFilters] = useState(initialFilters);
   const [queryDraft, setQueryDraft] = useState("");
@@ -379,6 +385,7 @@ export default function PartnerSettlementWorkspace() {
     Payload["unallocatedOperations"][number] | null
   >(null);
   const [newOrder, setNewOrder] = useState(false);
+  const [initialOrderOpened, setInitialOrderOpened] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -401,6 +408,7 @@ export default function PartnerSettlementWorkspace() {
       if (filters.partnerId) params.set("partnerId", filters.partnerId);
       if (filters.from) params.set("from", filters.from);
       if (filters.to) params.set("to", filters.to);
+      if (initialOrderId) params.set("orderId", String(initialOrderId));
       const response = await fetch(`/api/partner-management?${params}`, {
         cache: "no-store",
       });
@@ -415,11 +423,22 @@ export default function PartnerSettlementWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [filters, query]);
+  }, [filters, initialOrderId, query]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  useEffect(() => {
+    if (!initialOrderId || !data || initialOrderOpened) return;
+    const selected = data.orders.find((item) => item.order.id === initialOrderId);
+    if (!selected) return;
+    const timer = window.setTimeout(() => {
+      setTab("orders");
+      setHistoryOrder(selected);
+      setInitialOrderOpened(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [data, initialOrderId, initialOrderOpened]);
 
   const mutate = useCallback(
     async (body: Record<string, unknown>, idempotent = false) => {
@@ -479,7 +498,7 @@ export default function PartnerSettlementWorkspace() {
               onClick={() => setNewOrder(true)}
             >
               <Plus size={17} />
-              Новый заказ партнёра
+              Создать заказ без заявки
             </button>
             <button
               type="button"
@@ -509,6 +528,11 @@ export default function PartnerSettlementWorkspace() {
           </button>
         ))}
       </nav>
+      {initialOrderId && (
+        <a href={`/orders/${initialOrderId}#settlements`} className={secondary}>
+          <ChevronLeft size={17} /> Вернуться к заказу
+        </a>
+      )}
 
       {error && (
         <div
@@ -1712,7 +1736,7 @@ function RowActions({
           ? item.economy.partner.agreedAt
             ? "Изменить стоимость"
             : "Указать стоимость"
-          : "Назначить партнёра"}
+          : "Передать существующий заказ в цех"}
       </button>
       {canPay ? (
         <button
@@ -3479,7 +3503,7 @@ const statusLabel = (value: string) =>
       PAID: "Оплачено",
       OVERPAID: "Переплата",
       OVERDUE: "Просрочено",
-      NOT_ASSIGNED: "Партнёр не назначен",
+      NOT_ASSIGNED: "Не передан в цех",
       COST_MISSING: "Стоимость не указана",
       NOT_ACCRUED: "Не начислено",
       PAYABLE: "К выплате",

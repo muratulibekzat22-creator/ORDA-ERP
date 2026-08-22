@@ -4,6 +4,7 @@ import { PartnerRewardRule, PartnerSettlementOperationStatus, PartnerSettlementO
 
 import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { calculatePartnerSettlement, calculateReward } from "@/lib/partners/settlement";
+import { calculateOrderProfitability } from "@/lib/services/profitability.service";
 
 const equal = (actual: { toFixed(scale: number): string }, expected: string, label: string) =>
   assert.equal(actual.toFixed(2), expected, label);
@@ -92,4 +93,41 @@ const payrollPaid = calculateOrderEconomy({
 });
 equal(payrollPaid.profit.netProfit, "500.00", "payroll accrual reduces profit once");
 equal(payrollPaid.cash.payrollPaid, "100.00", "payroll payment affects cash position only");
+
+const control = calculateOrderProfitability({
+  totalSale: "2000000",
+  payments: [
+    { type: "CLIENT_PAYMENT", amount: "1000000" },
+    { type: "PARTNER_PAYOUT", amount: "500000", partnerId: 7 },
+  ],
+  partnerId: 7,
+  partnerAgreed: "1500000",
+  partnerAgreedAt: new Date("2026-08-22"),
+  costPlan: {
+    materialOutsideWorkshop: "50000",
+    delivery: "20000",
+    bankFees: "10000",
+    otherDirect: "20000",
+    confirmedAt: new Date("2026-08-22"),
+  },
+  payrollAccruals: [
+    { type: PayrollAccrualType.ORDER_BONUS, direction: PayrollDirection.INCREASE, amount: "50000", employee: { user: { role: Role.MANAGER }, position: "Менеджер" }, payments: [{ amount: "50000" }] },
+    { type: PayrollAccrualType.EXTRA_BONUS, direction: PayrollDirection.INCREASE, amount: "20000", employee: { user: { role: Role.MEASURER }, position: "Замерщик" } },
+    { type: PayrollAccrualType.EXTRA_BONUS, direction: PayrollDirection.INCREASE, amount: "10000", employee: { position: "Водитель" } },
+    { type: PayrollAccrualType.EXTRA_BONUS, direction: PayrollDirection.INCREASE, amount: "20000", employee: { position: "Администратор" } },
+  ],
+});
+equal(control.client.remaining, "1000000.00", "control: partial client payment changes outstanding only");
+equal(control.profit.marginBeforePayroll, "400000.00", "control: margin before payroll");
+equal(control.profit.payrollAccrued, "100000.00", "control: payroll accrual total");
+equal(control.profit.netProfit, "300000.00", "control: order profit");
+equal(control.profit.netMarginPercent, "15.00", "control: order margin");
+assert.equal(control.profit.costsConfirmed, true, "control: costs confirmed");
+assert.equal(control.profit.label, "Предварительная прибыль", "active order remains preliminary");
+const missingWorkshop = calculateOrderProfitability({ totalSale: "1800000" });
+assert.equal(missingWorkshop.profit.complete, false, "missing workshop never produces complete profit");
+assert.match(missingWorkshop.profit.warning ?? "", /не передан в цех/u);
+const missingCost = calculateOrderProfitability({ totalSale: "1800000", partnerId: 7 });
+assert.equal(missingCost.profit.complete, false, "missing workshop cost never produces complete profit");
+assert.match(missingCost.profit.warning ?? "", /стоимость цеха/u);
 console.log("Partner calculations: fixed/order/paid/profit/manual, Decimal precision, debt and reversal PASS");

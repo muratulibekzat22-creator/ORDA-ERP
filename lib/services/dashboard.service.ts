@@ -14,6 +14,7 @@ import {
 
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { getCompanyProfitability } from "@/lib/services/profitability.service";
 
 type DashboardScope = { role: Role; userId: number; period?: string };
 const percent = (value: number, total: number) =>
@@ -318,6 +319,9 @@ async function salesProjection(scope: DashboardScope) {
   const productionCount = (stages: string[]) => productionMetrics
     .filter((row) => stages.includes(row.stage))
     .reduce((sum, row) => sum + Number(row.count), 0);
+  const profitability = scope.role === Role.DIRECTOR
+    ? await getCompanyProfitability({ from: start, to: end })
+    : null;
   return {
     role: scope.role,
     period: { start, end },
@@ -347,6 +351,13 @@ async function salesProjection(scope: DashboardScope) {
       measurementsOverdue: measurementMetrics.overdue,
       proposalsNeedResponse,
       ...(scope.role === Role.DIRECTOR ? {
+        orderProfit: Number(profitability!.totals.orderProfit),
+        profitBeforeMandatory: Number(profitability!.totals.profitBeforeMandatory),
+        companyNetProfit: Number(profitability!.totals.companyNetProfit),
+        averageOrderMargin: Number(profitability!.totals.averageMargin),
+        cashResult: Number(profitability!.totals.cashResult),
+        incompleteProfitOrders: profitability!.totals.incompleteOrders,
+        completedProfitOrders: profitability!.totals.completedOrders,
         expensesForMonth: Number(monthlyExpenses._sum.amount ?? 0),
         activeEmployees: activeEmployeeCount,
         clientsWithBalance: Number(financeMetrics?.clients_with_balance ?? 0),
@@ -359,6 +370,7 @@ async function salesProjection(scope: DashboardScope) {
       } : {}),
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
+    ...(profitability ? { profitability } : {}),
     ...(scope.role === Role.MANAGER ? { measurementAttention } : {}),
     activities,
   };

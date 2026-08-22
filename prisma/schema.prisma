@@ -134,6 +134,8 @@ model Company {
   marketingSpends         MarketingSpend[]
   marketingBudgets        MarketingBudget[]
   marketingAuditLogs      MarketingAuditLog[]
+  orderCostPlans          OrderCostPlan[]
+  orderCostPlanRevisions  OrderCostPlanRevision[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -935,6 +937,7 @@ model Partner {
   orderRelations       PartnerOrderRelation[]
   settlementOperations PartnerSettlementOperation[]
   auditEvents          PartnerAuditEvent[]
+  defaultForSettings   CompanySettings[]            @relation("DefaultWorkshopPartner")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1032,6 +1035,8 @@ model Order {
   installation                OrderInstallation?
   calendarTasks               CalendarTask[]
   paymentReceipts             PaymentReceipt[]
+  costPlan                    OrderCostPlan?
+  costPlanRevisions           OrderCostPlanRevision[]
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -1754,29 +1759,67 @@ model MaterialPriceHistory {
 }
 
 model CompanySettings {
-  id               Int     @id @default(autoincrement())
-  companyId        Int     @default(dbgenerated())
-  company          Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  name             String  @default("ALTYN SAPA COMPANY")
-  bin              String  @default("220540017969")
-  legalAddress     String  @default("")
-  actualAddress    String  @default("")
-  phone            String  @default("+77085750881")
-  secondaryPhone   String  @default("+77760027555")
-  whatsapp         String  @default("")
-  email            String  @default("")
-  bankDetails      String  @default("")
-  directorName     String  @default("")
-  directorFullName String  @default("")
-  iik              String  @default("")
-  bank             String  @default("")
-  bik              String  @default("")
-  logoUrl          String  @default("")
+  id                       Int      @id @default(autoincrement())
+  companyId                Int      @default(dbgenerated())
+  company                  Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name                     String   @default("ALTYN SAPA COMPANY")
+  bin                      String   @default("220540017969")
+  legalAddress             String   @default("")
+  actualAddress            String   @default("")
+  phone                    String   @default("+77085750881")
+  secondaryPhone           String   @default("+77760027555")
+  whatsapp                 String   @default("")
+  email                    String   @default("")
+  bankDetails              String   @default("")
+  directorName             String   @default("")
+  directorFullName         String   @default("")
+  iik                      String   @default("")
+  bank                     String   @default("")
+  bik                      String   @default("")
+  logoUrl                  String   @default("")
+  defaultWorkshopPartnerId Int?
+  defaultWorkshopPartner   Partner? @relation("DefaultWorkshopPartner", fields: [defaultWorkshopPartnerId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([companyId])
+  @@index([companyId, defaultWorkshopPartnerId])
+}
+
+/// Planned order costs are accruals, not cash movements. A ledger entry is
+/// created only when money is actually paid.
+model OrderCostPlan {
+  id                      Int       @id @default(autoincrement())
+  companyId               Int       @default(dbgenerated())
+  company                 Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  orderId                 Int       @unique
+  order                   Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  materialOutsideWorkshop Decimal   @default(0) @db.Decimal(14, 2)
+  delivery                Decimal   @default(0) @db.Decimal(14, 2)
+  bankFees                Decimal   @default(0) @db.Decimal(14, 2)
+  otherDirect             Decimal   @default(0) @db.Decimal(14, 2)
+  confirmedAt             DateTime?
+  updatedById             Int
+  updatedByName           String
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([companyId, confirmedAt])
+}
+
+model OrderCostPlanRevision {
+  id        Int      @id @default(autoincrement())
+  companyId Int      @default(dbgenerated())
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId   Int
+  actorName String
+  snapshot  Json
+  createdAt DateTime @default(now())
+
+  @@index([companyId, orderId, createdAt])
 }
 
 model SystemSettings {

@@ -9,7 +9,10 @@ import { getOrder } from "@/lib/services/order.service";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 import { enterTenantFromSession } from "@/lib/tenant-context";
-import { calculateOrderEconomy } from "@/lib/orders/economy";
+import {
+  calculateLoadedOrderProfitability,
+  type ProfitabilityOrder,
+} from "@/lib/services/profitability.service";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -56,6 +59,15 @@ export async function getAuthorizedOrder(id: number) {
   }
   const source = await getOrder(id);
   if (!source) return null;
+  const companySettings = await prisma.companySettings.findUnique({
+    where: { companyId: source.companyId },
+    select: {
+      defaultWorkshopPartner: {
+        select: { id: true, name: true, active: true, archived: true, isTest: true },
+      },
+    },
+  });
+  const defaultWorkshop = companySettings?.defaultWorkshopPartner;
   const { _count, ...sourceOrder } = source;
   const order = {
     ...sourceOrder,
@@ -67,19 +79,13 @@ export async function getAuthorizedOrder(id: number) {
         _count.payrollAccruals > 0,
     },
     settlement: buildOrderSettlement(source),
-    economy: calculateOrderEconomy({
-      totalSale: source.amount,
-      commercialAdjustments: source.commercialAdjustments,
-      payments: source.payments,
-      partnerId: source.partnerId,
-      partnerAgreed: source.partnerPrice,
-      partnerAgreedAt: source.partnerAgreedAt,
-      partnerAgreedBy: source.partnerAssignmentHistory[0]?.author?.name ?? null,
-      partnerDueAt: source.partnerPlannedReadyAt,
-      clientDueAt: source.promisedAt,
-      payrollAccruals: source.payrollAccruals,
-      ledgerEntries: source.companyLedgerEntries,
-    }),
+    economy: calculateLoadedOrderProfitability(
+      source as unknown as ProfitabilityOrder,
+    ),
+    defaultWorkshop:
+      defaultWorkshop?.active && !defaultWorkshop.archived && !defaultWorkshop.isTest
+        ? { id: defaultWorkshop.id, name: defaultWorkshop.name }
+        : null,
   };
   if (role === Role.DIRECTOR) return order;
   if (role === Role.ACCOUNTANT)
@@ -104,6 +110,10 @@ export async function getAuthorizedOrder(id: number) {
       companyProfit: undefined,
       payments: [],
       partnerAssignmentHistory: [],
+      partnerRelation: undefined,
+      costPlan: undefined,
+      costPlanRevisions: [],
+      defaultWorkshop: undefined,
       payrollAccruals: [],
       commercialAdjustments: [],
       companyLedgerEntries: [],
@@ -141,6 +151,10 @@ export async function getAuthorizedOrder(id: number) {
     payrollAccruals: [],
     commercialAdjustments: [],
     companyLedgerEntries: [],
+    partnerRelation: undefined,
+    costPlan: undefined,
+    costPlanRevisions: [],
+    defaultWorkshop: undefined,
     economy: undefined,
     measurements: order.measurements.map((measurement) => {
       const safe = { ...measurement } as Partial<typeof measurement>;

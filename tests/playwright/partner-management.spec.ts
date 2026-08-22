@@ -64,8 +64,15 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   if (ordersPayload.data[0]) {
     await page.goto(`/orders/${ordersPayload.data[0].id}`);
     await expect(page.getByRole("heading", { name: "Экономика заказа", exact: true })).toBeVisible();
-    for (const label of ["Сумма продажи", "Получено от клиента", "Остаток клиента", "Согласованная стоимость", "Выплачено партнёру", "Осталось выплатить", "Маржа до зарплаты", "Зарплата по заказу", "Чистая прибыль"])
+    for (const label of ["Сумма продажи", "Получено от клиента", "Остаток клиента", "Согласованная стоимость", "Выплачено партнёру", "Осталось выплатить", "Маржа до зарплаты", "Всего начислено по заказу", "Прибыль заказа", "Чистая маржа заказа"])
       await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("NOT_ASSIGNED", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("−0 ₸", { exact: true })).toHaveCount(0);
+    const fullSettlement = page.getByRole("link", { name: "Открыть полный расчёт партнёра", exact: true });
+    await expect(fullSettlement).toHaveAttribute("href", `/partner-management?tab=orders&orderId=${ordersPayload.data[0].id}`);
+    await fullSettlement.click();
+    await expect(page).toHaveURL(new RegExp(`/partner-management\\?tab=orders&orderId=${ordersPayload.data[0].id}$`));
+    await expect(page.getByRole("link", { name: "Вернуться к заказу", exact: true })).toHaveAttribute("href", `/orders/${ordersPayload.data[0].id}#settlements`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/orders");

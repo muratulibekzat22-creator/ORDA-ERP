@@ -60,6 +60,49 @@ type Journal = {
   };
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
+type Profitability = {
+  totals: {
+    sales: number | string;
+    orderProfit: number | string;
+    profitBeforeMandatory: number | string;
+    companyNetProfit: number | string;
+    averageMargin: number | string;
+    clientReceived: number | string;
+    clientOutstanding: number | string;
+    partnerPaid: number | string;
+    partnerPayable: number | string;
+    payrollPaid: number | string;
+    otherExpensesPaid: number | string;
+    cashResult: number | string;
+    calculatedOrders: number;
+    incompleteOrders: number;
+  };
+  rows: Array<{
+    id: number;
+    number: string;
+    lifecycle: string;
+    client: { name: string };
+    partner: { name: string } | null;
+    economy: {
+      client: { totalSale: number | string };
+      partner: { accrued: number | string };
+      profit: {
+        directExpenses: number | string;
+        payrollAccrued: number | string;
+        netProfit: number | string;
+        netMarginPercent: number | string;
+        complete: boolean;
+        label: string;
+      };
+    };
+  }>;
+  highlights: {
+    highestProfit?: { number: string; economy: { profit: { netProfit: number | string } } } | null;
+    highestMargin?: { number: string; economy: { profit: { netMarginPercent: number | string } } } | null;
+    mostPopularProduct?: { product: string; material: string; orders: number } | null;
+    mostProfitableProduct?: { product: string; material: string; profit: number | string } | null;
+  };
+};
 type Form = {
   direction: Direction;
   categoryId: string;
@@ -127,8 +170,11 @@ export default function FinanceJournalPage() {
   const { data: session } = useSession();
   const isDirector = session?.user.role === "DIRECTOR";
   const [journal, setJournal] = useState(emptyJournal);
+  const [profitability, setProfitability] = useState<Profitability | null>(null);
   const [period, setPeriod] = useState("month");
-  const [tab, setTab] = useState("all");
+  const [tab, setTab] = useState<
+    "overview" | "profit" | "expenses" | "cash" | "orders" | "journal"
+  >("overview");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [search, setSearch] = useState("");
@@ -151,8 +197,7 @@ export default function FinanceJournalPage() {
       page: String(page),
       pageSize: "50",
     });
-    if (tab === "income") params.set("direction", "INCOME");
-    if (tab === "expense") params.set("direction", "EXPENSE");
+    if (tab === "expenses") params.set("direction", "EXPENSE");
     if (period === "custom" && from)
       params.set("from", `${from}T00:00:00`);
     if (period === "custom" && to)
@@ -164,11 +209,13 @@ export default function FinanceJournalPage() {
       });
       const body = (await response.json()) as {
         journal?: Journal;
+        profitability?: Profitability;
         error?: string;
       };
       if (!response.ok)
         throw new Error(body.error || "Не удалось загрузить финансы");
       setJournal(body.journal ?? emptyJournal);
+      setProfitability(body.profitability ?? null);
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Не удалось загрузить финансы",
@@ -406,13 +453,24 @@ export default function FinanceJournalPage() {
           color="text-rose-300"
         />
         <Metric
-          label="Разница доходов и расходов"
+          label="Денежный результат"
           value={journal.totals.cashResult}
           color={
             journal.totals.cashResult >= 0 ? "text-blue-300" : "text-rose-300"
           }
         />
       </div>
+      <p className="-mt-3 text-xs text-slate-500">
+        Денежный результат — фактическое движение денег, а не чистая прибыль.
+      </p>
+      {profitability && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Metric label="Прибыль заказов" value={Number(profitability.totals.orderProfit)} color="text-emerald-300" />
+          <Metric label="Прибыль до обязательных платежей" value={Number(profitability.totals.profitBeforeMandatory)} color="text-blue-300" />
+          <Metric label="Чистая прибыль компании" value={Number(profitability.totals.companyNetProfit)} color={Number(profitability.totals.companyNetProfit) >= 0 ? "text-emerald-300" : "text-rose-300"} />
+          <Metric label="Средняя маржа заказов" value={Number(profitability.totals.averageMargin)} color="text-amber-300" suffix="%" />
+        </div>
+      )}
 
       {form && (
         <form
@@ -563,39 +621,37 @@ export default function FinanceJournalPage() {
       )}
 
       <div className="flex gap-2 overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => { setPage(1); setTab("all"); }}
-          className={tabClass(tab === "all")}
-        >
-          Все
-        </button>
-        <button
-          type="button"
-          onClick={() => { setPage(1); setTab("income"); }}
-          className={tabClass(tab === "income")}
-        >
-          Доходы
-        </button>
-        <button
-          type="button"
-          onClick={() => { setPage(1); setTab("expense"); }}
-          className={tabClass(tab === "expense")}
-        >
-          Расходы
-        </button>
-        <button
-          type="button"
-          onClick={() => { setPage(1); setTab("analysis"); }}
-          className={tabClass(tab === "analysis")}
-        >
-          Аналитика
-        </button>
+        {([
+          ["overview", "Обзор"],
+          ["profit", "Прибыль"],
+          ["expenses", "Расходы"],
+          ["cash", "Денежный поток"],
+          ["orders", "Экономика заказов"],
+          ["journal", "Журнал"],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => { setPage(1); setTab(value); }}
+            className={tabClass(tab === value)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
-      {tab === "analysis" ? (
+      {tab === "overview" && profitability && (
+        <ProfitOverview profitability={profitability} />
+      )}
+      {tab === "profit" && profitability && (
+        <ProfitDetails profitability={profitability} />
+      )}
+      {tab === "orders" && profitability && (
+        <OrderEconomyTable profitability={profitability} />
+      )}
+      {tab === "cash" ? (
         <Analysis journal={journal} />
-      ) : (
+      ) : (tab === "expenses" || tab === "journal") ? (
         <>
           <input
             aria-label="Поиск операций"
@@ -701,7 +757,7 @@ export default function FinanceJournalPage() {
             </div>
           )}
         </>
-      )}
+      ) : null}
 
       {isDirector && (
         <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
@@ -812,20 +868,82 @@ function Options({
   );
 }
 
+function ProfitOverview({ profitability }: { profitability: Profitability }) {
+  const totals = profitability.totals;
+  return (
+    <section className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2 xl:grid-cols-4">
+      <Metric label="Сумма продаж" value={Number(totals.sales)} color="text-white" />
+      <Metric label="Получено от клиентов" value={Number(totals.clientReceived)} color="text-emerald-300" />
+      <Metric label="Остаток клиентов" value={Number(totals.clientOutstanding)} color="text-amber-300" />
+      <Metric label="Остаток партнёрам" value={Number(totals.partnerPayable)} color="text-rose-300" />
+      <p className="text-sm text-slate-400 sm:col-span-2 xl:col-span-4">
+        Рассчитано заказов: {totals.calculatedOrders}. Неполный расчёт: {totals.incompleteOrders}.
+      </p>
+    </section>
+  );
+}
+
+function ProfitDetails({ profitability }: { profitability: Profitability }) {
+  const { totals, highlights } = profitability;
+  return (
+    <div className="space-y-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Metric label="Прибыль заказов" value={Number(totals.orderProfit)} color="text-emerald-300" />
+        <Metric label="Прибыль до обязательных платежей" value={Number(totals.profitBeforeMandatory)} color="text-blue-300" />
+        <Metric label="Чистая прибыль компании" value={Number(totals.companyNetProfit)} color={Number(totals.companyNetProfit) >= 0 ? "text-emerald-300" : "text-rose-300"} />
+      </section>
+      <section className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2">
+        <Highlight label="Самый прибыльный заказ" value={highlights.highestProfit ? `${highlights.highestProfit.number} · ${money(Number(highlights.highestProfit.economy.profit.netProfit))}` : "Нет полного расчёта"} />
+        <Highlight label="Самый маржинальный заказ" value={highlights.highestMargin ? `${highlights.highestMargin.number} · ${Number(highlights.highestMargin.economy.profit.netMarginPercent).toLocaleString("ru-RU")}%` : "Нет полного расчёта"} />
+        <Highlight label="Самый ходовой товар" value={highlights.mostPopularProduct ? `${highlights.mostPopularProduct.product} · ${highlights.mostPopularProduct.material} · ${highlights.mostPopularProduct.orders}` : "Нет данных"} />
+        <Highlight label="Самый прибыльный товар" value={highlights.mostProfitableProduct ? `${highlights.mostProfitableProduct.product} · ${money(Number(highlights.mostProfitableProduct.profit))}` : "Нет полного расчёта"} />
+      </section>
+    </div>
+  );
+}
+
+function Highlight({ label, value }: { label: string; value: string }) {
+  return <div className="min-w-0 rounded-xl bg-slate-950/60 p-4"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 break-words font-semibold text-white">{value}</p></div>;
+}
+
+function OrderEconomyTable({ profitability }: { profitability: Profitability }) {
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827]">
+      <table className="w-full min-w-[980px] text-left text-sm">
+        <thead className="bg-slate-950 text-slate-400"><tr>{["Заказ", "Клиент", "Цех", "Продажа", "Стоимость цеха", "Прямые расходы", "Начисления", "Прибыль", "Маржа", "Полнота"].map((title) => <th key={title} className="px-3 py-3">{title}</th>)}</tr></thead>
+        <tbody>{profitability.rows.map((row) => <tr key={row.id} className="border-t border-slate-800 text-slate-200">
+          <td className="px-3 py-3"><a href={`/orders/${row.id}`} className="font-semibold text-blue-300">{row.number}</a></td>
+          <td className="px-3 py-3">{row.client.name}</td>
+          <td className="px-3 py-3">{row.partner?.name ?? "Не передан в цех"}</td>
+          <td className="px-3 py-3">{money(Number(row.economy.client.totalSale))}</td>
+          <td className="px-3 py-3">{row.economy.profit.complete ? money(Number(row.economy.partner.accrued)) : "—"}</td>
+          <td className="px-3 py-3">{money(Number(row.economy.profit.directExpenses))}</td>
+          <td className="px-3 py-3">{money(Number(row.economy.profit.payrollAccrued))}</td>
+          <td className="px-3 py-3 font-semibold">{row.economy.profit.complete ? money(Number(row.economy.profit.netProfit)) : "—"}</td>
+          <td className="px-3 py-3">{row.economy.profit.complete ? `${Number(row.economy.profit.netMarginPercent).toLocaleString("ru-RU")}%` : "—"}</td>
+          <td className="px-3 py-3">{row.economy.profit.label}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
 function Metric({
   label,
   value,
   color,
+  suffix,
 }: {
   label: string;
   value: number;
   color: string;
+  suffix?: string;
 }) {
   return (
     <div className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
       <p className="text-sm text-slate-400">{label}</p>
       <p className={`mt-2 break-words text-xl font-bold ${color}`}>
-        {money(value)}
+        {suffix ? `${value.toLocaleString("ru-RU")} ${suffix}` : money(value)}
       </p>
     </div>
   );

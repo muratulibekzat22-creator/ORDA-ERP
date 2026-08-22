@@ -47,6 +47,14 @@ export type OrderTabData = {
     city: string | null;
     active: boolean;
   } | null;
+  defaultWorkshop?: { id: number; name: string } | null;
+  costPlan?: {
+    materialOutsideWorkshop: NumericValue;
+    delivery: NumericValue;
+    bankFees: NumericValue;
+    otherDirect: NumericValue;
+    confirmedAt: Date | string | null;
+  } | null;
   settlement?: {
     cancelled: boolean;
     client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
@@ -78,6 +86,11 @@ export type OrderTabData = {
       installers: NumericValue; driver: NumericValue; expediter: NumericValue;
       otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue;
       netMarginPercent: NumericValue;
+      complete: boolean;
+      costsConfirmed: boolean;
+      label: string;
+      warning: string | null;
+      mode: "ACTUAL" | "PLANNED";
     };
     cash: {
       clientReceived: NumericValue; partnerPaid: NumericValue; payrollPaid: NumericValue;

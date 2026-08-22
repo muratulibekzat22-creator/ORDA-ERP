@@ -10,6 +10,7 @@ import {
   getFinanceJournal,
 } from "@/lib/services/finance-journal.service";
 import { createFinanceOperation, financeOperationTypes, getFinanceDashboard, type AdjustmentDirection, type FinanceOperationType } from "@/lib/services/payment.service";
+import { getCompanyProfitability } from "@/lib/services/profitability.service";
 
 const methods = ["cash", "kaspi", "bank_transfer", "card", "other"] as const;
 const maxAmount = 9_999_999_999.99;
@@ -80,7 +81,19 @@ export async function GET(request: Request) {
       requestedPageSize > 100
     )
       return NextResponse.json({ error: "Некорректная пагинация" }, { status: 400 });
-    const [data, journal] = await Promise.all([
+    const now = new Date();
+    const profitabilityFrom = from ?? (() => {
+      if (period === "all") return undefined;
+      const value = new Date(now);
+      value.setHours(0, 0, 0, 0);
+      if (period === "today") return value;
+      if (period === "week") value.setDate(value.getDate() - 6);
+      else if (period === "quarter") value.setMonth(Math.floor(value.getMonth() / 3) * 3, 1);
+      else if (period === "year") value.setMonth(0, 1);
+      else value.setDate(1);
+      return value;
+    })();
+    const [data, journal, profitability] = await Promise.all([
       getFinanceDashboard({
         period: (["today", "week", "month", "quarter", "year"].includes(
           period,
@@ -127,8 +140,9 @@ export async function GET(request: Request) {
         page: requestedPage,
         pageSize: requestedPageSize,
       }),
+      getCompanyProfitability({ from: profitabilityFrom, to: to ?? now }),
     ]);
-    return NextResponse.json({ ...data, journal });
+    return NextResponse.json({ ...data, journal, profitability });
   } catch (error) {
     logRequestFailure("finance.read_failed", request, error);
     return NextResponse.json({ error: "Не удалось загрузить финансы" }, { status: 500 });

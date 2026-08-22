@@ -85,7 +85,7 @@ function PartnerPayableTable({ orders }: { orders: OrderListItem[] }) {
               </p>
             </div>
             <Link
-              href={`/orders/${order.id}#settlements`}
+              href={`/orders/${order.id}?action=assign-workshop#settlements`}
               className="mt-4 block min-h-11 rounded-xl bg-blue-600 px-4 py-3 text-center font-semibold text-white"
             >
               Открыть расчёты
@@ -132,7 +132,7 @@ function PartnerPayableTable({ orders }: { orders: OrderListItem[] }) {
                 </td>
                 <td className="px-4 py-4">
                   <Link
-                    href={`/orders/${order.id}#settlements`}
+                    href={`/orders/${order.id}?action=assign-workshop#settlements`}
                     className="rounded-lg bg-blue-600 px-3 py-2 text-white"
                   >
                     Открыть
@@ -185,7 +185,7 @@ function WithoutPartnerTable({ orders }: { orders: OrderListItem[] }) {
               </p>
             </div>
             <Link
-              href={`/orders/${order.id}#settlements`}
+              href={`/orders/${order.id}?action=assign-workshop#settlements`}
               className="mt-4 block min-h-11 rounded-xl bg-blue-600 px-4 py-3 text-center font-semibold text-white"
             >
               Назначить цех
@@ -234,7 +234,7 @@ function WithoutPartnerTable({ orders }: { orders: OrderListItem[] }) {
                 <td className="px-4 py-4">{order.manager}</td>
                 <td className="px-4 py-4">
                   <Link
-                    href={`/orders/${order.id}#settlements`}
+                    href={`/orders/${order.id}?action=assign-workshop#settlements`}
                     className="rounded-lg bg-blue-600 px-3 py-2 text-white"
                   >
                     Назначить цех

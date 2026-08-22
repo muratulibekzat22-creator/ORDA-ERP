@@ -34,6 +34,13 @@ export type OrderEconomyInput = {
     affectsProfit: boolean;
     voidedAt?: Date | string | null;
   }>;
+  costPlan?: {
+    materialOutsideWorkshop: DecimalValue;
+    delivery: DecimalValue;
+    bankFees: DecimalValue;
+    otherDirect: DecimalValue;
+    confirmedAt?: Date | string | null;
+  } | null;
 };
 
 const clientIncome = new Set(["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"]);
@@ -82,9 +89,6 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       ? money(row.amount).negated()
       : money(row.amount);
   const payrollAccrued = money(payroll.reduce((sum, row) => sum.add(accrualValue(row)), money(0)));
-  const byType = (types: string[]) => money(payroll
-    .filter((row) => types.includes(String(row.type)))
-    .reduce((sum, row) => sum.add(accrualValue(row)), money(0)));
   const byRole = (roles: string[], positions: RegExp) => money(payroll
     .filter((row) => roles.includes(String(row.employee?.user?.role ?? "")) || positions.test(row.employee?.position ?? ""))
     .reduce((sum, row) => sum.add(accrualValue(row)), money(0)));
@@ -93,11 +97,19 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       ["GUARANTEED_ORDER_BONUS", "ORDER_BONUS"].includes(String(row.type)) &&
       (row.employee?.user?.role === Role.MANAGER || /менеджер/i.test(row.employee?.position ?? "")))
     .reduce((sum, row) => sum.add(accrualValue(row)), money(0)));
-  const measurer = byType(["MEASUREMENT_BONUS"]);
-  const installers = byRole(["INSTALLER"], /монтаж|установ/i);
+  const measurer = money(payroll
+    .filter((row) =>
+      String(row.type) === "MEASUREMENT_BONUS" ||
+      row.employee?.user?.role === Role.MEASURER ||
+      /замер/i.test(row.employee?.position ?? ""))
+    .reduce((sum, row) => sum.add(accrualValue(row)), money(0)));
   const driver = byRole([], /водител/i);
+  const installers = byRole(["INSTALLER"], /монтаж|установ/i);
   const expediter = byRole([], /экспедитор/i);
-  const classified = managerBonus.add(measurer).add(installers).add(driver).add(expediter);
+  // Legacy installer/expediter accruals remain immutable and are included in
+  // the catch-all amount. The current order form exposes only the canonical
+  // manager, measurer, driver and other buckets.
+  const classified = managerBonus.add(measurer).add(driver);
   const otherPayroll = money(payrollAccrued.sub(classified));
   const payrollPaid = money(payroll.reduce((sum, row) => sum.add(
     (row.payments ?? [])
@@ -112,19 +124,28 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
     entry.category !== "SALARY" &&
     entry.type !== "PARTNER_PAYOUT",
   );
-  const directExpenses = money(directLedger
+  const legacyDirectExpenses = money(directLedger
     .filter((entry) => entry.affectsProfit)
     .reduce((sum, entry) => sum.add(entry.amount), money(0)));
   const paidDirectExpenses = money(directLedger.reduce((sum, entry) => sum.add(entry.amount), money(0)));
   const directCategory = (pattern: RegExp) => money(directLedger
     .filter((entry) => entry.affectsProfit && pattern.test(`${entry.category} ${entry.type} ${entry.source}`))
     .reduce((sum, entry) => sum.add(entry.amount), money(0)));
-  const materials = directCategory(/MATERIAL|МАТЕРИАЛ/i);
-  const delivery = directCategory(/DELIVER|ДОСТАВ/i);
+  const legacyMaterials = directCategory(/MATERIAL|МАТЕРИАЛ/i);
+  const legacyDelivery = directCategory(/DELIVER|ДОСТАВ/i);
   const contractors = directCategory(/CONTRACTOR|ПОДРЯД/i);
-  const bankFees = directCategory(/BANK|COMMISSION|БАНК|КОМИСС/i);
-  const categorizedDirect = materials.add(delivery).add(contractors).add(bankFees);
-  const otherDirectExpenses = money(positive(directExpenses.sub(categorizedDirect)));
+  const legacyBankFees = directCategory(/BANK|COMMISSION|БАНК|КОМИСС/i);
+  const categorizedLegacy = legacyMaterials.add(legacyDelivery).add(legacyBankFees);
+  const legacyOtherDirect = money(positive(legacyDirectExpenses.sub(categorizedLegacy)));
+  const materials = input.costPlan
+    ? money(input.costPlan.materialOutsideWorkshop)
+    : legacyMaterials;
+  const delivery = input.costPlan ? money(input.costPlan.delivery) : legacyDelivery;
+  const bankFees = input.costPlan ? money(input.costPlan.bankFees) : legacyBankFees;
+  const otherDirectExpenses = input.costPlan
+    ? money(input.costPlan.otherDirect)
+    : legacyOtherDirect;
+  const directExpenses = money(materials.add(delivery).add(bankFees).add(otherDirectExpenses));
   const marginBeforePayroll = money(totalSale.sub(partnerAccrued).sub(directExpenses));
   const netProfit = money(marginBeforePayroll.sub(payrollAccrued));
   const netMarginPercent = totalSale.eq(0)
@@ -160,11 +181,19 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
                 ? "PARTIALLY_PAID"
                 : "PAYABLE";
   const profitComplete = Boolean(input.partnerId && input.partnerAgreedAt);
+  const costsConfirmed = Boolean(input.costPlan?.confirmedAt);
   const profitWarning = !input.partnerId
-    ? "Партнёр не назначен"
+    ? "Прибыль не рассчитана: заказ ещё не передан в цех"
     : !input.partnerAgreedAt
-      ? "Прибыль не рассчитана: не указана стоимость партнёра"
-      : null;
+      ? "Прибыль не рассчитана: не указана стоимость цеха"
+      : !costsConfirmed
+        ? "Предварительная прибыль: прямые расходы ещё не подтверждены"
+        : null;
+  const profitLabel = !profitComplete
+    ? "Прибыль не рассчитана"
+    : input.lifecycle === "COMPLETED" && costsConfirmed
+      ? "Фактическая прибыль заказа"
+      : "Предварительная прибыль";
 
   return {
     client: {
@@ -186,8 +215,10 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       managerBonus, measurer, installers, driver, expediter, otherPayroll,
       payrollAccrued, netProfit, netMarginPercent,
       complete: profitComplete,
+      costsConfirmed,
+      label: profitLabel,
       warning: profitWarning,
-      mode: input.lifecycle === "COMPLETED" ? "ACTUAL" : "PLANNED",
+      mode: input.lifecycle === "COMPLETED" ? ("ACTUAL" as const) : ("PLANNED" as const),
     },
     cash: {
       clientReceived: netReceived, partnerPaid: money(partnerPaid), payrollPaid,

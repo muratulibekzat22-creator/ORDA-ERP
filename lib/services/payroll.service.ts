@@ -412,6 +412,8 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
         });
         if (!order) throw new PayrollError("ORDER_NOT_FOUND");
         if (
+          (input.type === PayrollAccrualType.ORDER_BONUS ||
+            input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS) &&
           employee.userId &&
           order.managerUserId &&
           employee.userId !== order.managerUserId

@@ -18,10 +18,11 @@ type Material = {
   _count: { movements: number };
 };
 type SettingsData = {
-  company: Record<string, string>;
+  company: Record<string, string | number | null>;
   system: Record<string, string | number>;
   calculator: Record<string, number>;
   materials: Material[];
+  partners: Array<{ id: number; name: string }>;
   rolePermissions: Record<Role, Permission[]>;
 };
 type Tab = "company" | "materials" | "users" | "permissions" | "system";
@@ -91,8 +92,8 @@ export default function SettingsPage() {
         ...payload,
         company: {
           ...payload.company,
-          phone: formatCompanyPhone(payload.company.phone),
-          secondaryPhone: formatCompanyPhone(payload.company.secondaryPhone),
+          phone: formatCompanyPhone(String(payload.company.phone ?? "")),
+          secondaryPhone: formatCompanyPhone(String(payload.company.secondaryPhone ?? "")),
         },
       });
     } catch (cause) {
@@ -310,6 +311,31 @@ export default function SettingsPage() {
                 onChange={(value) => updateSection("company", key, value)}
               />
             ))}
+            <label className="block text-sm text-slate-300">
+              Основной цех
+              <select
+                value={String(data.company.defaultWorkshopPartnerId ?? "")}
+                disabled={saving}
+                onChange={(event) =>
+                  updateSection(
+                    "company",
+                    "defaultWorkshopPartnerId",
+                    event.target.value,
+                  )
+                }
+                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-white disabled:opacity-60"
+              >
+                <option value="">Не выбран</option>
+                {data.partners.map((partner) => (
+                  <option key={partner.id} value={partner.id}>
+                    {partner.name}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">
+                Подставляется в форму передачи заказа, но назначается только после подтверждения директора.
+              </span>
+            </label>
           </div>
           <button
             disabled={saving}
