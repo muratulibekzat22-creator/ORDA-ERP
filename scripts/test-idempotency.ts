@@ -51,6 +51,17 @@ async function deleteReceiptDocuments(orderIds: number[]) {
   await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: orderIds } } });
 }
 
+async function deleteOrderPartnerRelations(orderIds: number[]) {
+  const relations = await prisma.partnerOrderRelation.findMany({
+    where: { orderId: { in: orderIds } },
+    select: { id: true },
+  });
+  const relationIds = relations.map((item) => item.id);
+  if (!relationIds.length) return;
+  await prisma.partnerAuditEvent.deleteMany({ where: { relationId: { in: relationIds } } });
+  await prisma.partnerOrderRelation.deleteMany({ where: { id: { in: relationIds } } });
+}
+
 async function main() {
   let clientId: number | undefined;
   let partnerId: number | undefined;
@@ -92,6 +103,7 @@ async function main() {
     await deleteReceiptDocuments(parallelOrders.map((result) => result.order.id));
     await prisma.payment.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
     await prisma.production.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
+    await deleteOrderPartnerRelations(parallelOrders.map((result) => result.order.id));
     await prisma.order.deleteMany({ where: { id: { in: parallelOrders.map((result) => result.order.id) } } });
 
     const material = await prisma.material.create({
@@ -320,6 +332,7 @@ async function main() {
       await prisma.payment.deleteMany({ where: { orderId } });
       await prisma.inventoryCogsEntry.deleteMany({ where: { orderId } });
       await prisma.materialMovement.deleteMany({ where: { orderId } });
+      await deleteOrderPartnerRelations([orderId]);
     }
     await prisma.payment.deleteMany({ where: { idempotencyKey: { startsWith: tag } } });
 

@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
   const userId = Number(auth.session!.user.id);
   const phone = normalizePhone(new URL(request.url).searchParams.get("phone") ?? "");
-  const [managers, existing, configuredMaterials] = await Promise.all([
+  const [managers, existing, configuredMaterials, partners, companySettings] = await Promise.all([
     prisma.user.findMany({
       where: role === Role.MANAGER
         ? { id: userId, active: true, role: Role.MANAGER }
@@ -33,6 +33,22 @@ export async function GET(request: Request) {
       select: { uiName: true },
       orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
     }),
+    role === Role.DIRECTOR
+      ? prisma.partner.findMany({
+          where: {
+            active: true,
+            archived: false,
+            isTest: false,
+          },
+          select: { id: true, name: true, kind: true },
+          orderBy: [{ name: "asc" }, { id: "asc" }],
+        })
+      : [],
+    role === Role.DIRECTOR
+      ? prisma.companySettings.findFirst({
+          select: { defaultWorkshopPartnerId: true },
+        })
+      : null,
   ]);
   const ownershipConflict = Boolean(existing && role === Role.MANAGER && existing.managerUserId !== userId && existing.manager !== auth.session!.user.name);
   return NextResponse.json({
@@ -46,6 +62,11 @@ export async function GET(request: Request) {
     frameTypes: FRAME_TYPES,
     railingTypes: RAILING_TYPES,
     paymentMethods: PAYMENT_METHODS,
+    partners,
+    defaultWorkshopPartnerId:
+      partners.some((partner) => partner.id === companySettings?.defaultWorkshopPartnerId)
+        ? companySettings?.defaultWorkshopPartnerId
+        : null,
     existingClient: existing && !ownershipConflict ? existing : null,
     ownershipConflict,
   });

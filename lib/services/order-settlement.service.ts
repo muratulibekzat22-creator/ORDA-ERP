@@ -9,12 +9,32 @@ type PayrollAccrual = {
   payments?: Array<{ id: number; amount: Money; paymentDate: Date | string; reversalOfId?: number | null; reversedAt?: Date | string | null }>;
 };
 type Worker = { id: number; name: string; payrollProfile?: { id: number } | null };
+type PartnerRelation = {
+  id: number;
+  startsAt: Date | string;
+  workDueAt?: Date | string | null;
+  paymentDueAt?: Date | string | null;
+  comment?: string | null;
+  createdAt: Date | string;
+  createdBy?: { name: string } | null;
+  operations?: Array<{
+    id: number; type: string; status: string; amount: Money; adjustmentEffect: Money;
+    operationDate: Date | string; method?: string | null; account?: string | null;
+    comment?: string | null; paymentId?: number | null; reversalOfId?: number | null;
+    reversalOf?: { id: number } | null; reversal?: { id: number } | null; createdBy?: { name: string } | null;
+  }>;
+  auditEvents?: Array<{
+    id: number; action: string; comment?: string | null; createdAt: Date | string;
+    actor?: { name: string } | null;
+  }>;
+};
 export type SettlementSource = {
   amount: Money; partnerId?: number | null; partnerPrice: Money; partnerAgreedAt?: Date | string | null;
   partner?: { id: number; name: string } | null; payments?: Payment[]; partnerAssignmentHistory?: Assignment[]; status?: string;
   managerUser?: Worker | null;
   measurements?: Array<{ measurerUser?: Worker | null }>;
   payrollAccruals?: PayrollAccrual[];
+  partnerRelation?: PartnerRelation | null;
 };
 
 const clientTypes = new Set(["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"]);
@@ -51,6 +71,37 @@ export function buildOrderSettlement(order: SettlementSource) {
       remaining: agreed === null ? 0 : Math.max(agreed - paid, 0), overpayment: agreed === null ? 0 : Math.max(paid - agreed, 0), status: status(paid, agreed ?? 0, Boolean(order.partnerId)),
       payouts: payments.filter((item) => item.type === "PARTNER_PAYOUT" || item.type === "PARTNER_PAYOUT_REVERSAL").map((item) => ({ id: item.id, amount: Number(item.amount), type: item.type, partnerId: item.partnerId ?? null, partnerName: item.partner?.name ?? null, method: item.method ?? "", comment: item.comment ?? null, author: item.author ?? null, operationDate: item.operationDate ?? null })),
       assignments: (order.partnerAssignmentHistory ?? []).map((item) => ({ id: item.id, previousPartnerId: item.previousPartnerId ?? null, newPartnerId: item.newPartnerId, previousPayable: Number(item.previousPayable), newPayable: Number(item.newPayable), paidAtChange: Number(item.paidAtChange), remainingAtChange: Number(item.remainingAtChange), reason: item.reason, createdAt: item.createdAt, authorName: item.author?.name ?? null })),
+      history: order.partnerRelation ? {
+        relationId: order.partnerRelation.id,
+        startsAt: order.partnerRelation.startsAt,
+        workDueAt: order.partnerRelation.workDueAt ?? null,
+        paymentDueAt: order.partnerRelation.paymentDueAt ?? null,
+        comment: order.partnerRelation.comment ?? null,
+        createdAt: order.partnerRelation.createdAt,
+        createdBy: order.partnerRelation.createdBy?.name ?? null,
+        operations: (order.partnerRelation.operations ?? []).map((item) => ({
+          id: item.id,
+          type: item.type,
+          status: item.status,
+          amount: Number(item.amount),
+          adjustmentEffect: Number(item.adjustmentEffect),
+          operationDate: item.operationDate,
+          method: item.method ?? null,
+          account: item.account ?? null,
+          comment: item.comment ?? null,
+          paymentId: item.paymentId ?? null,
+          reversalOfId: item.reversalOfId ?? item.reversalOf?.id ?? null,
+          reversalId: item.reversal?.id ?? null,
+          author: item.createdBy?.name ?? null,
+        })),
+        audit: (order.partnerRelation.auditEvents ?? []).map((item) => ({
+          id: item.id,
+          action: item.action,
+          comment: item.comment ?? null,
+          createdAt: item.createdAt,
+          actor: item.actor?.name ?? null,
+        })),
+      } : null,
     },
     manager: worker(order.managerUser, new Set(["GUARANTEED_ORDER_BONUS", "ORDER_BONUS", "EXTRA_BONUS"])),
     measurer: worker(measurer, new Set(["MEASUREMENT_BONUS"])),

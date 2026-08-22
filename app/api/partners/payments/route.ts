@@ -19,11 +19,12 @@ export async function POST(request: Request) {
     if (!Number.isInteger(orderId) || orderId <= 0 || !Number.isFinite(amount) || amount <= 0 || typeof body.method !== "string" || !body.method.trim()) return NextResponse.json({ error: "Некорректная выплата цеху" }, { status: 400 });
     const operationDate = typeof body.operationDate === "string" && body.operationDate ? new Date(`${body.operationDate}T12:00:00+05:00`) : new Date();
     if (Number.isNaN(operationDate.getTime())) return NextResponse.json({ error: "Некорректная дата" }, { status: 400 });
-    const requestHash = createRequestHash({ orderId, amount, method: body.method, comment: body.comment ?? null, operationDate: operationDate.toISOString() });
+    const requestHash = createRequestHash({ orderId, amount, method: body.method, account: body.account ?? null, comment: body.comment ?? null, operationDate: operationDate.toISOString() });
     const result = await createPartnerPayoutForOrder({
       orderId,
       amount,
       method: body.method.trim(),
+      account: typeof body.account === "string" ? body.account.trim() || undefined : undefined,
       comment: typeof body.comment === "string" ? body.comment.trim() || undefined : undefined,
       operationDate,
       idempotencyKey: idempotency.key,

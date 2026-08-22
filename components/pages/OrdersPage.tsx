@@ -398,7 +398,7 @@ export default function OrdersPage({
   const stageFilters = ORDER_STAGE_KEYS.map((key) => [key, ORDER_STAGE_LABELS[key]] as [Filter, string]);
   const financeFilters: Array<[Filter, string]> = [
     ["client-payable", "К получению от клиентов"], ["partner-payable", "К выплате партнёрам"],
-    ["without-partner", "Без партнёра"], ["without-partner-price", "Без стоимости партнёра"],
+    ["without-partner", "Ещё не переданы в цех"], ["without-partner-price", "Без стоимости цеха"],
     ["without-contract", "Без договора"], ["overdue-client", "Просрочена оплата клиента"],
     ["overdue-partner", "Просрочен срок партнёра"], ["overdue-order", "Просрочен срок заказа"],
   ];
@@ -412,7 +412,7 @@ export default function OrdersPage({
   ];
   if (internalSettlement)
     summaryCards.push(
-      ["without-partner", "Без партнёра"],
+      ["without-partner", "Не переданы в цех"],
       ["partner-payable", "К выплате цеху"],
     );
   return (

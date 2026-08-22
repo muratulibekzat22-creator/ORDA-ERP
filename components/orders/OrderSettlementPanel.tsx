@@ -38,6 +38,14 @@ const methodLabels: Record<string, string> = {
   bank_transfer: "Банковский перевод",
   other: "Другое",
 };
+const operationLabels: Record<string, string> = {
+  COMPANY_TO_PARTNER: "Выплата цеху",
+  CLIENT_TO_PARTNER: "Оплата клиента напрямую цеху",
+  PARTNER_TO_COMPANY: "Передача денег от цеха компании",
+  PARTNER_REFUND: "Возврат от цеха",
+  ADJUSTMENT: "Корректировка начисления",
+  REVERSAL: "Сторно операции",
+};
 const control =
   "min-h-11 min-w-0 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white";
 
@@ -77,6 +85,7 @@ export default function OrderSettlementPanel({
   const [amount, setAmount] = useState("");
   const [operationDate, setOperationDate] = useState(today());
   const [method, setMethod] = useState("bank_transfer");
+  const [account, setAccount] = useState("");
   const [comment, setComment] = useState("");
   const [bonusAmount, setBonusAmount] = useState("");
   const [bonusReason, setBonusReason] = useState("");
@@ -90,6 +99,16 @@ export default function OrderSettlementPanel({
   const [assignOpen, setAssignOpen] = useState(
     searchParams.get("action") === "assign-workshop",
   );
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  useEffect(() => {
+    const openHistory = (event: Event) => {
+      const detail = (event as CustomEvent<{ orderId?: number }>).detail;
+      if (detail?.orderId === order.id) setHistoryOpen(true);
+    };
+    window.addEventListener("orda:open-partner-history", openHistory);
+    return () => window.removeEventListener("orda:open-partner-history", openHistory);
+  }, [order.id]);
 
   useEffect(() => {
     if (role !== "DIRECTOR") return;
@@ -203,7 +222,34 @@ export default function OrderSettlementPanel({
       amount: Number(amount),
       operationDate,
       method,
+      account,
       comment,
+    });
+  }
+  async function adjustPartner() {
+    const effectValue = window.prompt("Корректировка начисления цеху: положительная сумма увеличит начисление, отрицательная уменьшит.");
+    if (!effectValue) return;
+    const adjustmentEffect = Number(effectValue.replace(",", "."));
+    if (!Number.isFinite(adjustmentEffect) || adjustmentEffect === 0) return setError("Укажите ненулевую сумму корректировки");
+    const adjustmentComment = window.prompt("Обязательное основание корректировки");
+    if (!adjustmentComment?.trim() || !partner?.history?.relationId) return setError("Укажите основание корректировки");
+    await request("/api/partner-management", {
+      action: "operation",
+      relationId: partner.history.relationId,
+      type: "ADJUSTMENT",
+      amount: Math.abs(adjustmentEffect),
+      adjustmentEffect,
+      operationDate: new Date().toISOString(),
+      comment: adjustmentComment,
+    });
+  }
+  async function reverseOperation(operationId: number) {
+    const reversalReason = window.prompt("Обязательная причина сторно");
+    if (!reversalReason?.trim()) return;
+    await request("/api/partner-management", {
+      action: "reverse-operation",
+      operationId,
+      reason: reversalReason,
     });
   }
   async function accrueOrderPayroll(event: FormEvent) {
@@ -382,6 +428,12 @@ export default function OrderSettlementPanel({
                 />
               )}
             </dl>
+            {role === "DIRECTOR" && partner.history && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" onClick={() => setHistoryOpen(true)} className="min-h-10 rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white">История и полный расчёт</button>
+                <button type="button" onClick={() => void adjustPartner()} className="min-h-10 rounded-lg border border-amber-600/50 px-3 text-sm font-semibold text-amber-100">Корректировка</button>
+              </div>
+            )}
           </div>
         )}
         {manager && (
@@ -403,6 +455,38 @@ export default function OrderSettlementPanel({
           />
         )}
       </div>
+      {role === "DIRECTOR" && partner?.history && historyOpen && (
+        <div role="presentation" className="fixed inset-0 z-50 bg-black/70" onMouseDown={(event) => { if (event.currentTarget === event.target) setHistoryOpen(false); }}>
+          <aside role="dialog" aria-modal="true" aria-label="История и полный расчёт цеха" className="absolute inset-y-0 right-0 w-full max-w-2xl overflow-y-auto border-l border-slate-700 bg-[#101827] p-5 shadow-2xl sm:p-7">
+            <div className="flex items-start justify-between gap-3">
+              <div><h3 className="text-lg font-semibold text-white">История и полный расчёт</h3><p className="mt-1 text-sm text-slate-400">{order.number} · {partner.partnerName ?? "Цех не назначен"}</p></div>
+              <button type="button" onClick={() => setHistoryOpen(false)} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm text-white">Закрыть</button>
+            </div>
+            <dl className="mt-5 grid gap-3 rounded-xl bg-slate-950/60 p-4 text-sm sm:grid-cols-2">
+              <Value label="Стоимость цеха" value={partner.agreed === null ? "Не указана" : money(partner.agreed)} />
+              <Value label="Остаток" value={money(partner.remaining)} tone="text-amber-300" />
+              <Value label="Передан" value={date(partner.history.startsAt)} />
+              <Value label="Готовность" value={date(partner.history.workDueAt)} />
+              <Value label="Срок выплаты" value={date(partner.history.paymentDueAt)} />
+              <Value label="Создал" value={partner.history.createdBy ?? "Система"} />
+              {partner.history.comment && <div className="sm:col-span-2"><dt className="text-slate-500">Комментарий</dt><dd className="break-words text-white">{partner.history.comment}</dd></div>}
+            </dl>
+            <History title="Операции, выплаты, возвраты и сторно">
+              {partner.history.operations.length ? partner.history.operations.map((item) => (
+                <li key={item.id} className="rounded-xl bg-slate-950/60 p-3 text-sm text-slate-300">
+                  <div className="flex flex-wrap items-start justify-between gap-2"><div><strong className="text-white">{operationLabels[item.type] ?? item.type}</strong><p className="text-xs text-slate-500">{date(item.operationDate)} · {item.method ? (methodLabels[item.method] ?? item.method) : "Способ не указан"}{item.account ? ` · ${item.account}` : ""}{item.author ? ` · ${item.author}` : ""}</p></div><strong>{money(item.amount)}</strong></div>
+                  {item.adjustmentEffect !== 0 && <p className="mt-1 text-amber-200">Корректировка: {money(item.adjustmentEffect)}</p>}
+                  {item.comment && <p className="mt-1 break-words text-xs text-slate-400">{item.comment}</p>}
+                  {item.status === "POSTED" && item.type !== "REVERSAL" && !item.reversalOfId && !item.reversalId && <button type="button" disabled={busy} onClick={() => void reverseOperation(item.id)} className="mt-2 min-h-9 rounded-lg border border-rose-700 px-3 text-xs font-semibold text-rose-200">Сторно</button>}
+                </li>
+              )) : <li className="rounded-xl bg-slate-950/50 p-3 text-sm text-slate-400">Операций пока нет.</li>}
+            </History>
+            <History title="Audit log">
+              {partner.history.audit.length ? partner.history.audit.map((item) => <li key={item.id} className="rounded-xl bg-slate-950/50 p-3 text-sm text-slate-300"><div className="flex flex-wrap justify-between gap-2"><strong className="text-white">{item.action}</strong><span>{date(item.createdAt)}</span></div><p className="mt-1 text-xs text-slate-500">{item.actor ?? "Система"}{item.comment ? ` · ${item.comment}` : ""}</p></li>) : <li className="rounded-xl bg-slate-950/50 p-3 text-sm text-slate-400">Событий пока нет.</li>}
+            </History>
+          </aside>
+        </div>
+      )}
       {role === "DIRECTOR" && !readOnly && assignOpen && (
         <div
           role="presentation"
@@ -592,7 +676,7 @@ export default function OrderSettlementPanel({
       {partner?.partnerId &&
         partner.priceSet &&
         !readOnly &&
-        ["DIRECTOR", "ACCOUNTANT"].includes(role) && (
+        role === "DIRECTOR" && (
           <form
             onSubmit={payout}
             className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2"
@@ -636,6 +720,10 @@ export default function OrderSettlementPanel({
                 <option value="bank_transfer">Банковский перевод</option>
                 <option value="other">Другое</option>
               </select>
+            </label>
+            <label className="grid gap-1 text-sm text-slate-300">
+              <span>Касса или банковский счёт</span>
+              <input required value={account} onChange={(event) => setAccount(event.target.value)} placeholder="Касса / расчётный счёт" className={control} />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               <span>Комментарий</span>

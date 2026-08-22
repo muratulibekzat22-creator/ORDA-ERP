@@ -63,6 +63,10 @@ type Journal = {
 type Profitability = {
   totals: {
     sales: number | string;
+    grossMargin: number | string;
+    directOrderCosts: number | string;
+    orderPayrollAccrued: number | string;
+    marginAfterDirect: number | string;
     orderProfit: number | string;
     profitBeforeMandatory: number | string;
     companyNetProfit: number | string;
@@ -73,6 +77,15 @@ type Profitability = {
     partnerPayable: number | string;
     payrollPaid: number | string;
     otherExpensesPaid: number | string;
+    otherIncome: number | string;
+    generalExpenses: number | string;
+    marketingExpenses: number | string;
+    generalPayrollAccrued: number | string;
+    rentExpenses: number | string;
+    utilitiesExpenses: number | string;
+    administrativeExpenses: number | string;
+    otherOperatingExpenses: number | string;
+    mandatoryPayments: number | string;
     cashResult: number | string;
     calculatedOrders: number;
     incompleteOrders: number;
@@ -100,7 +113,16 @@ type Profitability = {
     highestProfit?: { number: string; economy: { profit: { netProfit: number | string } } } | null;
     highestMargin?: { number: string; economy: { profit: { netMarginPercent: number | string } } } | null;
     mostPopularProduct?: { product: string; material: string; orders: number } | null;
+    mostPopularMaterial?: { material: string; orders: number } | null;
     mostProfitableProduct?: { product: string; material: string; profit: number | string } | null;
+  };
+  charts: {
+    monthly: Array<{ month: string; sales: number | string; grossMargin: number | string; netProfit: number | string; cashResult: number | string }>;
+    products: Array<{ name: string; orders: number; profit: number | string }>;
+    materials: Array<{ name: string; orders: number; profit: number | string }>;
+    partners: Array<{ name: string; orders: number; profit: number | string }>;
+    managers: Array<{ name: string; orders: number; profit: number | string }>;
+    expenses: Array<{ name: string; amount: number | string }>;
   };
 };
 type Form = {
@@ -173,7 +195,7 @@ export default function FinanceJournalPage() {
   const [profitability, setProfitability] = useState<Profitability | null>(null);
   const [period, setPeriod] = useState("month");
   const [tab, setTab] = useState<
-    "overview" | "profit" | "expenses" | "cash" | "orders" | "journal"
+    "overview" | "profit" | "journal" | "expenses" | "cash" | "orders" | "reports"
   >("overview");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -624,10 +646,11 @@ export default function FinanceJournalPage() {
         {([
           ["overview", "Обзор"],
           ["profit", "Прибыль"],
+          ["journal", "Журнал"],
           ["expenses", "Расходы"],
           ["cash", "Денежный поток"],
           ["orders", "Экономика заказов"],
-          ["journal", "Журнал"],
+          ["reports", "Отчёты"],
         ] as const).map(([value, label]) => (
           <button
             key={value}
@@ -648,6 +671,9 @@ export default function FinanceJournalPage() {
       )}
       {tab === "orders" && profitability && (
         <OrderEconomyTable profitability={profitability} />
+      )}
+      {tab === "reports" && profitability && (
+        <ProfitReports profitability={profitability} />
       )}
       {tab === "cash" ? (
         <Analysis journal={journal} />
@@ -870,15 +896,33 @@ function Options({
 
 function ProfitOverview({ profitability }: { profitability: Profitability }) {
   const totals = profitability.totals;
+  const netMargin = Number(totals.sales) ? Number(totals.companyNetProfit) / Number(totals.sales) * 100 : 0;
   return (
-    <section className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2 xl:grid-cols-4">
-      <Metric label="Сумма продаж" value={Number(totals.sales)} color="text-white" />
-      <Metric label="Получено от клиентов" value={Number(totals.clientReceived)} color="text-emerald-300" />
-      <Metric label="Остаток клиентов" value={Number(totals.clientOutstanding)} color="text-amber-300" />
-      <Metric label="Остаток партнёрам" value={Number(totals.partnerPayable)} color="text-rose-300" />
-      <p className="text-sm text-slate-400 sm:col-span-2 xl:col-span-4">
-        Рассчитано заказов: {totals.calculatedOrders}. Неполный расчёт: {totals.incompleteOrders}.
-      </p>
+    <section className="space-y-4 rounded-2xl border border-slate-700 bg-[#101827] p-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Продажи" value={Number(totals.sales)} color="text-white" />
+        <Metric label="Получено от клиентов" value={Number(totals.clientReceived)} color="text-emerald-300" />
+        <Metric label="Валовая маржа заказов" value={Number(totals.grossMargin)} color="text-cyan-300" />
+        <Metric label="Прямые расходы заказов" value={Number(totals.directOrderCosts)} color="text-rose-300" />
+        <Metric label="Зарплата и бонусы по заказам" value={Number(totals.orderPayrollAccrued)} color="text-rose-300" />
+        <Metric label="Маржа после прямых расходов" value={Number(totals.marginAfterDirect)} color="text-blue-300" />
+        <Metric label="Реклама" value={Number(totals.marketingExpenses)} color="text-rose-300" />
+        <Metric label="Общая зарплата без orderId" value={Number(totals.generalPayrollAccrued)} color="text-rose-300" />
+        <Metric label="Аренда" value={Number(totals.rentExpenses)} color="text-rose-300" />
+        <Metric label="Коммунальные расходы" value={Number(totals.utilitiesExpenses)} color="text-rose-300" />
+        <Metric label="Административные расходы" value={Number(totals.administrativeExpenses)} color="text-rose-300" />
+        <Metric label="Другие операционные расходы" value={Number(totals.otherOperatingExpenses)} color="text-rose-300" />
+        <Metric label="Прочие операционные доходы" value={Number(totals.otherIncome)} color="text-emerald-300" />
+        <Metric label="Прибыль до обязательных платежей" value={Number(totals.profitBeforeMandatory)} color="text-blue-300" />
+        <Metric label="Обязательные платежи" value={Number(totals.mandatoryPayments)} color="text-rose-300" />
+        <Metric label="Чистая прибыль" value={Number(totals.companyNetProfit)} color={Number(totals.companyNetProfit) >= 0 ? "text-emerald-300" : "text-rose-300"} />
+        <Metric label="Чистая маржа" value={netMargin} color={netMargin >= 0 ? "text-emerald-300" : "text-rose-300"} suffix="%" />
+        <Metric label="Денежный результат" value={Number(totals.cashResult)} color={Number(totals.cashResult) >= 0 ? "text-emerald-300" : "text-rose-300"} />
+        <Metric label="К получению от клиентов" value={Number(totals.clientOutstanding)} color="text-amber-300" />
+        <Metric label="К выплате цехам" value={Number(totals.partnerPayable)} color="text-amber-300" />
+      </div>
+      <p className="rounded-xl border border-blue-500/20 bg-blue-950/20 p-3 text-sm text-blue-100">Денежный результат — это движение денег, а не чистая прибыль.</p>
+      <p className="text-sm text-slate-400">Рассчитано заказов: {totals.calculatedOrders}. Неполный расчёт: {totals.incompleteOrders}.</p>
     </section>
   );
 }
@@ -887,19 +931,47 @@ function ProfitDetails({ profitability }: { profitability: Profitability }) {
   const { totals, highlights } = profitability;
   return (
     <div className="space-y-4">
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Metric label="Прибыль заказов" value={Number(totals.orderProfit)} color="text-emerald-300" />
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Вклад заказов" value={Number(totals.orderProfit)} color="text-emerald-300" />
+        <Metric label="Прочие доходы" value={Number(totals.otherIncome)} color="text-emerald-300" />
+        <Metric label="Операционные расходы" value={Number(totals.generalExpenses)} color="text-rose-300" />
         <Metric label="Прибыль до обязательных платежей" value={Number(totals.profitBeforeMandatory)} color="text-blue-300" />
+        <Metric label="Обязательные платежи" value={Number(totals.mandatoryPayments)} color="text-rose-300" />
         <Metric label="Чистая прибыль компании" value={Number(totals.companyNetProfit)} color={Number(totals.companyNetProfit) >= 0 ? "text-emerald-300" : "text-rose-300"} />
       </section>
       <section className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2">
         <Highlight label="Самый прибыльный заказ" value={highlights.highestProfit ? `${highlights.highestProfit.number} · ${money(Number(highlights.highestProfit.economy.profit.netProfit))}` : "Нет полного расчёта"} />
         <Highlight label="Самый маржинальный заказ" value={highlights.highestMargin ? `${highlights.highestMargin.number} · ${Number(highlights.highestMargin.economy.profit.netMarginPercent).toLocaleString("ru-RU")}%` : "Нет полного расчёта"} />
-        <Highlight label="Самый ходовой товар" value={highlights.mostPopularProduct ? `${highlights.mostPopularProduct.product} · ${highlights.mostPopularProduct.material} · ${highlights.mostPopularProduct.orders}` : "Нет данных"} />
+        <Highlight label="Самый ходовой товар" value={highlights.mostPopularProduct ? `${highlights.mostPopularProduct.product} · ${highlights.mostPopularProduct.orders}` : "Нет данных"} />
+        <Highlight label="Самый ходовой материал" value={highlights.mostPopularMaterial ? `${highlights.mostPopularMaterial.material} · ${highlights.mostPopularMaterial.orders}` : "Нет данных"} />
         <Highlight label="Самый прибыльный товар" value={highlights.mostProfitableProduct ? `${highlights.mostProfitableProduct.product} · ${money(Number(highlights.mostProfitableProduct.profit))}` : "Нет полного расчёта"} />
       </section>
     </div>
   );
+}
+
+function ProfitReports({ profitability }: { profitability: Profitability }) {
+  const groups = [
+    ["Прибыль по товарам", profitability.charts.products],
+    ["Прибыль по материалам", profitability.charts.materials],
+    ["Прибыль по цехам", profitability.charts.partners],
+    ["Прибыль по менеджерам", profitability.charts.managers],
+  ] as const;
+  return <div className="grid gap-4 xl:grid-cols-2">
+    <section className="overflow-x-auto rounded-2xl border border-slate-700 bg-[#101827] p-4 xl:col-span-2"><h2 className="font-semibold text-white">Продажи, валовая маржа, чистая прибыль и денежный результат</h2><div className="mt-4 min-w-[600px] space-y-2">{profitability.charts.monthly.map((item) => <div key={item.month} className="grid grid-cols-[5rem_repeat(4,minmax(0,1fr))] gap-3 rounded-xl bg-slate-950/60 p-3 text-xs"><b>{item.month}</b><ReportValue label="Продажи" value={item.sales}/><ReportValue label="Валовая маржа" value={item.grossMargin}/><ReportValue label="Чистая прибыль" value={item.netProfit}/><ReportValue label="Деньги" value={item.cashResult}/></div>)}</div></section>
+    {groups.map(([title, rows]) => <section key={title} className="rounded-2xl border border-slate-700 bg-[#101827] p-4"><h2 className="font-semibold text-white">{title}</h2><ReportBars rows={rows}/></section>)}
+    <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 xl:col-span-2"><h2 className="font-semibold text-white">Расходы по категориям</h2><ReportBars rows={profitability.charts.expenses.map((item) => ({ name: item.name, orders: 0, profit: item.amount }))}/></section>
+  </div>;
+}
+
+function ReportValue({ label, value }: { label: string; value: number | string }) {
+  return <span><span className="block text-slate-500">{label}</span><b className={Number(value) < 0 ? "text-rose-300" : "text-slate-200"}>{money(Number(value))}</b></span>;
+}
+
+function ReportBars({ rows }: { rows: Array<{ name: string; orders: number; profit: number | string }> }) {
+  const top = [...rows].sort((left, right) => Math.abs(Number(right.profit)) - Math.abs(Number(left.profit))).slice(0, 10);
+  const maximum = Math.max(1, ...top.map((item) => Math.abs(Number(item.profit))));
+  return <div className="mt-4 space-y-3">{top.map((item) => <div key={item.name}><div className="flex justify-between gap-3 text-xs"><span className="truncate">{item.name}{item.orders ? ` · ${item.orders}` : ""}</span><b>{money(Number(item.profit))}</b></div><div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-800"><div className={Number(item.profit) < 0 ? "h-full rounded-full bg-rose-400" : "h-full rounded-full bg-emerald-400"} style={{ width: `${Math.max(2, Math.abs(Number(item.profit)) / maximum * 100)}%` }}/></div></div>)}</div>;
 }
 
 function Highlight({ label, value }: { label: string; value: string }) {

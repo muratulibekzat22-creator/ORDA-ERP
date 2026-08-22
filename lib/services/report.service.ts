@@ -77,7 +77,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const day = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: period.timezone }).format(date);
   orders.forEach((item) => { const key = day(item.createdAt); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.salesAmount += money(item.amount); trendMap.set(key, value); });
   payments.forEach((item) => { const key = day(item.operationDate); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.received += paymentEffect(item.type, item.amount); trendMap.set(key, value); });
-  const grossMargin = Number(profitability?.totals.orderProfit ?? 0);
+  const grossMargin = Number(profitability?.totals.grossMargin ?? 0);
   const currentCustomerRemaining = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
   const currentPartnerRemaining = Math.max(Number(partnerBalance._sum.partnerBalance ?? 0), 0);
   const payrollAccruedRow = payrollTotals.find((row) => row.kind === "accrual");
@@ -100,7 +100,18 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     },
     sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(actor.role === Role.DIRECTOR ? { grossMargin } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
-    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, grossMargin, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
+    ...(internalFinance ? { finance: {
+      sales: Number(profitability?.totals.sales ?? salesAmount),
+      customerReceived: Number(profitability?.totals.clientReceived ?? received),
+      customerRemaining: currentCustomerRemaining,
+      partnerAgreed,
+      partnerPaid: Number(profitability?.totals.partnerPaid ?? partnerPaid),
+      partnerRemaining: currentPartnerRemaining,
+      grossMargin,
+      payrollAccrued,
+      payrollPaid,
+      payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0),
+    } } : {}),
     funnel: [
       { key: "leads", label: "Заявки", value: clients.length, conversionFromPrevious: null },
       { key: "measurements", label: "Замеры", value: measurements.length, conversionFromPrevious: safePercent(measurements.length, clients.length) },

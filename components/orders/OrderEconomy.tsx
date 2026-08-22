@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
@@ -72,7 +71,7 @@ export default function OrderEconomy({ order }: { order: OrderTabData }) {
   return <section id="order-economy" className="scroll-mt-24 rounded-2xl border border-slate-800 bg-[#101827] shadow-sm">
     <div className="flex flex-col gap-3 border-b border-slate-800 p-4 sm:flex-row sm:items-start sm:justify-between md:p-5">
       <div>
-      <h2 className="text-lg font-semibold text-white">Экономика заказа</h2>
+      <h2 className="text-lg font-semibold text-white">Прибыль компании</h2>
       <p className="mt-1 text-sm text-slate-400">Начисления и фактические выплаты разделены; показатели рассчитаны backend-ом.</p>
       </div>
       <button type="button" onClick={() => setEditing((value) => !value)} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm font-semibold text-white">
@@ -121,10 +120,10 @@ export default function OrderEconomy({ order }: { order: OrderTabData }) {
           <Row label="Срок выплаты" value={date(economy.partner.dueAt)}/>
           <Row label="Статус взаиморасчёта" value={statuses[economy.partner.status] ?? economy.partner.status}/>
         </div>
-        <Link href={`/partner-management?tab=orders&orderId=${order.id}`} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white">Открыть полный расчёт партнёра</Link>
+        <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("orda:open-partner-history", { detail: { orderId: order.id } }))} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white">История и полный расчёт</button>
       </article>
       <article className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-        <h3 className="font-semibold text-emerald-200">Прибыль и маржа</h3>
+        <h3 className="font-semibold text-emerald-200">Прибыль компании</h3>
         <p className="mt-1 text-sm font-medium text-emerald-100">{economy.profit.label}</p>
         {economy.profit.warning && <p className="mt-3 rounded-xl border border-amber-400/20 bg-amber-950/30 p-3 text-sm text-amber-100">{economy.profit.warning}</p>}
         <div className="mt-3 text-sm">
@@ -142,8 +141,25 @@ export default function OrderEconomy({ order }: { order: OrderTabData }) {
           <Row label="Всего начислено по заказу" value={money(economy.profit.payrollAccrued)} strong/>
           <Row label="Прибыль заказа" value={economy.profit.complete ? money(economy.profit.netProfit) : "—"} strong/>
           <Row label="Чистая маржа заказа" value={economy.profit.complete && numeric(economy.profit.totalSale) !== 0 ? percent(economy.profit.netMarginPercent) : "—"} strong/>
+          <Row label="Рентабельность / чистая маржа" value={economy.profit.complete && numeric(economy.profit.totalSale) !== 0 ? percent(economy.profit.netMarginPercent) : "—"} strong/>
           <Row label="Полнота расчёта" value={economy.profit.costsConfirmed ? "Расходы подтверждены" : "Требует подтверждения расходов"}/>
         </div>
+        <details className="mt-4 rounded-xl border border-emerald-400/20 bg-slate-950/30 p-3">
+          <summary className="cursor-pointer text-sm font-semibold text-emerald-100">План / факт прямых расходов</summary>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[430px] text-xs text-slate-300">
+              <thead><tr className="text-left text-slate-500"><th className="pb-2">Расход</th><th className="pb-2 text-right">План</th><th className="pb-2 text-right">Факт</th><th className="pb-2 text-right">Отклонение</th></tr></thead>
+              <tbody>{([
+                ["Материал вне цеха", "materials"],
+                ["Доставка", "delivery"],
+                ["Банковские комиссии", "bankFees"],
+                ["Другие прямые", "otherDirect"],
+                ["Всего", "total"],
+              ] as const).map(([label, key]) => <tr key={key} className="border-t border-slate-800"><th className="py-2 text-left font-medium">{label}</th><td className="py-2 text-right">{money(economy.directCosts.plan[key])}</td><td className="py-2 text-right">{money(economy.directCosts.fact[key])}</td><td className={`py-2 text-right ${numeric(economy.directCosts.deviation[key]) > 0 ? "text-rose-300" : "text-emerald-300"}`}>{money(economy.directCosts.deviation[key])}</td></tr>)}</tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Активный заказ использует подтверждённый план. Завершённый заказ использует только фактические проводки Finance с orderId.</p>
+        </details>
       </article>
     </div>
     <details className="border-t border-slate-800 p-4 md:p-5">

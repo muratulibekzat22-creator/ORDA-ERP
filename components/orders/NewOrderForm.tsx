@@ -7,6 +7,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import CityCombobox from "@/components/clients/CityCombobox";
 
 type Option = { id: number; name: string };
+type PartnerOption = Option & { kind: string };
 type RegistrationOptions = {
   role: "DIRECTOR" | "MANAGER";
   currentUserId: number;
@@ -15,6 +16,8 @@ type RegistrationOptions = {
   frameTypes: string[];
   railingTypes: string[];
   paymentMethods: Array<{ value: string; label: string }>;
+  partners: PartnerOption[];
+  defaultWorkshopPartnerId: number | null;
   existingClient: { id: number; name: string; phone: string; city: string; address: string; managerUserId?: number | null } | null;
   ownershipConflict: boolean;
 };
@@ -52,6 +55,7 @@ export default function NewOrderForm() {
     railingType: "Классика", supportType: "", color: "", lighting: false, lightingDetails: "",
     cladding: false, claddingDetails: "", additionalDetails: "",
     amount: "", initialPayment: "0", paymentDate: "", paymentMethod: "BANK_TRANSFER", paymentComment: "",
+    partnerId: "", partnerPrice: "", partnerWorkDueAt: "", partnerPaymentDueAt: "", partnerComment: "",
   });
 
   useEffect(() => {
@@ -60,7 +64,14 @@ export default function NewOrderForm() {
         const body = await response.json() as RegistrationOptions & { error?: string };
         if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить форму");
         setOptions(body);
-        setForm((current) => ({ ...current, managerUserId: String(body.role === "MANAGER" ? body.currentUserId : body.managers[0]?.id ?? ""), material: body.materials[0] ?? "" }));
+        setForm((current) => ({
+          ...current,
+          managerUserId: String(body.role === "MANAGER" ? body.currentUserId : body.managers[0]?.id ?? ""),
+          material: body.materials[0] ?? "",
+          partnerId: body.role === "DIRECTOR" && body.defaultWorkshopPartnerId
+            ? String(body.defaultWorkshopPartnerId)
+            : "",
+        }));
       })
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить форму"))
       .finally(() => setLoading(false));
@@ -95,10 +106,21 @@ export default function NewOrderForm() {
     if (Number(form.initialPayment) > Number(form.amount)) return setError("Полученная сумма не может превышать сумму заказа");
     setSaving(true);
     try {
+      const { partnerPrice, ...registrationForm } = form;
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({ ...form, clientId: existingClient?.id, managerUserId: Number(form.managerUserId), amount: Number(form.amount), initialPayment: Number(form.initialPayment) }),
+        body: JSON.stringify({
+          ...registrationForm,
+          clientId: existingClient?.id,
+          managerUserId: Number(form.managerUserId),
+          amount: Number(form.amount),
+          initialPayment: Number(form.initialPayment),
+          partnerId: form.partnerId ? Number(form.partnerId) : null,
+          ...(form.partnerId && partnerPrice.trim()
+            ? { partnerPrice: Number(partnerPrice) }
+            : {}),
+        }),
       });
       const body = await response.json() as { id?: number; error?: string };
       if (!response.ok || !body.id) throw new Error(body.error ?? "Не удалось создать заказ");
@@ -159,6 +181,17 @@ export default function NewOrderForm() {
     <Block title="Дополнительно" description="Особенности объекта, монтажа и нестандартные параметры заказа.">
       <Field label="Дополнительные параметры" wide><textarea className={area} value={form.additionalDetails} onChange={(e) => set("additionalDetails", e.target.value)} /></Field>
     </Block>
+
+    {options.role === "DIRECTOR" ? <Block title="Цех / партнёр" description="Основной цех подставлен автоматически. Можно выбрать другого исполнителя или пока не передавать заказ в цех.">
+      <Field label="Исполнитель"><select className={input} value={form.partnerId} onChange={(event) => set("partnerId", event.target.value)}>
+        <option value="">Пока не передавать</option>
+        {options.partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}</option>)}
+      </select></Field>
+      <Field label="Согласованная стоимость цеха"><input className={input} disabled={!form.partnerId} type="number" min="0.01" step="0.01" inputMode="decimal" value={form.partnerPrice} onChange={(event) => set("partnerPrice", event.target.value)} placeholder="Можно указать позже" /></Field>
+      <Field label="Плановая готовность цеха"><input className={input} disabled={!form.partnerId} type="date" value={form.partnerWorkDueAt} onChange={(event) => set("partnerWorkDueAt", event.target.value)} /></Field>
+      <Field label="Плановая дата расчёта"><input className={input} disabled={!form.partnerId} type="date" value={form.partnerPaymentDueAt} onChange={(event) => set("partnerPaymentDueAt", event.target.value)} /></Field>
+      <Field label="Комментарий для цеха" wide><textarea className={area} disabled={!form.partnerId} value={form.partnerComment} onChange={(event) => set("partnerComment", event.target.value)} /></Field>
+    </Block> : null}
 
     <Block title="Финансы заказа" description="Остаток и initial Payment рассчитываются и создаются backend-ом.">
       <Field label="Общая сумма" required><input className={input} required type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(e) => set("amount", e.target.value)} /></Field>
