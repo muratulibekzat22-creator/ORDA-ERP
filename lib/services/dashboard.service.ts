@@ -32,6 +32,36 @@ export function dashboardPeriodRange(period = "month", now = new Date()) {
   };
 }
 
+function previousDashboardRange(period: string | undefined, current: { start: Date; end: Date }) {
+  if ((period ?? "month") === "month") {
+    const localStart = new Date(current.start.getTime() + 5 * 60 * 60 * 1000);
+    const year = localStart.getUTCFullYear();
+    const month = localStart.getUTCMonth();
+    return {
+      start: new Date(Date.UTC(year, month - 1, 1) - 5 * 60 * 60 * 1000),
+      end: new Date(Date.UTC(year, month, 1) - 5 * 60 * 60 * 1000 - 1),
+    };
+  }
+  const duration = current.end.getTime() - current.start.getTime() + 1;
+  return {
+    start: new Date(current.start.getTime() - duration),
+    end: new Date(current.start.getTime() - 1),
+  };
+}
+
+function financialChange(current: Prisma.Decimal.Value, previous: Prisma.Decimal.Value) {
+  const currentValue = Number(current);
+  const previousValue = Number(previous);
+  const amount = currentValue - previousValue;
+  return {
+    current: currentValue,
+    previous: previousValue,
+    amount,
+    percent: previousValue === 0 ? (currentValue === 0 ? 0 : null) : Math.round(amount / Math.abs(previousValue) * 10_000) / 100,
+    direction: amount > 0 ? "UP" : amount < 0 ? "DOWN" : "SAME",
+  };
+}
+
 async function salesProjection(scope: DashboardScope) {
   const companyId = requireTenantIdentity().companyId;
   const { start, end } = dashboardPeriodRange(scope.period);
@@ -319,9 +349,24 @@ async function salesProjection(scope: DashboardScope) {
   const productionCount = (stages: string[]) => productionMetrics
     .filter((row) => stages.includes(row.stage))
     .reduce((sum, row) => sum + Number(row.count), 0);
+  const priorDashboardPeriod = previousDashboardRange(scope.period, { start, end });
   const profitability = scope.role === Role.DIRECTOR
     ? await getCompanyProfitability({ from: start, to: end })
     : null;
+  const previousProfitability = scope.role === Role.DIRECTOR
+    ? await getCompanyProfitability({ from: priorDashboardPeriod.start, to: priorDashboardPeriod.end })
+    : null;
+  const dashboardProfitability = profitability && previousProfitability ? {
+    ...profitability,
+    previousTotals: previousProfitability.totals,
+    changes: {
+      sales: financialChange(profitability.totals.sales, previousProfitability.totals.sales),
+      grossMargin: financialChange(profitability.totals.grossMargin, previousProfitability.totals.grossMargin),
+      profitBeforeMandatory: financialChange(profitability.totals.profitBeforeMandatory, previousProfitability.totals.profitBeforeMandatory),
+      companyNetProfit: financialChange(profitability.totals.companyNetProfit, previousProfitability.totals.companyNetProfit),
+      cashResult: financialChange(profitability.totals.cashResult, previousProfitability.totals.cashResult),
+    },
+  } : profitability;
   return {
     role: scope.role,
     period: { start, end },
@@ -332,8 +377,8 @@ async function salesProjection(scope: DashboardScope) {
       proposalsSent: periodProposalCount,
       measurementsScheduled: periodLeads.filter((lead) => reached(lead, LeadStage.MEASUREMENT_SCHEDULED)).length,
       orders: orders.length,
-      totalSales: totals.sales,
-      receivedPrepayment: receivedFromClients,
+      totalSales: scope.role === Role.DIRECTOR ? Number(profitability!.totals.sales) : totals.sales,
+      receivedPrepayment: scope.role === Role.DIRECTOR ? Number(profitability!.totals.clientReceived) : receivedFromClients,
       balanceToReceive: scope.role === Role.DIRECTOR ? activeBalances.client : Math.max(totals.balance, 0),
       partnerBalancePayable: scope.role === Role.DIRECTOR ? activeBalances.partner : undefined,
       ordersWithoutPartner: scope.role === Role.DIRECTOR ? Number(financeMetrics?.without_partner ?? 0) : undefined,
@@ -352,6 +397,7 @@ async function salesProjection(scope: DashboardScope) {
       proposalsNeedResponse,
       ...(scope.role === Role.DIRECTOR ? {
         orderProfit: Number(profitability!.totals.orderProfit),
+        grossMargin: Number(profitability!.totals.grossMargin),
         profitBeforeMandatory: Number(profitability!.totals.profitBeforeMandatory),
         companyNetProfit: Number(profitability!.totals.companyNetProfit),
         averageOrderMargin: Number(profitability!.totals.averageMargin),
@@ -370,7 +416,7 @@ async function salesProjection(scope: DashboardScope) {
       } : {}),
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
-    ...(profitability ? { profitability } : {}),
+    ...(dashboardProfitability ? { profitability: dashboardProfitability } : {}),
     ...(scope.role === Role.MANAGER ? { measurementAttention } : {}),
     activities,
   };

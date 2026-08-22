@@ -62,6 +62,12 @@ export type OrderTabData = {
       partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; remaining: number; overpayment: number; status: string;
       payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
+      history?: {
+        relationId: number; startsAt: Date | string; workDueAt: Date | string | null; paymentDueAt: Date | string | null;
+        comment: string | null; createdAt: Date | string; createdBy: string | null;
+        operations: Array<{ id: number; type: string; status: string; amount: number; adjustmentEffect: number; operationDate: Date | string; method: string | null; account: string | null; comment: string | null; paymentId: number | null; reversalOfId: number | null; reversalId: number | null; author: string | null }>;
+        audit: Array<{ id: number; action: string; comment: string | null; createdAt: Date | string; actor: string | null }>;
+      } | null;
     };
     manager?: EmployeeSettlement;
     measurer?: EmployeeSettlement;
@@ -91,6 +97,11 @@ export type OrderTabData = {
       label: string;
       warning: string | null;
       mode: "ACTUAL" | "PLANNED";
+    };
+    directCosts: {
+      plan: { materials: NumericValue; delivery: NumericValue; bankFees: NumericValue; otherDirect: NumericValue; total: NumericValue; confirmed: boolean };
+      fact: { materials: NumericValue; delivery: NumericValue; bankFees: NumericValue; otherDirect: NumericValue; total: NumericValue };
+      deviation: { materials: NumericValue; delivery: NumericValue; bankFees: NumericValue; otherDirect: NumericValue; total: NumericValue };
     };
     cash: {
       clientReceived: NumericValue; partnerPaid: NumericValue; payrollPaid: NumericValue;

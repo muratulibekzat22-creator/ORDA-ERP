@@ -65,7 +65,7 @@ export async function seedPartnerManagementDemo() {
       const reward = rule === PartnerRewardRule.FIXED ? { rewardRule: rule, fixedAmount: "100000" } : { rewardRule: rule, rewardPercent: "10" };
       if (index < 4) {
         const existing = await createOrder({
-          client, partnerId: partner.id, address: client.address, staircase, material,
+          client, partnerId: null, address: client.address, staircase, material,
           orderReceivedAt: new Date(Date.UTC(2026, 7, 1 + index)), promisedAt: new Date(Date.UTC(2026, 9, 1 + index)),
           additionalDetails: `${seedVersion}:existing`, amount, prepayment: 0, partnerPrice: 0, partnerPriceSet: false, partnerPaid: 0,
           manager: setup.manager.name, managerUserId: setup.manager.id, actorRole: Role.DIRECTOR,
@@ -95,7 +95,7 @@ export async function seedPartnerManagementDemo() {
         const transferKey = `${seedVersion}:operation:${index}:transfer`;
         await createPartnerSettlementOperation({ relationId: relation.id, type: PartnerSettlementOperationType.PARTNER_TO_COMPANY, amount: "100000", operationDate: new Date(Date.UTC(2026, 7, 18 + index)), method: "bank", account: "Demo bank", comment: seedVersion, idempotencyKey: transferKey, requestHash: createRequestHash({ transferKey }) }, actor);
       }
-      if (firstType === PartnerSettlementOperationType.CLIENT_TO_COMPANY && index % 4 === 0) {
+      if (index >= 4 && firstType === PartnerSettlementOperationType.CLIENT_TO_COMPANY && index % 4 === 0) {
         const payoutKey = `${seedVersion}:operation:${index}:payout`;
         await createPartnerSettlementOperation({ relationId: relation.id, type: PartnerSettlementOperationType.COMPANY_TO_PARTNER, amount: "50000", operationDate: new Date(Date.UTC(2026, 7, 20 + index)), method: "bank", account: "Demo bank", comment: seedVersion, idempotencyKey: payoutKey, requestHash: createRequestHash({ payoutKey }) }, actor);
       }

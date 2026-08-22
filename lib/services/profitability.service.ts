@@ -195,8 +195,8 @@ function aggregateProducts(rows: ReturnType<typeof companyRow>[]) {
   >();
   for (const row of rows) {
     const product = row.staircase.trim() || "Тип изделия не указан";
-    const material = row.material.trim() || "Материал не указан";
-    const key = `${product}\u0000${material}`;
+    const material = "Все материалы";
+    const key = product;
     const group = groups.get(key) ?? {
       product,
       material,
@@ -225,6 +225,41 @@ function aggregateProducts(rows: ReturnType<typeof companyRow>[]) {
     averageMargin: group.calculated
       ? group.marginTotal.div(group.calculated).toDecimalPlaces(2)
       : zero(),
+  }));
+}
+
+function aggregateMaterials(rows: ReturnType<typeof companyRow>[]) {
+  const groups = new Map<string, {
+    material: string;
+    orders: number;
+    sales: Prisma.Decimal;
+    profit: Prisma.Decimal;
+    marginTotal: Prisma.Decimal;
+    calculated: number;
+  }>();
+  for (const row of rows) {
+    const material = row.material.trim() || "Материал не указан";
+    const group = groups.get(material) ?? {
+      material,
+      orders: 0,
+      sales: zero(),
+      profit: zero(),
+      marginTotal: zero(),
+      calculated: 0,
+    };
+    group.orders += 1;
+    group.sales = group.sales.add(row.economy.client.totalSale);
+    if (row.economy.profit.complete) {
+      group.profit = group.profit.add(row.economy.profit.netProfit);
+      group.marginTotal = group.marginTotal.add(row.economy.profit.netMarginPercent);
+      group.calculated += 1;
+    }
+    groups.set(material, group);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    averageProfit: group.calculated ? group.profit.div(group.calculated).toDecimalPlaces(2) : zero(),
+    averageMargin: group.calculated ? group.marginTotal.div(group.calculated).toDecimalPlaces(2) : zero(),
   }));
 }
 
@@ -330,6 +365,19 @@ export async function getCompanyProfitability(period: Period = {}) {
     (sum, row) => sum.add(row.economy.profit.netProfit),
     zero(),
   );
+  const grossMargin = calculable.reduce(
+    (sum, row) => sum.add(row.economy.client.totalSale.sub(row.economy.partner.accrued)),
+    zero(),
+  );
+  const directOrderCosts = calculable.reduce(
+    (sum, row) => sum.add(row.economy.profit.directExpenses),
+    zero(),
+  );
+  const orderPayrollAccrued = calculable.reduce(
+    (sum, row) => sum.add(row.economy.profit.payrollAccrued),
+    zero(),
+  );
+  const marginAfterDirect = grossMargin.sub(directOrderCosts);
   const clientReceived = rows.reduce(
     (sum, row) => sum.add(row.economy.client.netReceived),
     zero(),
@@ -359,6 +407,11 @@ export async function getCompanyProfitability(period: Period = {}) {
   let generalExpenses = zero();
   let mandatoryPayments = zero();
   let generalCashExpenses = zero();
+  let marketingExpenses = zero();
+  let rentExpenses = zero();
+  let utilitiesExpenses = zero();
+  let administrativeExpenses = zero();
+  let otherOperatingExpenses = zero();
   for (const entry of generalLedger) {
     if (entry.direction === "INCOME") {
       otherIncome = otherIncome.add(entry.amount);
@@ -371,7 +424,14 @@ export async function getCompanyProfitability(period: Period = {}) {
     } ${entry.category} ${entry.type}`;
     if (/TAX|SOCIAL|MANDATORY|НАЛОГ|СОЦИАЛ|ОБЯЗАТ/i.test(category))
       mandatoryPayments = mandatoryPayments.add(entry.amount);
-    else generalExpenses = generalExpenses.add(entry.amount);
+    else {
+      generalExpenses = generalExpenses.add(entry.amount);
+      if (/MARKET|ADVERT|РЕКЛАМ|МАРКЕТ/i.test(category)) marketingExpenses = marketingExpenses.add(entry.amount);
+      else if (/RENT|АРЕНД/i.test(category)) rentExpenses = rentExpenses.add(entry.amount);
+      else if (/UTILIT|COMMUNAL|КОММУН/i.test(category)) utilitiesExpenses = utilitiesExpenses.add(entry.amount);
+      else if (/ADMIN|OFFICE|АДМИН|ОФИС/i.test(category)) administrativeExpenses = administrativeExpenses.add(entry.amount);
+      else otherOperatingExpenses = otherOperatingExpenses.add(entry.amount);
+    }
   }
   const generalPayrollAccrued = generalPayroll.reduce(
     (sum, accrual) =>
@@ -387,6 +447,7 @@ export async function getCompanyProfitability(period: Period = {}) {
   generalExpenses = generalExpenses
     .add(generalPayrollAccrued)
     .add(unlinkedMarketingExpense);
+  marketingExpenses = marketingExpenses.add(unlinkedMarketingExpense);
 
   const profitBeforeMandatory = orderProfit
     .add(otherIncome)
@@ -409,6 +470,7 @@ export async function getCompanyProfitability(period: Period = {}) {
     .sub(generalCashExpenses);
 
   const products = aggregateProducts(rows);
+  const materials = aggregateMaterials(rows);
   const profitable = rows.filter((row) => row.economy.profit.complete);
   const partnerMap = new Map<
     number,
@@ -441,12 +503,42 @@ export async function getCompanyProfitability(period: Period = {}) {
       managerMap.set(row.manager.id, value);
     }
   }
+  const monthlyMap = new Map<string, {
+    month: string;
+    sales: Prisma.Decimal;
+    grossMargin: Prisma.Decimal;
+    netProfit: Prisma.Decimal;
+    cashResult: Prisma.Decimal;
+  }>();
+  for (const row of rows) {
+    const month = row.orderReceivedAt.toISOString().slice(0, 7);
+    const value = monthlyMap.get(month) ?? {
+      month,
+      sales: zero(),
+      grossMargin: zero(),
+      netProfit: zero(),
+      cashResult: zero(),
+    };
+    value.sales = value.sales.add(row.economy.client.totalSale);
+    value.cashResult = value.cashResult.add(row.economy.cash.balance);
+    if (row.economy.profit.complete) {
+      value.grossMargin = value.grossMargin.add(
+        row.economy.client.totalSale.sub(row.economy.partner.accrued),
+      );
+      value.netProfit = value.netProfit.add(row.economy.profit.netProfit);
+    }
+    monthlyMap.set(month, value);
+  }
 
   return {
     period,
     rows,
     totals: {
       sales,
+      grossMargin,
+      directOrderCosts,
+      orderPayrollAccrued,
+      marginAfterDirect,
       orderProfit,
       profitBeforeMandatory,
       companyNetProfit,
@@ -459,6 +551,12 @@ export async function getCompanyProfitability(period: Period = {}) {
       otherExpensesPaid: otherOrderCashExpenses.add(generalCashExpenses),
       otherIncome,
       generalExpenses,
+      marketingExpenses,
+      generalPayrollAccrued,
+      rentExpenses,
+      utilitiesExpenses,
+      administrativeExpenses,
+      otherOperatingExpenses,
       mandatoryPayments,
       cashResult,
       calculatedOrders: calculable.length,
@@ -470,6 +568,7 @@ export async function getCompanyProfitability(period: Period = {}) {
         .length,
     },
     products,
+    materials,
     highlights: {
       highestProfit: firstBy(profitable, (a, b) =>
         b.economy.profit.netProfit.comparedTo(a.economy.profit.netProfit),
@@ -483,6 +582,9 @@ export async function getCompanyProfitability(period: Period = {}) {
         a.economy.profit.netProfit.comparedTo(b.economy.profit.netProfit),
       ),
       mostPopularProduct: firstBy(products, (a, b) =>
+        b.orders - a.orders || b.sales.comparedTo(a.sales),
+      ),
+      mostPopularMaterial: firstBy(materials, (a, b) =>
         b.orders - a.orders || b.sales.comparedTo(a.sales),
       ),
       topSellingProduct: firstBy(products, (a, b) =>
@@ -500,6 +602,23 @@ export async function getCompanyProfitability(period: Period = {}) {
       mostEffectiveManager: firstBy([...managerMap.values()], (a, b) =>
         b.profit.comparedTo(a.profit),
       ),
+    },
+    charts: {
+      monthly: [...monthlyMap.values()].sort((left, right) => left.month.localeCompare(right.month)),
+      products: products.map((item) => ({ name: item.product, orders: item.orders, sales: item.sales, profit: item.profit })),
+      materials: materials.map((item) => ({ name: item.material, orders: item.orders, sales: item.sales, profit: item.profit })),
+      partners: [...partnerMap.values()],
+      managers: [...managerMap.values()],
+      expenses: [
+        { name: "Прямые расходы заказов", amount: directOrderCosts },
+        { name: "Зарплата по заказам", amount: orderPayrollAccrued },
+        { name: "Реклама", amount: marketingExpenses },
+        { name: "Общая зарплата", amount: generalPayrollAccrued },
+        { name: "Аренда", amount: rentExpenses },
+        { name: "Коммунальные", amount: utilitiesExpenses },
+        { name: "Административные", amount: administrativeExpenses },
+        { name: "Другие операционные", amount: otherOperatingExpenses },
+      ],
     },
   };
 }

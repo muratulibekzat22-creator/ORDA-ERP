@@ -50,6 +50,7 @@ const economy = calculateOrderEconomy({
   partnerId: 1,
   partnerAgreed: "3700000",
   partnerAgreedAt: new Date("2026-08-19T00:00:00Z"),
+  lifecycle: "COMPLETED",
   ledgerEntries: [{ direction: "EXPENSE", amount: "20000", source: "MANUAL", category: "MATERIALS", type: "DIRECT_EXPENSE", affectsProfit: true }],
   payrollAccruals: [
     { type: PayrollAccrualType.ORDER_BONUS, direction: PayrollDirection.INCREASE, amount: "50000", employee: { user: { role: Role.MANAGER }, position: "Менеджер" } },
@@ -83,6 +84,19 @@ assert.equal(calculateOrderEconomy({ totalSale: "1000", partnerId: 1, partnerDis
 assert.equal(calculateOrderEconomy({ totalSale: "1000", partnerId: 1, partnerAgreed: "0", partnerAgreedAt: new Date() }).partner.status, "NOT_ACCRUED", "zero accrual is explicit");
 assert.equal(calculateOrderEconomy({ totalSale: "1000", lifecycle: "COMPLETED" }).profit.mode, "ACTUAL", "completed order profit mode");
 assert.equal(calculateOrderEconomy({ totalSale: "1000", lifecycle: "IN_PRODUCTION" }).profit.mode, "PLANNED", "active order profit mode");
+const planFact = calculateOrderEconomy({
+  totalSale: "1000",
+  partnerId: 1,
+  partnerAgreed: "400",
+  partnerAgreedAt: new Date(),
+  lifecycle: "COMPLETED",
+  costPlan: { materialOutsideWorkshop: "100", delivery: "20", bankFees: "10", otherDirect: "10", confirmedAt: new Date() },
+  ledgerEntries: [{ direction: "EXPENSE", amount: "80", source: "MANUAL", category: "MATERIALS", type: "DIRECT_EXPENSE", affectsProfit: true }],
+});
+equal(planFact.directCosts.plan.total, "140.00", "confirmed direct cost plan total");
+equal(planFact.directCosts.fact.total, "80.00", "actual order-linked ledger cost total");
+equal(planFact.directCosts.deviation.total, "-60.00", "fact minus plan deviation");
+equal(planFact.profit.directExpenses, "80.00", "completed order uses fact without adding plan");
 
 const payrollPaid = calculateOrderEconomy({
   totalSale: "1000", partnerId: 1, partnerAgreed: "400", partnerAgreedAt: new Date(),

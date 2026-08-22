@@ -312,6 +312,8 @@ export async function POST(request: Request) {
     const partnerPrice =
       role === Role.DIRECTOR ? money(body.partnerPrice, 0) : 0;
     const partnerPaid = role === Role.DIRECTOR ? money(body.partnerPaid, 0) : 0;
+    const partnerWorkDueAt = dateValue(body.partnerWorkDueAt);
+    const partnerPaymentDueAt = dateValue(body.partnerPaymentDueAt);
     const orderReceivedAt =
       dateValue(body.orderReceivedAt) ?? (!enhanced ? new Date() : null);
     const readinessDate = dateValue(body.readinessDate);
@@ -447,8 +449,13 @@ export async function POST(request: Request) {
         Boolean(partnerId) &&
         Object.hasOwn(body, "partnerPrice"),
       partnerPaid,
+      partnerWorkDueAt,
+      partnerPaymentDueAt,
+      partnerComment: requiredText(body.partnerComment) ?? "",
       manager: managerUser.name,
       managerUserId: managerUser.id,
+      actorId: Number(auth.session!.user.id),
+      actorName: auth.session!.user.name ?? managerUser.name,
     };
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;

@@ -137,14 +137,40 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
   const legacyBankFees = directCategory(/BANK|COMMISSION|БАНК|КОМИСС/i);
   const categorizedLegacy = legacyMaterials.add(legacyDelivery).add(legacyBankFees);
   const legacyOtherDirect = money(positive(legacyDirectExpenses.sub(categorizedLegacy)));
-  const materials = input.costPlan
-    ? money(input.costPlan.materialOutsideWorkshop)
-    : legacyMaterials;
-  const delivery = input.costPlan ? money(input.costPlan.delivery) : legacyDelivery;
-  const bankFees = input.costPlan ? money(input.costPlan.bankFees) : legacyBankFees;
-  const otherDirectExpenses = input.costPlan
-    ? money(input.costPlan.otherDirect)
-    : legacyOtherDirect;
+  const plannedMaterials = money(input.costPlan?.materialOutsideWorkshop ?? 0);
+  const plannedDelivery = money(input.costPlan?.delivery ?? 0);
+  const plannedBankFees = money(input.costPlan?.bankFees ?? 0);
+  const plannedOtherDirect = money(input.costPlan?.otherDirect ?? 0);
+  const plannedDirectExpenses = money(
+    plannedMaterials.add(plannedDelivery).add(plannedBankFees).add(plannedOtherDirect),
+  );
+  const actualMaterials = legacyMaterials;
+  const actualDelivery = legacyDelivery;
+  const actualBankFees = legacyBankFees;
+  const actualOtherDirect = legacyOtherDirect;
+  const actualDirectExpenses = money(legacyDirectExpenses);
+  const completed = input.lifecycle === "COMPLETED";
+  const useConfirmedPlan = Boolean(input.costPlan?.confirmedAt);
+  const materials = completed
+    ? actualMaterials
+    : useConfirmedPlan
+      ? plannedMaterials
+      : money(0);
+  const delivery = completed
+    ? actualDelivery
+    : useConfirmedPlan
+      ? plannedDelivery
+      : money(0);
+  const bankFees = completed
+    ? actualBankFees
+    : useConfirmedPlan
+      ? plannedBankFees
+      : money(0);
+  const otherDirectExpenses = completed
+    ? actualOtherDirect
+    : useConfirmedPlan
+      ? plannedOtherDirect
+      : money(0);
   const directExpenses = money(materials.add(delivery).add(bankFees).add(otherDirectExpenses));
   const marginBeforePayroll = money(totalSale.sub(partnerAccrued).sub(directExpenses));
   const netProfit = money(marginBeforePayroll.sub(payrollAccrued));
@@ -181,7 +207,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
                 ? "PARTIALLY_PAID"
                 : "PAYABLE";
   const profitComplete = Boolean(input.partnerId && input.partnerAgreedAt);
-  const costsConfirmed = Boolean(input.costPlan?.confirmedAt);
+  const costsConfirmed = completed || useConfirmedPlan;
   const profitWarning = !input.partnerId
     ? "Прибыль не рассчитана: заказ ещё не передан в цех"
     : !input.partnerAgreedAt
@@ -191,7 +217,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
         : null;
   const profitLabel = !profitComplete
     ? "Прибыль не рассчитана"
-    : input.lifecycle === "COMPLETED" && costsConfirmed
+    : completed
       ? "Фактическая прибыль заказа"
       : "Предварительная прибыль";
 
@@ -219,6 +245,30 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       label: profitLabel,
       warning: profitWarning,
       mode: input.lifecycle === "COMPLETED" ? ("ACTUAL" as const) : ("PLANNED" as const),
+    },
+    directCosts: {
+      plan: {
+        materials: plannedMaterials,
+        delivery: plannedDelivery,
+        bankFees: plannedBankFees,
+        otherDirect: plannedOtherDirect,
+        total: plannedDirectExpenses,
+        confirmed: useConfirmedPlan,
+      },
+      fact: {
+        materials: actualMaterials,
+        delivery: actualDelivery,
+        bankFees: actualBankFees,
+        otherDirect: actualOtherDirect,
+        total: actualDirectExpenses,
+      },
+      deviation: {
+        materials: money(actualMaterials.sub(plannedMaterials)),
+        delivery: money(actualDelivery.sub(plannedDelivery)),
+        bankFees: money(actualBankFees.sub(plannedBankFees)),
+        otherDirect: money(actualOtherDirect.sub(plannedOtherDirect)),
+        total: money(actualDirectExpenses.sub(plannedDirectExpenses)),
+      },
     },
     cash: {
       clientReceived: netReceived, partnerPaid: money(partnerPaid), payrollPaid,

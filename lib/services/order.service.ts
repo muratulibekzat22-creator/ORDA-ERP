@@ -1,8 +1,16 @@
-import { DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
+import {
+  DocumentStatus,
+  DocumentType,
+  PartnerRewardRule,
+  PartnerSettlementStatus,
+  Prisma,
+  Role,
+} from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf } from "@/lib/services/payment-receipt.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export async function getOrders(
   where: import("@prisma/client").Prisma.OrderWhereInput = {},
@@ -161,8 +169,16 @@ export async function getOrder(id: number) {
         include: {
           createdBy: { select: { name: true } },
           operations: {
-            where: { status: "POSTED" },
-            orderBy: { operationDate: "asc" },
+            include: {
+              createdBy: { select: { name: true } },
+              reversalOf: { select: { id: true } },
+              reversal: { select: { id: true } },
+            },
+            orderBy: [{ operationDate: "desc" }, { id: "desc" }],
+          },
+          auditEvents: {
+            include: { actor: { select: { name: true } } },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           },
         },
       },
@@ -284,8 +300,13 @@ type CreateOrderInput = {
   partnerPrice: number;
   partnerPriceSet?: boolean;
   partnerPaid: number;
+  partnerWorkDueAt?: Date | null;
+  partnerPaymentDueAt?: Date | null;
+  partnerComment?: string;
   manager: string;
   managerUserId?: number;
+  actorId?: number;
+  actorName?: string;
   actorRole?: Role;
   enforceClientOwnership?: boolean;
   idempotencyKey?: string;
@@ -326,6 +347,10 @@ export async function createOrder(data: CreateOrderInput) {
   const balance = data.amount - data.prepayment;
   const partnerBalance = data.partnerPrice - data.partnerPaid;
   const companyProfit = data.amount - data.partnerPrice;
+  const tenant = requireTenantIdentity().companyId;
+  const actorId = data.actorId ?? data.managerUserId;
+  const actorName = data.actorName ?? data.manager;
+  if (!actorId) throw new Error("ACTOR_REQUIRED");
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -479,6 +504,42 @@ export async function createOrder(data: CreateOrderInput) {
               status: "Новая заявка",
             },
           });
+          if (data.partnerId) {
+            const relation = await tx.partnerOrderRelation.create({
+              data: {
+                companyId: tenant,
+                partnerId: data.partnerId,
+                orderId: order.id,
+                rewardRule: PartnerRewardRule.MANUAL,
+                rewardPercent: null,
+                fixedAmount: null,
+                manualAmount: data.partnerPriceSet ? money(data.partnerPrice) : null,
+                profitBasis: money(companyProfit),
+                startsAt: order.orderReceivedAt,
+                workDueAt: data.partnerWorkDueAt,
+                paymentDueAt: data.partnerPaymentDueAt,
+                settlementStatus: data.partnerPriceSet
+                  ? PartnerSettlementStatus.CALCULATED
+                  : PartnerSettlementStatus.NOT_CALCULATED,
+                comment: data.partnerComment?.trim().slice(0, 2000) || null,
+                createdById: actorId,
+              },
+            });
+            await tx.partnerAuditEvent.create({
+              data: {
+                companyId: tenant,
+                partnerId: data.partnerId,
+                relationId: relation.id,
+                action: "ORDER_LINKED",
+                after: {
+                  orderId: order.id,
+                  partnerPrice: data.partnerPriceSet ? money(data.partnerPrice) : null,
+                },
+                comment: data.partnerComment?.trim().slice(0, 2000) || null,
+                actorId,
+              },
+            });
+          }
           let initialPaymentId: number | null = null;
           if (data.prepayment > 0) {
             const initialPayment = await tx.payment.create({
@@ -521,8 +582,10 @@ export async function createOrder(data: CreateOrderInput) {
             data: {
               orderId: order.id,
               title: "Создан заказ",
-              description: `Заказ ${order.number} успешно создан.`,
-              user: data.manager,
+              description: data.partnerId
+                ? `Заказ ${order.number} создан и передан выбранному исполнителю.`
+                : `Заказ ${order.number} успешно создан.`,
+              user: actorName,
               idempotencyKey: eventKey,
               requestHash: data.requestHash,
             },
@@ -532,7 +595,7 @@ export async function createOrder(data: CreateOrderInput) {
               orderId: order.id,
               fromStatus: null,
               toStatus: "Новая заявка",
-              changedByName: data.manager,
+              changedByName: actorName,
               changedByRole: data.actorRole ?? "MANAGER",
               comment: "Заказ создан",
             },
@@ -542,8 +605,8 @@ export async function createOrder(data: CreateOrderInput) {
               orderId: order.id,
               type: "ORDER_CREATED",
               toLifecycle: "CREATED",
-              actorId: data.managerUserId,
-              actorName: data.manager,
+              actorId,
+              actorName,
               role: data.actorRole ?? "MANAGER",
               idempotencyKey: data.idempotencyKey
                 ? `order-lifecycle:${data.idempotencyKey}`

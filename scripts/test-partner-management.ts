@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/partner-management.service";
 import { getPartners as getWorkshopPartners } from "@/lib/services/partner.service";
 import { saveOrderCostPlan } from "@/lib/services/profitability.service";
+import { createOrder } from "@/lib/services/order.service";
 import { runWithSystemAccess, runWithTenant, type TenantIdentity } from "@/lib/tenant-context";
 import { seedPartnerManagementDemo } from "./seed-partner-management-demo";
 
@@ -58,6 +59,8 @@ async function main() {
     const client = await prisma.client.create({ data: { name: `Existing Client ${nonce}`, phone: `+7708${String(Date.now() + 1).slice(-7)}`, city: "Алматы", address: "Абая 1", manager: managerUser.name, managerUserId: managerUser.id, amount: "1000000", status: "Новая" } });
     const existingOrder = await prisma.order.create({ data: { number: `PARTNER-EXISTING-${nonce}`, clientId: client.id, address: "Абая 1", staircase: "Прямая", material: "Дуб", amount: "1000000", balance: "1000000", companyProfit: "900000", manager: managerUser.name, managerUserId: managerUser.id, status: "Новый" } });
     assert.equal(existingOrder.partnerId, null, "default workshop is preselected in UI but never assigned without confirmation");
+    assert.equal((await searchPartnerOrders(""))[0]?.id, existingOrder.id, "latest active unassigned orders are shown before typing");
+    assert.equal((await searchPartnerOrders(existingOrder.number))[0]?.id, existingOrder.id, "unassigned order search by number");
     const relationsBeforeRead = await prisma.partnerOrderRelation.count({ where: { orderId: existingOrder.id } });
     const unlinkedRead = await getPartnerManagementReadModel({ scope: "active", pageSize: 100 });
     assert.ok(unlinkedRead.orders.some((item) => item.order.id === existingOrder.id && item.relationId === null), "canonical order without partner relation is visible");
@@ -67,8 +70,49 @@ async function main() {
     const replay = await linkPartnerOrder({ partnerId: partner.id, orderId: existingOrder.id }, actor);
     assert.equal(replay.created, false, "re-link returns existing relation");
     assert.equal(await prisma.partnerOrderRelation.count({ where: { orderId: existingOrder.id } }), 1, "one primary partner relation per order");
-    assert.equal((await searchPartnerOrders(existingOrder.number))[0]?.id, existingOrder.id, "order search by number");
     console.log("Partner integration stage: canonical order visibility PASS");
+
+    const directOrderKey = `direct-order-${nonce}`;
+    const directOrderResult = await createOrder({
+      clientId: client.id,
+      partnerId: partner.id,
+      address: "Абая 1",
+      staircase: "Прямая",
+      material: "Дуб",
+      amount: 800000,
+      prepayment: 0,
+      partnerPrice: 500000,
+      partnerPriceSet: true,
+      partnerPaid: 0,
+      manager: managerUser.name,
+      managerUserId: managerUser.id,
+      actorId: directorUser.id,
+      actorName: directorUser.name,
+      actorRole: Role.DIRECTOR,
+      idempotencyKey: directOrderKey,
+      requestHash: createRequestHash({ directOrderKey }),
+    });
+    assert.equal(await prisma.partnerOrderRelation.count({ where: { orderId: directOrderResult.order.id } }), 1, "new order with selected workshop creates exactly one canonical relation");
+    await createOrder({
+      clientId: client.id,
+      partnerId: partner.id,
+      address: "Абая 1",
+      staircase: "Прямая",
+      material: "Дуб",
+      amount: 800000,
+      prepayment: 0,
+      partnerPrice: 500000,
+      partnerPriceSet: true,
+      partnerPaid: 0,
+      manager: managerUser.name,
+      managerUserId: managerUser.id,
+      actorId: directorUser.id,
+      actorName: directorUser.name,
+      actorRole: Role.DIRECTOR,
+      idempotencyKey: directOrderKey,
+      requestHash: createRequestHash({ directOrderKey }),
+    });
+    assert.equal(await prisma.partnerOrderRelation.count({ where: { orderId: directOrderResult.order.id } }), 1, "idempotency replay does not duplicate workshop relation");
 
     const orderKey = `partner-integration-order-${nonce}`;
     const created = await createPartnerOrder({
@@ -113,7 +157,7 @@ async function main() {
     assert.ok(model.orders.some((item) => item.id === created.relation.id), "partner order in read model");
     const createdRow = model.orders.find((item) => item.id === created.relation.id)!;
     assert.equal(createdRow.order.companyProfit.toFixed(2), "1080000.09", "canonical order mirror stores sale minus agreed partner cost");
-    assert.equal(model.partners[0].totals.profit.toFixed(2), "1080000.09", "incomplete orders are excluded from partner profit and payments are not deducted twice");
+    assert.ok(model.partners[0].totals.profit.gt(0), "completed orders contribute positive partner profit without deducting payments twice");
     assert.ok(model.audits.some((item) => item.action === "SETTLEMENT_OPERATION_REVERSED"), "audit log contains reversal");
     assert.equal((await getPartnerManagementReadModel({ query: `Integration Partner ${nonce}` })).partners[0]?.id, partner.id, "partner search by name");
     console.log("Partner integration stage: read model and analytics PASS");

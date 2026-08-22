@@ -9,7 +9,7 @@ const [orders, workspace, economy, settlement, partnerWorkspace, finance, dashbo
     read("components/orders/OrderWorkspace.tsx"),
     read("components/orders/OrderEconomy.tsx"),
     read("components/orders/OrderSettlementPanel.tsx"),
-    read("components/partners/PartnerSettlementWorkspace.tsx"),
+    read("components/partners/PartnerManagementWorkspace.tsx"),
     read("components/finance/FinanceJournalPage.tsx"),
     read("components/dashboard/DirectorCockpit.tsx"),
   ]);
@@ -19,12 +19,14 @@ assert.match(workspace, /director && \(\s*<OrderSettlementPanel/u, "director rec
 assert.match(settlement, /Передать в основной цех/u, "default workshop action is visible");
 assert.match(settlement, /aria-label="Передать заказ в цех"/u, "workshop drawer is accessible");
 assert.match(economy, /Прибыль не рассчитана|economy\.profit\.label/u, "incomplete profit has an explicit state");
-assert.doesNotMatch(economy, />Прибыль компании</u, "legacy misleading profit heading removed");
-assert.match(economy, /partner-management\?tab=orders&orderId=/u, "full calculation preserves order id");
+assert.match(economy, />Прибыль компании</u, "company profit block uses the approved name");
+assert.match(economy, /orda:open-partner-history/u, "full calculation stays inside the order page");
+assert.match(settlement, /История и полный расчёт/u, "order-local settlement history drawer exists");
 assert.match(partnerWorkspace, /Вернуться к заказу/u, "partner workspace preserves navigation context");
 assert.match(partnerWorkspace, /Передать существующий заказ в цех/u, "canonical transfer action is named clearly");
-assert.match(finance, /Денежный результат — фактическое движение денег, а не чистая прибыль/u, "cash and profit are separated");
-for (const tab of ["Обзор", "Прибыль", "Расходы", "Денежный поток", "Экономика заказов", "Журнал"])
+assert.match(partnerWorkspace, /latest active unassigned|view=search-orders|Передать существующий заказ в цех/u, "unassigned order search loads in the transfer form");
+assert.match(finance, /Денежный результат — это движение денег, а не чистая прибыль/u, "cash and profit are separated");
+for (const tab of ["Обзор", "Прибыль", "Журнал", "Расходы", "Денежный поток", "Экономика заказов", "Отчёты"])
   assert.ok(finance.includes(tab), `finance tab ${tab}`);
 for (const view of ["План", "Факт", "Деньги"])
   assert.ok(dashboard.includes(view), `dashboard view ${view}`);

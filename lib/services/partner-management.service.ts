@@ -208,6 +208,7 @@ export async function setPartnerAgreedCost(
         rewardPercent: null,
         fixedAmount: null,
         manualAmount: agreed,
+        profitBasis: relation.order.amount.sub(agreed),
         startsAt: dates.agreedAt ?? new Date(),
         ...(dates.workDueAt === undefined ? {} : { workDueAt: dates.workDueAt }),
         ...(dates.paymentDueAt === undefined ? {} : { paymentDueAt: dates.paymentDueAt }),
@@ -547,6 +548,7 @@ export async function setOrderPartnerAgreement(input: {
           rewardPercent: null,
           fixedAmount: null,
           manualAmount: agreed,
+          profitBasis: order.amount.sub(agreed),
           startsAt: input.agreedAt ?? new Date(),
           workDueAt: input.workDueAt,
           paymentDueAt: input.paymentDueAt,
@@ -681,7 +683,7 @@ export async function createPartnerOrder(input: {
   const result = await createOrder({
     clientId: input.clientId,
     client,
-    partnerId: partner.id,
+    partnerId: null,
     address: input.address.trim(),
     staircase: input.staircase.trim(),
     material: input.material.trim(),
@@ -1143,29 +1145,53 @@ export async function searchPartnerOrders(query: string) {
   const search = query.trim().slice(0, 120);
   const digits = search.replace(/\D/g, "");
   const numeric = /^\d+(?:[.,]\d{1,2})?$/.test(search) ? new Prisma.Decimal(search.replace(",", ".")) : null;
-  return prisma.order.findMany({
+  const rows = await prisma.order.findMany({
     where: {
       companyId: tenant,
       deletedAt: null,
+      partnerId: null,
+      partnerRelation: null,
+      lifecycle: { notIn: ["COMPLETED", "CANCELLED"] },
       ...(search ? { OR: [
         { number: { contains: search, mode: "insensitive" } },
         { client: { name: { contains: search, mode: "insensitive" } } },
         { client: { phone: { contains: digits || search } } },
         { client: { city: { contains: search, mode: "insensitive" } } },
         { address: { contains: search, mode: "insensitive" } },
+        { material: { contains: search, mode: "insensitive" } },
+        { manager: { contains: search, mode: "insensitive" } },
+        { managerUser: { name: { contains: search, mode: "insensitive" } } },
         { documents: { some: { type: DocumentType.CONTRACT, number: { contains: search, mode: "insensitive" } } } },
         ...(numeric ? [{ amount: numeric }] : []),
       ] } : {}),
     },
     select: {
-      id: true, number: true, amount: true, prepayment: true, balance: true, status: true,
-      address: true, staircase: true, material: true, partnerId: true,
+      id: true, number: true, amount: true, prepayment: true, balance: true, status: true, lifecycle: true,
+      address: true, staircase: true, material: true, partnerId: true, orderReceivedAt: true,
       client: { select: { id: true, name: true, phone: true, city: true } },
+      managerUser: { select: { id: true, name: true } },
+      payments: { select: { type: true, amount: true } },
       documents: { where: { type: DocumentType.CONTRACT }, select: { id: true, number: true }, take: 1 },
       partnerRelation: { select: { id: true, partnerId: true, partner: { select: { name: true } } } },
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: 50,
+  });
+  return rows.map((order) => {
+    const received = order.payments.reduce((sum, payment) =>
+      clientPaymentTypes.has(payment.type)
+        ? sum.add(payment.amount)
+        : payment.type === "REFUND"
+          ? sum.sub(payment.amount)
+          : sum,
+    new Prisma.Decimal(0));
+    return {
+      ...order,
+      payments: undefined,
+      received,
+      remaining: Prisma.Decimal.max(order.amount.sub(received), 0),
+      manager: order.managerUser,
+    };
   });
 }
 
@@ -1444,7 +1470,7 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
   const tenant = companyId();
   const query = filters.query?.trim().slice(0, 120) ?? "";
   const digits = query.replace(/\D/g, "");
-  const [partners, canonicalOrders, managers, audits, unallocatedPayments] = await sequentialQueries([
+  const [partners, canonicalOrders, managers, audits, unallocatedPayments, settings] = await sequentialQueries([
     () => prisma.partner.findMany({
       where: {
         companyId: tenant,
@@ -1512,6 +1538,14 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
         registeredBy: { select: { id: true, name: true } },
       },
       orderBy: [{ operationDate: "desc" }, { id: "desc" }],
+    }),
+    () => prisma.companySettings.findUnique({
+      where: { companyId: tenant },
+      select: {
+        defaultWorkshopPartner: {
+          select: { id: true, name: true, active: true, archived: true, isTest: true },
+        },
+      },
     }),
   ] as const);
 
@@ -1686,6 +1720,12 @@ export async function getPartnerManagementReadModel(filters: PartnerManagementFi
     payroll: periodTotals.payroll,
   };
   return {
+    defaultWorkshop:
+      settings?.defaultWorkshopPartner?.active &&
+      !settings.defaultWorkshopPartner.archived &&
+      !settings.defaultWorkshopPartner.isTest
+        ? { id: settings.defaultWorkshopPartner.id, name: settings.defaultWorkshopPartner.name }
+        : null,
     partners: partnerSummaries,
     orders: pageRows,
     allFilteredTotals: aggregateRows(filteredRows),
