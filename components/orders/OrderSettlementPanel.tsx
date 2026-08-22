@@ -281,7 +281,9 @@ export default function OrderSettlementPanel({
             className="min-h-11 rounded-xl bg-amber-300 px-4 font-semibold text-slate-950"
           >
             {order.partner
-              ? "Изменить цех или стоимость"
+              ? partner?.priceSet
+                ? "Изменить цех или стоимость"
+                : "Указать стоимость цеха"
               : defaultWorkshop
                 ? `Передать в основной цех — ${defaultWorkshop.name}`
                 : "Назначить цех"}
@@ -580,7 +582,7 @@ export default function OrderSettlementPanel({
                 disabled={busy}
                 className="min-h-11 rounded-xl bg-violet-700 px-4 font-semibold text-white disabled:opacity-50 sm:col-span-2"
               >
-                Создать начисление без выплаты
+                {accrualKind === "manager" ? "Начислить бонус менеджеру" : "Создать начисление без выплаты"}
               </button>
               <p className="text-xs text-slate-500 sm:col-span-2">Начисление влияет на прибыль заказа, но не создаёт расход денег до фактической выплаты через Payroll.</p>
             </>
