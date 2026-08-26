@@ -42,7 +42,9 @@ const cancelled = new Set(["CANCELLED", "LOST", "Отменён", "Отмене�
 
 export function buildOrderSettlement(order: SettlementSource) {
   const payments = order.payments ?? [];
-  const received = payments.reduce((sum, item) => clientTypes.has(item.type) ? sum + Number(item.amount) : item.type === "REFUND" ? sum - Number(item.amount) : sum, 0);
+  const receivedGross = payments.reduce((sum, item) => clientTypes.has(item.type) ? sum + Number(item.amount) : sum, 0);
+  const refunds = payments.reduce((sum, item) => item.type === "REFUND" ? sum + Number(item.amount) : sum, 0);
+  const received = receivedGross - refunds;
   const paid = payments.reduce((sum, item) => item.partnerId !== order.partnerId ? sum : item.type === "PARTNER_PAYOUT" ? sum + Number(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? sum - Number(item.amount) : sum, 0);
   const total = Number(order.amount), priceSet = Boolean(order.partnerAgreedAt), agreed = priceSet ? Number(order.partnerPrice) : null;
   const status = (value: number, target: number, assigned = true): SettlementStatus => !assigned ? "NOT_ASSIGNED" : value > target ? "OVERPAID" : target > 0 && value >= target ? "PAID" : value > 0 ? "PARTIAL" : "UNPAID";
@@ -63,12 +65,27 @@ export function buildOrderSettlement(order: SettlementSource) {
     };
   };
   const measurer = order.measurements?.find((item) => item.measurerUser)?.measurerUser ?? null;
+  const clientRemaining = Math.max(total - received, 0);
+  const clientOverpayment = Math.max(received - total, 0);
+  // The order production deadline is not the same thing as a client payment
+  // deadline. Until a canonical payment schedule exists, do not show a false date.
+  const clientDueAt = null;
+  const clientStatus = clientOverpayment > 0
+    ? "OVERPAID"
+    : clientRemaining <= 0
+      ? "PAID"
+      : received > 0
+        ? "PARTIAL"
+        : "UNPAID";
+  const pendingPartner = (order.partnerRelation?.operations ?? []).reduce((sum, item) =>
+    item.type === "COMPANY_TO_PARTNER" && item.status === "PENDING" ? sum + Number(item.amount) : sum, 0);
   return {
     cancelled: cancelled.has(order.status ?? ""),
-    client: { total, received, remaining: Math.max(total - received, 0), overpayment: Math.max(received - total, 0), status: status(received, total) },
+    client: { total, receivedGross, refunds, received, remaining: clientRemaining, overpayment: clientOverpayment, dueAt: clientDueAt, status: clientStatus },
     partner: {
       partnerId: order.partnerId ?? null, partnerName: order.partner?.name ?? null, priceSet, agreed, paid: priceSet ? paid : 0,
-      remaining: agreed === null ? 0 : Math.max(agreed - paid, 0), overpayment: agreed === null ? 0 : Math.max(paid - agreed, 0), status: status(paid, agreed ?? 0, Boolean(order.partnerId)),
+      pending: pendingPartner,
+      remaining: agreed === null ? 0 : Math.max(agreed - paid, 0), overpayment: agreed === null ? 0 : Math.max(paid - agreed, 0), status: pendingPartner > 0 ? "PENDING_CONFIRMATION" : status(paid, agreed ?? 0, Boolean(order.partnerId)),
       payouts: payments.filter((item) => item.type === "PARTNER_PAYOUT" || item.type === "PARTNER_PAYOUT_REVERSAL").map((item) => ({ id: item.id, amount: Number(item.amount), type: item.type, partnerId: item.partnerId ?? null, partnerName: item.partner?.name ?? null, method: item.method ?? "", comment: item.comment ?? null, author: item.author ?? null, operationDate: item.operationDate ?? null })),
       assignments: (order.partnerAssignmentHistory ?? []).map((item) => ({ id: item.id, previousPartnerId: item.previousPartnerId ?? null, newPartnerId: item.newPartnerId, previousPayable: Number(item.previousPayable), newPayable: Number(item.newPayable), paidAtChange: Number(item.paidAtChange), remainingAtChange: Number(item.remainingAtChange), reason: item.reason, createdAt: item.createdAt, authorName: item.author?.name ?? null })),
       history: order.partnerRelation ? {

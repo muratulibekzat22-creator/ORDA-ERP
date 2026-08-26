@@ -24,6 +24,10 @@ import {
   deleteOrderFromWork,
   OrderDeletionError,
 } from "@/lib/services/order-deletion.service";
+import {
+  OrderDetailsError,
+  updateOrderDetails,
+} from "@/lib/services/order-details.service";
 
 type Context = { params: Promise<{ id: string }> };
 const include = {
@@ -137,14 +141,15 @@ function redactForRole<T extends Record<string, unknown>>(
     }
     return result;
   }
-  for (const field of [
-    "companyProfit",
-    "partnerPrice",
-    "partnerAgreedAt",
-    "partnerPaid",
-    "partnerBalance",
-  ] as const)
-    delete result[field];
+  delete result.companyProfit;
+  if (role !== Role.MANAGER)
+    for (const field of [
+      "partnerPrice",
+      "partnerAgreedAt",
+      "partnerPaid",
+      "partnerBalance",
+    ] as const)
+      delete result[field];
   delete result.payments;
   delete result.partnerAssignmentHistory;
   delete result.payrollAccruals;
@@ -157,9 +162,15 @@ function redactForRole<T extends Record<string, unknown>>(
     });
   if (result.settlement && typeof result.settlement === "object") {
     const settlement = result.settlement as Record<string, unknown>;
-    delete settlement.partner;
-    delete settlement.manager;
-    delete settlement.measurer;
+    if (role !== Role.MANAGER) {
+      delete settlement.partner;
+      delete settlement.manager;
+      delete settlement.measurer;
+    } else if (settlement.partner && typeof settlement.partner === "object") {
+      const partner = settlement.partner as Record<string, unknown>;
+      partner.assignments = [];
+      partner.history = null;
+    }
   }
   if (
     role === Role.PRODUCTION ||
@@ -266,6 +277,91 @@ export async function PATCH(request: Request, { params }: Context) {
         { error: "Критические поля изменяются только domain-командами" },
         { status: 400 },
       );
+    if (body.action === "updateDetails") {
+      if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+        return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+      const idempotency = readIdempotencyKey(request);
+      if ("response" in idempotency) return idempotency.response;
+      const promisedAt = body.promisedAt
+        ? new Date(String(body.promisedAt))
+        : null;
+      const orderReceivedAt = body.orderReceivedAt
+        ? new Date(String(body.orderReceivedAt))
+        : undefined;
+      const amount = Number(body.amount);
+      if (
+        (promisedAt && Number.isNaN(promisedAt.getTime())) ||
+        (orderReceivedAt && Number.isNaN(orderReceivedAt.getTime())) ||
+        !Number.isFinite(amount) ||
+        amount <= 0
+      )
+        return NextResponse.json(
+          { error: "Проверьте дату и сумму заказа" },
+          { status: 400 },
+        );
+      const payload = {
+        orderId: id,
+        clientName: body.clientName,
+        phone: body.phone,
+        whatsapp: body.whatsapp,
+        city: body.city,
+        clientAddress: body.clientAddress,
+        iin: body.iin,
+        clientComment: body.clientComment,
+        orderAddress: body.orderAddress,
+        mapUrl: body.mapUrl,
+        staircase: body.staircase,
+        material: body.material,
+        frameComment: body.frameComment,
+        railingType: body.railingType,
+        supportType: body.supportType,
+        color: body.color,
+        lighting: body.lighting,
+        lightingDetails: body.lightingDetails,
+        cladding: body.cladding,
+        claddingDetails: body.claddingDetails,
+        additionalDetails: body.additionalDetails,
+        paymentMethod: body.paymentMethod,
+        promisedAt: promisedAt?.toISOString() ?? null,
+        orderReceivedAt: orderReceivedAt?.toISOString() ?? null,
+        amount: body.amount,
+        reason: body.reason,
+      };
+      const result = await updateOrderDetails(id, {
+        clientName: text(body.clientName, 300) ?? "",
+        phone: text(body.phone, 100) ?? "",
+        whatsapp: text(body.whatsapp, 100) ?? "",
+        city: text(body.city, 200) ?? "",
+        clientAddress: text(body.clientAddress, 1000) ?? "",
+        iin: text(body.iin, 32) ?? "",
+        clientComment: text(body.clientComment, 2000) ?? "",
+        orderAddress: text(body.orderAddress, 1000) ?? "",
+        mapUrl: text(body.mapUrl, 2000) ?? "",
+        staircase: text(body.staircase, 500) ?? "",
+        material: text(body.material, 300) ?? "",
+        frameComment: text(body.frameComment, 2000) ?? "",
+        railingType: text(body.railingType, 500) ?? "",
+        supportType: text(body.supportType, 500) ?? "",
+        color: text(body.color, 300) ?? "",
+        lighting: body.lighting === true,
+        lightingDetails: text(body.lightingDetails, 1000) ?? "",
+        cladding: body.cladding === true,
+        claddingDetails: text(body.claddingDetails, 1000) ?? "",
+        additionalDetails: text(body.additionalDetails, 3000) ?? "",
+        paymentMethod: text(body.paymentMethod, 100) ?? "",
+        orderReceivedAt,
+        promisedAt,
+        amount,
+        reason: text(body.reason, 1000) ?? "",
+        idempotencyKey: idempotency.key,
+        requestHash: createRequestHash(payload),
+      }, {
+        userId: Number(auth.session!.user.id),
+        role,
+        name: auth.session!.user.name ?? "Сотрудник",
+      });
+      return NextResponse.json(result, { status: 200 });
+    }
     if (body.action === "commercialAdjustment") {
       if (role !== Role.DIRECTOR)
         return NextResponse.json(
@@ -323,7 +419,7 @@ export async function PATCH(request: Request, { params }: Context) {
         );
     }
     if (body.action === "assignPartner") {
-      if (role !== Role.DIRECTOR)
+      if (role !== Role.DIRECTOR && role !== Role.MANAGER)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -548,13 +644,45 @@ export async function PATCH(request: Request, { params }: Context) {
       : NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   } catch (error) {
     if (error instanceof PartnerManagementError) {
+      if (error.message === "FORBIDDEN")
+        return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+      if (error.message === "DIRECTOR_CONFIRMATION_REQUIRED")
+        return NextResponse.json(
+          { error: "После первой выплаты изменение стоимости подтверждает директор" },
+          { status: 409 },
+        );
       const conflict = [
         "PARTNER_REASSIGNMENT_WITH_PAYMENTS",
+        "PARTNER_REASSIGNMENT_WITH_PENDING_PAYOUT",
         "PARTNER_REASSIGNMENT_REASON_REQUIRED",
+        "PARTNER_COST_BELOW_PAID_OR_PENDING",
       ].includes(error.message);
       return NextResponse.json(
         { error: conflict ? "Сначала урегулируйте выплаты прежнему цеху" : "Не удалось передать заказ в цех" },
         { status: conflict ? 409 : 400 },
+      );
+    }
+    if (error instanceof OrderDetailsError) {
+      if (error.message === "FORBIDDEN")
+        return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+      if (error.message === "ORDER_NOT_FOUND")
+        return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
+      if (error.message === "IDEMPOTENCY_CONFLICT") return idempotencyConflict();
+      if (error.message.startsWith("DUPLICATE_CLIENT:")) {
+        const [, clientId, clientName] = error.message.split(":");
+        return NextResponse.json(
+          { error: `Этот телефон уже указан у клиента ${clientName} (№${clientId})` },
+          { status: 409 },
+        );
+      }
+      if (error.message.startsWith("AMOUNT_BELOW_RECEIVED:"))
+        return NextResponse.json(
+          { error: `Сумма заказа не может быть меньше уже полученной оплаты (${error.message.split(":")[1]} ₸)` },
+          { status: 409 },
+        );
+      return NextResponse.json(
+        { error: "Проверьте обязательные поля, телефон, сумму и основание изменения" },
+        { status: 400 },
       );
     }
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")

@@ -193,11 +193,23 @@ export async function setPartnerAgreedCost(
   actor: PartnerManagementActor,
   dates: { agreedAt?: Date; workDueAt?: Date | null; paymentDueAt?: Date | null } = {},
 ) {
-  director(actor);
   const relation = await loadedRelation(relationId);
   if (!relation) throw new PartnerManagementError("RELATION_NOT_FOUND");
+  if (
+    actor.role !== Role.DIRECTOR &&
+    !(actor.role === Role.MANAGER && relation.order.managerUser?.id === actor.userId)
+  ) throw new PartnerManagementError("FORBIDDEN");
   const agreed = positiveMoney(amount);
   const before = calculateLoadedPartnerRelation(relation);
+  const pendingPayout = relation.operations
+    .filter((operation) =>
+      operation.type === PartnerSettlementOperationType.COMPANY_TO_PARTNER &&
+      operation.status === PartnerSettlementOperationStatus.PENDING)
+    .reduce((sum, operation) => sum.add(operation.amount), new Prisma.Decimal(0));
+  if (agreed.lt(before.companyPaidPartner.add(pendingPayout)))
+    throw new PartnerManagementError("PARTNER_COST_BELOW_PAID_OR_PENDING");
+  if (actor.role === Role.MANAGER && before.companyPaidPartner.gt(0))
+    throw new PartnerManagementError("DIRECTOR_CONFIRMATION_REQUIRED");
   if (agreed.lt(before.companyPaidPartner) && !comment.trim())
     throw new PartnerManagementError("PARTNER_COST_BELOW_PAID_REASON_REQUIRED");
   await prisma.$transaction([
@@ -464,7 +476,6 @@ export async function linkPartnerOrder(input: {
   paymentDueAt?: Date | null;
   comment?: string;
 }, actor: PartnerManagementActor) {
-  director(actor);
   const tenant = companyId();
   const [partner, order, existing] = await sequentialQueries([
     () => prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, isTest: false, active: true, archived: false, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } }),
@@ -473,6 +484,10 @@ export async function linkPartnerOrder(input: {
   ] as const);
   if (!partner) throw new PartnerManagementError("PARTNER_NOT_FOUND");
   if (!order) throw new PartnerManagementError("ORDER_NOT_FOUND");
+  if (
+    actor.role !== Role.DIRECTOR &&
+    !(actor.role === Role.MANAGER && order.managerUserId === actor.userId)
+  ) throw new PartnerManagementError("FORBIDDEN");
   if (existing) {
     if (existing.partnerId !== partner.id) throw new PartnerManagementError("ORDER_ALREADY_LINKED");
     return { relation: relationView(existing), created: false };
@@ -518,25 +533,43 @@ export async function setOrderPartnerAgreement(input: {
   paymentDueAt?: Date | null;
   comment?: string;
 }, actor: PartnerManagementActor) {
-  director(actor);
   const tenant = companyId();
   const [order, existing] = await sequentialQueries([
     () => prisma.order.findFirst({
-      where: { id: input.orderId, companyId: tenant, deletedAt: null },
+      where: {
+        id: input.orderId,
+        companyId: tenant,
+        deletedAt: null,
+        ...(actor.role === Role.MANAGER ? { managerUserId: actor.userId } : {}),
+      },
       include: { payments: { where: { companyId: tenant } }, partnerRelation: true },
     }),
     () => prisma.partnerOrderRelation.findFirst({ where: { companyId: tenant, orderId: input.orderId } }),
   ] as const);
   if (!order) throw new PartnerManagementError("ORDER_NOT_FOUND");
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER)
+    throw new PartnerManagementError("FORBIDDEN");
   const partner = await prisma.partner.findFirst({
     where: { id: input.partnerId, companyId: tenant, isTest: false, active: true, archived: false },
   });
   if (!partner) throw new PartnerManagementError("PARTNER_NOT_FOUND");
   const agreed = positiveMoney(input.amount);
+  const postedPayoutForCurrent = order.payments.some((payment) =>
+    payment.partnerId === order.partnerId && payment.type === "PARTNER_PAYOUT");
+  if (actor.role === Role.MANAGER && postedPayoutForCurrent)
+    throw new PartnerManagementError("DIRECTOR_CONFIRMATION_REQUIRED");
   if (existing && existing.partnerId !== partner.id) {
     const postedPayout = order.payments.some((payment) =>
       payment.partnerId === existing.partnerId && payment.type === "PARTNER_PAYOUT");
     if (postedPayout) throw new PartnerManagementError("PARTNER_REASSIGNMENT_WITH_PAYMENTS");
+    const pendingPayout = await prisma.partnerSettlementOperation.count({
+      where: {
+        relationId: existing.id,
+        type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+        status: PartnerSettlementOperationStatus.PENDING,
+      },
+    });
+    if (pendingPayout) throw new PartnerManagementError("PARTNER_REASSIGNMENT_WITH_PENDING_PAYOUT");
     const reason = input.comment?.trim().slice(0, 2000) ?? "";
     if (!reason) throw new PartnerManagementError("PARTNER_REASSIGNMENT_REASON_REQUIRED");
     await prisma.$transaction(async (tx) => {
@@ -928,6 +961,263 @@ export async function createPartnerPayoutForOrder(input: {
     idempotencyKey: input.idempotencyKey,
     requestHash: input.requestHash,
   }, actor);
+}
+
+export async function requestPartnerPayoutForOrder(input: {
+  orderId: number;
+  amount: Prisma.Decimal.Value;
+  operationDate: Date;
+  method: string;
+  account?: string;
+  comment?: string;
+  idempotencyKey: string;
+  requestHash: string;
+}, actor: PartnerManagementActor) {
+  if (actor.role !== Role.MANAGER) throw new PartnerManagementError("FORBIDDEN");
+  const tenant = companyId();
+  if (Number.isNaN(input.operationDate.getTime()))
+    throw new PartnerManagementError("INVALID_DATE");
+  const amount = positiveMoney(input.amount);
+  if (!input.method.trim()) throw new PartnerManagementError("INVALID_METHOD");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${40_000_000 + input.orderId})`;
+    const replay = await tx.partnerSettlementOperation.findFirst({
+      where: { companyId: tenant, idempotencyKey: input.idempotencyKey },
+    });
+    if (replay) {
+      if (!compareRequestHash(replay.requestHash, input.requestHash))
+        throw new PartnerManagementError("IDEMPOTENCY_CONFLICT");
+      return { operation: replay, created: false };
+    }
+    const relation = await tx.partnerOrderRelation.findFirst({
+      where: {
+        companyId: tenant,
+        orderId: input.orderId,
+        order: {
+          companyId: tenant,
+          deletedAt: null,
+          managerUserId: actor.userId,
+          partnerAgreedAt: { not: null },
+        },
+      },
+      include: relationInclude,
+    });
+    if (!relation) throw new PartnerManagementError("RELATION_NOT_FOUND");
+    const metrics = calculateLoadedPartnerRelation(relation);
+    const pending = relation.operations
+      .filter((operation) =>
+        operation.type === PartnerSettlementOperationType.COMPANY_TO_PARTNER &&
+        operation.status === PartnerSettlementOperationStatus.PENDING)
+      .reduce((sum, operation) => sum.add(operation.amount), new Prisma.Decimal(0));
+    if (amount.add(pending).gt(metrics.companyDebt))
+      throw new PartnerManagementError("PAYOUT_EXCEEDS_PARTNER_BALANCE");
+    const created = await tx.partnerSettlementOperation.create({
+      data: {
+        companyId: tenant,
+        relationId: relation.id,
+        partnerId: relation.partnerId,
+        orderId: relation.orderId,
+        type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+        status: PartnerSettlementOperationStatus.PENDING,
+        amount,
+        operationDate: input.operationDate,
+        method: input.method.trim().slice(0, 100) || null,
+        account: input.account?.trim().slice(0, 200) || null,
+        comment: input.comment?.trim().slice(0, 2000) || null,
+        createdById: actor.userId,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: input.requestHash,
+      },
+    });
+    await tx.partnerAuditEvent.create({
+      data: {
+        companyId: tenant,
+        partnerId: relation.partnerId,
+        relationId: relation.id,
+        operationId: created.id,
+        action: "PARTNER_PAYOUT_REQUESTED",
+        after: { amount: amount.toString(), status: "PENDING" },
+        comment: created.comment,
+        actorId: actor.userId,
+      },
+    });
+    await tx.orderEvent.create({
+      data: {
+        companyId: tenant,
+        orderId: relation.orderId,
+        title: "Оплата цеху заявлена менеджером",
+        description: `${amount.toString()} ₸ · ожидает подтверждения директора`,
+        user: actor.name,
+      },
+    });
+    return { operation: created, created: true };
+  }, {
+    // The per-order advisory lock serializes balance reservations. READ COMMITTED
+    // then guarantees that a waiter sees the request committed by its predecessor
+    // instead of failing with a stale SERIALIZABLE snapshot.
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+    maxWait: 10_000,
+    timeout: 20_000,
+  });
+}
+
+export async function withdrawPartnerPayoutRequest(
+  operationId: number,
+  actor: PartnerManagementActor,
+) {
+  if (actor.role !== Role.MANAGER) throw new PartnerManagementError("FORBIDDEN");
+  const tenant = companyId();
+  const operation = await prisma.partnerSettlementOperation.findFirst({
+    where: {
+      id: operationId,
+      companyId: tenant,
+      type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+      status: PartnerSettlementOperationStatus.PENDING,
+      createdById: actor.userId,
+      order: { managerUserId: actor.userId },
+    },
+  });
+  if (!operation) throw new PartnerManagementError("PAYOUT_REQUEST_NOT_FOUND");
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.partnerSettlementOperation.update({
+      where: { id: operation.id },
+      data: { status: PartnerSettlementOperationStatus.CANCELLED },
+    });
+    await tx.partnerAuditEvent.create({
+      data: {
+        companyId: tenant,
+        partnerId: operation.partnerId,
+        relationId: operation.relationId,
+        operationId: operation.id,
+        action: "PARTNER_PAYOUT_REQUEST_WITHDRAWN",
+        before: { status: "PENDING" },
+        after: { status: "CANCELLED" },
+        actorId: actor.userId,
+      },
+    });
+    return updated;
+  });
+}
+
+export async function reviewPartnerPayoutRequest(input: {
+  operationId: number;
+  decision: "CONFIRM" | "REJECT";
+  reason?: string;
+  idempotencyKey: string;
+  requestHash: string;
+}, actor: PartnerManagementActor) {
+  director(actor);
+  const tenant = companyId();
+  const operation = await prisma.partnerSettlementOperation.findFirst({
+    where: {
+      id: input.operationId,
+      companyId: tenant,
+      type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+    },
+    include: { order: true, createdBy: { select: { name: true } } },
+  });
+  if (!operation) throw new PartnerManagementError("PAYOUT_REQUEST_NOT_FOUND");
+  if (operation.status === PartnerSettlementOperationStatus.POSTED)
+    return { operation, created: false };
+  if (operation.status !== PartnerSettlementOperationStatus.PENDING)
+    throw new PartnerManagementError("PAYOUT_REQUEST_ALREADY_REVIEWED");
+  if (input.decision === "REJECT") {
+    const reason = input.reason?.trim().slice(0, 2000) ?? "";
+    if (!reason) throw new PartnerManagementError("REJECTION_REASON_REQUIRED");
+    const rejected = await prisma.$transaction(async (tx) => {
+      const updated = await tx.partnerSettlementOperation.update({
+        where: { id: operation.id },
+        data: { status: PartnerSettlementOperationStatus.REJECTED },
+      });
+      await tx.partnerAuditEvent.create({
+        data: {
+          companyId: tenant,
+          partnerId: operation.partnerId,
+          relationId: operation.relationId,
+          operationId: operation.id,
+          action: "PARTNER_PAYOUT_REQUEST_REJECTED",
+          before: { status: "PENDING" },
+          after: { status: "REJECTED" },
+          comment: reason,
+          actorId: actor.userId,
+        },
+      });
+      await tx.orderEvent.create({
+        data: {
+          companyId: tenant,
+          orderId: operation.orderId,
+          title: "Оплата цеху отклонена",
+          description: reason,
+          user: actor.name,
+        },
+      });
+      return updated;
+    });
+    return { operation: rejected, created: true };
+  }
+  const financial = await createFinanceOperation({
+    type: "PARTNER_PAYOUT",
+    orderId: operation.orderId,
+    partnerId: operation.partnerId,
+    amount: Number(operation.amount),
+    method: operation.method?.trim() || "other",
+    operationDate: operation.operationDate,
+    comment: operation.comment ?? `Подтверждена заявка менеджера ${operation.createdBy.name}`,
+    author: actor.name,
+    authorId: actor.userId,
+    idempotencyKey: `partner-payout-approval:${operation.id}`,
+    requestHash: input.requestHash,
+    transactionEffect: async (tx, payment) => {
+      await tx.partnerSettlementOperation.update({
+        where: { id: operation.id },
+        data: {
+          status: PartnerSettlementOperationStatus.POSTED,
+          paymentId: payment.id,
+        },
+      });
+      await tx.partnerAuditEvent.create({
+        data: {
+          companyId: tenant,
+          partnerId: operation.partnerId,
+          relationId: operation.relationId,
+          operationId: operation.id,
+          action: "PARTNER_PAYOUT_REQUEST_CONFIRMED",
+          before: { status: "PENDING" },
+          after: { status: "POSTED", paymentId: payment.id },
+          comment: input.reason?.trim().slice(0, 2000) || null,
+          actorId: actor.userId,
+        },
+      });
+    },
+  });
+  if (!financial) throw new PartnerManagementError("ORDER_NOT_FOUND");
+  const posted = await prisma.partnerSettlementOperation.findUniqueOrThrow({
+    where: { id: operation.id },
+  });
+  return { operation: posted, created: financial.created };
+}
+
+export async function getPendingPartnerPayoutRequests() {
+  return prisma.partnerSettlementOperation.findMany({
+    where: {
+      companyId: companyId(),
+      type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+      status: PartnerSettlementOperationStatus.PENDING,
+    },
+    include: {
+      partner: { select: { id: true, name: true } },
+      order: {
+        select: {
+          id: true,
+          number: true,
+          manager: true,
+          client: { select: { name: true } },
+        },
+      },
+      createdBy: { select: { id: true, name: true } },
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
 }
 
 export async function linkHistoricalPartnerPayment(input: {

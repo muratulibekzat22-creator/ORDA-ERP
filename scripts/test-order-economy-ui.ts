@@ -15,7 +15,7 @@ const [orders, workspace, economy, settlement, partnerWorkspace, finance, dashbo
   ]);
 
 assert.match(orders, /\?action=assign-workshop#settlements/u, "assign workshop keeps the order page context");
-assert.match(workspace, /director && \(\s*<OrderSettlementPanel/u, "director receives the real settlement controls");
+assert.match(workspace, /canSeeClientFinance && \(\s*<OrderSettlementPanel/u, "director and permitted operational roles receive the real settlement controls");
 assert.match(settlement, /Передать в основной цех/u, "default workshop action is visible");
 assert.match(settlement, /aria-label="Передать заказ в цех"/u, "workshop drawer is accessible");
 assert.match(economy, /Прибыль не рассчитана|economy\.profit\.label/u, "incomplete profit has an explicit state");

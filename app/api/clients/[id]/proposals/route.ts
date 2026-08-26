@@ -171,7 +171,19 @@ export async function POST(request: Request, context: Context) {
         unknown
       >;
       return {
+        calculationId: item.id,
         material: item.material,
+        calculatedPrice: Number(calculation.calculatedPrice ?? item.baseClientPrice),
+        finalPrice: Number(calculation.finalPrice ?? item.clientPrice),
+        pricingMode: calculation.pricingMode === "MANUAL" ? "MANUAL" : "CALCULATOR",
+        discountOrMarkup: Number(
+          calculation.discountOrMarkup ??
+            Number(item.clientPrice) - Number(item.baseClientPrice),
+        ),
+        manualPricingComment:
+          typeof calculation.manualPricingComment === "string"
+            ? calculation.manualPricingComment
+            : null,
         total: Number(item.clientPrice),
         composition: calculation.lines ?? [],
         executionTerm,
@@ -221,7 +233,9 @@ export async function POST(request: Request, context: Context) {
             client: {
               name: client.name,
               phone: client.phone,
+              whatsapp: client.whatsapp,
               city: client.city,
+              address: client.address,
             },
             variants,
             introduction:
@@ -242,7 +256,10 @@ export async function POST(request: Request, context: Context) {
         const created = await tx.commercialProposal.create({
           data: {
             clientId,
-            calculationId: ordered[1].id,
+            // Required relational anchor for legacy readers. The customer's
+            // business choice is stored per variant and selected explicitly
+            // during conversion; this field is never an implicit selection.
+            calculationId: ordered[0].id,
             number,
             rootNumber,
             version,

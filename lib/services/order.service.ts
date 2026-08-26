@@ -48,6 +48,7 @@ export async function getOrders(
       promisedAt: true,
       partnerPlannedReadyAt: true,
       completedAt: true,
+      financialClosedAt: true,
       createdAt: true,
       updatedAt: true,
       client: { select: { id: true, name: true, phone: true, city: true } },

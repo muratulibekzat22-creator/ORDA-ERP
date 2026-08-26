@@ -107,6 +107,7 @@ export async function getAuthorizedOrder(id: number) {
       amount: undefined,
       prepayment: undefined,
       balance: undefined,
+      partnerPrice: undefined,
       companyProfit: undefined,
       payments: [],
       partnerAssignmentHistory: [],
@@ -135,17 +136,12 @@ export async function getAuthorizedOrder(id: number) {
       calculations: [],
     } as unknown as typeof order;
 
-  // Server Components serialize their props into the RSC response. Remove
-  // management figures here as well as in the REST API so they never reach a
-  // manager's browser, even when the interface does not render them.
+  // Server Components serialize their props into the RSC response. Managers
+  // receive operational settlement figures for their order, never company P&L.
   return {
     ...order,
     managerUser: undefined,
-    partnerPrice: undefined,
-    partnerAgreedAt: undefined,
     companyProfit: undefined,
-    partnerPaid: undefined,
-    partnerBalance: undefined,
     payments: [],
     partnerAssignmentHistory: [],
     payrollAccruals: [],
@@ -154,7 +150,7 @@ export async function getAuthorizedOrder(id: number) {
     partnerRelation: undefined,
     costPlan: undefined,
     costPlanRevisions: [],
-    defaultWorkshop: undefined,
+    defaultWorkshop: role === Role.MANAGER ? order.defaultWorkshop : undefined,
     economy: undefined,
     measurements: order.measurements.map((measurement) => {
       const safe = { ...measurement } as Partial<typeof measurement>;
@@ -162,10 +158,23 @@ export async function getAuthorizedOrder(id: number) {
       return safe;
     }),
     settlement: role === Role.MANAGER
-      ? { client: order.settlement.client, manager: order.settlement.manager }
+      ? {
+          client: order.settlement.client,
+          partner: {
+            ...order.settlement.partner,
+            assignments: [],
+            history: null,
+          },
+          manager: order.settlement.manager,
+          measurer: order.settlement.measurer,
+        }
       : [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
         ? undefined
         : { client: order.settlement.client },
+    partnerPrice: role === Role.MANAGER ? order.partnerPrice : undefined,
+    partnerAgreedAt: role === Role.MANAGER ? order.partnerAgreedAt : undefined,
+    partnerPaid: role === Role.MANAGER ? order.partnerPaid : undefined,
+    partnerBalance: role === Role.MANAGER ? order.partnerBalance : undefined,
     amount: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
       ? undefined
       : order.amount,

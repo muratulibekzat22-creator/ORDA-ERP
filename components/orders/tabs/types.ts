@@ -9,6 +9,8 @@ export type OrderTabData = {
   createdAt: Date | string;
   orderReceivedAt: Date | string;
   promisedAt: Date | string | null;
+  completedAt: Date | string | null;
+  financialClosedAt: Date | string | null;
   address: string;
   mapUrl: string;
   staircase: string;
@@ -38,6 +40,8 @@ export type OrderTabData = {
     whatsapp: string;
     city: string;
     address: string;
+    iin: string;
+    comment: string;
   };
   partner: {
     id: number;
@@ -57,9 +61,9 @@ export type OrderTabData = {
   } | null;
   settlement?: {
     cancelled: boolean;
-    client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
+    client?: { total: number; receivedGross: number; refunds: number; received: number; remaining: number; overpayment: number; dueAt: Date | string | null; status: string };
     partner?: {
-      partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; remaining: number; overpayment: number; status: string;
+      partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; pending: number; remaining: number; overpayment: number; status: string;
       payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
       history?: {

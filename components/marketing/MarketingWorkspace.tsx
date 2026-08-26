@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
+import { useSearchParams } from "next/navigation";
 import { BarChart3, Download, FileUp, Loader2, Plus, RefreshCw, Search, Send } from "lucide-react";
 
 import { CAMPAIGN_STATUS_LABELS, SPEND_STATUS_LABELS } from "@/lib/marketing/domain";
+import MarketingContentTasks from "@/components/marketing/MarketingContentTasks";
 
 type Source = { id: number; name: string; code: string; platform: string; isPaid: boolean; system: boolean };
 type Channel = { id: number; name: string; code: string; system: boolean };
@@ -23,7 +25,7 @@ type WorkspaceData = {
   spends: Spend[]; budgets: Budget[]; managers: Array<{ id: number; name: string; role: string }>; marketingUsers: Array<{ id: number; name: string; role: string }>; categories: Array<{ id: number; name: string; code: string }>;
 };
 
-const tabs = ["Обзор", "Входящие", "Заявки", "Кампании", "Каналы", "Расходы и показатели", "Воронка", "Атрибуция", "Бюджет", "Отчёты"] as const;
+const tabs = ["Обзор", "Отзывы и контент", "Входящие", "Заявки", "Кампании", "Каналы", "Расходы и показатели", "Воронка", "Атрибуция", "Бюджет", "Отчёты"] as const;
 type Tab = typeof tabs[number];
 const field = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500";
 const card = "rounded-2xl border border-slate-800 bg-slate-900/70 p-4";
@@ -68,8 +70,11 @@ const Td = ({ children, className = "" }: { children: React.ReactNode; className
 
 export default function MarketingWorkspace() {
   const { data: session } = useSession();
+  const searchParams = useSearchParams();
   const now = new Date();
-  const [active, setActive] = useState<Tab>("Обзор");
+  const [active, setActive] = useState<Tab>(
+    searchParams.get("tab") === "content" ? "Отзывы и контент" : "Обзор",
+  );
   const [from, setFrom] = useState(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29).toISOString().slice(0, 10));
   const [to, setTo] = useState(now.toISOString().slice(0, 10));
   const [search, setSearch] = useState("");
@@ -117,6 +122,7 @@ export default function MarketingWorkspace() {
     <div data-scroll-region className="mb-5 overflow-x-auto"><div role="tablist" aria-label="Разделы маркетинга" className="flex min-w-max gap-2 rounded-2xl border border-slate-800 bg-slate-900/60 p-2">{tabs.map((tab) => <button key={tab} role="tab" aria-selected={active === tab} type="button" onClick={() => setActive(tab)} className={`min-h-11 rounded-xl px-4 text-sm font-semibold ${active === tab ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}>{tab}</button>)}</div></div>
     {!data ? (busy ? <div className="grid min-h-72 place-items-center text-slate-400"><Loader2 className="animate-spin"/></div> : <Empty/>) : <>
       {active === "Обзор" && <Overview data={data}/>} 
+      {active === "Отзывы и контент" && <MarketingContentTasks initialFilter={searchParams.get("filter") ?? "all"}/>}
       {active === "Входящие" && <Incoming data={data} search={search} setSearch={setSearch} send={send} busy={busy}/>} 
       {active === "Заявки" && <Applications data={data}/>} 
       {active === "Кампании" && <Campaigns data={data} send={send} busy={busy}/>} 

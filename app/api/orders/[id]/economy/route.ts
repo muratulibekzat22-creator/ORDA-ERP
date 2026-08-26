@@ -25,8 +25,8 @@ async function authorize(context: Context, write = false) {
   if (auth.response) return { response: auth.response } as const;
   const role = auth.session!.user.role as Role;
   if (
-    role !== Role.DIRECTOR &&
-    (!write && role !== Role.ACCOUNTANT)
+    (write && role !== Role.DIRECTOR) ||
+    (!write && role !== Role.DIRECTOR && role !== Role.ACCOUNTANT && role !== Role.MANAGER)
   )
     return {
       response: NextResponse.json(
@@ -44,7 +44,14 @@ async function authorize(context: Context, write = false) {
     } as const;
   const companyId = requireTenantIdentity().companyId;
   const order = await prisma.order.findFirst({
-    where: { id, companyId, deletedAt: null },
+    where: {
+      id,
+      companyId,
+      deletedAt: null,
+      ...(role === Role.MANAGER
+        ? { managerUserId: Number(auth.session!.user.id) }
+        : {}),
+    },
     select: { id: true, number: true, client: { select: { name: true } } },
   });
   if (!order)
@@ -54,7 +61,7 @@ async function authorize(context: Context, write = false) {
         { status: 404 },
       ),
     } as const;
-  return { auth, companyId, id, order } as const;
+  return { auth, companyId, id, order, role } as const;
 }
 
 export async function GET(_: Request, context: Context) {
@@ -113,9 +120,9 @@ export async function GET(_: Request, context: Context) {
   return NextResponse.json({
     order: access.order,
     partners,
-    employees,
+    employees: access.role === Role.DIRECTOR ? employees : [],
     period,
-    costPlan,
+    costPlan: access.role === Role.DIRECTOR ? costPlan : null,
     defaultWorkshop:
       defaultWorkshop?.active &&
       !defaultWorkshop.archived &&

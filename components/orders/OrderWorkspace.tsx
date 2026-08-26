@@ -25,6 +25,7 @@ import { useState } from "react";
 import StairCalculator from "@/components/calculator/StairCalculator";
 import ProjectPayments from "@/components/project/ProjectPayments";
 import OrderActionsMenu from "./OrderActionsMenu";
+import OrderCompletionPanel from "./OrderCompletionPanel";
 import OrderProcess from "./OrderProcess";
 import OrderSettlementPanel from "./OrderSettlementPanel";
 import OrderEconomy from "./OrderEconomy";
@@ -32,7 +33,6 @@ import {
   ORDER_STAGE_LABELS,
   projectOrderStage,
 } from "@/lib/orders/presentation";
-import { paymentMethodLabel } from "@/lib/orders/registration";
 
 import DocumentsTab from "./tabs/DocumentsTab";
 import FilesTab from "./tabs/FilesTab";
@@ -113,11 +113,33 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const [error, setError] = useState("");
   const [comment, setComment] = useState("");
   const [form, setForm] = useState({
-    address: order.address,
+    clientName: order.client.name,
+    phone: order.client.phone,
+    whatsapp: order.client.whatsapp,
+    city: order.client.city,
+    clientAddress: order.client.address,
+    iin: order.client.iin ?? "",
+    clientComment: order.client.comment ?? "",
+    orderAddress: order.address,
+    mapUrl: order.mapUrl,
     material: order.material,
     staircase: order.staircase,
-    manager: order.manager,
+    frameComment: order.frameComment,
+    railingType: order.railingType,
+    supportType: order.supportType,
+    color: order.color,
+    lighting: order.lighting,
+    lightingDetails: order.lightingDetails,
+    cladding: order.cladding,
+    claddingDetails: order.claddingDetails,
+    additionalDetails: order.additionalDetails,
+    paymentMethod: order.paymentMethod,
+    orderReceivedAt: new Date(order.orderReceivedAt).toISOString().slice(0, 10),
+    promisedAt: order.promisedAt
+      ? new Date(order.promisedAt).toISOString().slice(0, 10)
+      : "",
     amount: String(order.amount),
+    reason: "",
   });
   const archived = Boolean(order.deletedAt);
   const role = session?.user.role ?? "";
@@ -304,6 +326,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         readOnly={archived}
       />
 
+      {(["DIRECTOR", "MANAGER"] as string[]).includes(role) && (
+        <OrderCompletionPanel order={order} readOnly={archived} />
+      )}
+
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.85fr)] xl:gap-5">
         <div className="space-y-4 md:space-y-5">
           <section id="client" className={panel}>
@@ -400,25 +426,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           </section>
 
           {canSeeClientFinance && (
-            <section id="order-finance" className={panel}>
-              <SectionTitle
-                icon={<CircleDollarSign size={20} />}
-                title="Финансы заказа"
-                description="Клиентские суммы; расчёт с цехом остаётся отдельным"
-              />
-              <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 md:p-5">
-                <Field title="Общая сумма" value={money(order.amount)} />
-                <Field title="Получено" value={money(order.prepayment)} />
-                <Field title="Остаток" value={money(order.balance)} />
-                <Field
-                  title="Способ оплаты"
-                  value={paymentMethodLabel(order.paymentMethod) || "Не указан"}
-                />
-              </div>
-            </section>
-          )}
-
-          {director && (
             <OrderSettlementPanel order={order} readOnly={archived} />
           )}
           {director && <OrderEconomy order={order} />}
@@ -517,8 +524,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               </details>
             </section>
           )}
-
-          {!director && <OrderSettlementPanel order={order} readOnly={archived} />}
 
           <section id="documents" className={panel}>
             <SectionTitle
@@ -717,10 +722,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               {[
                 ["Клиент", "client"],
                 ["Технические параметры", "technical"],
-                ...(canSeeClientFinance
-                  ? [["Финансы заказа", "order-finance"]]
-                  : []),
-                ...(canSeeClientFinance ? [["Расчёты", "settlements"]] : []),
+                ...(canSeeClientFinance ? [["Заказ и расчёты", "settlements"]] : []),
                 ["Расчёт", "calculation"],
                 ["Документы", "documents"],
                 ["История", "history"],
@@ -764,16 +766,35 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             </h2>
             {editing ? (
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <p className="rounded-xl bg-blue-950/40 p-3 text-sm text-blue-200 sm:col-span-2">
+                  Контакты обновятся в канонической карточке клиента. История оплат и документы не переписываются.
+                </p>
                 {[
-                  ["address", "Адрес"],
+                  ["clientName", "ФИО клиента"],
+                  ["phone", "Телефон"],
+                  ["whatsapp", "WhatsApp"],
+                  ["city", "Город"],
+                  ["clientAddress", "Адрес клиента"],
+                  ["iin", "ИИН"],
+                  ["clientComment", "Комментарий клиента"],
+                  ["orderAddress", "Адрес монтажа"],
+                  ["mapUrl", "Ссылка на карту"],
                   ["material", "Материал"],
                   ["staircase", "Тип лестницы"],
-                  ["manager", "Менеджер"],
+                  ["frameComment", "Каркас"],
+                  ["railingType", "Ограждение"],
+                  ["supportType", "Опоры"],
+                  ["color", "Цвет"],
+                  ["lightingDetails", "Подсветка — детали"],
+                  ["claddingDetails", "Обшивка — детали"],
+                  ["additionalDetails", "Дополнительные детали"],
+                  ["paymentMethod", "Способ оплаты"],
+                  ["reason", "Основание изменения"],
                 ].map(([key, title]) => (
                   <label key={key} className="text-sm text-slate-300">
                     {title}
                     <input
-                      value={form[key as keyof typeof form]}
+                      value={String(form[key as keyof typeof form] ?? "")}
                       onChange={(event) =>
                         setForm((current) => ({
                           ...current,
@@ -799,6 +820,20 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                     }
                     className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
                   />
+                </label>
+                <label className="text-sm text-slate-300">
+                  Дата заказа
+                  <input type="date" value={form.orderReceivedAt} onChange={(event) => setForm((current) => ({ ...current, orderReceivedAt: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" />
+                </label>
+                <label className="text-sm text-slate-300">
+                  Обещанный срок
+                  <input type="date" value={form.promisedAt} onChange={(event) => setForm((current) => ({ ...current, promisedAt: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" />
+                </label>
+                <label className="flex min-h-11 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+                  <input type="checkbox" checked={form.lighting} onChange={(event) => setForm((current) => ({ ...current, lighting: event.target.checked }))} /> Подсветка
+                </label>
+                <label className="flex min-h-11 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-white">
+                  <input type="checkbox" checked={form.cladding} onChange={(event) => setForm((current) => ({ ...current, cladding: event.target.checked }))} /> Обшивка
                 </label>
               </div>
             ) : (
@@ -836,11 +871,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 type="button"
                 onClick={() => {
                   const editPayload: Record<string, unknown> = {
-                    address: form.address,
-                    material: form.material,
-                    staircase: form.staircase,
-                    manager: form.manager,
+                    action: "updateDetails",
+                    ...form,
                     amount: Number(form.amount),
+                    promisedAt: form.promisedAt || null,
                   };
                   void patch(
                     editing ? editPayload : { comment },

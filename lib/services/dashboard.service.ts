@@ -294,6 +294,46 @@ async function salesProjection(scope: DashboardScope) {
         },
       })
     : [];
+  const [incompleteOrderRows, marketingContentRows] = scope.role === Role.DIRECTOR
+    ? await Promise.all([
+        prisma.order.findMany({
+          where: {
+            deletedAt: null,
+            lifecycle: { not: OrderLifecycle.CANCELLED },
+            OR: [
+              { partnerId: null },
+              { partnerAgreedAt: null },
+              { balance: { gt: 0 } },
+            ],
+          },
+          select: {
+            id: true,
+            number: true,
+            amount: true,
+            balance: true,
+            partnerId: true,
+            partnerAgreedAt: true,
+            partner: { select: { name: true } },
+            client: { select: { name: true } },
+          },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 12,
+        }),
+        prisma.marketingContentTask.findMany({
+          select: {
+            status: true,
+            scheduledAt: true,
+            reviewText: true,
+            assignedMarketerId: true,
+            contentReceivedAt: true,
+            publishedAt: true,
+            order: { select: { completedAt: true } },
+            assets: { select: { type: true } },
+          },
+          take: 1000,
+        }),
+      ])
+    : [[], []];
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
   const periodLeads = leads;
@@ -413,11 +453,37 @@ async function salesProjection(scope: DashboardScope) {
         productionPainting: productionCount(["Покраска"]),
         productionReady: productionCount(["Готово к монтажу"]),
         productionOverdue: productionMetrics.reduce((sum, row) => sum + Number(row.overdue), 0),
+        deliveredThisMonth: marketingContentRows.filter((task) => task.order.completedAt && task.order.completedAt >= monthStart).length,
+        contentWaitingReview: marketingContentRows.filter((task) => !task.reviewText && task.status !== "REFUSED" && task.status !== "PUBLISHED").length,
+        contentWaitingPhoto: marketingContentRows.filter((task) => !task.assets.some((asset) => asset.type === "PHOTO") && task.status !== "REFUSED" && task.status !== "PUBLISHED").length,
+        contentWaitingVideo: marketingContentRows.filter((task) => !task.assets.some((asset) => asset.type === "VIDEO") && task.status !== "REFUSED" && task.status !== "PUBLISHED").length,
+        contentShootsScheduled: marketingContentRows.filter((task) => task.status === "SHOOT_SCHEDULED").length,
+        contentReceived: marketingContentRows.filter((task) => Boolean(task.contentReceivedAt)).length,
+        contentPublished: marketingContentRows.filter((task) => Boolean(task.publishedAt) || task.status === "PUBLISHED").length,
+        contentRefused: marketingContentRows.filter((task) => task.status === "REFUSED").length,
+        contentUnassigned: marketingContentRows.filter((task) => !task.assignedMarketerId && task.status !== "REFUSED" && task.status !== "PUBLISHED").length,
       } : {}),
     },
     ...(scope.role === Role.DIRECTOR ? { managers } : {}),
     ...(dashboardProfitability ? { profitability: dashboardProfitability } : {}),
     ...(scope.role === Role.MANAGER ? { measurementAttention } : {}),
+    ...(scope.role === Role.DIRECTOR ? {
+      attention: {
+        incompleteOrders: incompleteOrderRows.map((order) => ({
+          id: order.id,
+          number: order.number,
+          client: order.client.name,
+          amount: Number(order.amount),
+          partnerId: order.partnerId,
+          partnerName: order.partner?.name ?? null,
+          missing: [
+            !order.partnerId ? "цех" : null,
+            !order.partnerAgreedAt ? "стоимость цеха" : null,
+            Number(order.balance) > 0 ? "остаток клиента" : null,
+          ].filter((item): item is string => Boolean(item)),
+        })),
+      },
+    } : {}),
     activities,
   };
 }

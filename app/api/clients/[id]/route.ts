@@ -1,6 +1,6 @@
 import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { canAccessLead, normalizeLeadSource } from "@/lib/leads/domain";
+import { canAccessLead, normalizeLeadSource, normalizePhone } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import {
@@ -30,6 +30,24 @@ export async function PATCH(request: Request, { params }: Context) {
     const data: Prisma.ClientUpdateInput = {};
     for (const key of ["name", "phone", "whatsapp", "city", "address", "iin", "estimateNotes", "comment"] as const) if (typeof body[key] === "string") data[key] = body[key].trim();
     if (["name", "phone", "city"].some((key) => key in body && !String(body[key]).trim())) return NextResponse.json({ error: "Обязательные поля не могут быть пустыми" }, { status: 400 });
+    if ("phone" in body || "whatsapp" in body) {
+      const phone = "phone" in body ? normalizePhone(String(body.phone)) : null;
+      const whatsapp = "whatsapp" in body && String(body.whatsapp).trim()
+        ? normalizePhone(String(body.whatsapp))
+        : phone;
+      if (("phone" in body && !phone) || ("whatsapp" in body && String(body.whatsapp).trim() && !whatsapp))
+        return NextResponse.json({ error: "Некорректный телефон" }, { status: 400 });
+      const candidates = await prisma.client.findMany({
+        where: { id: { not: id }, deletedAt: null, active: true },
+        select: { id: true, name: true, phone: true, whatsapp: true },
+      });
+      const duplicate = candidates.find((client) =>
+        [normalizePhone(client.phone), normalizePhone(client.whatsapp)].some((value) => value && (value === phone || value === whatsapp)));
+      if (duplicate)
+        return NextResponse.json({ error: `Телефон уже принадлежит клиенту ${duplicate.name} (№${duplicate.id})` }, { status: 409 });
+      if (phone) data.phone = phone;
+      if (whatsapp) data.whatsapp = whatsapp;
+    }
     if ("sourceCode" in body || "source" in body) { const source = normalizeLeadSource(body.sourceCode ?? body.source); if (!source) return NextResponse.json({ error: "Некорректный источник" }, { status: 400 }); data.sourceCode = source; data.source = source; }
     if ("estimatedAmount" in body) { const value = Number(body.estimatedAmount); if (!Number.isFinite(value) || value < 0) return NextResponse.json({ error: "Некорректная сумма" }, { status: 400 }); data.estimatedAmount = String(value); data.amount = String(value); }
     return NextResponse.json(await prisma.client.update({ where: { id }, data }));
