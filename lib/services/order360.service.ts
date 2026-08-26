@@ -88,8 +88,12 @@ async function assertAccess(orderId: number, actor: Order360Actor) {
 }
 
 type GateItem = { code: string; passed: boolean; message: string };
-export async function evaluateGate(orderId: number, target: OrderLifecycle) {
-  const order = await prisma.order.findUnique({
+export async function evaluateGate(
+  orderId: number,
+  target: OrderLifecycle,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+) {
+  const order = await client.order.findUnique({
     where: { id: orderId },
     include: {
       documents: { select: { type: true } },
@@ -336,7 +340,7 @@ export async function transitionLifecycle(
         !input.reason?.trim()
       )
         throw new Order360Error("REASON_REQUIRED");
-      const gate = await evaluateGate(input.orderId, input.to);
+      const gate = await evaluateGate(input.orderId, input.to, tx);
       if (!gate.passed) {
         if (!(
           input.override &&

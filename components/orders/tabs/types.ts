@@ -11,6 +11,9 @@ export type OrderTabData = {
   promisedAt: Date | string | null;
   completedAt: Date | string | null;
   financialClosedAt: Date | string | null;
+  contractConfirmedAt: Date | string | null;
+  workshopConfirmedAt: Date | string | null;
+  installationCompleted: boolean;
   address: string;
   mapUrl: string;
   staircase: string;
@@ -51,6 +54,10 @@ export type OrderTabData = {
     city: string | null;
     active: boolean;
   } | null;
+  documents: Array<{
+    type: string;
+    status: string;
+  }>;
   defaultWorkshop?: { id: number; name: string } | null;
   costPlan?: {
     materialOutsideWorkshop: NumericValue;

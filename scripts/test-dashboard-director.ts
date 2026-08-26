@@ -4,12 +4,33 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { OrderLifecycle, Role } from "@prisma/client";
 import { dashboardPeriodRange, getDashboardSummary } from "../lib/services/dashboard.service";
+import { buildManagerOrderAttention, managerOrderBusinessStatus } from "../lib/orders/manager-attention";
 import { prisma } from "../lib/prisma";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Dashboard integration requires TEST_DATABASE_URL");
 const tag = `dashboard-${Date.now()}`;
 
 async function main() {
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "CREATED", contractConfirmed: false, partnerAssigned: false }), "Заказ оформлен");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "PREPARATION", contractConfirmed: true, partnerAssigned: false }), "Договор подписан");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "IN_PRODUCTION", contractConfirmed: true, partnerAssigned: true }), "В работе у цеха");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "ACCEPTANCE", contractConfirmed: true, partnerAssigned: true }), "Уточните: заказ завершён?");
+  const incompleteAttention = buildManagerOrderAttention({
+    id: 99,
+    number: "ORD-99",
+    lifecycle: "CREATED",
+    amount: 0,
+    promisedAt: null,
+    address: "",
+    staircase: "",
+    material: "",
+    contractConfirmed: false,
+    partnerAssigned: false,
+    client: { name: "", phone: "", city: "", address: "" },
+  });
+  assert(incompleteAttention.missing.includes("стоимость заказа"));
+  assert.equal(incompleteAttention.actionLabel, "Заполнить данные");
+  assert.equal(incompleteAttention.href, "/orders/99?action=edit");
   const month = dashboardPeriodRange("month", new Date("2026-08-31T20:30:00.000Z"));
   const today = dashboardPeriodRange("today", new Date("2026-08-31T20:30:00.000Z"));
   assert.equal(month.start.toISOString(), "2026-08-31T19:00:00.000Z");
@@ -45,6 +66,12 @@ async function main() {
     ]);
     const scopedMetrics = scopedManager.metrics as Record<string, number | undefined>;
     const emptyMetrics = emptyManager.metrics as Record<string, number | undefined>;
+    const scopedManagerProjection = scopedManager as typeof scopedManager & {
+      managerOrderAttention: ReturnType<typeof buildManagerOrderAttention>[];
+    };
+    const emptyManagerProjection = emptyManager as typeof emptyManager & {
+      managerOrderAttention: ReturnType<typeof buildManagerOrderAttention>[];
+    };
     assert("managers" in director && "partnerBalancePayable" in director.metrics, "director projection is incomplete");
     assert.equal(director.metrics.partnerBalancePayable, baselinePartnerPayable + 400, "director partner payable is not based on the agreed partner price");
     assert.equal(director.metrics.ordersWithoutPartner, baselineWithoutPartner + 1, "director orders-without-workshop count is incorrect");
@@ -57,6 +84,11 @@ async function main() {
     assert.equal(scopedMetrics.payrollBalancePayable, undefined, "manager received company payroll totals");
     assert.equal(scopedMetrics.expensesForMonth, undefined, "manager received company expenses");
     assert.equal(emptyMetrics.newLeads, 0); assert.equal(emptyMetrics.orders, 0); assert.equal(emptyMetrics.totalSales, 0);
+    assert.equal(scopedManagerProjection.managerOrderAttention.length, 1, "manager active-order queue is incomplete");
+    assert.equal(scopedManagerProjection.managerOrderAttention[0]?.id, ownOrder.id, "manager received another manager's order in attention queue");
+    assert(scopedManagerProjection.managerOrderAttention[0]?.missing.includes("срок заказа"), "missing order deadline was not detected");
+    assert.equal(scopedMetrics.ordersNeedAttention, 1, "manager attention KPI is incorrect");
+    assert.equal(emptyManagerProjection.managerOrderAttention.length, 0, "empty manager received an order queue");
     assert(!("newLeads" in accountant.metrics), "accountant received CRM projection");
     assert("partnerPayable" in accountant.metrics, "accountant partner payable is missing");
     assert(!("totalSales" in production.metrics), "production received finance projection");
@@ -68,7 +100,10 @@ async function main() {
     assert(route.includes("if (!session?.user || !enterTenantFromSession(session))") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Продажи", "Получено", "К получению от клиентов", "К выплате партнёрам", "К выплате сотрудникам", "Мои новые заявки", "Мои отправленные КП", "Payroll к выплате", "Активные сотрудники", "Расходы за месяц", "Требует внимания", "Конверсия", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    for (const label of ["Продажи", "Получено", "К получению от клиентов", "К выплате партнёрам", "К выплате сотрудникам", "Мои новые заявки", "Мои отправленные КП", "Мои действующие заказы", "Мои заказы — что сделать сегодня", "Заказы требуют действия", "Payroll к выплате", "Активные сотрудники", "Расходы за месяц", "Требует внимания", "Конверсия", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    const orderProcess = readFileSync("components/orders/OrderProcess.tsx", "utf8");
+    for (const label of ["Менеджер фиксирует только договор, передачу в цех и сдачу объекта", "Договор подписан", "Передан в цех", "Уточнить: заказ завершён?"])
+      assert(orderProcess.includes(label), `manager order status UI missing: ${label}`);
     for (const label of ["Краткий статус бизнеса за выбранный период", "Открыть финансы", "Замеры, требующие закрытия", "Последние важные действия", "Работа идёт стабильно"])
       assert.ok(dashboard.includes(label), `premium Director hierarchy is missing: ${label}`);
     assert(!dashboard.includes("<table"), "Director team performance must not regress to a wide table");

@@ -18,7 +18,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useState } from "react";
 
@@ -33,6 +33,7 @@ import {
   ORDER_STAGE_LABELS,
   projectOrderStage,
 } from "@/lib/orders/presentation";
+import { managerOrderBusinessStatus } from "@/lib/orders/manager-attention";
 
 import DocumentsTab from "./tabs/DocumentsTab";
 import FilesTab from "./tabs/FilesTab";
@@ -104,8 +105,9 @@ function SectionTitle({
 
 export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(searchParams.get("action") === "edit");
   const [commentOpen, setCommentOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -144,6 +146,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const archived = Boolean(order.deletedAt);
   const role = session?.user.role ?? "";
   const director = role === "DIRECTOR";
+  const manager = role === "MANAGER";
   const canEdit = !archived && ["DIRECTOR", "MANAGER"].includes(role);
   const canAddPayment =
     !archived && ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
@@ -152,6 +155,20 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   );
   const calculation = order.calculations[0];
   const production = order.productions[0];
+  const contractConfirmed = Boolean(
+    order.contractConfirmedAt ||
+      order.documents.some(
+        (document) =>
+          document.type === "CONTRACT" &&
+          !["ARCHIVED", "CANCELLED"].includes(document.status),
+      ),
+  );
+  const businessStatus = managerOrderBusinessStatus({
+    lifecycle: order.lifecycle,
+    contractConfirmed,
+    partnerAssigned: Boolean(order.partner),
+    installationCompleted: order.installationCompleted,
+  });
   const nextMeasurement = [...order.measurements].sort(
     (first, second) =>
       new Date(first.visitDate).getTime() -
@@ -212,7 +229,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 Заказ {order.number}
               </h1>
               <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-sm font-semibold text-emerald-300">
-                {
+                {manager
+                  ? businessStatus
+                  :
                   ORDER_STAGE_LABELS[
                     projectOrderStage(
                       order.lifecycle,
@@ -323,6 +342,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         orderId={order.id}
         lifecycle={order.lifecycle}
         version={order.version}
+        contractConfirmed={contractConfirmed}
+        partnerAssigned={Boolean(order.partner)}
+        installationCompleted={order.installationCompleted}
         readOnly={archived}
       />
 
@@ -377,7 +399,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 value={date(order.orderReceivedAt)}
               />
               <Field title="Срок" value={date(order.promisedAt)} />
-              <Field title="Статус заказа" value={order.status} />
+              <Field title="Статус заказа" value={manager ? businessStatus : order.status} />
               <Field
                 title="Зарегистрирован в ORDA"
                 value={date(order.createdAt)}
@@ -658,7 +680,9 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               <div className="rounded-xl bg-blue-500/10 p-4">
                 <p className={label}>Этап производства</p>
                 <p className="mt-2 text-lg font-bold text-blue-300">
-                  {ORDER_STAGE_LABELS[projectOrderStage(order.lifecycle, production?.stage)]}
+                  {manager
+                    ? businessStatus
+                    : ORDER_STAGE_LABELS[projectOrderStage(order.lifecycle, production?.stage)]}
                 </p>
               </div>
               <p className="mt-3 text-xs leading-5 text-slate-500">
@@ -684,8 +708,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                     }
                   />
                   <Field
-                    title="Текущий этап"
-                    value={production?.stage || "Не начат"}
+                    title="Статус"
+                    value={manager ? businessStatus : production?.stage || "Не начат"}
                   />
                   <Field
                     title="Плановая дата"
