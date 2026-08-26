@@ -377,7 +377,15 @@ function orderBonusCalculation(
 }
 
 export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
-  director(actor);
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER)
+    throw new PayrollError("FORBIDDEN");
+  if (
+    actor.role === Role.MANAGER &&
+    (input.type !== PayrollAccrualType.ORDER_BONUS ||
+      !input.orderId ||
+      input.paymentMode === BonusPaymentMode.IMMEDIATE ||
+      (input.bonusRule && input.bonusRule !== PayrollBonusRule.FIXED))
+  ) throw new PayrollError("FORBIDDEN");
   if (input.type === PayrollAccrualType.MEASUREMENT_BONUS)
     throw new PayrollError("MEASUREMENT_BONUS_AUTOMATIC_ONLY");
   const reason = requiredReason(input.reason);
@@ -391,6 +399,8 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
           throw new PayrollError("IDEMPOTENCY_CONFLICT");
         return { accrual: existing, created: false };
       }
+      if (actor.role === Role.MANAGER && input.orderId)
+        await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${50_000_000 + input.orderId})`;
       const period = await openPeriod(tx, input.periodId);
       const employee = await tx.employeePayrollProfile.findUnique({
         where: { id: input.employeeId },
@@ -411,6 +421,21 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
           select: orderBonusSelect,
         });
         if (!order) throw new PayrollError("ORDER_NOT_FOUND");
+        if (
+          actor.role === Role.MANAGER &&
+          (order.managerUserId !== actor.userId || employee.userId !== actor.userId)
+        ) throw new PayrollError("FORBIDDEN");
+        if (actor.role === Role.MANAGER) {
+          const existingManagerBonus = await tx.payrollAccrual.findFirst({
+            where: {
+              orderId: order.id,
+              employeeId: employee.id,
+              type: PayrollAccrualType.ORDER_BONUS,
+            },
+            select: { id: true },
+          });
+          if (existingManagerBonus) throw new PayrollError("ORDER_BONUS_EXISTS");
+        }
         if (
           (input.type === PayrollAccrualType.ORDER_BONUS ||
             input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS) &&

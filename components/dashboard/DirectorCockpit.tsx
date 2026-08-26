@@ -72,6 +72,15 @@ type ProductionPayload = { role: "PRODUCTION"; metrics: { preparation: number; p
 type InstallationItem = { id: number; scheduledAt: string; href: string; order: { number: string; address: string; client: { name: string; city: string } } };
 type InstallerPayload = { role: "INSTALLER"; metrics: { today: number; upcoming: number; overdue: number; assigned: number }; nextInstallation: InstallationItem | null; installations: InstallationItem[] };
 type Payload = SalesPayload | AccountantPayload | ProductionPayload | InstallerPayload;
+type PartnerPayoutRequest = {
+  id: number;
+  amount: string | number;
+  operationDate: string;
+  comment?: string | null;
+  partner: { name: string };
+  order: { id: number; number: string; manager: string; client: { name: string } };
+  createdBy: { name: string };
+};
 
 const periods: Record<Period, string> = { today: "Сегодня", week: "Неделя", month: "Месяц" };
 const money = (value: number | string) => `${Math.round(Number(value) || 0).toLocaleString("ru-RU")} ₸`;
@@ -82,6 +91,7 @@ export default function DirectorCockpit() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [payoutRequests, setPayoutRequests] = useState<PartnerPayoutRequest[]>([]);
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -100,6 +110,34 @@ export default function DirectorCockpit() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  const loadPayoutRequests = useCallback(async () => {
+    const response = await fetch("/api/partner-payout-requests", { cache: "no-store" });
+    if (response.ok) setPayoutRequests(await response.json() as PartnerPayoutRequest[]);
+  }, []);
+  useEffect(() => {
+    if (session?.user.role !== "DIRECTOR") return;
+    const timer = window.setTimeout(() => void loadPayoutRequests(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadPayoutRequests, session?.user.role]);
+  async function reviewPayout(operationId: number, decision: "CONFIRM" | "REJECT") {
+    const rawReason = decision === "REJECT"
+      ? window.prompt("Причина отклонения")
+      : window.prompt("Комментарий подтверждения (необязательно)");
+    if (rawReason === null) return;
+    const reason = rawReason.trim();
+    if (decision === "REJECT" && !reason) return;
+    const response = await fetch("/api/partner-payout-requests", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ operationId, decision, reason }),
+    });
+    if (!response.ok) {
+      const body = await response.json() as { error?: string };
+      setError(body.error ?? "Не удалось обработать оплату цеху");
+      return;
+    }
+    await Promise.all([load(), loadPayoutRequests()]);
+  }
 
   const role = session?.user.role ?? data?.role;
   const isDirector = role === "DIRECTOR";
@@ -111,6 +149,23 @@ export default function DirectorCockpit() {
       : <WorkspaceHeader role={role} period={period} setPeriod={setPeriod} loading={loading} onRefresh={load}/>
     }
     {error && <div role="alert" className="rounded-2xl border border-red-500/30 bg-red-950/30 p-4 text-red-200">{error}</div>}
+    {isDirector && payoutRequests.length > 0 && (
+      <section className="rounded-2xl border border-amber-400/30 bg-amber-950/10 p-4 sm:p-5">
+        <h2 className="text-lg font-semibold text-white">Оплаты цехам на подтверждении</h2>
+        <div className="mt-3 grid gap-3 xl:grid-cols-2">
+          {payoutRequests.map((item) => (
+            <article key={item.id} className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div><Link href={`/orders/${item.order.id}`} className="font-semibold text-blue-300">{item.order.number}</Link><p className="text-sm text-slate-400">{item.order.client.name} · менеджер {item.createdBy.name || item.order.manager}</p><p className="mt-1 text-sm text-slate-300">Цех: {item.partner.name}</p></div>
+                <strong className="text-lg text-amber-200">{money(item.amount)}</strong>
+              </div>
+              {item.comment && <p className="mt-2 text-sm text-slate-400">{item.comment}</p>}
+              <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void reviewPayout(item.id, "CONFIRM")} className="min-h-11 rounded-xl bg-emerald-700 px-3 font-semibold text-white">Подтвердить</button><button type="button" onClick={() => void reviewPayout(item.id, "REJECT")} className="min-h-11 rounded-xl border border-rose-700 px-3 font-semibold text-rose-200">Отклонить</button></div>
+            </article>
+          ))}
+        </div>
+      </section>
+    )}
     {loading && !data
       ? <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-slate-900"/>)}</div>
       : data && <Projection data={data}/>

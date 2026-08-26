@@ -21,6 +21,17 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
   const [regularSteps, setRegularSteps] = useState("18");
   const [platforms, setPlatforms] = useState<number[]>([2]);
   const [clientOverride, setClientOverride] = useState("");
+  const [pricingMode, setPricingMode] = useState<"CALCULATOR" | "MANUAL">("CALCULATOR");
+  const [leadPrices, setLeadPrices] = useState<Record<(typeof leadMaterials)[number], string>>({
+    "Сосна": "",
+    "Карагач": "",
+    "Дуб ламель": "",
+  });
+  const [leadPriceComments, setLeadPriceComments] = useState<Record<(typeof leadMaterials)[number], string>>({
+    "Сосна": "",
+    "Карагач": "",
+    "Дуб ламель": "",
+  });
   const [workshopOverride, setWorkshopOverride] = useState("");
   const [installationRequired, setInstallationRequired] = useState(true);
   const [deliveryRequired, setDeliveryRequired] = useState(true);
@@ -55,11 +66,12 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
     const lineCost = enabledLines.reduce((sum, line) => sum + (line.enabled ? line.quantity * line.unitCost : 0), 0);
     const baseClientPrice = equivalentSteps * tariff.salePrice + lineSale;
     const baseWorkshopCost = equivalentSteps * (tariff.internalPrice ?? 0) + lineCost;
-    const clientPrice = clientOverride === "" ? baseClientPrice : Number(clientOverride);
+    const clientPrice = clientId || clientOverride === "" ? baseClientPrice : Number(clientOverride);
     const workshopCost = workshopOverride === "" ? baseWorkshopCost : Number(workshopOverride);
     if (![clientPrice, workshopCost].every((value) => Number.isFinite(value) && value >= 0)) return null;
     return { equivalentSteps, saleRate: tariff.salePrice, clientPrice, workshopCost, baseClientPrice, baseWorkshopCost, clientAdjustment: clientPrice - baseClientPrice, workshopAdjustment: workshopCost - baseWorkshopCost, grossProfit: clientPrice - workshopCost };
   }, [
+    clientId,
     clientOverride,
     deliveryRequired,
     installationRequired,
@@ -84,10 +96,26 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
       (!clientId && (!Number.isInteger(Number(targetOrderId)) || Number(targetOrderId) <= 0))
     )
       return setMessage("Укажите корректный ID заказа и заполните расчёт.");
+    if (
+      clientId &&
+      pricingMode === "MANUAL" &&
+      leadMaterials.some(
+        (item) =>
+          !Number.isFinite(Number(leadPrices[item])) ||
+          Number(leadPrices[item]) <= 0 ||
+          !leadPriceComments[item].trim(),
+      )
+    ) return setMessage("Для ручного режима укажите цену и основание по всем трём материалам.");
     setSaving(true);
     setMessage("");
     try {
-      const saveOne = async (selectedMaterial: string) => {
+      const saveOne = async (selectedMaterial: (typeof leadMaterials)[number] | string) => {
+      const selectedLeadPrice = clientId
+        ? leadPrices[selectedMaterial as (typeof leadMaterials)[number]]
+        : clientOverride;
+      const selectedComment = clientId
+        ? leadPriceComments[selectedMaterial as (typeof leadMaterials)[number]]
+        : "";
       const response = await fetch(clientId ? `/api/clients/${clientId}/calculations` : `/api/orders/${targetOrderId}/calculation`, {
         method: "POST",
         headers: {
@@ -98,9 +126,17 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
           material: selectedMaterial,
           regularSteps: Number(regularSteps),
           platformEquivalents: platforms,
-          ...(clientOverride === ""
+          ...(selectedLeadPrice === ""
             ? {}
-            : { clientPrice: Number(clientOverride) }),
+            : { finalPrice: Number(selectedLeadPrice), clientPrice: Number(selectedLeadPrice) }),
+          ...(clientId
+            ? {
+                pricingMode,
+                manualPricingComment:
+                  selectedComment ||
+                  (pricingMode === "CALCULATOR" ? "Цена по калькулятору" : ""),
+              }
+            : {}),
           ...(!clientId && isDirector && workshopOverride !== ""
             ? { workshopCost: Number(workshopOverride) }
             : {}),
@@ -120,7 +156,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
       if (clientId) {
         const options = await Promise.all(leadMaterials.map((selectedMaterial) => saveOne(selectedMaterial)));
         const saved = options.map((option, index) => ({ id: Number(option.id), material: option.material ?? leadMaterials[index], clientPrice: option.clientPrice ?? 0 }));
-        setLeadOptions(saved); setSavedLeadCalculationId(saved[1]?.id ?? saved[0]?.id ?? null); onLeadOptionsSaved?.(saved);
+        setLeadOptions(saved); setSavedLeadCalculationId(saved[0]?.id ?? null); onLeadOptionsSaved?.(saved);
       } else {
         await saveOne(material); setSavedOrderId(Number(targetOrderId));
       }
@@ -215,6 +251,59 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
           )}
         </div>
       </section>
+      {clientId && (
+        <section className="rounded-xl border border-blue-800/70 bg-blue-950/10 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-semibold text-white">Три независимые цены для КП</h2>
+              <p className="text-sm text-slate-400">
+                Каждая цена сохраняется со своим материалом и основанием.
+              </p>
+            </div>
+            <select
+              value={pricingMode}
+              onChange={(event) => setPricingMode(event.target.value as "CALCULATOR" | "MANUAL")}
+              className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+            >
+              <option value="CALCULATOR">По калькулятору</option>
+              <option value="MANUAL">Ручная цена</option>
+            </select>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {leadMaterials.map((leadMaterial) => (
+              <article key={leadMaterial} className="rounded-xl bg-slate-950/60 p-3">
+                <h3 className="font-semibold text-white">{leadMaterial}</h3>
+                <label className="mt-3 block text-sm text-slate-300">
+                  Финальная цена клиенту
+                  <input
+                    required={pricingMode === "MANUAL"}
+                    type="number"
+                    min="1"
+                    inputMode="decimal"
+                    value={leadPrices[leadMaterial]}
+                    onChange={(event) => {
+                      if (event.target.value) setPricingMode("MANUAL");
+                      setLeadPrices((current) => ({ ...current, [leadMaterial]: event.target.value }));
+                    }}
+                    placeholder="Рассчитать автоматически"
+                    className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+                  />
+                </label>
+                <label className="mt-3 block text-sm text-slate-300">
+                  Основание / комментарий
+                  <input
+                    required={pricingMode === "MANUAL"}
+                    value={leadPriceComments[leadMaterial]}
+                    onChange={(event) => setLeadPriceComments((current) => ({ ...current, [leadMaterial]: event.target.value }))}
+                    placeholder={pricingMode === "MANUAL" ? "Почему цена задана вручную" : "Необязательно"}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+                  />
+                </label>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <section className="space-y-4 rounded-xl border border-slate-700 p-4">
         <div>
           <h2 className="font-semibold text-white">Монтаж и доставка</h2>
@@ -382,7 +471,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
             />
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="text-sm text-slate-300">
+            {!clientId && <label className="text-sm text-slate-300">
               Итоговая цена клиенту
               <input
                 type="number"
@@ -396,7 +485,7 @@ export default function StairCalculator({ orderId, clientId, onLeadOptionsSaved 
               <span className="mt-1 block text-xs text-slate-500">
                 Корректировка: {money(calculation.clientAdjustment)}
               </span>
-            </label>
+            </label>}
             {isDirector && (
               <label className="text-sm text-slate-300">
                 Итоговая стоимость цеха

@@ -100,6 +100,13 @@ export default function OrderSettlementPanel({
     searchParams.get("action") === "assign-workshop",
   );
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [payoutRequests, setPayoutRequests] = useState<Array<{
+    id: number;
+    amount: string | number;
+    status: string;
+    operationDate: Date | string;
+    comment: string | null;
+  }>>([]);
 
   useEffect(() => {
     const openHistory = (event: Event) => {
@@ -111,7 +118,7 @@ export default function OrderSettlementPanel({
   }, [order.id]);
 
   useEffect(() => {
-    if (role !== "DIRECTOR") return;
+    if (!["DIRECTOR", "MANAGER"].includes(role)) return;
     void fetch(`/api/orders/${order.id}/economy`, { cache: "no-store" })
       .then(async (response) =>
         response.ok
@@ -156,6 +163,13 @@ export default function OrderSettlementPanel({
           setPartnerId(String(payload.defaultWorkshop.id));
       });
   }, [order.id, order.partner, role]);
+
+  useEffect(() => {
+    if (!["DIRECTOR", "MANAGER"].includes(role)) return;
+    void fetch(`/api/orders/${order.id}/partner-payout-requests`, { cache: "no-store" })
+      .then(async (response) => response.ok ? await response.json() as typeof payoutRequests : [])
+      .then(setPayoutRequests);
+  }, [order.id, role]);
 
   async function request(
     url: string,
@@ -217,7 +231,9 @@ export default function OrderSettlementPanel({
   }
   async function payout(event: FormEvent) {
     event.preventDefault();
-    await request("/api/partners/payments", {
+    await request(role === "MANAGER"
+      ? `/api/orders/${order.id}/partner-payout-requests`
+      : "/api/partners/payments", {
       orderId: order.id,
       amount: Number(amount),
       operationDate,
@@ -225,6 +241,12 @@ export default function OrderSettlementPanel({
       account,
       comment,
     });
+  }
+  async function withdrawPayoutRequest(operationId: number) {
+    const saved = await request(`/api/orders/${order.id}/partner-payout-requests`, { operationId }, "DELETE");
+    if (saved)
+      setPayoutRequests((items) => items.map((item) =>
+        item.id === operationId ? { ...item, status: "CANCELLED" } : item));
   }
   async function adjustPartner() {
     const effectValue = window.prompt("Корректировка начисления цеху: положительная сумма увеличит начисление, отрицательная уменьшит.");
@@ -315,7 +337,7 @@ export default function OrderSettlementPanel({
           {error}
         </p>
       )}
-      {role === "DIRECTOR" && !readOnly && (
+      {["DIRECTOR", "MANAGER"].includes(role) && !readOnly && (
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
@@ -487,7 +509,7 @@ export default function OrderSettlementPanel({
           </aside>
         </div>
       )}
-      {role === "DIRECTOR" && !readOnly && assignOpen && (
+      {["DIRECTOR", "MANAGER"].includes(role) && !readOnly && assignOpen && (
         <div
           role="presentation"
           className="fixed inset-0 z-50 bg-black/70"
@@ -600,7 +622,7 @@ export default function OrderSettlementPanel({
         </form>
         </div>
       )}
-      {role === "DIRECTOR" && !readOnly && (
+      {["DIRECTOR", "MANAGER"].includes(role) && !readOnly && (
         <form
           onSubmit={accrueOrderPayroll}
           className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2"
@@ -608,7 +630,7 @@ export default function OrderSettlementPanel({
           <h3 className="font-semibold text-white sm:col-span-2">
             Начисления сотрудникам по заказу
           </h3>
-          <label className="grid gap-1 text-sm text-slate-300 sm:col-span-2">
+          {role === "DIRECTOR" && <label className="grid gap-1 text-sm text-slate-300 sm:col-span-2">
             <span>Вид начисления</span>
             <select value={accrualKind} onChange={(event) => setAccrualKind(event.target.value as typeof accrualKind)} className={control}>
               <option value="manager">Бонус менеджера</option>
@@ -616,7 +638,7 @@ export default function OrderSettlementPanel({
               <option value="driver">Водитель</option>
               <option value="other">Другое начисление</option>
             </select>
-          </label>
+          </label>}
           {!periodId ? (
             <p className="text-sm text-amber-300 sm:col-span-2">
               Откройте текущий расчётный месяц в разделе «Зарплаты».
@@ -631,7 +653,7 @@ export default function OrderSettlementPanel({
             </p>
           ) : (
             <>
-              {(accrualKind === "driver" || accrualKind === "other") && (
+              {role === "DIRECTOR" && (accrualKind === "driver" || accrualKind === "other") && (
                 <label className="grid gap-1 text-sm text-slate-300">
                   <span>Реальный сотрудник</span>
                   <select required value={selectedEmployeeId} onChange={(event) => setSelectedEmployeeId(event.target.value)} className={control}>
@@ -676,13 +698,13 @@ export default function OrderSettlementPanel({
       {partner?.partnerId &&
         partner.priceSet &&
         !readOnly &&
-        role === "DIRECTOR" && (
+        ["DIRECTOR", "MANAGER"].includes(role) && (
           <form
             onSubmit={payout}
             className="mt-4 grid gap-3 rounded-xl bg-slate-950/50 p-4 sm:grid-cols-2"
           >
             <h3 className="font-semibold text-white sm:col-span-2">
-              Выплатить цеху
+              {role === "MANAGER" ? "Сообщить об оплате цеху" : "Выплатить цеху"}
             </h3>
             <label className="grid gap-1 text-sm text-slate-300">
               <span>Сумма выплаты</span>
@@ -741,7 +763,7 @@ export default function OrderSettlementPanel({
               }
               className="min-h-11 rounded-xl bg-emerald-700 px-4 font-semibold text-white disabled:opacity-50 sm:col-span-2"
             >
-              Выплатить указанную сумму
+              {role === "MANAGER" ? "Отправить директору на подтверждение" : "Выплатить указанную сумму"}
             </button>
             <button
               type="button"
@@ -753,6 +775,25 @@ export default function OrderSettlementPanel({
             </button>
           </form>
         )}
+      {payoutRequests.length > 0 && (
+        <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/50 p-4">
+          <h3 className="font-semibold text-white">Заявки на оплату цеху</h3>
+          <div className="mt-3 space-y-2">
+            {payoutRequests.map((item) => (
+              <article key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-900 p-3 text-sm">
+                <div>
+                  <p className="font-semibold text-white">{money(Number(item.amount))}</p>
+                  <p className="text-slate-400">{date(item.operationDate)} · {item.status === "PENDING" ? "Ожидает подтверждения директора" : item.status === "REJECTED" ? "Отклонено" : item.status === "CANCELLED" ? "Отозвано" : item.status}</p>
+                  {item.comment && <p className="text-xs text-slate-500">{item.comment}</p>}
+                </div>
+                {role === "MANAGER" && item.status === "PENDING" && (
+                  <button type="button" disabled={busy} onClick={() => void withdrawPayoutRequest(item.id)} className="min-h-10 rounded-lg border border-rose-700 px-3 font-semibold text-rose-200">Отозвать заявку</button>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
       {partner && partner.assignments.length > 0 && (
         <History title="История стоимости цеха">
           {partner.assignments.map((item) => (

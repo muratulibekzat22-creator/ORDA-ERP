@@ -71,7 +71,10 @@ enum PartnerSettlementOperationType {
 }
 
 enum PartnerSettlementOperationStatus {
+  PENDING
   POSTED
+  REJECTED
+  CANCELLED
   REVERSED
   DISPUTED
 }

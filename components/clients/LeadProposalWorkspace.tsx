@@ -14,8 +14,12 @@ type Calculation = {
   createdAt: string;
 };
 type Variant = {
+  calculationId?: number;
   material: string;
   total: string | number;
+  finalPrice?: string | number;
+  calculatedPrice?: string | number;
+  pricingMode?: "CALCULATOR" | "MANUAL";
   warranty?: string;
 };
 type Proposal = {
@@ -27,7 +31,7 @@ type Proposal = {
   createdAt: string;
   validUntil: string;
   snapshot: {
-    client?: { name?: string; phone?: string };
+    client?: { name?: string; phone?: string; city?: string; address?: string };
     variants?: Variant[];
   };
   conversion?: { orderId: number } | null;
@@ -47,6 +51,25 @@ export default function LeadProposalWorkspace({
     [optionIds, setOptionIds] = useState<number[]>([]),
     [message, setMessage] = useState(""),
     [saving, setSaving] = useState(false),
+    [conversionOpen, setConversionOpen] = useState(false),
+    [partners, setPartners] = useState<Array<{ id: number; name: string }>>([]),
+    [defaultWorkshopId, setDefaultWorkshopId] = useState<number | null>(null),
+    [conversion, setConversion] = useState({
+      calculationId: "",
+      finalSaleAmount: "",
+      adjustmentReason: "",
+      address: "",
+      promisedAt: "",
+      paymentMethod: "kaspi",
+      initialPayment: "",
+      workshopPartnerId: "",
+      workshopCost: "",
+      workshopDueAt: "",
+      workshopPaymentDueAt: "",
+      workshopComment: "",
+      managerBonus: "",
+      comment: "",
+    }),
     [currentTime, setCurrentTime] = useState(0);
   const load = useCallback(async () => {
     const [a, b] = await Promise.all([
@@ -104,8 +127,12 @@ export default function LeadProposalWorkspace({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: value }),
     });
-    if (!response.ok) return setMessage((await response.json()).error);
+    if (!response.ok) {
+      setMessage((await response.json()).error);
+      return false;
+    }
     await load();
+    return true;
   }
   async function send(id: number) {
     setSaving(true);
@@ -140,20 +167,70 @@ export default function LeadProposalWorkspace({
         : (await response.json()).error,
     );
   }
+  async function openConversion() {
+    if (!latest?.snapshot.variants?.length) return;
+    const first = latest.snapshot.variants[0];
+    const response = await fetch("/api/orders/options", { cache: "no-store" });
+    if (response.ok) {
+      const options = await response.json() as {
+        partners?: Array<{ id: number; name: string }>;
+        defaultWorkshopPartnerId?: number | null;
+      };
+      setPartners(options.partners ?? []);
+      setDefaultWorkshopId(options.defaultWorkshopPartnerId ?? null);
+    }
+    setConversion((current) => ({
+      ...current,
+      calculationId: String(first.calculationId ?? latestThree.find((item) => item.material === first.material)?.id ?? ""),
+      finalSaleAmount: String(first.finalPrice ?? first.total),
+      address: latest.snapshot.client?.address ?? "",
+    }));
+    setConversionOpen(true);
+  }
   async function convert(id: number) {
-    if (!confirm("Клиент согласился? Будет создан заказ из КП.")) return;
-    await status(id, "ACCEPTED");
-    await fetch(`/api/clients/${clientId}/stage`, {
+    setSaving(true);
+    setMessage("");
+    if (!(await status(id, "ACCEPTED"))) {
+      setSaving(false);
+      return;
+    }
+    const stageResponse = await fetch(`/api/clients/${clientId}/stage`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ stage: "WON" }),
     });
+    if (!stageResponse.ok) {
+      const stageBody = await stageResponse.json() as { error?: string };
+      setMessage(stageBody.error ?? "Не удалось перевести заявку в заказ");
+      setSaving(false);
+      return;
+    }
     const response = await fetch(`/api/proposals/${id}/convert`, {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({
+        ...conversion,
+        calculationId: Number(conversion.calculationId),
+        finalSaleAmount: Number(conversion.finalSaleAmount),
+        initialPayment: Number(conversion.initialPayment || 0),
+        workshopPartnerId: conversion.workshopPartnerId
+          ? Number(conversion.workshopPartnerId)
+          : null,
+        workshopCost: conversion.workshopCost
+          ? Number(conversion.workshopCost)
+          : undefined,
+        managerBonus: Number(conversion.managerBonus || 0),
+      }),
     });
     const body = await response.json();
     if (response.ok) router.push(`/orders/${body.id}`);
-    else setMessage(body.error);
+    else {
+      setMessage(body.error);
+      setSaving(false);
+    }
   }
   return (
     <main className="space-y-6 p-4 md:p-8">
@@ -268,7 +345,7 @@ export default function LeadProposalWorkspace({
               Новая версия
             </button>
             <button
-              onClick={() => void convert(latest.id)}
+              onClick={() => void openConversion()}
               className="min-h-12 rounded-xl bg-emerald-600 px-5 font-semibold text-white"
             >
               Оформить заказ
@@ -304,6 +381,108 @@ export default function LeadProposalWorkspace({
         proposalId={latest?.id}
         onDone={setMessage}
       />
+      {latest && conversionOpen && (
+        <div
+          role="presentation"
+          className="fixed inset-0 z-50 bg-black/70"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target && !saving) setConversionOpen(false);
+          }}
+        >
+          <form
+            aria-label="Оформить заказ из выбранного варианта КП"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void convert(latest.id);
+            }}
+            className="absolute inset-y-0 right-0 grid w-full max-w-2xl content-start gap-4 overflow-y-auto border-l border-slate-700 bg-[#101827] p-5 shadow-2xl sm:grid-cols-2 sm:p-7"
+          >
+            <div className="sm:col-span-2">
+              <h2 className="text-xl font-bold text-white">Оформить заказ</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Выберите согласованный клиентом материал. Система больше не выбирает вариант автоматически.
+              </p>
+            </div>
+            <label className="text-sm text-slate-300 sm:col-span-2">
+              Вариант КП
+              <select
+                required
+                value={conversion.calculationId}
+                onChange={(event) => {
+                  const selected = latest.snapshot.variants?.find((item) =>
+                    String(item.calculationId ?? latestThree.find((calculation) => calculation.material === item.material)?.id ?? "") === event.target.value);
+                  setConversion((current) => ({
+                    ...current,
+                    calculationId: event.target.value,
+                    finalSaleAmount: String(selected?.finalPrice ?? selected?.total ?? ""),
+                  }));
+                }}
+                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+              >
+                <option value="">Выберите материал</option>
+                {latest.snapshot.variants?.map((variant) => (
+                  <option key={`${variant.calculationId}-${variant.material}`} value={variant.calculationId ?? latestThree.find((item) => item.material === variant.material)?.id}>
+                    {variant.material} · {money(variant.finalPrice ?? variant.total)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {[
+              ["finalSaleAmount", "Финальная сумма продажи", "number"],
+              ["adjustmentReason", "Основание изменения цены КП", "text"],
+              ["address", "Адрес заказа", "text"],
+              ["promisedAt", "Обещанный срок", "date"],
+              ["initialPayment", "Первый платёж (необязательно)", "number"],
+              ["managerBonus", "Бонус менеджера (начисление)", "number"],
+            ].map(([key, title, type]) => (
+              <label key={key} className="text-sm text-slate-300">
+                {title}
+                <input
+                  required={["finalSaleAmount", "address"].includes(key)}
+                  type={type}
+                  min={type === "number" ? "0" : undefined}
+                  value={conversion[key as keyof typeof conversion]}
+                  onChange={(event) => setConversion((current) => ({ ...current, [key]: event.target.value }))}
+                  className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+                />
+              </label>
+            ))}
+            <label className="text-sm text-slate-300">
+              Способ оплаты
+              <select value={conversion.paymentMethod} onChange={(event) => setConversion((current) => ({ ...current, paymentMethod: event.target.value }))} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">
+                <option value="kaspi">Kaspi</option><option value="cash">Наличные</option><option value="bank_transfer">Банковский перевод</option><option value="other">Другое</option>
+              </select>
+            </label>
+            <label className="text-sm text-slate-300">
+              Передать в цех сейчас (необязательно)
+              <select
+                value={conversion.workshopPartnerId}
+                onChange={(event) => setConversion((current) => ({ ...current, workshopPartnerId: event.target.value }))}
+                className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+              >
+                <option value="">Не назначать</option>
+                {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}{partner.id === defaultWorkshopId ? " · основной" : ""}</option>)}
+              </select>
+            </label>
+            {conversion.workshopPartnerId && (
+              <>
+                <label className="text-sm text-slate-300">Согласованная стоимость цеха<input required type="number" min="1" value={conversion.workshopCost} onChange={(event) => setConversion((current) => ({ ...current, workshopCost: event.target.value }))} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" /></label>
+                <label className="text-sm text-slate-300">Срок готовности цеха<input type="date" value={conversion.workshopDueAt} onChange={(event) => setConversion((current) => ({ ...current, workshopDueAt: event.target.value }))} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" /></label>
+                <label className="text-sm text-slate-300">Срок выплаты цеху<input type="date" value={conversion.workshopPaymentDueAt} onChange={(event) => setConversion((current) => ({ ...current, workshopPaymentDueAt: event.target.value }))} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" /></label>
+                <label className="text-sm text-slate-300 sm:col-span-2">Комментарий цеху<input value={conversion.workshopComment} onChange={(event) => setConversion((current) => ({ ...current, workshopComment: event.target.value }))} className="mt-1 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" /></label>
+              </>
+            )}
+            <label className="text-sm text-slate-300 sm:col-span-2">
+              Комментарий к заказу
+              <textarea value={conversion.comment} onChange={(event) => setConversion((current) => ({ ...current, comment: event.target.value }))} className="mt-1 min-h-24 w-full rounded-xl border border-slate-700 bg-slate-900 p-3 text-white" />
+            </label>
+            <div className="flex flex-col-reverse gap-2 sm:col-span-2 sm:flex-row sm:justify-end">
+              <button type="button" disabled={saving} onClick={() => setConversionOpen(false)} className="min-h-12 rounded-xl border border-slate-700 px-5 font-semibold text-white">Отмена</button>
+              <button disabled={saving || !conversion.calculationId} className="min-h-12 rounded-xl bg-emerald-600 px-5 font-semibold text-white disabled:opacity-50">{saving ? "Оформление…" : "Подтвердить и создать заказ"}</button>
+            </div>
+          </form>
+        </div>
+      )}
       <section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
         <h2 className="text-xl font-semibold text-white">
           Коммерческие предложения

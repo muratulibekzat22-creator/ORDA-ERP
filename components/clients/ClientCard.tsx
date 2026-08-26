@@ -58,6 +58,8 @@ type ClientDetail = {
   whatsapp: string;
   city: string;
   address: string;
+  iin: string;
+  comment: string;
   source: string;
   manager: string;
   status: string;
@@ -168,6 +170,8 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           whatsapp: client.whatsapp,
           city: client.city,
           address: client.address,
+          iin: client.iin,
+          comment: client.comment,
           source: client.source,
           estimateNotes: client.estimateNotes,
           estimatedAmount: client.estimatedAmount,
@@ -447,6 +451,14 @@ export default function ClientCard({ clientId }: { clientId: number }) {
                     onChange={(e) => update("address", e.target.value)}
                     className={inputClass}
                   />
+                </Field>
+              </div>
+              <Field label="ИИН">
+                <input value={client.iin} onChange={(e) => update("iin", e.target.value)} className={inputClass} />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Комментарий клиента">
+                  <textarea rows={3} value={client.comment} onChange={(e) => update("comment", e.target.value)} className={inputClass} />
                 </Field>
               </div>
               <Field label="Источник заявки">

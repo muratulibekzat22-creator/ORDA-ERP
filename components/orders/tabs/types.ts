@@ -38,6 +38,8 @@ export type OrderTabData = {
     whatsapp: string;
     city: string;
     address: string;
+    iin: string;
+    comment: string;
   };
   partner: {
     id: number;

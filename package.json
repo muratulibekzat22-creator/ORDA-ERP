@@ -73,7 +73,9 @@
     "test:documents": "tsx scripts/test-documents-module.ts",
     "test:contracts": "tsx scripts/test-contract-generation.ts",
     "test:contract-package": "tsx scripts/test-contract-document-package.ts",
-    "test:marketing": "tsx scripts/test-marketing-workspace.ts"
+    "test:marketing": "tsx scripts/test-marketing-workspace.ts",
+    "test:order-workflow-final": "tsx scripts/test-order-workflow-final.ts",
+    "test:order-workflow:go-live": "tsx scripts/test-order-workflow-go-live.ts"
   },
   "engines": {
     "node": ">=20.9.0"

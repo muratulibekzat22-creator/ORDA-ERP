@@ -33,8 +33,7 @@ export async function GET(request: Request) {
       select: { uiName: true },
       orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
     }),
-    role === Role.DIRECTOR
-      ? prisma.partner.findMany({
+    prisma.partner.findMany({
           where: {
             active: true,
             archived: false,
@@ -42,13 +41,10 @@ export async function GET(request: Request) {
           },
           select: { id: true, name: true, kind: true },
           orderBy: [{ name: "asc" }, { id: "asc" }],
-        })
-      : [],
-    role === Role.DIRECTOR
-      ? prisma.companySettings.findFirst({
+        }),
+    prisma.companySettings.findFirst({
           select: { defaultWorkshopPartnerId: true },
-        })
-      : null,
+        }),
   ]);
   const ownershipConflict = Boolean(existing && role === Role.MANAGER && existing.managerUserId !== userId && existing.manager !== auth.session!.user.name);
   return NextResponse.json({
