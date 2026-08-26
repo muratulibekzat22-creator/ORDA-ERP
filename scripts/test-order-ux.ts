@@ -86,7 +86,6 @@ assert.match(routeShell, /pathname\.startsWith\(href\)/);
 for (const section of [
   "client",
   "technical",
-  "order-finance",
   "calculation",
   "documents",
   "history",
@@ -96,6 +95,7 @@ for (const section of [
   "files",
 ])
   assert.match(workspace, new RegExp(`id="${section}"`));
+assert.match(settlementPanel, /id="settlements"/);
 for (const action of [
   "Редактировать",
   "Печать",
@@ -125,9 +125,8 @@ assert.match(ordersApi, /enforceClientOwnership: enhanced/);
 assert.match(ordersApi, /Полученная сумма не может превышать сумму заказа/);
 assert.match(orderOptions, /active: true, role: Role\.MANAGER/);
 assert.match(orderOptions, /kind: "STAIR_MATERIAL"/);
-for (const label of ["Расчёты", "Получено от клиента", "Остаток клиента", "Согласованная стоимость цеха", "Выплачено цеху", "Осталось выплатить", "Указать стоимость цеха", "Выплатить цеху", "История выплат цеху"])
+for (const label of ["Заказ и расчёты", "Получено от клиента", "Остаток клиента", "Согласованная стоимость цеха", "Выплачено цеху", "Осталось выплатить", "Указать стоимость цеха", "Выплатить цеху", "История выплат цеху"])
   assert.match(settlementPanel, new RegExp(label));
-assert.match(settlementPanel, /id="settlements"/);
 for (const label of ["К выплате цеху", "Стоимость цеха", "Осталось выплатить"])
   assert.match(ordersPage, new RegExp(label));
 assert.match(directorDashboard, /\/orders\?settlement=partner-payable/);
