@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -9,12 +9,14 @@ import {
   BanknoteArrowUp,
   BriefcaseBusiness,
   CalendarClock,
+  Camera,
   CheckCircle2,
   CircleDollarSign,
   ClipboardList,
   Factory,
   FileWarning,
   HandCoins,
+  MessageSquareText,
   RefreshCw,
   Ruler,
   ShoppingBag,
@@ -41,6 +43,9 @@ type SalesMetrics = {
   orderProfit?: number; grossMargin?: number; profitBeforeMandatory?: number; companyNetProfit?: number;
   averageOrderMargin?: number; cashResult?: number; incompleteProfitOrders?: number;
   completedProfitOrders?: number;
+  deliveredThisMonth?: number; contentWaitingReview?: number; contentWaitingPhoto?: number;
+  contentWaitingVideo?: number; contentShootsScheduled?: number; contentReceived?: number;
+  contentPublished?: number; contentRefused?: number; contentUnassigned?: number;
 };
 type ManagerRow = { managerUserId: number; manager: string; newLeads: number; orders: number; totalSales: number; conversion: number };
 type MeasurementAttention = { id: number; nextActionAt: string; nextActionComment?: string | null; client: { id: number; name: string; phone: string } };
@@ -66,7 +71,8 @@ type DashboardProfitability = {
     expenses: Array<{ name: string; amount: string | number }>;
   };
 };
-type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; profitability?: DashboardProfitability; measurementAttention?: MeasurementAttention[]; activities: ActivityItem[] };
+type IncompleteOrder = { id: number; number: string; client: string; amount: number; partnerId: number | null; partnerName: string | null; missing: string[] };
+type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; profitability?: DashboardProfitability; measurementAttention?: MeasurementAttention[]; attention?: { incompleteOrders: IncompleteOrder[] }; activities: ActivityItem[] };
 type AccountantPayload = { role: "ACCOUNTANT"; metrics: { receipts: number; expenses: number; partnerPayable: number; payrollPayable: number; pendingPayrollPayments: number; attentionOperations: number }; recentFinance: Array<{ id: number; type: string; category: string; direction: string; amount: string; operationDate: string; comment?: string | null }> };
 type ProductionPayload = { role: "PRODUCTION"; metrics: { preparation: number; painting: number; readyForInstallation: number; overdue: number; tasksToday: number; attentionOrders: number; missingMaterials: number; readyMaterials: number }; jobs: Array<{ id: number; stage: string; percent: number; href: string; order: { number: string; client: { name: string; city: string } } }> };
 type InstallationItem = { id: number; scheduledAt: string; href: string; order: { number: string; address: string; client: { name: string; city: string } } };
@@ -230,7 +236,7 @@ function Projection({ data }: { data: Payload }) {
 
 function SalesDashboard({ data }: { data: SalesPayload }) {
   if (data.role === "DIRECTOR") return <>
-    <DirectorSalesDashboard metrics={data.metrics} managers={data.managers ?? []} profitability={data.profitability}/>
+    <DirectorSalesDashboard metrics={data.metrics} managers={data.managers ?? []} profitability={data.profitability} attention={data.attention}/>
     <DirectorActivityFeed activities={data.activities}/>
   </>;
   return <>
@@ -239,8 +245,9 @@ function SalesDashboard({ data }: { data: SalesPayload }) {
   </>;
 }
 
-function DirectorSalesDashboard({ metrics: m, managers, profitability }: { metrics: SalesMetrics; managers: ManagerRow[]; profitability?: DashboardProfitability }) {
+function DirectorSalesDashboard({ metrics: m, managers, profitability, attention }: { metrics: SalesMetrics; managers: ManagerRow[]; profitability?: DashboardProfitability; attention?: SalesPayload["attention"] }) {
   const [economyView, setEconomyView] = useState<"plan" | "fact" | "money">("plan");
+  const [selectedIncomplete, setSelectedIncomplete] = useState<IncompleteOrder | null>(null);
   const overdueTotal = m.overdueNextActions + m.overdueOrders + m.overdueTasks + m.measurementsOverdue;
   const sortedManagers = [...managers].sort((left, right) => right.totalSales - left.totalSales || right.orders - left.orders);
   const maxManagerSales = Math.max(...sortedManagers.map((manager) => manager.totalSales), 1);
@@ -298,7 +305,12 @@ function DirectorSalesDashboard({ metrics: m, managers, profitability }: { metri
           <AttentionLink href="/calendar?state=overdue" label="Просроченные задачи" value={m.overdueTasks} icon={<CalendarClock size={17}/>}/>
           <AttentionLink href="/measurements?filter=needs-closing" label="Замеры, требующие закрытия" value={m.measurementsOverdue} icon={<Ruler size={17}/>}/>
           <AttentionLink href="/orders?settlement=partner-payable" label="Заказы к выплате партнёру" value={m.partnerPayableOrders ?? 0} icon={<HandCoins size={17}/>}/>
+          <AttentionLink href="/marketing?tab=content&filter=review" label="Завершённые без отзыва" value={m.contentWaitingReview ?? 0} icon={<MessageSquareText size={17}/>}/>
+          <AttentionLink href="/marketing?tab=content&filter=photo" label="Без фото" value={m.contentWaitingPhoto ?? 0} icon={<Camera size={17}/>}/>
+          <AttentionLink href="/marketing?tab=content&filter=video" label="Без видео" value={m.contentWaitingVideo ?? 0} icon={<Camera size={17}/>}/>
+          <AttentionLink href="/marketing?tab=content" label="Без маркетолога" value={m.contentUnassigned ?? 0} icon={<UserRoundCheck size={17}/>}/>
         </div>
+        {attention?.incompleteOrders.length ? <div className="mt-4 space-y-2"><h3 className="text-sm font-semibold text-white">Заказы с неполным расчётом</h3>{attention.incompleteOrders.slice(0, 6).map((order) => <article key={order.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-white/8 bg-black/15 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="truncate font-semibold text-white">{order.number} · {order.client}</p><p className="mt-1 text-xs text-slate-400">Продажа: {money(order.amount)} · не заполнено: {order.missing.join(", ")}</p></div><button type="button" onClick={() => setSelectedIncomplete(order)} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-amber-300 px-3 text-sm font-semibold text-slate-950">Заполнить</button></article>)}</div> : null}
         {!overdueTotal && !(m.ordersWithoutPartner ?? 0) && !(m.clientsWithBalance ?? 0) && !(m.ordersWithoutContract ?? 0) && <StableState text="Нет новых проблем — операционная работа идёт стабильно."/>}
       </SectionShell>
 
@@ -311,6 +323,12 @@ function DirectorSalesDashboard({ metrics: m, managers, profitability }: { metri
         </div>
       </SectionShell>
     </div>
+
+    <SectionShell eyebrow="Marketing" title="Отзывы и контент" href="/marketing?tab=content" icon={<Camera size={20}/>}>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+        <TeamStat label="Сдано за месяц" value={m.deliveredThisMonth ?? 0}/><TeamStat label="Ждут отзыв" value={m.contentWaitingReview ?? 0}/><TeamStat label="Ждут фото" value={m.contentWaitingPhoto ?? 0}/><TeamStat label="Ждут видео" value={m.contentWaitingVideo ?? 0}/><TeamStat label="Съёмки" value={m.contentShootsScheduled ?? 0}/><TeamStat label="Контент получен" value={m.contentReceived ?? 0}/><TeamStat label="Опубликовано" value={m.contentPublished ?? 0}/><TeamStat label="Отказы" value={m.contentRefused ?? 0}/>
+      </div>
+    </SectionShell>
 
     <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.6fr)]">
       <SectionShell eyebrow="Performance" title="Команда" href="/employees" icon={<UserRoundCheck size={20}/>} aside={`${m.activeEmployees ?? 0} активных`}>
@@ -335,6 +353,86 @@ function DirectorSalesDashboard({ metrics: m, managers, profitability }: { metri
         {!production.some((item) => item.value) && <StableState text="Производственных задач за период нет."/>}
       </SectionShell>
     </div>
+    {selectedIncomplete && <IncompleteOrderDialog order={selectedIncomplete} onClose={() => setSelectedIncomplete(null)} />}
+  </div>;
+}
+
+function IncompleteOrderDialog({ order, onClose }: { order: IncompleteOrder; onClose: () => void }) {
+  const needsWorkshop = order.missing.includes("цех") || order.missing.includes("стоимость цеха");
+  const [partners, setPartners] = useState<Array<{ id: number; name: string }>>([]);
+  const [partnerId, setPartnerId] = useState(order.partnerId ? String(order.partnerId) : "");
+  const [partnerPrice, setPartnerPrice] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(needsWorkshop);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!needsWorkshop) return;
+    void fetch(`/api/orders/${order.id}/economy`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as {
+          error?: string;
+          partners?: Array<{ id: number; name: string; active?: boolean }>;
+          defaultWorkshop?: { id: number } | null;
+        };
+        if (!response.ok)
+          throw new Error(body.error ?? "Не удалось загрузить цеха");
+        const rows = (body.partners ?? []).filter((item) => item.active !== false);
+        setPartners(rows);
+        setPartnerId((current) =>
+          current || String(body.defaultWorkshop?.id ?? rows[0]?.id ?? ""),
+        );
+      })
+      .catch((cause) =>
+        setError(cause instanceof Error ? cause.message : "Не удалось загрузить цеха"),
+      )
+      .finally(() => setBusy(false));
+  }, [needsWorkshop, order.id]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/orders/${order.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          action: "assignPartner",
+          partnerId: Number(partnerId),
+          partnerPrice: Number(partnerPrice),
+          partnerAgreedAt: new Date().toISOString(),
+          reason,
+        }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Расчёт не сохранён");
+      onClose();
+      window.location.reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Расчёт не сохранён");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="fixed inset-0 z-50 bg-black/75" role="presentation" onMouseDown={(event) => event.currentTarget === event.target && !busy && onClose()}>
+    <section role="dialog" aria-modal="true" aria-label={`Заполнить расчёт ${order.number}`} className="absolute inset-y-0 right-0 w-full max-w-lg overflow-y-auto border-l border-slate-700 bg-[#101827] p-5 sm:p-7">
+      <h2 className="text-xl font-bold text-white">{order.number}</h2>
+      <p className="mt-1 text-sm text-slate-400">{order.client} · продажа {money(order.amount)}</p>
+      <p className="mt-4 rounded-xl bg-amber-950/30 p-3 text-sm text-amber-100">Не заполнено: {order.missing.join(", ")}</p>
+      {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
+      {needsWorkshop ? <form onSubmit={(event) => void save(event)} className="mt-5 grid gap-4">
+        <label className="text-sm text-slate-300">Цех<select required value={partnerId} onChange={(event) => setPartnerId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"><option value="">Выберите цех</option>{partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}</option>)}</select></label>
+        <label className="text-sm text-slate-300">Согласованная стоимость цеха<input required min="0" step="0.01" type="number" value={partnerPrice} onChange={(event) => setPartnerPrice(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label>
+        <label className="text-sm text-slate-300">Основание<input required value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Согласовано с цехом" className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" /></label>
+        <button disabled={busy} className="min-h-11 rounded-xl bg-amber-300 font-semibold text-slate-950 disabled:opacity-50">{busy ? "Сохранение…" : "Сохранить расчёт"}</button>
+      </form> : <Link href={`/orders/${order.id}#settlements`} className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-blue-600 px-4 font-semibold text-white">Открыть оплату клиента</Link>}
+      <button type="button" disabled={busy} onClick={onClose} className="mt-3 min-h-11 w-full rounded-xl border border-slate-700 font-semibold text-white">Закрыть</button>
+    </section>
   </div>;
 }
 

@@ -20,8 +20,10 @@ for (const [role, email] of [["DIRECTOR", playwrightUsers.director], ["MARKETER"
       await page.setViewportSize(viewport);
       await page.goto("/marketing");
       await expect(page.getByRole("heading", { name: "Маркетинг", exact: true })).toBeVisible();
-      for (const label of ["Обзор", "Входящие", "Заявки", "Кампании", "Каналы", "Расходы и показатели", "Воронка", "Атрибуция", "Бюджет", "Отчёты"])
+      for (const label of ["Обзор", "Входящие", "Заявки", "Кампании", "Каналы", "Расходы и показатели", "Воронка", "Атрибуция", "Бюджет", "Отчёты", "Отзывы и контент"])
         await expect(page.getByRole("tab", { name: label, exact: true })).toBeVisible();
+      await page.getByRole("tab", { name: "Отзывы и контент", exact: true }).click();
+      await expect(page.getByRole("heading", { name: /PW-CONTENT-ORDER/u })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     }
     const response = await page.request.get("/api/marketing");

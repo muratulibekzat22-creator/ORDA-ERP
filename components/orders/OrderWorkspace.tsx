@@ -25,6 +25,7 @@ import { useState } from "react";
 import StairCalculator from "@/components/calculator/StairCalculator";
 import ProjectPayments from "@/components/project/ProjectPayments";
 import OrderActionsMenu from "./OrderActionsMenu";
+import OrderCompletionPanel from "./OrderCompletionPanel";
 import OrderProcess from "./OrderProcess";
 import OrderSettlementPanel from "./OrderSettlementPanel";
 import OrderEconomy from "./OrderEconomy";
@@ -32,7 +33,6 @@ import {
   ORDER_STAGE_LABELS,
   projectOrderStage,
 } from "@/lib/orders/presentation";
-import { paymentMethodLabel } from "@/lib/orders/registration";
 
 import DocumentsTab from "./tabs/DocumentsTab";
 import FilesTab from "./tabs/FilesTab";
@@ -326,6 +326,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         readOnly={archived}
       />
 
+      {(["DIRECTOR", "MANAGER"] as string[]).includes(role) && (
+        <OrderCompletionPanel order={order} readOnly={archived} />
+      )}
+
       <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.85fr)] xl:gap-5">
         <div className="space-y-4 md:space-y-5">
           <section id="client" className={panel}>
@@ -422,25 +426,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           </section>
 
           {canSeeClientFinance && (
-            <section id="order-finance" className={panel}>
-              <SectionTitle
-                icon={<CircleDollarSign size={20} />}
-                title="Финансы заказа"
-                description="Клиентские суммы; расчёт с цехом остаётся отдельным"
-              />
-              <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 md:p-5">
-                <Field title="Общая сумма" value={money(order.amount)} />
-                <Field title="Получено" value={money(order.prepayment)} />
-                <Field title="Остаток" value={money(order.balance)} />
-                <Field
-                  title="Способ оплаты"
-                  value={paymentMethodLabel(order.paymentMethod) || "Не указан"}
-                />
-              </div>
-            </section>
-          )}
-
-          {director && (
             <OrderSettlementPanel order={order} readOnly={archived} />
           )}
           {director && <OrderEconomy order={order} />}
@@ -539,8 +524,6 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               </details>
             </section>
           )}
-
-          {!director && <OrderSettlementPanel order={order} readOnly={archived} />}
 
           <section id="documents" className={panel}>
             <SectionTitle
@@ -739,10 +722,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               {[
                 ["Клиент", "client"],
                 ["Технические параметры", "technical"],
-                ...(canSeeClientFinance
-                  ? [["Финансы заказа", "order-finance"]]
-                  : []),
-                ...(canSeeClientFinance ? [["Расчёты", "settlements"]] : []),
+                ...(canSeeClientFinance ? [["Заказ и расчёты", "settlements"]] : []),
                 ["Расчёт", "calculation"],
                 ["Документы", "documents"],
                 ["История", "history"],

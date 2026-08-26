@@ -13,6 +13,8 @@ export type OrderListItem = {
   id: number;
   number: string;
   lifecycle: string;
+  completedAt?: string | null;
+  financialClosedAt?: string | null;
   amount?: string;
   prepayment?: string;
   balance?: string;
@@ -136,6 +138,9 @@ export default function OrderTable({
               >
                 Открыть
               </Link>
+              {canManage && !order.deletedAt && order.lifecycle !== "COMPLETED" && order.lifecycle !== "CANCELLED" && (
+                <Link href={`/orders/${order.id}?action=complete`} className="mt-2 block min-h-11 rounded-xl border border-emerald-600 px-4 py-3 text-center font-semibold text-emerald-200">Объект сдан</Link>
+              )}
             </article>
           );
         })}
@@ -219,6 +224,9 @@ export default function OrderTable({
                       >
                         Открыть
                       </Link>
+                      {canManage && !order.deletedAt && order.lifecycle !== "COMPLETED" && order.lifecycle !== "CANCELLED" && (
+                        <Link href={`/orders/${order.id}?action=complete`} className="rounded-lg border border-emerald-600 px-3 py-2 text-emerald-200">Объект сдан</Link>
+                      )}
                       <OrderActionsMenu
                         order={order}
                         canDelete={canManage && !order.deletedAt}

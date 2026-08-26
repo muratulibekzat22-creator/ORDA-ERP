@@ -19,7 +19,7 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   await login(page, playwrightUsers.director);
   await page.goto("/partner-management");
   await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toBeVisible();
-  for (const label of ["Обзор", "Партнёры", "Заказы", "Взаиморасчёты", "Выплаты", "Отчёты"])
+  for (const label of ["Обзор", "Партнёры", "Заказы и расчёты", "Взаиморасчёты", "Выплаты", "Отчёты"])
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   const api = await page.request.get("/api/partner-management?pageSize=100&scope=active");
   expect(api.status()).toBe(200);
@@ -27,7 +27,7 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   expect(payload.orders).toHaveLength(payload.counts.active);
   for (const chart of ["Продажи и клиентские оплаты", "Начислено и выплачено партнёрам", "Остатки клиентов и долги партнёрам", "Чистая прибыль по месяцам", "Чистая маржа по месяцам", "Прибыль по партнёрам", "Количество заказов по партнёрам", "Структура расходов партнёрских заказов"])
     await expect(page.getByRole("heading", { name: chart, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Заказы", exact: true }).click();
+  await page.getByRole("button", { name: "Заказы и расчёты", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Канонические заказы", exact: true })).toBeVisible();
   if (payload.partners[0]) {
     const detail = await page.request.get(`/api/partner-management/${payload.partners[0].id}`);
@@ -61,16 +61,17 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
     expect(filtered.pagination.total).toBe(ordersPayload.filterMetrics[filter].count);
     expect(filtered.data.reduce((sum, item) => sum + Number(item[field]), 0)).toBeCloseTo(Number(ordersPayload.filterMetrics[filter].amount), 2);
   }
-  if (ordersPayload.data[0]) {
-    await page.goto(`/orders/${ordersPayload.data[0].id}`);
+  const orderWithPartnerId = payload.orders[0]?.order.id ?? ordersPayload.data[0]?.id;
+  if (orderWithPartnerId) {
+    await page.goto(`/orders/${orderWithPartnerId}`);
     await expect(page.getByRole("heading", { name: "Прибыль компании", exact: true, level: 2 })).toBeVisible();
     for (const label of ["Сумма продажи", "Получено от клиента", "Остаток клиента", "Согласованная стоимость", "Выплачено партнёру", "Осталось выплатить", "Маржа до зарплаты", "Всего начислено по заказу", "Прибыль заказа", "Чистая маржа заказа"])
       await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
     await expect(page.getByText("NOT_ASSIGNED", { exact: true })).toHaveCount(0);
     await expect(page.getByText("−0 ₸", { exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: "История и полный расчёт", exact: true }).first().click();
+    await page.locator("#settlements").getByRole("button", { name: "История и полный расчёт", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "История и полный расчёт цеха", exact: true })).toBeVisible();
-    await expect(page).toHaveURL(new RegExp(`/orders/${ordersPayload.data[0].id}$`));
+    await expect(page).toHaveURL(new RegExp(`/orders/${orderWithPartnerId}$`));
     await page.getByRole("button", { name: "Закрыть", exact: true }).click();
   }
   await page.setViewportSize({ width: 1440, height: 900 });

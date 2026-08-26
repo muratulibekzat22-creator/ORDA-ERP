@@ -330,7 +330,7 @@ const danger =
 const tabs: Array<[Tab, string]> = [
   ["overview", "Обзор"],
   ["partners", "Партнёры"],
-  ["orders", "Заказы"],
+  ["orders", "Заказы и расчёты"],
   ["settlements", "Взаиморасчёты"],
   ["payments", "Выплаты"],
   ["reports", "Отчёты"],
@@ -498,7 +498,7 @@ export default function PartnerSettlementWorkspace({
               onClick={() => setNewOrder(true)}
             >
               <Plus size={17} />
-              Создать заказ без заявки
+              Создать заказ
             </button>
             <button
               type="button"
@@ -3024,6 +3024,9 @@ function NewOrderDialog({
         onSubmit={save}
         className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
       >
+        <p className="rounded-xl bg-slate-950/60 p-3 text-sm text-slate-300 md:col-span-2 xl:col-span-3">
+          Создаёт обычный заказ ORDA с выбранным цехом. Отдельный заказ партнёра не создаётся.
+        </p>
         <Select
           required
           label="Партнёр"

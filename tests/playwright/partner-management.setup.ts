@@ -41,6 +41,7 @@ export default async function setup() {
       else await prisma.user.create({ data: { name: `Partner ${key}`, email, password: hash, role, active: true, mustChangePassword: false } });
     }
     const marketer = await prisma.user.findUniqueOrThrow({ where: { email: playwrightUsers.marketer } });
+    const manager = await prisma.user.findUniqueOrThrow({ where: { email: playwrightUsers.manager } });
     const source = await prisma.marketingSource.upsert({
       where: { companyId_code: { companyId: company.companyId, code: "PW_META" } },
       create: { code: "PW_META", name: "Playwright Meta", platform: "Meta", isPaid: true, system: true },
@@ -60,6 +61,57 @@ export default async function setup() {
       where: { dedupeKey: "playwright-marketing-metric" },
       create: { metricDate: new Date(), platform: "Meta", campaignId: campaign.id, reportedSpend: 100000, impressions: 50000, clicks: 500, messages: 50, platformLeads: 25, importKey: "playwright", dedupeKey: "playwright-marketing-metric", createdById: marketer.id },
       update: { clicks: 500, impressions: 50000 },
+    });
+    let contentClient = await prisma.client.findFirst({
+      where: { phone: "+77000003218", deletedAt: null },
+    });
+    if (!contentClient) contentClient = await prisma.client.create({
+      data: {
+        name: "Playwright Content Client",
+        phone: "+77000003218",
+        whatsapp: "+77000003218",
+        city: "Алматы",
+        address: "Абая 10",
+        manager: manager.name,
+        managerUserId: manager.id,
+        amount: "0",
+        status: "Завершена",
+      },
+    });
+    const contentOrder = await prisma.order.upsert({
+      where: { number: "PW-CONTENT-ORDER" },
+      update: {
+        clientId: contentClient.id,
+        manager: manager.name,
+        managerUserId: manager.id,
+        completedAt: new Date(),
+        lifecycle: "COMPLETED",
+      },
+      create: {
+        number: "PW-CONTENT-ORDER",
+        clientId: contentClient.id,
+        address: "Абая 10",
+        staircase: "П-образная",
+        material: "Ясень",
+        amount: 0,
+        balance: 0,
+        manager: manager.name,
+        managerUserId: manager.id,
+        status: "Заказ завершён",
+        lifecycle: "COMPLETED",
+        completedAt: new Date(),
+      },
+    });
+    await prisma.marketingContentTask.upsert({
+      where: { orderId: contentOrder.id },
+      update: { assignedMarketerId: marketer.id, status: "NEW" },
+      create: {
+        orderId: contentOrder.id,
+        clientId: contentClient.id,
+        assignedMarketerId: marketer.id,
+        createdById: manager.id,
+        status: "NEW",
+      },
     });
   });
   await prisma.$disconnect();

@@ -2,6 +2,9 @@ import "./require-test-database";
 
 import { spawnSync } from "node:child_process";
 
+process.env.NEXTAUTH_URL ||= "http://127.0.0.1:3218";
+process.env.NEXTAUTH_SECRET ||= "order-workflow-local-test-secret";
+
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 const steps: Array<{
@@ -26,6 +29,7 @@ const steps: Array<{
   { label: "Director Dashboard", command: npm, args: ["run", "test:dashboard-director"], timeout: 300_000 },
   { label: "Role acceptance", command: npm, args: ["run", "test:role-acceptance"], timeout: 300_000 },
   { label: "Database safety", command: npm, args: ["run", "test:database-safety"], timeout: 180_000 },
+  { label: "Playwright desktop and mobile", command: npx, args: ["playwright", "test"], timeout: 600_000 },
   { label: "git diff --check", command: "git", args: ["diff", "--check"], timeout: 60_000 },
 ];
 

@@ -19,6 +19,7 @@ const statuses: Record<string, string> = {
   PAYABLE: "Не оплачено",
   NOT_ACCRUED: "Не начислено",
   DISPUTED: "Спорный расчёт",
+  PENDING_CONFIRMATION: "Оплата заявлена менеджером",
 };
 const payrollStatuses: Record<string, string> = {
   ACCRUED: "Начислено",
@@ -55,7 +56,7 @@ export default function OrderSettlementPanel({
 }: {
   order: Pick<
     OrderTabData,
-    "id" | "number" | "client" | "partner" | "settlement" | "defaultWorkshop"
+    "id" | "number" | "client" | "partner" | "settlement" | "defaultWorkshop" | "economy"
   >;
   readOnly?: boolean;
 }) {
@@ -324,10 +325,9 @@ export default function OrderSettlementPanel({
       id="settlements"
       className="scroll-mt-24 rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5"
     >
-      <h2 className="text-lg font-semibold text-white">Расчёты</h2>
+      <h2 className="text-lg font-semibold text-white">Заказ и расчёты</h2>
       <p className="mt-1 text-sm text-slate-400">
-        Единый финансовый водопад заказа: клиент, цех и выплаты сотрудникам.
-        Денежные события проводятся только через канонические Payment и Payroll.
+        Продажа, расчёт с цехом и результат заказа на одном экране.
       </p>
       {error && (
         <p
@@ -386,11 +386,13 @@ export default function OrderSettlementPanel({
                 value={money(client.received)}
                 tone="text-emerald-300"
               />
+              <Value label="Возвраты" value={money(client.refunds)} />
               <Value
                 label="Остаток клиента"
                 value={money(client.remaining)}
                 tone="text-amber-300"
               />
+              <Value label="Следующая оплата" value={client.dueAt ? date(client.dueAt) : "Не назначена"} />
               {client.overpayment > 0 && (
                 <Value
                   label="Переплата"
@@ -427,6 +429,11 @@ export default function OrderSettlementPanel({
                 tone="text-emerald-300"
               />
               <Value
+                label="Заявлено менеджером"
+                value={money(partner.pending)}
+                tone="text-blue-300"
+              />
+              <Value
                 label="Осталось выплатить"
                 value={money(partner.remaining)}
                 tone="text-amber-300"
@@ -456,6 +463,30 @@ export default function OrderSettlementPanel({
                 <button type="button" onClick={() => void adjustPartner()} className="min-h-10 rounded-lg border border-amber-600/50 px-3 text-sm font-semibold text-amber-100">Корректировка</button>
               </div>
             )}
+          </div>
+        )}
+        {(client || manager || measurer) && (
+          <div className="min-w-0 rounded-xl border border-emerald-900/70 bg-emerald-950/10 p-4 lg:col-span-2">
+            <div className="flex flex-wrap justify-between gap-2">
+              <h3 className="font-semibold text-white">Результат заказа</h3>
+              <span className="text-sm text-emerald-300">
+                {partner?.priceSet ? "Расчёт заполнен" : "Нужна стоимость цеха"}
+              </span>
+            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <Value label="Сумма продажи" value={money(client?.total ?? 0)} />
+              <Value label="Стоимость цеха" value={partner?.agreed == null ? "Не указана" : money(partner.agreed)} />
+              <Value label="Бонус менеджера" value={money(manager?.accrued ?? 0)} />
+              <Value label="Бонус замерщика" value={money(measurer?.accrued ?? 0)} />
+              {role === "DIRECTOR" && order.economy && (
+                <>
+                  <Value label="Валовая маржа" value={money(Number(order.economy.profit.marginBeforePayroll))} tone="text-cyan-300" />
+                  <Value label="Начислено сотрудникам" value={money(Number(order.economy.profit.payrollAccrued))} />
+                  <Value label="Чистая прибыль" value={order.economy.profit.complete ? money(Number(order.economy.profit.netProfit)) : "Не рассчитана"} tone="text-emerald-300" />
+                  <Value label="Рентабельность" value={order.economy.profit.complete ? `${Number(order.economy.profit.netMarginPercent).toLocaleString("ru-RU")}%` : "—"} />
+                </>
+              )}
+            </dl>
           </div>
         )}
         {manager && (
@@ -690,7 +721,7 @@ export default function OrderSettlementPanel({
               >
                 {accrualKind === "manager" ? "Начислить бонус менеджеру" : "Создать начисление без выплаты"}
               </button>
-              <p className="text-xs text-slate-500 sm:col-span-2">Начисление влияет на прибыль заказа, но не создаёт расход денег до фактической выплаты через Payroll.</p>
+              <p className="text-xs text-slate-500 sm:col-span-2">Начисление учитывается в результате заказа. Фактическая выплата отражается после оплаты сотруднику.</p>
             </>
           )}
         </form>
@@ -745,7 +776,7 @@ export default function OrderSettlementPanel({
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               <span>Касса или банковский счёт</span>
-              <input required value={account} onChange={(event) => setAccount(event.target.value)} placeholder="Касса / расчётный счёт" className={control} />
+              <input required={role === "DIRECTOR"} value={account} onChange={(event) => setAccount(event.target.value)} placeholder={role === "DIRECTOR" ? "Касса / расчётный счёт" : "Касса / счёт (необязательно)"} className={control} />
             </label>
             <label className="grid gap-1 text-sm text-slate-300">
               <span>Комментарий</span>

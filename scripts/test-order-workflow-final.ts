@@ -1,12 +1,17 @@
 import "./require-test-database";
 
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { PartnerSettlementOperationStatus, Role } from "@prisma/client";
+import { MarketingContentTaskStatus, OrderLifecycle, PartnerSettlementOperationStatus, Role } from "@prisma/client";
 
 import { createRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { OrderDetailsError, updateOrderDetails } from "@/lib/services/order-details.service";
+import { getMarketingContentAsset, getMarketingContentTasks, MarketingContentError, updateMarketingContentTask, uploadMarketingContentAsset } from "@/lib/services/marketing-content.service";
+import { closeOrderFinancially, completeDeliveredOrder, OrderCompletionError } from "@/lib/services/order-completion.service";
 import { createFinanceOperation } from "@/lib/services/payment.service";
 import {
   PartnerManagementError,
@@ -34,11 +39,14 @@ async function main() {
   await runWithTenant(tenant, async () => {
     const director = await prisma.user.create({ data: { name: `Workflow Director ${nonce}`, email: `workflow-director-${nonce}@test.local`, password: "not-a-login-hash", role: Role.DIRECTOR, active: true } });
     const manager = await prisma.user.create({ data: { name: `Workflow Manager ${nonce}`, email: `workflow-manager-${nonce}@test.local`, password: "not-a-login-hash", role: Role.MANAGER, active: true } });
+    const otherManager = await prisma.user.create({ data: { name: `Workflow Other Manager ${nonce}`, email: `workflow-other-manager-${nonce}@test.local`, password: "not-a-login-hash", role: Role.MANAGER, active: true } });
+    await prisma.user.create({ data: { name: `Workflow Marketer ${nonce}`, email: `workflow-marketer-${nonce}@test.local`, password: "not-a-login-hash", role: Role.MARKETER, active: true } });
     const partner = await prisma.partner.create({ data: { name: `Workflow Workshop ${nonce}`, active: true, archived: false, isTest: false } });
     const phone = `+7708${String(Date.now()).slice(-7)}`;
     const client = await prisma.client.create({ data: { name: `Workflow Client ${nonce}`, phone, whatsapp: phone, city: "Алматы", address: "Абая 1", manager: manager.name, managerUserId: manager.id, amount: "1000000", status: "Новая" } });
     const order = await prisma.order.create({ data: { number: `WORKFLOW-${nonce}`, clientId: client.id, address: "Абая 1", staircase: "Прямая", material: "Сосна", amount: "1000000", balance: "1000000", manager: manager.name, managerUserId: manager.id, status: "Оформлен" } });
     const managerActor = { userId: manager.id, role: Role.MANAGER, name: manager.name };
+    const otherManagerActor = { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name };
     const directorActor = { userId: director.id, role: Role.DIRECTOR, name: director.name };
 
     const detailsPayload = { orderId: order.id, amount: "1100000", phone };
@@ -106,6 +114,177 @@ async function main() {
       (error: unknown) => error instanceof OrderDetailsError && error.message.startsWith("AMOUNT_BELOW_RECEIVED:"),
       "sale amount cannot go below received client payment",
     );
+
+    const completionPayload = {
+      orderId: order.id,
+      completedAt: new Date(),
+      comment: "Клиент принял объект",
+      clientAccepted: true,
+      contactConsent: "YES" as const,
+      photoVideoConsent: "YES" as const,
+    };
+    const expectedMarketer = await prisma.user.findFirstOrThrow({
+      where: { active: true, role: Role.MARKETER },
+      orderBy: { id: "asc" },
+    });
+    const assignedMarketerActor = {
+      userId: expectedMarketer.id,
+      role: Role.MARKETER,
+      name: expectedMarketer.name,
+    };
+    await assert.rejects(
+      () => completeDeliveredOrder({
+        ...completionPayload,
+        idempotencyKey: `workflow-completion-forbidden-${nonce}`,
+        requestHash: createRequestHash(completionPayload),
+      }, otherManagerActor),
+      (error: unknown) => error instanceof OrderCompletionError && error.message === "ORDER_NOT_FOUND",
+      "manager cannot complete another manager's order",
+    );
+    const completed = await completeDeliveredOrder({
+      ...completionPayload,
+      idempotencyKey: `workflow-completion-${nonce}`,
+      requestHash: createRequestHash(completionPayload),
+    }, managerActor);
+    assert.equal(completed.created, true, "manager completes own delivered order");
+    assert.ok(completed.task, "completion creates or returns a marketing task");
+    assert.equal(completed.task.assignedMarketerId, expectedMarketer.id, "completion assigns the first active marketer deterministically");
+    assert.equal((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).lifecycle, OrderLifecycle.COMPLETED, "order lifecycle is completed");
+    assert.equal(await prisma.marketingContentTask.count({ where: { orderId: order.id } }), 1, "one marketing task per order");
+    await completeDeliveredOrder({
+      ...completionPayload,
+      idempotencyKey: `workflow-completion-${nonce}`,
+      requestHash: createRequestHash(completionPayload),
+    }, managerActor);
+    assert.equal(await prisma.marketingContentTask.count({ where: { orderId: order.id } }), 1, "completion replay does not duplicate marketing task");
+
+    const contentTasks = await getMarketingContentTasks(assignedMarketerActor);
+    assert.equal(contentTasks.tasks.some((task) => task.orderId === order.id), true, "marketer receives the completed order task");
+    await updateMarketingContentTask(completed.task.id, {
+      status: MarketingContentTaskStatus.CONTACTED,
+      reviewText: "Клиент доволен результатом",
+    }, assignedMarketerActor);
+    assert.equal((await prisma.marketingContentTask.findUniqueOrThrow({ where: { orderId: order.id } })).status, MarketingContentTaskStatus.CONTACTED, "marketer updates the canonical task");
+    const blobDir = await mkdtemp(join(tmpdir(), "orda-marketing-content-"));
+    process.env.TEST_BLOB_DIR = blobDir;
+    try {
+      const png = new File([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      ], "object.png", { type: "image/png" });
+      const uploaded = await uploadMarketingContentAsset({
+        orderId: order.id,
+        file: png,
+        idempotencyKey: `workflow-content-asset-${nonce}`,
+        actor: managerActor,
+      });
+      assert.equal(uploaded.created, true, "manager can attach a real object photo while completing own order");
+      assert.ok(await getMarketingContentAsset(uploaded.asset.id, assignedMarketerActor), "assigned marketer can open the protected content asset");
+      await assert.rejects(
+        () => uploadMarketingContentAsset({
+          orderId: order.id,
+          file: png,
+          idempotencyKey: `workflow-content-asset-forbidden-${nonce}`,
+          actor: otherManagerActor,
+        }),
+        (error: unknown) => error instanceof MarketingContentError && error.message === "NOT_FOUND",
+        "another manager cannot upload content to a foreign order",
+      );
+    } finally {
+      delete process.env.TEST_BLOB_DIR;
+      await rm(blobDir, { recursive: true, force: true });
+    }
+    await assert.rejects(
+      () => getMarketingContentTasks(managerActor),
+      (error: unknown) => error instanceof MarketingContentError && error.message === "FORBIDDEN",
+      "manager cannot access marketing content tasks",
+    );
+    await assert.rejects(
+      () => closeOrderFinancially({
+        orderId: order.id,
+        reason: "Попытка до расчётов",
+        idempotencyKey: `workflow-close-blocked-${nonce}`,
+        requestHash: createRequestHash({ orderId: order.id, action: "close-blocked" }),
+      }, directorActor),
+      (error: unknown) => error instanceof OrderCompletionError && error.message.startsWith("OBLIGATIONS_OPEN:"),
+      "operational completion does not bypass open financial obligations",
+    );
+
+    const zeroOrder = await prisma.order.create({ data: {
+      number: `WORKFLOW-ZERO-${nonce}`,
+      clientId: client.id,
+      address: "Абая 2",
+      staircase: "Сервисный заказ",
+      material: "Без материала",
+      amount: 1,
+      balance: 1,
+      manager: manager.name,
+      managerUserId: manager.id,
+      status: "Оформлен",
+    } });
+    await setOrderPartnerAgreement({
+      orderId: zeroOrder.id,
+      partnerId: partner.id,
+      amount: "1",
+      comment: "Полностью оплаченный тестовый расчёт",
+    }, directorActor);
+    await createFinanceOperation({
+      type: "CLIENT_PAYMENT",
+      orderId: zeroOrder.id,
+      amount: 1,
+      method: "cash",
+      author: director.name,
+      authorId: director.id,
+      idempotencyKey: `workflow-zero-client-payment-${nonce}`,
+      requestHash: createRequestHash({ orderId: zeroOrder.id, kind: "client" }),
+    });
+    await createFinanceOperation({
+      type: "PARTNER_PAYOUT",
+      orderId: zeroOrder.id,
+      partnerId: partner.id,
+      amount: 1,
+      method: "cash",
+      author: director.name,
+      authorId: director.id,
+      idempotencyKey: `workflow-zero-partner-payment-${nonce}`,
+      requestHash: createRequestHash({ orderId: zeroOrder.id, kind: "partner" }),
+    });
+    const zeroCompletionPayload = {
+      orderId: zeroOrder.id,
+      completedAt: new Date(),
+      clientAccepted: true,
+      contactConsent: "UNKNOWN" as const,
+      photoVideoConsent: "UNKNOWN" as const,
+    };
+    const activeMarketers = await prisma.user.findMany({
+      where: { active: true, role: Role.MARKETER },
+      select: { id: true },
+    });
+    await prisma.user.updateMany({
+      where: { id: { in: activeMarketers.map((item) => item.id) } },
+      data: { active: false },
+    });
+    try {
+      const unassigned = await completeDeliveredOrder({
+        ...zeroCompletionPayload,
+        idempotencyKey: `workflow-zero-completion-${nonce}`,
+        requestHash: createRequestHash(zeroCompletionPayload),
+      }, managerActor);
+      assert.equal(unassigned.task?.assignedMarketerId, null, "task stays unassigned when no active marketer exists");
+    } finally {
+      await prisma.user.updateMany({
+        where: { id: { in: activeMarketers.map((item) => item.id) } },
+        data: { active: true },
+      });
+    }
+    const closePayload = { orderId: zeroOrder.id, action: "financial-close" };
+    const closed = await closeOrderFinancially({
+      orderId: zeroOrder.id,
+      reason: "Все обязательства закрыты",
+      idempotencyKey: `workflow-zero-close-${nonce}`,
+      requestHash: createRequestHash(closePayload),
+    }, directorActor);
+    assert.equal(closed.created, true, "director closes a financially settled completed order");
+    assert.ok((await prisma.order.findUniqueOrThrow({ where: { id: zeroOrder.id } })).financialClosedAt, "financial close timestamp is stored separately");
   });
   console.log("Final order workflow integration passed on TEST_DATABASE_URL");
 }
