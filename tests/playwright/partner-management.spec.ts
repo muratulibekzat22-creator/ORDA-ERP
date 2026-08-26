@@ -17,13 +17,21 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   page.on("response", (response) => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`); });
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, playwrightUsers.director);
+  await expect(page.getByRole("heading", { name: "Состояние компании", exact: true })).toBeVisible();
+  await expect(page.getByText("Отзывы и контент", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Состояние компании", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/partner-management");
   await expect(page.getByRole("heading", { name: "Партнёры", exact: true })).toBeVisible();
   for (const label of ["Обзор", "Партнёры", "Заказы и расчёты", "Взаиморасчёты", "Выплаты", "Отчёты"])
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   const api = await page.request.get("/api/partner-management?pageSize=100&scope=active");
   expect(api.status()).toBe(200);
-  const payload = await api.json() as { partners: Array<{ id: number }>; counts: { active: number }; orders: Array<{ order: { id: number } }> };
+  const payload = await api.json() as { partners: Array<{ id: number }>; counts: { active: number }; orders: Array<{ relationId: number | null; partnerId: number | null; order: { id: number } }> };
   expect(payload.orders).toHaveLength(payload.counts.active);
   for (const chart of ["Продажи и клиентские оплаты", "Начислено и выплачено партнёрам", "Остатки клиентов и долги партнёрам", "Чистая прибыль по месяцам", "Чистая маржа по месяцам", "Прибыль по партнёрам", "Количество заказов по партнёрам", "Структура расходов партнёрских заказов"])
     await expect(page.getByRole("heading", { name: chart, exact: true })).toBeVisible();
@@ -61,7 +69,7 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
     expect(filtered.pagination.total).toBe(ordersPayload.filterMetrics[filter].count);
     expect(filtered.data.reduce((sum, item) => sum + Number(item[field]), 0)).toBeCloseTo(Number(ordersPayload.filterMetrics[filter].amount), 2);
   }
-  const orderWithPartnerId = payload.orders[0]?.order.id ?? ordersPayload.data[0]?.id;
+  const orderWithPartnerId = payload.orders.find((item) => item.relationId)?.order.id ?? ordersPayload.data[0]?.id;
   if (orderWithPartnerId) {
     await page.goto(`/orders/${orderWithPartnerId}`);
     await expect(page.getByRole("heading", { name: "Прибыль компании", exact: true, level: 2 })).toBeVisible();
