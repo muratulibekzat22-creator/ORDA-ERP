@@ -5,6 +5,12 @@ import { readFileSync } from "node:fs";
 import { OrderLifecycle, Role } from "@prisma/client";
 import { dashboardPeriodRange, getDashboardSummary } from "../lib/services/dashboard.service";
 import { buildManagerOrderAttention, managerOrderBusinessStatus } from "../lib/orders/manager-attention";
+import {
+  almatyBusinessDate,
+  completeManagerMorningReview,
+  getDirectorManagerOwnershipIssues,
+  getManagerMorningReviewState,
+} from "../lib/services/manager-morning-review.service";
 import { prisma } from "../lib/prisma";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Dashboard integration requires TEST_DATABASE_URL");
@@ -12,9 +18,17 @@ const tag = `dashboard-${Date.now()}`;
 
 async function main() {
   assert.equal(managerOrderBusinessStatus({ lifecycle: "CREATED", contractConfirmed: false, partnerAssigned: false }), "Заказ оформлен");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "CREATED", contractConfirmed: false, contractStatus: "DRAFT", partnerAssigned: false }), "Договор подготовлен");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "CREATED", contractConfirmed: false, contractStatus: "READY", partnerAssigned: false }), "Договор отправлен");
   assert.equal(managerOrderBusinessStatus({ lifecycle: "PREPARATION", contractConfirmed: true, partnerAssigned: false }), "Договор подписан");
-  assert.equal(managerOrderBusinessStatus({ lifecycle: "IN_PRODUCTION", contractConfirmed: true, partnerAssigned: true }), "В работе у цеха");
-  assert.equal(managerOrderBusinessStatus({ lifecycle: "ACCEPTANCE", contractConfirmed: true, partnerAssigned: true }), "Уточните: заказ завершён?");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "PREPARATION", contractConfirmed: true, contractStatus: "DRAFT", partnerAssigned: false }), "Договор подписан");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "READY_FOR_PRODUCTION", contractConfirmed: true, partnerAssigned: false }), "Ожидает передачи в цех");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "IN_PRODUCTION", contractConfirmed: true, partnerAssigned: true }), "Заказ у цеха");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "READY_FOR_INSTALLATION", contractConfirmed: true, partnerAssigned: true }), "Готов к установке");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "INSTALLATION", contractConfirmed: true, partnerAssigned: true }), "Установка");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "COMPLETED", contractConfirmed: true, partnerAssigned: true }), "Объект сдан");
+  assert.equal(managerOrderBusinessStatus({ lifecycle: "COMPLETED", contractConfirmed: true, partnerAssigned: true, financialClosedAt: new Date() }), "Финансово закрыт");
+  assert.equal(almatyBusinessDate(new Date("2026-08-27T19:30:00.000Z")).iso, "2026-08-28");
   const incompleteAttention = buildManagerOrderAttention({
     id: 99,
     number: "ORD-99",
@@ -52,7 +66,7 @@ async function main() {
     partnerId = (await prisma.partner.create({ data: { name: tag } })).id;
     const ownOrder = await prisma.order.create({ data: { number: `${tag}-own`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "1000", prepayment: "400", balance: "600", partnerId, partnerPrice: "500", partnerAgreedAt: new Date(), partnerPaid: "100", partnerBalance: "400", companyProfit: "500", lifecycle: OrderLifecycle.CREATED, status: "New" } });
     const cancelled = await prisma.order.create({ data: { number: `${tag}-cancelled`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "9000", balance: "9000", partnerId, partnerPrice: "5000", partnerBalance: "5000", lifecycle: OrderLifecycle.CANCELLED, status: "Cancelled" } });
-    const foreignOrder = await prisma.order.create({ data: { number: `${tag}-foreign`, clientId: otherLead.id, manager: other.name, managerUserId: other.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "2000", balance: "2000", lifecycle: OrderLifecycle.CREATED, status: "New" } });
+    const foreignOrder = await prisma.order.create({ data: { number: `${tag}-foreign`, clientId: otherLead.id, manager: other.name, managerUserId: null, address: "TEST", staircase: "Straight", material: "Oak", amount: "2000", balance: "2000", lifecycle: OrderLifecycle.CREATED, status: "New" } });
     orderIds.push(ownOrder.id, cancelled.id, foreignOrder.id);
     paymentIds.push((await prisma.payment.create({ data: { orderId: ownOrder.id, amount: "400", type: "CLIENT_PAYMENT", method: "TEST", author: manager.name } })).id);
 
@@ -89,6 +103,21 @@ async function main() {
     assert(scopedManagerProjection.managerOrderAttention[0]?.missing.includes("срок заказа"), "missing order deadline was not detected");
     assert.equal(scopedMetrics.ordersNeedAttention, 1, "manager attention KPI is incorrect");
     assert.equal(emptyManagerProjection.managerOrderAttention.length, 0, "empty manager received an order queue");
+    const morningNow = new Date("2026-08-28T03:00:00.000Z");
+    const morningBefore = await getManagerMorningReviewState(manager.id, morningNow);
+    assert.equal(morningBefore.inventory.managerOrderCount, 1, "morning check did not use the manager's real orders");
+    assert.equal(morningBefore.mustReview, true, "first daily morning check was not required");
+    const morningCompleted = await completeManagerMorningReview(manager.id, morningNow);
+    assert.equal(morningCompleted.reviewedToday, true, "morning check completion was not persisted");
+    assert.equal(morningCompleted.mustReview, false, "completed morning check still blocks the same day");
+    const morningRepeat = await completeManagerMorningReview(manager.id, morningNow);
+    assert.equal(morningRepeat.reviewedToday, true, "morning check is not idempotent");
+    const nextDay = await getManagerMorningReviewState(manager.id, new Date("2026-08-29T03:00:00.000Z"));
+    assert.equal(nextDay.mustReview, true, "new Almaty business day did not require a new review");
+    const ownershipState = await getManagerMorningReviewState(other.id, morningNow);
+    assert.equal(ownershipState.bypassReason, "OWNERSHIP_REQUIRED", "legacy ownership mismatch was hidden as an empty manager account");
+    const ownershipIssues = await getDirectorManagerOwnershipIssues();
+    assert(ownershipIssues.some((order) => order.id === foreignOrder.id && order.suggestedManagerId === other.id), "director did not receive deterministic ownership diagnostics");
     assert(!("newLeads" in accountant.metrics), "accountant received CRM projection");
     assert("partnerPayable" in accountant.metrics, "accountant partner payable is missing");
     assert(!("totalSales" in production.metrics), "production received finance projection");
@@ -112,9 +141,15 @@ async function main() {
     assert(dashboard.includes("/orders?settlement=client-payable") && dashboard.includes("/orders?settlement=without-contract"), "Director attention links are incomplete");
     assert(dashboard.includes("/measurements?filter=needs-closing"), "Director measurement attention must open the needs-closing queue");
     const home = readFileSync("app/page.tsx", "utf8");
-    assert(home.includes("getServerSession"), "home role projection is not server-side");
+    assert(home.includes("getServerSession") && home.includes("getManagerMorningReviewState") && home.includes('redirect("/manager-morning-check")'), "manager morning gate is not server-side");
+    const morningRoute = readFileSync("app/api/manager-morning-check/route.ts", "utf8");
+    assert(morningRoute.includes("session.user.role !== Role.MANAGER") && morningRoute.includes("status: 403"), "morning check API is not manager-only");
+    const morningPage = readFileSync("components/orders/ManagerMorningCheck.tsx", "utf8");
+    for (const label of ["Утренний контроль", "Проверьте свои действующие заказы", "Завершить утреннюю проверку"])
+      assert(morningPage.includes(label), `morning control UI missing: ${label}`);
     console.log("dashboard role projections, own scope, cancelled exclusion, balances, empty state and routes passed");
   } finally {
+    await prisma.managerDailyReview.deleteMany({ where: { managerUserId: { in: userIds } } });
     await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
     await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
     if (partnerId) await prisma.partner.deleteMany({ where: { id: partnerId } });

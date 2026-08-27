@@ -33,16 +33,20 @@ export default function OrderProcess({
   lifecycle,
   version,
   contractConfirmed,
+  contractStatus,
   partnerAssigned,
   installationCompleted = false,
+  financialClosedAt,
   readOnly = false,
 }: {
   orderId: number;
   lifecycle: string;
   version: number;
   contractConfirmed: boolean;
+  contractStatus?: string | null;
   partnerAssigned: boolean;
   installationCompleted?: boolean;
+  financialClosedAt?: Date | string | null;
   readOnly?: boolean;
 }) {
   const router = useRouter();
@@ -165,8 +169,10 @@ export default function OrderProcess({
     const status = managerOrderBusinessStatus({
       lifecycle,
       contractConfirmed,
+      contractStatus,
       partnerAssigned,
       installationCompleted,
+      financialClosedAt,
     });
     const steps = [
       { label: "Заказ оформлен", done: true },

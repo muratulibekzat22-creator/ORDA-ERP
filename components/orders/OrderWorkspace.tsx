@@ -155,19 +155,21 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   );
   const calculation = order.calculations[0];
   const production = order.productions[0];
+  const contractDocument = order.documents.find(
+    (document) =>
+      document.type === "CONTRACT" &&
+      !["ARCHIVED", "CANCELLED"].includes(document.status),
+  );
   const contractConfirmed = Boolean(
-    order.contractConfirmedAt ||
-      order.documents.some(
-        (document) =>
-          document.type === "CONTRACT" &&
-          !["ARCHIVED", "CANCELLED"].includes(document.status),
-      ),
+    order.contractConfirmedAt || contractDocument?.status === "SIGNED",
   );
   const businessStatus = managerOrderBusinessStatus({
     lifecycle: order.lifecycle,
     contractConfirmed,
+    contractStatus: contractDocument?.status ?? null,
     partnerAssigned: Boolean(order.partner),
     installationCompleted: order.installationCompleted,
+    financialClosedAt: order.financialClosedAt,
   });
   const nextMeasurement = [...order.measurements].sort(
     (first, second) =>
@@ -343,8 +345,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         lifecycle={order.lifecycle}
         version={order.version}
         contractConfirmed={contractConfirmed}
+        contractStatus={contractDocument?.status ?? null}
         partnerAssigned={Boolean(order.partner)}
         installationCompleted={order.installationCompleted}
+        financialClosedAt={order.financialClosedAt}
         readOnly={archived}
       />
 

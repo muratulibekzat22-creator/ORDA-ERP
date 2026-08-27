@@ -16,6 +16,7 @@ import { prisma } from "@/lib/prisma";
 import { buildManagerOrderAttention } from "@/lib/orders/manager-attention";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { getCompanyProfitability } from "@/lib/services/profitability.service";
+import { getDirectorManagerOwnershipIssues } from "@/lib/services/manager-morning-review.service";
 
 type DashboardScope = { role: Role; userId: number; period?: string };
 const percent = (value: number, total: number) =>
@@ -297,7 +298,7 @@ async function salesProjection(scope: DashboardScope) {
         where: {
           ...managerOrderWhere,
           deletedAt: null,
-          lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+          lifecycle: { not: OrderLifecycle.CANCELLED },
         },
         select: {
           id: true,
@@ -311,14 +312,22 @@ async function salesProjection(scope: DashboardScope) {
           contractConfirmedAt: true,
           partnerId: true,
           installationCompleted: true,
+          financialClosedAt: true,
           client: { select: { name: true, phone: true, city: true, address: true } },
           documents: {
             where: {
               type: DocumentType.CONTRACT,
               status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED] },
             },
+            orderBy: [{ documentDate: "desc" }, { id: "desc" }],
             take: 1,
-            select: { id: true },
+            select: { status: true },
+          },
+          calendarTasks: {
+            where: { status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } },
+            orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+            take: 1,
+            select: { dueAt: true },
           },
         },
         orderBy: [{ promisedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
@@ -334,13 +343,16 @@ async function salesProjection(scope: DashboardScope) {
       address: order.address,
       staircase: order.staircase,
       material: order.material,
-      contractConfirmed: Boolean(order.contractConfirmedAt || order.documents.length),
+      contractConfirmed: Boolean(order.contractConfirmedAt || order.documents[0]?.status === DocumentStatus.SIGNED),
+      contractStatus: order.documents[0]?.status ?? null,
       partnerAssigned: Boolean(order.partnerId),
       installationCompleted: order.installationCompleted,
+      financialClosedAt: order.financialClosedAt,
+      nextActionAt: order.calendarTasks[0]?.dueAt ?? null,
       client: order.client,
     }, now))
     .sort((left, right) => left.priority - right.priority || Number(left.promisedAt ? new Date(left.promisedAt) : Number.POSITIVE_INFINITY) - Number(right.promisedAt ? new Date(right.promisedAt) : Number.POSITIVE_INFINITY));
-  const [incompleteOrderRows, marketingContentRows] = scope.role === Role.DIRECTOR
+  const [incompleteOrderRows, marketingContentRows, managerOwnershipIssues] = scope.role === Role.DIRECTOR
     ? await Promise.all([
         prisma.order.findMany({
           where: {
@@ -378,8 +390,9 @@ async function salesProjection(scope: DashboardScope) {
           },
           take: 1000,
         }),
+        getDirectorManagerOwnershipIssues(),
       ])
-    : [[], []];
+    : [[], [], []];
   const reached = (lead: (typeof leads)[number], stage: LeadStage) =>
     lead.stage === stage || lead.leadStatusHistory.some((item) => item.toStage === stage);
   const periodLeads = leads;
@@ -516,6 +529,7 @@ async function salesProjection(scope: DashboardScope) {
     ...(scope.role === Role.MANAGER ? { measurementAttention, managerOrderAttention } : {}),
     ...(scope.role === Role.DIRECTOR ? {
       attention: {
+        managerOwnershipIssues,
         incompleteOrders: incompleteOrderRows.map((order) => ({
           id: order.id,
           number: order.number,

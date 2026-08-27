@@ -42,6 +42,7 @@ export default async function setup() {
     }
     const marketer = await prisma.user.findUniqueOrThrow({ where: { email: playwrightUsers.marketer } });
     const manager = await prisma.user.findUniqueOrThrow({ where: { email: playwrightUsers.manager } });
+    await prisma.managerDailyReview.deleteMany({ where: { managerUserId: manager.id } });
     const source = await prisma.marketingSource.upsert({
       where: { companyId_code: { companyId: company.companyId, code: "PW_META" } },
       create: { code: "PW_META", name: "Playwright Meta", platform: "Meta", isPaid: true, system: true },
