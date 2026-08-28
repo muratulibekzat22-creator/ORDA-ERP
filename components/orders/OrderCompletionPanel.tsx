@@ -93,7 +93,7 @@ export default function OrderCompletionPanel({
   }
 
   return (
-    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
+    <section id="completion" className="scroll-mt-24 rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold text-white">

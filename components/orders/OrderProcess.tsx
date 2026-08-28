@@ -8,6 +8,7 @@ import {
   ORDER_STAGE_LABELS,
   projectOrderStage,
 } from "@/lib/orders/presentation";
+import { managerOrderBusinessStatus } from "@/lib/orders/manager-attention";
 
 type Transition = {
   to: string;
@@ -31,11 +32,21 @@ export default function OrderProcess({
   orderId,
   lifecycle,
   version,
+  contractConfirmed,
+  contractStatus,
+  partnerAssigned,
+  installationCompleted = false,
+  financialClosedAt,
   readOnly = false,
 }: {
   orderId: number;
   lifecycle: string;
   version: number;
+  contractConfirmed: boolean;
+  contractStatus?: string | null;
+  partnerAssigned: boolean;
+  installationCompleted?: boolean;
+  financialClosedAt?: Date | string | null;
   readOnly?: boolean;
 }) {
   const router = useRouter();
@@ -49,6 +60,7 @@ export default function OrderProcess({
   const [measurementOpen, setMeasurementOpen] = useState(false);
   const [measurementDate, setMeasurementDate] = useState(new Date().toISOString().slice(0, 10));
   const [measurementComment, setMeasurementComment] = useState("");
+  const manager = session?.user.role === "MANAGER";
   const load = useCallback(async () => {
     const [transitions, signals] = await Promise.all([
       fetch(`/api/orders/${orderId}/available-transitions`),
@@ -122,8 +134,106 @@ export default function OrderProcess({
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось завершить замер"); }
     finally { setBusy(false); }
   }
+  async function confirmContract() {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/orders/${orderId}/commands`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          action: "confirm-contract",
+          expectedVersion: data.version,
+        }),
+      });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok)
+        throw new Error(payload.error ?? "Не удалось подтвердить договор");
+      await load();
+      router.refresh();
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Не удалось подтвердить договор",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (manager) {
+    const completed = lifecycle === "COMPLETED";
+    const status = managerOrderBusinessStatus({
+      lifecycle,
+      contractConfirmed,
+      contractStatus,
+      partnerAssigned,
+      installationCompleted,
+      financialClosedAt,
+    });
+    const steps = [
+      { label: "Заказ оформлен", done: true },
+      { label: "Договор подписан", done: contractConfirmed },
+      { label: "Передан в цех", done: partnerAssigned },
+      { label: "Заказ завершён", done: completed },
+    ];
+    const currentIndex = Math.max(
+      0,
+      steps.findIndex((step) => !step.done),
+    );
+    return (
+      <section id="process" className="scroll-mt-24 rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Статус заказа</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              Менеджер фиксирует только договор, передачу в цех и сдачу объекта.
+            </p>
+          </div>
+          <span className="self-start rounded-full bg-blue-500/10 px-3 py-1.5 text-sm font-semibold text-blue-200">
+            {status}
+          </span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {steps.map((step, index) => (
+            <div
+              key={step.label}
+              className={`rounded-xl border p-3 text-sm ${step.done ? "border-emerald-900 bg-emerald-500/10 text-emerald-300" : index === currentIndex ? "border-blue-500 bg-blue-500/15 text-blue-200" : "border-slate-800 text-slate-500"}`}
+            >
+              <span className="block text-xs">
+                {step.done ? "✓ Выполнено" : index === currentIndex ? "Сейчас" : "Далее"}
+              </span>
+              {step.label}
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 rounded-xl bg-slate-950/50 p-3 text-sm text-slate-400">
+          Заготовку, покраску и другие внутренние этапы ведёт производственный кабинет.
+        </p>
+        {error && <p role="alert" className="mt-3 text-sm text-red-300">{error}</p>}
+        {!readOnly && !contractConfirmed && (
+          <button type="button" disabled={busy} onClick={() => void confirmContract()} className="mt-4 min-h-11 w-full rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50 sm:w-auto">
+            {busy ? "Сохранение…" : "Договор подписан"}
+          </button>
+        )}
+        {!readOnly && contractConfirmed && !partnerAssigned && (
+          <a href="#settlements" className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-amber-300 px-5 font-semibold text-slate-950 sm:w-auto">
+            Передать в цех
+          </a>
+        )}
+        {!readOnly && partnerAssigned && !completed && (
+          <a href="#completion" className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-emerald-700 px-5 font-semibold text-white sm:w-auto">
+            Уточнить: заказ завершён?
+          </a>
+        )}
+      </section>
+    );
+  }
   return (
-    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
+    <section id="process" className="scroll-mt-24 rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
       <h2 className="text-lg font-semibold text-white">Процесс</h2>
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {ORDER_STAGE_KEYS.map((key, index) => (

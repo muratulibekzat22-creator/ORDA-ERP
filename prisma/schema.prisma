@@ -139,6 +139,7 @@ model Company {
   marketingAuditLogs      MarketingAuditLog[]
   marketingContentTasks   MarketingContentTask[]
   marketingContentAssets  MarketingContentAsset[]
+  managerDailyReviews     ManagerDailyReview[]
   orderCostPlans          OrderCostPlan[]
   orderCostPlanRevisions  OrderCostPlanRevision[]
 
@@ -612,6 +613,7 @@ model User {
   assignedMarketingContentTasks  MarketingContentTask[]        @relation("MarketingContentTaskAssignee")
   createdMarketingContentTasks   MarketingContentTask[]        @relation("MarketingContentTaskCreator")
   uploadedMarketingContentAssets MarketingContentAsset[]       @relation("MarketingContentAssetUploader")
+  managerDailyReviews            ManagerDailyReview[]          @relation("ManagerDailyReviewManager")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3138,6 +3140,24 @@ model MarketingContentTask {
   @@index([companyId, status, createdAt])
   @@index([companyId, assignedMarketerId, status])
   @@index([companyId, scheduledAt, status])
+}
+
+model ManagerDailyReview {
+  id                  Int      @id @default(autoincrement())
+  companyId           Int      @default(dbgenerated())
+  company             Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  managerUserId       Int
+  manager             User     @relation("ManagerDailyReviewManager", fields: [managerUserId], references: [id], onDelete: Restrict)
+  businessDate        DateTime @db.Date
+  inventoryOrderCount Int
+  actionOrderCount    Int
+  completedAt         DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([companyId, managerUserId, businessDate])
+  @@index([companyId, businessDate])
+  @@index([companyId, managerUserId, completedAt])
 }
 
 model MarketingContentAsset {

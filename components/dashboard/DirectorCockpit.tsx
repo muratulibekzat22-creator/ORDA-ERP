@@ -37,6 +37,7 @@ type SalesMetrics = {
   partnerBalancePayable?: number; payrollBalancePayable?: number; ordersWithoutPartner?: number;
   tasksToday: number; overdueTasks: number; measurementsToday: number; measurementsUpcoming: number;
   measurementsOverdue: number; proposalsNeedResponse: number; expensesForMonth?: number;
+  ordersNeedAttention?: number;
   activeEmployees?: number; clientsWithBalance?: number; partnerPayableOrders?: number;
   ordersWithoutContract?: number; productionPreparation?: number; productionPainting?: number;
   productionReady?: number; productionOverdue?: number;
@@ -49,6 +50,7 @@ type SalesMetrics = {
 };
 type ManagerRow = { managerUserId: number; manager: string; newLeads: number; orders: number; totalSales: number; conversion: number };
 type MeasurementAttention = { id: number; nextActionAt: string; nextActionComment?: string | null; client: { id: number; name: string; phone: string } };
+type ManagerOrderAttention = { id: number; number: string; client: string; phone: string; city: string; amount: number; promisedAt: string | null; status: string; missing: string[]; overdue: boolean; requiresAction: boolean; actionLabel: string; href: string };
 type DashboardProfitability = {
   totals: { sales: string | number; grossMargin: string | number; directOrderCosts: string | number; orderPayrollAccrued: string | number; marginAfterDirect: string | number; orderProfit: string | number; profitBeforeMandatory: string | number; companyNetProfit: string | number; averageMargin: string | number; partnerPaid: string | number; payrollPaid: string | number; otherExpensesPaid: string | number; cashResult: string | number };
   changes?: Record<string, { current: number; previous: number; amount: number; percent: number | null; direction: string }>;
@@ -72,7 +74,8 @@ type DashboardProfitability = {
   };
 };
 type IncompleteOrder = { id: number; number: string; client: string; amount: number; partnerId: number | null; partnerName: string | null; missing: string[] };
-type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; profitability?: DashboardProfitability; measurementAttention?: MeasurementAttention[]; attention?: { incompleteOrders: IncompleteOrder[] }; activities: ActivityItem[] };
+type ManagerOwnershipIssue = { id: number; number: string; client: string; legacyManager: string; managerUserId: number | null; suggestedManagerId: number | null; suggestedManager: string | null };
+type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; profitability?: DashboardProfitability; measurementAttention?: MeasurementAttention[]; managerOrderAttention?: ManagerOrderAttention[]; attention?: { incompleteOrders: IncompleteOrder[]; managerOwnershipIssues?: ManagerOwnershipIssue[] }; activities: ActivityItem[] };
 type AccountantPayload = { role: "ACCOUNTANT"; metrics: { receipts: number; expenses: number; partnerPayable: number; payrollPayable: number; pendingPayrollPayments: number; attentionOperations: number }; recentFinance: Array<{ id: number; type: string; category: string; direction: string; amount: string; operationDate: string; comment?: string | null }> };
 type ProductionPayload = { role: "PRODUCTION"; metrics: { preparation: number; painting: number; readyForInstallation: number; overdue: number; tasksToday: number; attentionOrders: number; missingMaterials: number; readyMaterials: number }; jobs: Array<{ id: number; stage: string; percent: number; href: string; order: { number: string; client: { name: string; city: string } } }> };
 type InstallationItem = { id: number; scheduledAt: string; href: string; order: { number: string; address: string; client: { name: string; city: string } } };
@@ -240,7 +243,7 @@ function SalesDashboard({ data }: { data: SalesPayload }) {
     <DirectorActivityFeed activities={data.activities}/>
   </>;
   return <>
-    <ManagerSalesDashboard metrics={data.metrics} attention={data.measurementAttention ?? []}/>
+    <ManagerSalesDashboard metrics={data.metrics} attention={data.measurementAttention ?? []} orders={data.managerOrderAttention ?? []}/>
     <Panel title="Последние важные действия"><LegacyActivityFeed activities={data.activities}/></Panel>
   </>;
 }
@@ -310,6 +313,7 @@ function DirectorSalesDashboard({ metrics: m, managers, profitability, attention
           <AttentionLink href="/marketing?tab=content&filter=video" label="Без видео" value={m.contentWaitingVideo ?? 0} icon={<Camera size={17}/>}/>
           <AttentionLink href="/marketing?tab=content" label="Без маркетолога" value={m.contentUnassigned ?? 0} icon={<UserRoundCheck size={17}/>}/>
         </div>
+        {attention?.managerOwnershipIssues?.length ? <div className="mt-4 rounded-xl border border-red-700/60 bg-red-950/25 p-4"><h3 className="font-semibold text-red-200">Нарушена привязка заказов к менеджерам</h3><p className="mt-1 text-sm text-red-100">{attention.managerOwnershipIssues.length} заказов не попадут в личный кабинет до исправления canonical managerUserId.</p><div className="mt-3 space-y-2">{attention.managerOwnershipIssues.slice(0, 6).map((order) => <Link key={order.id} href={`/orders/${order.id}`} className="block rounded-lg bg-black/20 p-3 text-sm text-white hover:bg-black/30">{order.number} · {order.client} · {order.suggestedManager || order.legacyManager || "менеджер не указан"}</Link>)}</div></div> : null}
         {attention?.incompleteOrders.length ? <div className="mt-4 space-y-2"><h3 className="text-sm font-semibold text-white">Заказы с неполным расчётом</h3>{attention.incompleteOrders.slice(0, 6).map((order) => <article key={order.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-white/8 bg-black/15 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="truncate font-semibold text-white">{order.number} · {order.client}</p><p className="mt-1 text-xs text-slate-400">Продажа: {money(order.amount)} · не заполнено: {order.missing.join(", ")}</p></div><button type="button" onClick={() => setSelectedIncomplete(order)} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-lg bg-amber-300 px-3 text-sm font-semibold text-slate-950">Заполнить</button></article>)}</div> : null}
         {!overdueTotal && !(m.ordersWithoutPartner ?? 0) && !(m.clientsWithBalance ?? 0) && !(m.ordersWithoutContract ?? 0) && <StableState text="Нет новых проблем — операционная работа идёт стабильно."/>}
       </SectionShell>
@@ -484,17 +488,18 @@ function ChartRows({ rows }: { rows: Array<{ name: string; profit: string | numb
   return <div className="mt-4 space-y-3">{top.length ? top.map((item) => <div key={item.name}><div className="flex min-w-0 justify-between gap-3 text-xs"><span className="truncate text-slate-300">{item.name}{item.orders ? ` · ${item.orders}` : ""}</span><b className={Number(item.profit) < 0 ? "text-rose-300" : "text-white"}>{money(item.profit)}</b></div><div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-800"><div className={`h-full rounded-full ${Number(item.profit) < 0 ? "bg-rose-400" : "bg-emerald-400"}`} style={{ width: `${Math.max(2, Math.abs(Number(item.profit)) / maximum * 100)}%` }}/></div></div>) : <StableState text="Нет рассчитанных данных."/>}</div>;
 }
 
-function ManagerSalesDashboard({ metrics: m, attention }: { metrics: SalesMetrics; attention: MeasurementAttention[] }) {
+function ManagerSalesDashboard({ metrics: m, attention, orders }: { metrics: SalesMetrics; attention: MeasurementAttention[]; orders: ManagerOrderAttention[] }) {
   return <><div className="grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4">
     <Metric href="/clients" label="Мои новые заявки" value={m.newLeads} featured/>
     <Metric href="/clients" label="Мои активные заявки" value={m.activeLeads} featured/>
-    <Metric href="/orders" label="Мои заказы" value={m.orders} featured/>
+    <Metric href="/orders" label="Мои действующие заказы" value={m.activeOrders} featured/>
     <Metric href="/orders" label="Мои продажи" value={money(m.totalSales)} featured/>
     <Metric href="/clients" label="Мои отправленные КП" value={m.proposalsSent}/>
     <Metric href="/measurements" label="Мои замеры сегодня" value={m.measurementsToday}/>
     <Metric href="/calendar" label="Мои задачи сегодня" value={m.tasksToday}/>
     <Metric href="/calendar?state=overdue" label="Мои просроченные" value={m.overdueNextActions + m.overdueTasks + m.overdueOrders} alert/>
-  </div><Panel title="Требует внимания после замера">{attention.length ? <div className="grid gap-2 md:grid-cols-2">{attention.map((item) => <Link key={item.id} href={`/clients/${item.client.id}`} className="min-w-0 rounded-xl border border-amber-800/60 bg-amber-950/20 p-3 hover:border-amber-500"><b className="block truncate text-white">{item.client.name || item.client.phone}</b><span className="mt-1 block break-words text-sm text-amber-200">{item.nextActionComment || "Замер выполнен — требуется работа менеджера"}</span><time className="mt-2 block text-xs text-slate-500">до {new Date(item.nextActionAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link>)}</div> : <Empty text="Новых результатов замеров, требующих внимания, нет."/>}</Panel></>;
+    <Metric href="#manager-orders" label="Заказы требуют действия" value={m.ordersNeedAttention ?? 0} alert/>
+  </div><Panel title="Мои заказы — что сделать сегодня" href="/orders"><div id="manager-orders" className="grid min-w-0 gap-3 lg:grid-cols-2">{orders.length ? orders.map((order) => <article key={order.id} className={`min-w-0 rounded-xl border p-4 ${order.requiresAction ? "border-amber-800/60 bg-amber-950/15" : "border-emerald-900/50 bg-emerald-950/10"}`}><div className="flex min-w-0 flex-wrap items-start justify-between gap-2"><div className="min-w-0"><b className="block break-words text-white">{order.number} · {order.client}</b><span className="mt-1 block break-words text-sm text-slate-400">{order.city || "Город не указан"}{order.phone ? ` · ${order.phone}` : " · телефон не указан"}</span></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${order.requiresAction ? "bg-amber-400/10 text-amber-200" : "bg-emerald-400/10 text-emerald-200"}`}>{order.status}</span></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><span className="rounded-lg bg-black/20 p-2 text-slate-300"><small className="block text-slate-500">Стоимость</small>{money(order.amount)}</span><span className="rounded-lg bg-black/20 p-2 text-slate-300"><small className="block text-slate-500">Срок</small>{order.promisedAt ? new Date(order.promisedAt).toLocaleDateString("ru-RU", { timeZone: "Asia/Almaty" }) : "не указан"}</span></div>{order.missing.length ? <p className="mt-3 break-words text-sm text-amber-200">Заполнить: {order.missing.join(", ")}</p> : order.overdue ? <p className="mt-3 text-sm text-red-300">Срок прошёл — уточните текущий статус.</p> : <p className="mt-3 text-sm text-emerald-300">Основные данные заполнены.</p>}<Link href={order.href} className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-500">{order.actionLabel}</Link></article>) : <Empty text="Действующих заказов нет."/>}</div></Panel><Panel title="Требует внимания после замера">{attention.length ? <div className="grid gap-2 md:grid-cols-2">{attention.map((item) => <Link key={item.id} href={`/clients/${item.client.id}`} className="min-w-0 rounded-xl border border-amber-800/60 bg-amber-950/20 p-3 hover:border-amber-500"><b className="block truncate text-white">{item.client.name || item.client.phone}</b><span className="mt-1 block break-words text-sm text-amber-200">{item.nextActionComment || "Замер выполнен — требуется работа менеджера"}</span><time className="mt-2 block text-xs text-slate-500">до {new Date(item.nextActionAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link>)}</div> : <Empty text="Новых результатов замеров, требующих внимания, нет."/>}</Panel></>;
 }
 
 function LegacyActivityFeed({ activities }: { activities: ActivityItem[] }) {

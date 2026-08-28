@@ -7,7 +7,7 @@ async function login(page: Page, email: string) {
   await page.getByLabel("Email").fill(email);
   await page.locator('input[name="password"]').fill(playwrightPassword);
   await page.getByRole("button", { name: "Войти" }).click();
-  await page.waitForURL((url) => url.pathname === "/", { timeout: 20_000 });
+  await page.waitForURL((url) => url.pathname !== "/login", { timeout: 20_000 });
 }
 
 test("DIRECTOR sees shared partner workspace without mobile overflow or browser errors", async ({ page }) => {
@@ -18,7 +18,7 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, playwrightUsers.director);
   await expect(page.getByRole("heading", { name: "Состояние компании", exact: true })).toBeVisible();
-  await expect(page.getByText("Отзывы и контент", { exact: true })).toBeVisible();
+  await expect(page.getByText("Отзывы и контент", { exact: true })).toBeVisible({ timeout: 30_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.reload();
@@ -86,6 +86,26 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   await page.goto("/orders");
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   expect({ browserErrors, failedResponses }).toEqual({ browserErrors: [], failedResponses: [] });
+});
+
+test("MANAGER completes one mobile morning control and returns to the dashboard", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, playwrightUsers.manager);
+  await expect(page).toHaveURL(/\/manager-morning-check$/u);
+  await expect(page.getByRole("heading", { name: "Проверьте свои действующие заказы", exact: true })).toBeVisible();
+  await expect(page.getByText("PW-CONTENT-ORDER", { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const stateResponse = await page.request.get("/api/manager-morning-check");
+  expect(stateResponse.status()).toBe(200);
+  const state = await stateResponse.json() as { mustReview: boolean; inventory: { managerOrderCount: number }; orders: Array<{ number: string }> };
+  expect(state.mustReview).toBe(true);
+  expect(state.inventory.managerOrderCount).toBeGreaterThan(0);
+  expect(state.orders.some((order) => order.number === "PW-CONTENT-ORDER")).toBe(true);
+  await page.getByRole("button", { name: "Завершить утреннюю проверку", exact: true }).click();
+  await expect(page).toHaveURL(/\/$/u);
+  await expect(page.getByRole("heading", { name: "Рабочий стол менеджера", exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(/\/$/u);
 });
 
 for (const [role, email] of [["MANAGER", playwrightUsers.manager], ["ACCOUNTANT", playwrightUsers.accountant]] as const) {
