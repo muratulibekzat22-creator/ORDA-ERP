@@ -11,7 +11,7 @@ const text = (value: unknown, required = false) => typeof value === "string" && 
 export async function GET(request: Request) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const params = new URL(request.url).searchParams, role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const includeDeleted = params.get("includeDeleted") === "true";
   const deletedOnly = params.get("deletedOnly") === "true";
   if (role !== Role.DIRECTOR && (includeDeleted || deletedOnly || params.get("active") === "false"))

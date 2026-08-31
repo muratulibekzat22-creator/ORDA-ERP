@@ -12,13 +12,14 @@ export default async function PartnerManagementPage({
 }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
-  if (session.user.role !== Role.DIRECTOR) forbidden();
+  if (session.user.role !== Role.DIRECTOR && session.user.role !== Role.OPERATIONS_DIRECTOR) forbidden();
   const query = await searchParams;
   const orderId = Number(query.orderId);
   return (
     <PartnerSettlementWorkspace
       initialTab={query.tab === "orders" ? "orders" : undefined}
       initialOrderId={Number.isInteger(orderId) && orderId > 0 ? orderId : undefined}
+      readOnly={session.user.role === Role.OPERATIONS_DIRECTOR}
     />
   );
 }

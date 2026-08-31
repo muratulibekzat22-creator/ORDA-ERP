@@ -101,7 +101,7 @@ function redactForRole<T extends Record<string, unknown>>(
   order: T,
   role: Role,
 ) {
-  if (role === Role.DIRECTOR) return order;
+  if (role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR) return order;
   const result: Record<string, unknown> = { ...order };
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
@@ -252,6 +252,8 @@ export async function PATCH(request: Request, { params }: Context) {
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const role = auth.session!.user.role as Role;
+  if (role === Role.OPERATIONS_DIRECTOR)
+    return NextResponse.json({ error: "Операционный доступ только для чтения" }, { status: 403 });
   if (!(await canAccess(id, role, auth.session!.user.id)))
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   try {

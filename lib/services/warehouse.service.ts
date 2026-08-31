@@ -117,6 +117,7 @@ function jsonValue(value: unknown) {
 async function scopedOrderIds(actor: WarehouseActor) {
   if (
     actor.role === Role.DIRECTOR ||
+    actor.role === Role.OPERATIONS_DIRECTOR ||
     actor.role === Role.MANAGER ||
     actor.role === Role.ACCOUNTANT
   )
@@ -223,7 +224,7 @@ export async function getWarehouse(
     ].filter(Boolean),
   }));
   const canSeeCost =
-    actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
+    actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT;
   const visibleMaterials = canSeeCost
     ? enriched.map((source) => {
         const { mainImagePath, ...item } = source;

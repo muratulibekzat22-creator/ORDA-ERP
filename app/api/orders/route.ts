@@ -217,7 +217,7 @@ export async function GET(request: Request) {
     const filterMetrics = Object.fromEntries(metricRows);
     const cities = [...new Set(cityRows.map((row) => row.client.city.trim()).filter(Boolean))]
       .sort((left, right) => left.localeCompare(right, "ru"));
-    if (role !== Role.DIRECTOR && role !== Role.ACCOUNTANT) {
+    if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT) {
       const projected = orders.map((order) => {
           const result = { ...order } as Record<string, unknown>;
           delete result.companyProfit;

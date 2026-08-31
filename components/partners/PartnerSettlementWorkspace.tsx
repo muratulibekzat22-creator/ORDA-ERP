@@ -364,9 +364,11 @@ const initialFilters = {
 export default function PartnerSettlementWorkspace({
   initialTab,
   initialOrderId,
+  readOnly = false,
 }: {
   initialTab?: Tab;
   initialOrderId?: number;
+  readOnly?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
   const [data, setData] = useState<Payload | null>(null);
@@ -475,6 +477,16 @@ export default function PartnerSettlementWorkspace({
     setTab("orders");
     setFilters((current) => ({ ...current, ...next, page: 1 }));
   };
+
+  if (readOnly)
+    return (
+      <PartnerOperationsReadOnly
+        data={data}
+        error={error}
+        loading={loading}
+        reload={() => void load()}
+      />
+    );
 
   return (
     <main className="min-w-0 space-y-5 overflow-x-hidden p-4 text-slate-100 sm:p-6 md:p-8">
@@ -667,6 +679,124 @@ export default function PartnerSettlementWorkspace({
         />
       )}
     </main>
+  );
+}
+
+function PartnerOperationsReadOnly({
+  data,
+  error,
+  loading,
+  reload,
+}: {
+  data: Payload | null;
+  error: string;
+  loading: boolean;
+  reload: () => void;
+}) {
+  return (
+    <main className="min-w-0 space-y-5 overflow-x-hidden p-4 text-slate-100 sm:p-6 md:p-8">
+      <header className="rounded-[28px] border border-amber-300/20 bg-[#0b1220] p-5 sm:p-7">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.25em] text-amber-300">
+              Operational read-only
+            </p>
+            <h1 className="mt-2 text-3xl font-semibold text-white">Партнёры</h1>
+            <p className="mt-2 max-w-3xl text-sm text-slate-400">
+              Заказы, стоимость цеха, выплаты и остатки. Проведение выплат и
+              изменение финансовых данных отключены для операционной роли.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={secondary}
+            onClick={reload}
+            disabled={loading}
+          >
+            <RefreshCw size={17} className={loading ? "animate-spin" : ""} />
+            Обновить
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div
+          role="alert"
+          className="rounded-xl border border-red-500/40 bg-red-950/40 p-4 text-red-200"
+        >
+          {error}
+        </div>
+      )}
+      {loading && !data ? (
+        <div className={`${panel} py-16 text-center text-slate-400`}>
+          Загрузка реальных данных…
+        </div>
+      ) : data ? (
+        <>
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="Активные партнёры" value={String(data.totals.activePartners)} />
+            <Metric label="Заказов" value={String(data.totals.orders)} />
+            <Metric label="Стоимость цеха" value={money(data.totals.partnerAccrued)} />
+            <Metric label="Осталось выплатить" value={money(data.totals.companyDebt)} />
+            <Metric label="Продажи" value={money(data.totals.orderAmount)} />
+            <Metric label="Получено от клиентов" value={money(data.totals.received)} />
+            <Metric label="Остаток клиентов" value={money(data.totals.clientRemaining)} />
+            <Metric label="Прибыль" value={money(data.totals.profit)} />
+          </section>
+
+          <section className={panel}>
+            <h2 className="text-xl font-semibold text-white">Заказы и взаиморасчёты</h2>
+            <div className="mt-4 space-y-3">
+              {data.orders.length ? (
+                data.orders.map((item) => (
+                  <article
+                    key={item.order.id}
+                    className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4 lg:grid-cols-[minmax(0,1.5fr)_repeat(3,minmax(0,1fr))_auto] lg:items-center"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-white">
+                        {item.order.number} · {item.order.client.name}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {item.partner?.name ?? "Цех не назначен"} · {item.order.manager.name}
+                      </p>
+                    </div>
+                    <Metric label="Стоимость цеха" value={money(item.metrics.partnerAccrued)} compact />
+                    <Metric label="Выплачено" value={money(item.metrics.companyPaidPartner)} compact />
+                    <Metric label="Остаток" value={money(item.metrics.partnerRemaining)} compact />
+                    <a
+                      href={`/orders/${item.order.id}`}
+                      className={secondary}
+                    >
+                      Открыть
+                    </a>
+                  </article>
+                ))
+              ) : (
+                <p className="py-8 text-center text-sm text-slate-400">Заказов нет</p>
+              )}
+            </div>
+          </section>
+        </>
+      ) : null}
+    </main>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "min-w-0" : panel}>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-1 break-words font-semibold text-white">{value}</p>
+    </div>
   );
 }
 

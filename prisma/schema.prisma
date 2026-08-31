@@ -8,6 +8,7 @@ datasource db {
 
 enum Role {
   DIRECTOR
+  OPERATIONS_DIRECTOR
   MARKETER
   MANAGER
   ACCOUNTANT
@@ -142,6 +143,8 @@ model Company {
   managerDailyReviews     ManagerDailyReview[]
   orderCostPlans          OrderCostPlan[]
   orderCostPlanRevisions  OrderCostPlanRevision[]
+  operationalWorkItems    OperationalWorkItem[]
+  operationalAuditEvents  OperationalAccessAuditEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -215,6 +218,38 @@ enum Permission {
   warehouse
   payroll
   marketing
+  operations
+}
+
+enum OperationalScope {
+  ORDA_PROJECT
+  ALTYN_SAPA
+}
+
+enum OperationalWorkItemStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+enum OperationalWorkItemPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+enum OperationalAccessAuditAction {
+  OPERATIONAL_ACCESS_GRANTED
+  OPERATIONAL_ACCESS_EXTENDED
+  OPERATIONAL_SCOPE_CHANGED
+  OPERATIONAL_ACCESS_REVOKED
+  OPERATIONAL_TASK_CREATED
+  OPERATIONAL_TASK_ASSIGNED
+  OPERATIONAL_TASK_UPDATED
+  OPERATIONAL_RELEASE_APPROVED
 }
 
 enum MarketingCampaignStatus {
@@ -519,22 +554,30 @@ enum TrainingAuditAction {
 }
 
 model User {
-  id                  Int       @id @default(autoincrement())
-  companyId           Int       @default(dbgenerated())
-  company             Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  name                String
-  email               String    @unique
-  password            String
-  role                Role      @default(MANAGER)
-  phone               String?
-  active              Boolean   @default(true)
-  lastLogin           DateTime?
-  failedLoginAttempts Int       @default(0)
-  lockedUntil         DateTime?
-  passwordChangedAt   DateTime  @default(now())
-  mustChangePassword  Boolean   @default(false)
-  sessionVersion      Int       @default(1)
-  employeeCode        String?   @unique
+  id                           Int       @id @default(autoincrement())
+  companyId                    Int       @default(dbgenerated())
+  company                      Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name                         String
+  email                        String    @unique
+  password                     String
+  role                         Role      @default(MANAGER)
+  phone                        String?
+  active                       Boolean   @default(true)
+  lastLogin                    DateTime?
+  failedLoginAttempts          Int       @default(0)
+  lockedUntil                  DateTime?
+  passwordChangedAt            DateTime  @default(now())
+  mustChangePassword           Boolean   @default(false)
+  sessionVersion               Int       @default(1)
+  employeeCode                 String?   @unique
+  temporaryAccess              Boolean   @default(false)
+  accessExpiresAt              DateTime?
+  accessRevokedAt              DateTime?
+  revokedById                  Int?
+  revokedBy                    User?     @relation("OperationalAccessRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+  revokeReason                 String?
+  ordaProjectOperationsEnabled Boolean   @default(false)
+  companyOperationsEnabled     Boolean   @default(false)
 
   partnerProfile                 Partner?
   assignedMeasurements           Measurement[]
@@ -614,11 +657,65 @@ model User {
   createdMarketingContentTasks   MarketingContentTask[]        @relation("MarketingContentTaskCreator")
   uploadedMarketingContentAssets MarketingContentAsset[]       @relation("MarketingContentAssetUploader")
   managerDailyReviews            ManagerDailyReview[]          @relation("ManagerDailyReviewManager")
+  operationalAccessRevocations   User[]                        @relation("OperationalAccessRevokedBy")
+  assignedOperationalWorkItems   OperationalWorkItem[]         @relation("OperationalWorkItemAssignee")
+  createdOperationalWorkItems    OperationalWorkItem[]         @relation("OperationalWorkItemCreator")
+  targetedOperationalAudits      OperationalAccessAuditEvent[] @relation("OperationalAuditTarget")
+  authoredOperationalAudits      OperationalAccessAuditEvent[] @relation("OperationalAuditActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([companyId, active, role])
+  @@index([companyId, role, temporaryAccess, accessExpiresAt])
+}
+
+model OperationalWorkItem {
+  id                 Int                         @id @default(autoincrement())
+  companyId          Int                         @default(dbgenerated())
+  company            Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  scope              OperationalScope
+  title              String
+  description        String?
+  source             String
+  status             OperationalWorkItemStatus   @default(OPEN)
+  priority           OperationalWorkItemPriority @default(NORMAL)
+  dueAt              DateTime?
+  completedAt        DateTime?
+  assigneeId         Int
+  assignee           User                        @relation("OperationalWorkItemAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  createdById        Int
+  createdBy          User                        @relation("OperationalWorkItemCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  previewUrl         String?
+  productionUrl      String?
+  commitSha          String?
+  pullRequestUrl     String?
+  verificationResult String?
+  releaseStatus      String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+
+  @@index([companyId, scope, status, priority])
+  @@index([companyId, assigneeId, status, dueAt])
+}
+
+model OperationalAccessAuditEvent {
+  id           Int                          @id @default(autoincrement())
+  companyId    Int                          @default(dbgenerated())
+  company      Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  targetUserId Int
+  targetUser   User                         @relation("OperationalAuditTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  actorId      Int
+  actor        User                         @relation("OperationalAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  action       OperationalAccessAuditAction
+  before       Json?
+  after        Json?
+  reason       String
+  createdAt    DateTime                     @default(now())
+
+  @@index([companyId, targetUserId, createdAt])
+  @@index([companyId, actorId, createdAt])
+  @@index([companyId, action, createdAt])
 }
 
 model AuthAuditEvent {

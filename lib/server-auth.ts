@@ -5,19 +5,35 @@ import { type Permission } from "./permissions";
 import { hasPermission } from "./services/permission.service";
 import { Role } from "./roles";
 import { enterTenantFromSession } from "./tenant-context";
+import { OperationalScope } from "@prisma/client";
 
 export async function requirePermission(permission: Permission) {
   const session = await getServerSession(authOptions);
   if (!session?.user || !session.user.role || !enterTenantFromSession(session)) {
     return {
       response: NextResponse.json(
-        { error: "Сессия завершена", code: "SESSION_INVALID" },
+        { error: "Сессия завершена", code: session?.invalidReason ?? "SESSION_INVALID" },
         { status: 401 },
       ),
     };
   }
 
   const role = session.user.role as Role;
+  if (
+    role === Role.OPERATIONS_DIRECTOR &&
+    permission !== "operations" &&
+    session.user.companyOperationsEnabled !== true
+  ) {
+    return {
+      response: NextResponse.json(
+        {
+          error: "Область операционного доступа отключена",
+          code: "OPERATIONAL_SCOPE_DISABLED",
+        },
+        { status: 403 },
+      ),
+    };
+  }
   if (
     !Object.values(Role).includes(role) ||
     !(await hasPermission(role, permission))
@@ -46,4 +62,30 @@ export async function requirePermission(permission: Permission) {
       return session;
     },
   };
+}
+
+export async function requireOperationsAccess(scope?: OperationalScope) {
+  const auth = await requirePermission("operations");
+  if (auth.response) return auth;
+  const role = auth.session!.user.role as Role;
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR)
+    return {
+      response: NextResponse.json(
+        { error: "Недостаточно прав", code: "OPERATIONS_FORBIDDEN" },
+        { status: 403 },
+      ),
+    };
+  if (role === Role.OPERATIONS_DIRECTOR && scope) {
+    const enabled = scope === OperationalScope.ORDA_PROJECT
+      ? auth.session!.user.ordaProjectOperationsEnabled
+      : auth.session!.user.companyOperationsEnabled;
+    if (!enabled)
+      return {
+        response: NextResponse.json(
+          { error: "Область операционного доступа отключена", code: "OPERATIONAL_SCOPE_DISABLED" },
+          { status: 403 },
+        ),
+      };
+  }
+  return auth;
 }

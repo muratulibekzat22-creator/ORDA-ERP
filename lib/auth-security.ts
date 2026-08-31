@@ -12,7 +12,7 @@ export function accountFailureWindowStart(passwordChangedAt: Date | null | undef
   return passwordChangedAt && passwordChangedAt > windowStart ? passwordChangedAt : windowStart;
 }
 
-export type SafeAuthReason = "INVALID_CREDENTIALS" | "TEMPORARILY_LOCKED" | "RATE_LIMITED" | "SESSION_INVALID" | "PASSWORD_CHANGE_REQUIRED" | "CSRF_OR_AUTH_FLOW_ERROR" | "NETWORK_ERROR";
+export type SafeAuthReason = "INVALID_CREDENTIALS" | "TEMPORARILY_LOCKED" | "RATE_LIMITED" | "SESSION_INVALID" | "PASSWORD_CHANGE_REQUIRED" | "CSRF_OR_AUTH_FLOW_ERROR" | "NETWORK_ERROR" | "TEMPORARY_ACCESS_EXPIRED" | "OPERATIONAL_ACCESS_REVOKED";
 
 type RequestLike = { headers?: Record<string, string | string[] | undefined> };
 

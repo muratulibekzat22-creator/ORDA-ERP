@@ -47,6 +47,21 @@ export async function proxy(request: NextRequest) {
     url.searchParams.set("reason", "SESSION_INVALID");
     return redirect(url);
   }
+  if (String(token.role ?? "") === "OPERATIONS_DIRECTOR") {
+    const expiresAt = typeof token.accessExpiresAt === "string"
+      ? new Date(token.accessExpiresAt)
+      : null;
+    const reason = token.accessRevokedAt || token.temporaryAccess !== true
+      ? "OPERATIONAL_ACCESS_REVOKED"
+      : !expiresAt || expiresAt <= new Date()
+        ? "TEMPORARY_ACCESS_EXPIRED"
+        : null;
+    if (reason) {
+      const url = new URL("/login", request.url);
+      url.searchParams.set("reason", reason);
+      return redirect(url);
+    }
+  }
   if (
     token.mustChangePassword &&
     request.nextUrl.pathname !== "/change-password"
@@ -58,6 +73,7 @@ export async function proxy(request: NextRequest) {
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
+    OPERATIONS_DIRECTOR: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse", "partners", "reports", "marketing", "operations"],
     MARKETER: ["marketing", "calendar"],
     MANAGER: [
       "clients",
@@ -84,6 +100,12 @@ export async function proxy(request: NextRequest) {
   };
   const firstSegment =
     request.nextUrl.pathname.split("/").filter(Boolean)[0] ?? "";
+  if (
+    role === "OPERATIONS_DIRECTOR" &&
+    firstSegment !== "operations" &&
+    token.companyOperationsEnabled !== true
+  )
+    return redirect(new URL("/operations", request.url));
   if (role === "MARKETER" && /^\/clients\/\d+$/.test(request.nextUrl.pathname)) {
     const id = request.nextUrl.pathname.split("/").at(-1);
     return rewrite(new URL(`/marketing/applications/${id}`, request.url));
@@ -113,8 +135,10 @@ export async function proxy(request: NextRequest) {
     "training",
     "change-password",
     "marketing",
+    "operations",
+    "partner-management",
   ].includes(firstSegment);
-  if (firstSegment === "marketing" && role !== "DIRECTOR" && role !== "MARKETER")
+  if (firstSegment === "marketing" && role !== "DIRECTOR" && role !== "OPERATIONS_DIRECTOR" && role !== "MARKETER")
     return new NextResponse("Доступ запрещён", { status: 403, headers: { "x-request-id": requestId } });
   if (
     firstSegment === "training" &&
@@ -131,13 +155,15 @@ export async function proxy(request: NextRequest) {
   const required =
     firstSegment === "calculator"
       ? "orders"
+      : firstSegment === "partner-management"
+        ? "partners"
       : firstSegment === "calculator-config"
         ? "*"
         : firstSegment === "analytics"
           ? "reports"
           : firstSegment;
   const allowed = permissions[role] ?? [];
-  const selfPayroll = firstSegment === "payroll" && role !== "PARTNER";
+  const selfPayroll = firstSegment === "payroll" && role !== "PARTNER" && role !== "OPERATIONS_DIRECTOR";
   const trainingWorkspace =
     firstSegment === "training" &&
     (role === "MEASURER" || role === "DIRECTOR");

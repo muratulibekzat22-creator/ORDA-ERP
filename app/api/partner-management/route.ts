@@ -55,10 +55,10 @@ function actor(session: { user: { id: string; role?: string; name?: string | nul
   };
 }
 
-async function directorAuth() {
+async function directorAuth(readOnly = false) {
   const auth = await requirePermission("partners");
   if (auth.response) return { response: auth.response };
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && !(readOnly && auth.session!.user.role === Role.OPERATIONS_DIRECTOR))
     return { response: NextResponse.json({ error: "Недостаточно прав" }, { status: 403 }) };
   return { session: auth.session! };
 }
@@ -90,7 +90,7 @@ function errorResponse(error: unknown) {
 }
 
 export async function GET(request: Request) {
-  const auth = await directorAuth();
+  const auth = await directorAuth(true);
   if (auth.response) return auth.response;
   if (!enterTenantFromSession(auth.session)) return NextResponse.json({ error: "Сессия завершена" }, { status: 401 });
   try {

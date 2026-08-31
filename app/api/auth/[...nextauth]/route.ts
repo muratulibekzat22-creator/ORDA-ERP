@@ -4,6 +4,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 
 import { ACCOUNT_FAILURE_LIMIT, ACCOUNT_IP_FAILURE_LIMIT, AUTH_WINDOW_MS, IP_ABUSE_FAILURE_LIMIT, accountFailureWindowStart, accountIdentifierHash, normalizeAccountIdentifier, pruneAuthAudit, requestId, requestIpHash, userAgentClass, writeAuthAudit, type SafeAuthReason } from "@/lib/auth-security";
 import { productionLog } from "@/lib/observability";
+import { operationalAccessFailure } from "@/lib/operations/access";
 import { prisma } from "@/lib/prisma";
 import { enterTenantContext, runWithSystemAccess } from "@/lib/tenant-context";
 
@@ -40,12 +41,27 @@ export const authOptions: NextAuthOptions = {
         throw new SafeAuthError("TEMPORARILY_LOCKED");
       }
       const passwordMatches = await bcrypt.compare(credentials.password, user?.password ?? DUMMY_PASSWORD_HASH);
-      if (!user || !user.active || !passwordMatches) {
+      if (!user || !passwordMatches) {
         if (user?.active) {
           const nextFailures = user.failedLoginAttempts + 1;
           await runWithSystemAccess(() => prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: nextFailures, ...(nextFailures === ACCOUNT_FAILURE_LIMIT ? { lockedUntil: new Date(Date.now() + AUTH_WINDOW_MS) } : {}) } }));
         }
         await audit(user?.id, false, invalidReason);
+        throw new SafeAuthError("INVALID_CREDENTIALS");
+      }
+      const operationalFailure = operationalAccessFailure(user);
+      if (operationalFailure) {
+        if (operationalFailure === "TEMPORARY_ACCESS_EXPIRED" && user.active) {
+          await runWithSystemAccess(() => prisma.user.update({
+            where: { id: user.id },
+            data: { active: false, sessionVersion: { increment: 1 } },
+          }));
+        }
+        await audit(user.id, false, operationalFailure);
+        throw new SafeAuthError(operationalFailure);
+      }
+      if (!user.active) {
+        await audit(user.id, false, invalidReason);
         throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       if (!user.company.active) {
@@ -61,6 +77,11 @@ export const authOptions: NextAuthOptions = {
         sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
+        temporaryAccess: user.temporaryAccess,
+        accessExpiresAt: user.accessExpiresAt?.toISOString() ?? null,
+        accessRevokedAt: user.accessRevokedAt?.toISOString() ?? null,
+        ordaProjectOperationsEnabled: user.ordaProjectOperationsEnabled,
+        companyOperationsEnabled: user.companyOperationsEnabled,
       };
     },
   })],
@@ -75,21 +96,41 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id; token.role = user.role; token.sessionVersion = user.sessionVersion;
         token.mustChangePassword = user.mustChangePassword; token.companyId = user.companyId;
         token.companySlug = user.companySlug; token.companyName = user.companyName;
-        token.isDemo = user.isDemo; token.invalid = false;
+        token.isDemo = user.isDemo; token.invalid = false; token.invalidReason = undefined;
+        token.temporaryAccess = user.temporaryAccess;
+        token.accessExpiresAt = user.accessExpiresAt;
+        token.accessRevokedAt = user.accessRevokedAt;
+        token.ordaProjectOperationsEnabled = user.ordaProjectOperationsEnabled;
+        token.companyOperationsEnabled = user.companyOperationsEnabled;
       }
       else if (token.id) {
         const current = await runWithSystemAccess(() => prisma.user.findUnique({
           where: { id: Number(token.id) },
           select: {
             active: true, role: true, sessionVersion: true, mustChangePassword: true,
+            temporaryAccess: true, accessExpiresAt: true, accessRevokedAt: true,
+            ordaProjectOperationsEnabled: true, companyOperationsEnabled: true,
             companyId: true, company: { select: { active: true, slug: true, name: true, isDemo: true } },
           },
         }));
-        token.invalid = !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
+        const operationalFailure = current ? operationalAccessFailure(current) : null;
+        if (current && operationalFailure === "TEMPORARY_ACCESS_EXPIRED" && current.active) {
+          await runWithSystemAccess(() => prisma.user.update({
+            where: { id: Number(token.id) },
+            data: { active: false, sessionVersion: { increment: 1 } },
+          }));
+        }
+        token.invalidReason = operationalFailure ?? undefined;
+        token.invalid = Boolean(operationalFailure) || !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
         if (current) {
           token.role = current.role; token.mustChangePassword = current.mustChangePassword;
           token.companyId = current.companyId; token.companySlug = current.company.slug;
           token.companyName = current.company.name; token.isDemo = current.company.isDemo;
+          token.temporaryAccess = current.temporaryAccess;
+          token.accessExpiresAt = current.accessExpiresAt?.toISOString() ?? null;
+          token.accessRevokedAt = current.accessRevokedAt?.toISOString() ?? null;
+          token.ordaProjectOperationsEnabled = current.ordaProjectOperationsEnabled;
+          token.companyOperationsEnabled = current.companyOperationsEnabled;
         }
       }
       return token;
@@ -102,7 +143,13 @@ export const authOptions: NextAuthOptions = {
       session.user.companySlug = String(token.companySlug ?? "");
       session.user.companyName = String(token.companyName ?? "ORDA ERP");
       session.user.isDemo = token.isDemo === true;
+      session.user.temporaryAccess = token.temporaryAccess === true;
+      session.user.accessExpiresAt = typeof token.accessExpiresAt === "string" ? token.accessExpiresAt : null;
+      session.user.accessRevokedAt = typeof token.accessRevokedAt === "string" ? token.accessRevokedAt : null;
+      session.user.ordaProjectOperationsEnabled = token.ordaProjectOperationsEnabled === true;
+      session.user.companyOperationsEnabled = token.companyOperationsEnabled === true;
       session.invalid = token.invalid === true || !session.user.companyId;
+      session.invalidReason = typeof token.invalidReason === "string" ? token.invalidReason : undefined;
       if (!session.invalid) {
         enterTenantContext({
           companyId: session.user.companyId,

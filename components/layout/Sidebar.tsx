@@ -17,6 +17,7 @@ import {
   ChevronRight,
   X,
   Megaphone,
+  ShieldCheck,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
@@ -37,6 +38,11 @@ const menu = [
         id: "dashboard",
         title: "Главная",
         icon: LayoutDashboard,
+      },
+      {
+        id: "operations",
+        title: "Операционное управление",
+        icon: ShieldCheck,
       },
     ],
   },
@@ -132,7 +138,9 @@ export default function Sidebar({
   const role = session?.user.role as Role | undefined;
   const permissionByPage: Partial<Record<string, Permission>> = { clients: "clients", orders: "orders", marketing: "marketing", partners: "partners", production: "production", warehouse: "warehouse", payroll: "payroll", finance: "finance", reports: "reports", documents: "documents", calendar: "calendar", employees: "employees", settings: "settings" };
   const visible = (id: string) => {
-    if (id === "marketing") return role === "DIRECTOR" || role === "MARKETER";
+    if (id === "operations") return role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR";
+    if (id === "marketing") return role === "DIRECTOR" || (role === "OPERATIONS_DIRECTOR" && session?.user.companyOperationsEnabled === true) || role === "MARKETER";
+    if (role === "OPERATIONS_DIRECTOR") return session?.user.companyOperationsEnabled === true && ["clients", "orders", "measurements", "marketing", "calendar", "production", "warehouse", "partners", "reports", "documents"].includes(id);
     return id === "dashboard" ||
     (id === "payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
@@ -197,7 +205,7 @@ export default function Sidebar({
                 return (
                   <button
                     key={item.id}
-                    onClick={() => item.id === "payroll" ? router.push("/payroll") : item.id === "marketing" ? router.push("/marketing") : setPage(item.id)}
+                    onClick={() => item.id === "payroll" ? router.push("/payroll") : item.id === "marketing" ? router.push("/marketing") : item.id === "operations" ? router.push("/operations") : setPage(item.id)}
                     aria-current={active ? "page" : undefined}
                     className={`group flex min-h-12 w-full items-center justify-between rounded-xl px-4 py-3 text-left transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 ${
                       active

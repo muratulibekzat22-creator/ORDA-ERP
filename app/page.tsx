@@ -14,6 +14,7 @@ export default async function Home() {
   if (!session?.user) redirect("/login");
   const role = session.user.role as Role;
   if (role === Role.MARKETER) redirect("/marketing");
+  if (role === Role.OPERATIONS_DIRECTOR) redirect("/operations");
   if (role === Role.PARTNER) redirect("/partner");
   if (role === Role.MEASURER) return <MeasurerHome />;
   if (role === Role.MANAGER) {

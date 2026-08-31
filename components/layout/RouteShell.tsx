@@ -22,6 +22,7 @@ import {
   Warehouse,
   BarChart3,
   Megaphone,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import Header from "@/components/Header";
@@ -29,7 +30,7 @@ import { hasDefaultPermission, type Permission } from "@/lib/permissions";
 import { type Role } from "@/lib/roles";
 
 const sections = [
-  { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
+  { title: "Главное", items: [["/", "Главная", LayoutDashboard], ["/operations", "Операционное управление", ShieldCheck]] },
   { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
   { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Партнёры", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
@@ -59,18 +60,21 @@ export default function RouteShell({
     "/payroll": "payroll",
     "/settings": "settings",
     "/marketing": "marketing",
+    "/operations": "operations",
   };
   const visible = (href: string) => {
     if (href === "/calculator-config") return session?.user.role === "DIRECTOR";
-    if (href === "/partner-management") return role === "DIRECTOR";
-    if (href === "/marketing") return role === "DIRECTOR" || role === "MARKETER";
+    if (href === "/partner-management") return role === "DIRECTOR" || (role === "OPERATIONS_DIRECTOR" && session?.user.companyOperationsEnabled === true);
+    if (href === "/marketing") return role === "DIRECTOR" || (role === "OPERATIONS_DIRECTOR" && session?.user.companyOperationsEnabled === true) || role === "MARKETER";
+    if (role === "OPERATIONS_DIRECTOR")
+      return href === "/operations" || (session?.user.companyOperationsEnabled === true && ["/clients", "/orders", "/measurements", "/marketing", "/calendar", "/production", "/warehouse", "/partner-management", "/reports", "/documents"].includes(href));
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
     if (role === "MANAGER")
       return ["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"].includes(href);
     if (role === "MARKETER") return ["/marketing", "/calendar"].includes(href);
     if (role === "DIRECTOR")
-      return ["/", "/clients", "/orders", "/measurements", "/marketing", "/calendar", "/production", "/warehouse", "/employees", "/payroll", "/finance", "/partner-management", "/reports", "/documents", "/settings"].includes(href);
+      return ["/", "/operations", "/clients", "/orders", "/measurements", "/marketing", "/calendar", "/production", "/warehouse", "/employees", "/payroll", "/finance", "/partner-management", "/reports", "/documents", "/settings"].includes(href);
     if (href === "/training" || href === "/measurements") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||

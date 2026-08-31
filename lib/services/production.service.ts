@@ -66,7 +66,7 @@ export type ProductionListFilters = {
 
 function scopeWhere(actor: ProductionActor): Prisma.ProductionWhereInput {
   const active = { archivedAt: null, order: { deletedAt: null } } as const;
-  if (actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) return active;
+  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.MANAGER) return active;
   if (actor.role === Role.PRODUCTION) return { ...active, masterUserId: actor.userId, stage: { notIn: ["Монтаж", "Сдано"] } };
   if (actor.role === Role.INSTALLER) return { ...active, masterUserId: actor.userId, stage: "Монтаж" };
   return { id: -1 };
@@ -150,7 +150,7 @@ export async function getProductionCounters(actor: ProductionActor, filters: Pro
 }
 
 export async function getProductionOptions(actor: ProductionActor) {
-  if (!canCreateProduction(actor.role)) throw new ProductionServiceError("FORBIDDEN");
+  if (!canCreateProduction(actor.role) && actor.role !== Role.OPERATIONS_DIRECTOR) throw new ProductionServiceError("FORBIDDEN");
   const [orders, assignees, partners] = await Promise.all([
     prisma.order.findMany({
       where: { deletedAt: null, productions: { none: { archivedAt: null } } },
