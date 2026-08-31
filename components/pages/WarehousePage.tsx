@@ -145,7 +145,7 @@ export default function WarehousePage() {
   const canCreateMaterial = role === Role.DIRECTOR,
     canEdit = role === Role.DIRECTOR || role === Role.ACCOUNTANT,
     canDelete = role === Role.DIRECTOR,
-    canSeeCost = role === Role.DIRECTOR || role === Role.ACCOUNTANT;
+    canSeeCost = role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR || role === Role.ACCOUNTANT;
   const load = useCallback(async () => {
     setLoading(true);
     setError("");

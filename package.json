@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "npm run test:payroll:unit && npm run test:order-economy:ui && npm run test:payroll && npm run test:partner-management && npm run test:marketing && npm run test:final-integration && npm run test:tenant-isolation && npm run test:role-acceptance && npm run test:database-safety",
+    "test": "npm run test:payroll:unit && npm run test:order-economy:ui && npm run test:payroll && npm run test:partner-management && npm run test:marketing && npm run test:final-integration && npm run test:tenant-isolation && npm run test:operations && npm run test:role-acceptance && npm run test:database-safety",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -75,6 +75,7 @@
     "test:contracts": "tsx scripts/test-contract-generation.ts",
     "test:contract-package": "tsx scripts/test-contract-document-package.ts",
     "test:marketing": "tsx scripts/test-marketing-workspace.ts",
+    "test:operations": "tsx scripts/test-operations-director.ts",
     "test:order-workflow-final": "tsx scripts/test-order-workflow-final.ts",
     "test:order-workflow:go-live": "tsx scripts/test-order-workflow-go-live.ts"
   },

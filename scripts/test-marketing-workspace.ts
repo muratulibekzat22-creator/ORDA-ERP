@@ -31,6 +31,7 @@ assert.notEqual(marketingMetricDedupeKey(keyInput), marketingMetricDedupeKey({ .
 
 assert.deepEqual(defaultPermissions[Role.MARKETER].sort(), ["calendar", "marketing"]);
 assert.ok(defaultPermissions[Role.DIRECTOR].includes("marketing"));
+assert.ok(defaultPermissions[Role.OPERATIONS_DIRECTOR].includes("marketing"));
 assert.ok(defaultPermissions[Role.ACCOUNTANT].includes("marketing"));
 
 const scope = read("lib/tenant-scope.ts");
@@ -46,7 +47,7 @@ assert.match(service, /leadAttribution\.create/);
 assert.match(service, /tx\.client\.create/);
 
 const route = read("app/api/marketing/route.ts");
-assert.match(route, /role !== Role\.DIRECTOR && role !== Role\.MARKETER/);
+assert.match(route, /role !== Role\.DIRECTOR && role !== Role\.OPERATIONS_DIRECTOR && role !== Role\.MARKETER/);
 assert.match(route, /requirePermission\("marketing"\)/);
 
 const workspace = read("components/marketing/MarketingWorkspace.tsx");

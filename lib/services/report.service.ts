@@ -10,7 +10,7 @@ const range = (start: Date, end: Date) => ({ gte: start, lte: end });
 
 export async function getReportsReadModel(params: URLSearchParams, actor: Actor): Promise<ReportsReadModel> {
   const companyId = requireTenantIdentity().companyId;
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
   const period = resolveReportRange(params);
   const requestedManager = params.get("managerId");
   let scope: Scope = {};
@@ -33,10 +33,10 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     prisma.payment.findMany({ where: { operationDate: range(period.start, period.end), order: activeOrder }, select: { amount: true, type: true, operationDate: true, order: { select: { managerUserId: true } } } }),
     prisma.payment.findMany({ where: { operationDate: range(period.previousStart, period.previousEnd), order: activeOrder }, select: { amount: true, type: true } }),
     prisma.production.groupBy({ by: ["stage"], where: { order: { ...orderScope, lifecycle: { not: "CANCELLED" }, createdAt: range(period.start, period.end) } }, _count: { _all: true }, orderBy: { stage: "asc" } }),
-    actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
+    actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
-  const internalFinance = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const internalFinance = actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT;
   const profitability = internalFinance
     ? await getCompanyProfitability({ from: period.start, to: period.end, managerUserId: scope.managerUserId })
     : null;
@@ -98,7 +98,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       salesAmount: { current: salesAmount, previous: previousSales, changePercent: changePercent(salesAmount, previousSales) },
       received: { current: received, previous: previousReceived, changePercent: changePercent(received, previousReceived) }, remaining: currentCustomerRemaining, conversion: safePercent(orders.length, clients.length),
     },
-    sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(actor.role === Role.DIRECTOR ? { grossMargin } : {}) },
+    sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR ? { grossMargin } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
     ...(internalFinance ? { finance: {
       sales: Number(profitability?.totals.sales ?? salesAmount),

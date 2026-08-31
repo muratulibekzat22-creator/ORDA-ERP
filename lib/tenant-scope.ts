@@ -59,6 +59,8 @@ export const TENANT_MODELS = new Set([
   "MarketingContentTask",
   "MarketingContentAsset",
   "ManagerDailyReview",
+  "OperationalWorkItem",
+  "OperationalAccessAuditEvent",
 ]);
 
 const WHERE_OPERATIONS = new Set([

@@ -62,7 +62,7 @@ export function allowedDocumentTypes(actor: DocumentActor): DocumentType[] {
 }
 
 async function entityScope(actor: DocumentActor): Promise<{ client: Prisma.ClientWhereInput; order: Prisma.OrderWhereInput }> {
-  if (actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT) return { client: {}, order: {} };
+  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT) return { client: {}, order: {} };
   if (actor.role === Role.MANAGER) {
     const client = { active: true, deletedAt: null, OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] };
     return { client, order: { deletedAt: null, client } };

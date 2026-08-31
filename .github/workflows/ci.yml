@@ -90,6 +90,7 @@ jobs:
           npm run test:warehouse
           npm run test:production:api
           npm run test:tenant-isolation
+          npm run test:operations
           npm run test:order-workflow-final
         env:
           DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}

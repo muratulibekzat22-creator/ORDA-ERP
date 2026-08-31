@@ -7,6 +7,8 @@ import { FormEvent, useEffect, useState } from "react";
 const INVALID_CREDENTIALS = "Не удалось войти. Проверьте данные или обратитесь к администратору.";
 const LOCKED = "Слишком много попыток входа. Подождите и попробуйте снова.";
 const SESSION_ENDED = "Сессия завершена. Войдите снова.";
+const ACCESS_EXPIRED = "Срок временного операционного доступа истёк. Обратитесь к директору.";
+const ACCESS_REVOKED = "Операционный доступ отключён директором.";
 const CONNECTION_ERROR = "Не удалось связаться с сервером. Проверьте интернет и повторите.";
 const LIVE_URL = process.env.NEXT_PUBLIC_LIVE_APP_URL || "https://orda-erp-staging.vercel.app";
 const DEMO_URL = process.env.NEXT_PUBLIC_DEMO_APP_URL || "https://orda-erp-unified-preview.vercel.app";
@@ -15,6 +17,8 @@ function authMessage(code?: string | null) {
   const value = decodeURIComponent(code ?? "").toUpperCase();
   if (value.includes("TEMPORARILY_LOCKED") || value.includes("RATE_LIMITED")) return LOCKED;
   if (value.includes("SESSION_INVALID")) return SESSION_ENDED;
+  if (value.includes("TEMPORARY_ACCESS_EXPIRED")) return ACCESS_EXPIRED;
+  if (value.includes("OPERATIONAL_ACCESS_REVOKED")) return ACCESS_REVOKED;
   return INVALID_CREDENTIALS;
 }
 

@@ -9,6 +9,6 @@ export default async function MarketingPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
   const role = session.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MARKETER) forbidden();
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MARKETER) forbidden();
   return <MarketingWorkspace />;
 }

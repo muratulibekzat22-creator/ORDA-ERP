@@ -12,6 +12,10 @@ export const playwrightUsers = {
   manager: "partner-playwright-manager@test.local",
   accountant: "partner-playwright-accountant@test.local",
   marketer: "partner-playwright-marketer@test.local",
+  operations: "partner-playwright-operations@test.local",
+  operationsScopedOff: "partner-playwright-operations-scoped-off@test.local",
+  operationsExpired: "partner-playwright-operations-expired@test.local",
+  operationsRevoked: "partner-playwright-operations-revoked@test.local",
 } as const;
 
 export default async function setup() {
@@ -35,10 +39,24 @@ export default async function setup() {
       });
     }
     for (const [key, email] of Object.entries(playwrightUsers)) {
-      const role = key === "director" ? Role.DIRECTOR : key === "manager" ? Role.MANAGER : key === "marketer" ? Role.MARKETER : Role.ACCOUNTANT;
+      const role = key === "director" ? Role.DIRECTOR : key === "manager" ? Role.MANAGER : key === "marketer" ? Role.MARKETER : key.startsWith("operations") ? Role.OPERATIONS_DIRECTOR : Role.ACCOUNTANT;
       const existing = await prisma.user.findFirst({ where: { email } });
-      if (existing) await prisma.user.update({ where: { id: existing.id }, data: { name: `Partner ${key}`, password: hash, role, active: true, mustChangePassword: false, failedLoginAttempts: 0, lockedUntil: null } });
-      else await prisma.user.create({ data: { name: `Partner ${key}`, email, password: hash, role, active: true, mustChangePassword: false } });
+      const operationalAccess = role === Role.OPERATIONS_DIRECTOR
+        ? {
+            temporaryAccess: true,
+            accessExpiresAt: key === "operationsExpired"
+              ? new Date(Date.now() - 86_400_000)
+              : new Date(Date.now() + 30 * 86_400_000),
+            accessRevokedAt: key === "operationsRevoked" ? new Date() : null,
+            revokedById: null,
+            revokeReason: key === "operationsRevoked" ? "Playwright revoked access" : null,
+            ordaProjectOperationsEnabled: true,
+            companyOperationsEnabled: key !== "operationsScopedOff",
+            active: key !== "operationsRevoked",
+          }
+        : {};
+      if (existing) await prisma.user.update({ where: { id: existing.id }, data: { name: `Partner ${key}`, password: hash, role, active: true, mustChangePassword: false, failedLoginAttempts: 0, lockedUntil: null, ...operationalAccess } });
+      else await prisma.user.create({ data: { name: `Partner ${key}`, email, password: hash, role, active: true, mustChangePassword: false, ...operationalAccess } });
     }
     const marketer = await prisma.user.findUniqueOrThrow({ where: { email: playwrightUsers.marketer } });
     const manager = await prisma.user.findUniqueOrThrow({ where: { email: playwrightUsers.manager } });

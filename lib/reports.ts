@@ -35,7 +35,7 @@ export type ManagerReportRow = {
 
 export type ReportsReadModel = {
   generatedAt: string;
-  role: "DIRECTOR" | "MANAGER" | "ACCOUNTANT";
+  role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "MANAGER" | "ACCOUNTANT";
   period: Omit<ReportRange, "start" | "end" | "previousStart" | "previousEnd"> & {
     start: string; end: string; previousStart: string; previousEnd: string;
   };

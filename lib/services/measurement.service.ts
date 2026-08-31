@@ -255,7 +255,7 @@ export function measurementOperationalView(
 export function measurementScope(
   actor: MeasurementActor,
 ): Prisma.MeasurementWhereInput {
-  if (actor.role === Role.DIRECTOR) return {};
+  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) return {};
   if (actor.role === Role.MEASURER) return { measurerUserId: actor.userId };
   if (actor.role === Role.MANAGER)
     return {
@@ -542,9 +542,9 @@ export async function measurementWorkspace(
       gte: new Date(now.getTime() - 30 * 86_400_000),
     };
   }
-  if (actor.role === Role.DIRECTOR && filters.measurerUserId)
+  if ((actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) && filters.measurerUserId)
     workspaceWhere.measurerUserId = filters.measurerUserId;
-  if (actor.role === Role.DIRECTOR && filters.managerUserId)
+  if ((actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) && filters.managerUserId)
     workspaceWhere.client = { managerUserId: filters.managerUserId };
   const search = filters.search?.trim().slice(0, 120);
   if (search) {
@@ -603,7 +603,7 @@ export async function measurementWorkspace(
     manager_name: string | null;
   };
   const companyId = requireTenantIdentity().companyId;
-  const summaryScopeSql = actor.role === Role.DIRECTOR
+  const summaryScopeSql = actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR
     ? Prisma.sql`m."companyId" = ${companyId}`
     : actor.role === Role.MEASURER
       ? Prisma.sql`m."companyId" = ${companyId} AND m."measurerUserId" = ${actor.userId}`

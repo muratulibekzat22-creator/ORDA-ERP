@@ -14,7 +14,7 @@ const taskSelect = {
 } satisfies Prisma.CalendarTaskSelect;
 
 export function taskScope(actor: CalendarActor): Prisma.CalendarTaskWhereInput {
-  if (actor.role === Role.DIRECTOR) return {};
+  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) return {};
   if (actor.role === Role.MANAGER) return { OR: [{ assigneeId: actor.userId }, { creatorId: actor.userId }, { client: { managerUserId: actor.userId } }, { order: { managerUserId: actor.userId } }] };
   return { assigneeId: actor.userId };
 }
@@ -66,7 +66,7 @@ export async function listCalendarTasks(actor: CalendarActor, filters: CalendarL
   const cursor = decodeDateIdCursor(filters.cursor);
   if (filters.cursor && !cursor) throw new Error("INVALID_CURSOR");
   const where: Prisma.CalendarTaskWhereInput = { AND: [taskScope(actor), activeTaskScope()], dueAt: { gte: filters.from, lt: filters.to } };
-  if (filters.assigneeId) where.assigneeId = actor.role === Role.DIRECTOR ? filters.assigneeId : actor.userId;
+  if (filters.assigneeId) where.assigneeId = actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR ? filters.assigneeId : actor.userId;
   if (filters.status) where.status = filters.status;
   else if (filters.state === "completed") where.status = CalendarTaskStatus.COMPLETED;
   else if (filters.state === "active") where.status = { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] };
@@ -98,9 +98,10 @@ export async function getCalendarTask(actor: CalendarActor, id: number) {
 }
 
 export async function getCalendarMeta(actor: CalendarActor) {
-  const userWhere = actor.role === Role.DIRECTOR ? { active: true } : { id: actor.userId, active: true };
-  const orderWhere: Prisma.OrderWhereInput = { deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] } : { id: -1 }) };
-  const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };
+  const fullRead = actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR;
+  const userWhere = fullRead ? { active: true } : { id: actor.userId, active: true };
+  const orderWhere: Prisma.OrderWhereInput = { deletedAt: null, ...(fullRead ? {} : actor.role === Role.MANAGER ? { OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] } : { id: -1 }) };
+  const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(fullRead ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };
   const [assignees, clients, orders] = await Promise.all([
     prisma.user.findMany({ where: userWhere, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } }),
     prisma.client.findMany({ where: clientWhere, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 300 }),

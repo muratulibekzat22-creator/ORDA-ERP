@@ -52,7 +52,7 @@ const optionalId = (value: unknown) => {
 const asNumber = (value: Prisma.Decimal | number | string | null | undefined) => Number(value ?? 0);
 
 function assertMarketingActor(actor: MarketingActor) {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MARKETER) throw new MarketingError("FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MARKETER) throw new MarketingError("FORBIDDEN");
 }
 
 export async function ensureMarketingCatalogs() {
@@ -172,9 +172,10 @@ export async function getMarketingWorkspace(actor: MarketingActor, filters: { fr
     return { id: campaign.id, name: campaign.name, platform: campaign.platform, spend: campaignSpend, clicks, platformLeads, applications: campaignAttributions.length, orders: campaignOrders.length, cpc: campaignSpend / Math.max(clicks, 1), cpl: campaignSpend / Math.max(campaignAttributions.length, 1), roas: campaignSold / Math.max(campaignSpend, 1) };
   });
 
-  const directorMetrics = actor.role === Role.DIRECTOR ? { soldAmount, paidAmount, grossProfit, romi: kpis.romi, roas: kpis.roas } : null;
-  const publicKpis = actor.role === Role.DIRECTOR ? kpis : { ...kpis, romi: 0 };
-  const publicAttributions = actor.role === Role.DIRECTOR ? attributions : attributions.map((item) => ({
+  const internalRead = actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR;
+  const directorMetrics = internalRead ? { soldAmount, paidAmount, grossProfit, romi: kpis.romi, roas: kpis.roas } : null;
+  const publicKpis = internalRead ? kpis : { ...kpis, romi: 0 };
+  const publicAttributions = internalRead ? attributions : attributions.map((item) => ({
     ...item,
     application: {
       ...item.application,

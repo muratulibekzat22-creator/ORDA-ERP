@@ -40,7 +40,7 @@ export async function GET(request: Request) {
   const auth = await requirePermission("marketing");
   if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MARKETER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MARKETER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const filters = parseRange(request);
   if (!filters) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
   try {

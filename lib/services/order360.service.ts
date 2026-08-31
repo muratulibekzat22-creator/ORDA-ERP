@@ -53,7 +53,7 @@ export async function canAccessOrder360(
     !(actor.role === Role.DIRECTOR && options.includeDeleted)
   )
     return false;
-  if (actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT)
+  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT)
     return true;
   if (actor.role === Role.MANAGER)
     return (

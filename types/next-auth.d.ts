@@ -9,9 +9,15 @@ declare module "next-auth" {
     companySlug: string;
     companyName: string;
     isDemo: boolean;
+    temporaryAccess: boolean;
+    accessExpiresAt: string | null;
+    accessRevokedAt: string | null;
+    ordaProjectOperationsEnabled: boolean;
+    companyOperationsEnabled: boolean;
   }
   interface Session {
     invalid?: boolean;
+    invalidReason?: string;
     user: {
       id: string;
       name?: string | null;
@@ -22,6 +28,11 @@ declare module "next-auth" {
       companySlug: string;
       companyName: string;
       isDemo: boolean;
+      temporaryAccess: boolean;
+      accessExpiresAt: string | null;
+      accessRevokedAt: string | null;
+      ordaProjectOperationsEnabled: boolean;
+      companyOperationsEnabled: boolean;
     };
   }
 }
@@ -37,5 +48,11 @@ declare module "next-auth/jwt" {
     companyName?: string;
     isDemo?: boolean;
     invalid?: boolean;
+    invalidReason?: string;
+    temporaryAccess?: boolean;
+    accessExpiresAt?: string | null;
+    accessRevokedAt?: string | null;
+    ordaProjectOperationsEnabled?: boolean;
+    companyOperationsEnabled?: boolean;
   }
 }
