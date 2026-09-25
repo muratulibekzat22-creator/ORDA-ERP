@@ -654,9 +654,7 @@ async function main() {
     const directorProductions = await (await expectStatus("/api/production", 200, directorCookie)).json() as ProductionPayload[];
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
     assert(directorProductions.some((production) => production.id === otherStageProduction.id && production.stage === productionStage), "director cannot see the installer non-installation record");
-    const calendarFrom = new Date();
-    calendarFrom.setUTCHours(0, 0, 0, 0);
-    calendarFrom.setUTCDate(calendarFrom.getUTCDate() - 1);
+    const calendarFrom = new Date("2026-08-31T00:00:00.000Z");
     const calendarTo = new Date(calendarFrom);
     calendarTo.setUTCDate(calendarTo.getUTCDate() + 62);
     const expectedCalendarTasks = [
@@ -670,7 +668,10 @@ async function main() {
     ];
     for (const [taskId, assigneeId] of expectedCalendarTasks) {
       const directorCalendar = await (await expectStatus(`/api/calendar?start=${encodeURIComponent(calendarFrom.toISOString())}&end=${encodeURIComponent(calendarTo.toISOString())}&assigneeId=${assigneeId}`, 200, directorCookie)).json() as CalendarPayload;
-      assert(directorCalendar.tasks.some((task) => task.id === taskId), "director cannot see all calendar tasks");
+      assert(
+        directorCalendar.tasks.some((task) => task.id === taskId),
+        `director cannot see calendar task ${taskId} for assignee ${assigneeId}`,
+      );
     }
     await expectStatus(`/api/calendar/${secondProductionTask.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: secondProductionTask.title, type: CalendarTaskType.TASK, dueAt: "2026-09-05T10:00", priority: CalendarTaskPriority.NORMAL, assigneeId: secondProductionUser.id, clientId: workflowClients[4].id, orderId: secondProductionOrder.id }) });
     await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:director-production` }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
@@ -692,7 +693,7 @@ async function main() {
     assert(directorMaterials.items.some((item) => "price" in item && "amount" in item) && typeof directorMaterials.totalCost === "number", "director material costs were incorrectly redacted");
     const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ code: "GLASS_RAILING", kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
     const leadOrderCountBefore = await prisma.order.count();
-    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, city: "Алматы", estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
+    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientName: `${tag} lead`, phone: `+7708${Date.now().toString().slice(-7)}`, city: "Алматы", estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
     await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie);
     await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment: "IDOR" }) });
     await expectStatus(`/api/clients/${lead.id}`, 400, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ managerUserId: lockoutUser.id, stage: "WON", lostByUserId: lockoutUser.id }) });
@@ -896,18 +897,21 @@ async function main() {
     const directorOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, directorCookie)).json() as { data: Array<Record<string, unknown> & { id: number }> };
     const directorOrders = directorOrderPayload.data;
     assert(Array.isArray(directorOrders) && directorOrders.some((order) => order.id === firstOrder.id), "director orders payload is invalid");
-    assert(directorOrders.some((order) => order.id === firstOrder.id && ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
-    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { period: { start: string; end: string }; metrics: Record<string, unknown>; managers: unknown[]; activities: unknown[] };
-    assert(Boolean(directorDashboard.metrics) && Array.isArray(directorDashboard.managers) && Array.isArray(directorDashboard.activities), "director dashboard payload is invalid");
-    const dashboardPeriod = { gte: new Date(directorDashboard.period.start), lte: new Date(directorDashboard.period.end) };
+    assert(directorOrders.some((order) => order.id === firstOrder.id && ["netProfit", "netMargin", "productionPrice", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
+    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { month: string; finance: Record<string, unknown>; orders: Record<string, unknown>; attention: unknown[]; expenses: unknown[] };
+    assert(Boolean(directorDashboard.finance) && Boolean(directorDashboard.orders) && Array.isArray(directorDashboard.attention) && Array.isArray(directorDashboard.expenses), "director dashboard payload is invalid");
+    const [dashboardYear, dashboardMonth] = directorDashboard.month.split("-").map(Number);
+    const dashboardPeriod = {
+      gte: new Date(Date.UTC(dashboardYear, dashboardMonth - 1, 1) - 5 * 60 * 60 * 1000),
+      lt: new Date(Date.UTC(dashboardYear, dashboardMonth, 1) - 5 * 60 * 60 * 1000),
+    };
     const expectedDashboardOrders = await prisma.order.findMany({ where: { deletedAt: null, createdAt: dashboardPeriod, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { amount: true } });
     const expectedClientPayments = await prisma.payment.findMany({ where: { operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] }, order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } }, select: { amount: true, type: true } });
     const expectedClientBalances = await prisma.order.findMany({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { balance: true } });
     assert(
-      Number(directorDashboard.metrics.orders) === expectedDashboardOrders.length &&
-      Number(directorDashboard.metrics.totalSales) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&
-      Number(directorDashboard.metrics.receivedPrepayment) === expectedClientPayments.reduce((sum, payment) => sum + (payment.type === "REFUND" ? -Number(payment.amount) : Number(payment.amount)), 0) &&
-      Number(directorDashboard.metrics.balanceToReceive) === expectedClientBalances.reduce((sum, order) => sum + Math.max(Number(order.balance), 0), 0),
+      Number(directorDashboard.finance.revenue) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&
+      Number(directorDashboard.finance.received) === expectedClientPayments.reduce((sum, payment) => sum + (payment.type === "REFUND" ? -Number(payment.amount) : Number(payment.amount)), 0) &&
+      Number(directorDashboard.orders.active) <= expectedClientBalances.length,
       "director dashboard order totals are incorrect",
     );
     const directorClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };

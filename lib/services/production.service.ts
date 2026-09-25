@@ -211,12 +211,14 @@ export async function createProductionCommand(input: {
       const assignee = await getAssignee(tx, input.data.masterUserId, input.data.stage);
       const now = new Date();
       const completed = isCompletedProductionStage(input.data.stage);
-      const productionData = { ...input.data, masterUserId: undefined };
+      const productionData = {
+        ...input.data,
+        orderId: input.orderId,
+        masterUserId: assignee.id,
+      };
       const created = await tx.production.create({
         data: {
           ...productionData,
-          order: { connect: { id: input.orderId } },
-          masterUser: { connect: { id: assignee.id } },
           master: assignee.name,
           completedAt: completed ? now : null,
           actualEndAt: completed ? now : null,

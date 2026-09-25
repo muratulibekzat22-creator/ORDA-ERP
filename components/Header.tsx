@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Building2, ChevronDown, Clock3, KeyRound, LogOut, Menu, Settings, UserCircle } from "lucide-react";
+import { ArrowLeft, Building2, ChevronDown, Clock3, KeyRound, LogOut, Menu, Settings, SlidersHorizontal, UserCircle } from "lucide-react";
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
@@ -45,6 +45,7 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
           {profileOpen && <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-56 rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
             <Link href="/change-password" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><KeyRound size={17}/>Настройки аккаунта</Link>
             {role === "DIRECTOR" && <Link href="/settings" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><Settings size={17}/>Настройки компании</Link>}
+            {role === "DIRECTOR" && <Link href="/calculator-config" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><SlidersHorizontal size={17}/>Настройки калькулятора</Link>}
           </div>}
         </div>
         {session && <button type="button" aria-label="Выйти из системы" title="Выйти" onClick={() => signOut({ callbackUrl: "/login" })} className="grid size-11 shrink-0 place-items-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><LogOut size={20}/></button>}

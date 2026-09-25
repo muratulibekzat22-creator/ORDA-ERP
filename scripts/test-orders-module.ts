@@ -57,6 +57,13 @@ for (const removed of ["without-partner", "partner-payable", "overdue-client"])
   assert(!ordersPage.includes(removed), `Legacy settlement filter remains: ${removed}`);
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
 assert(ordersApi.includes("[OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED]"), "completed tab must retain cancelled orders");
+assert(ordersApi.includes('mode: "insensitive"'), "legacy manager order fallback must ignore name casing");
+const ownershipMigration = readFileSync(
+  "prisma/migrations/20260925143000_normalize_manager_ownership/migration.sql",
+  "utf8",
+);
+assert.match(ownershipMigration, /lower\(trim\(u\."name"\)\) = lower\(trim\(o\."manager"\)\)/);
+assert.doesNotMatch(ownershipMigration, /\b(?:DELETE|TRUNCATE|DROP)\b/i);
 
 const workspace = [
   readFileSync("components/orders/OrderWorkspace.tsx", "utf8"),

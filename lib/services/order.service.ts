@@ -133,7 +133,7 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
   const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
     ? { OR: [
         { managerUserId: actor.userId },
-        { managerUserId: null, manager: actor.name },
+        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
         { leadConversion: { managerId: actor.userId } },
       ] }
     : actor.role === Role.PARTNER

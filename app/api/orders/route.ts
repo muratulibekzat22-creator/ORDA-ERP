@@ -78,7 +78,7 @@ export async function GET(request: Request) {
       : role === Role.MANAGER
         ? { OR: [
             { managerUserId: userId },
-            { managerUserId: null, manager: auth.session!.user.name ?? "" },
+            { managerUserId: null, manager: { equals: auth.session!.user.name ?? "", mode: "insensitive" } },
             { leadConversion: { managerId: userId } },
           ] }
         : role === Role.PRODUCTION
