@@ -79,6 +79,7 @@ export async function getAuthorizedOrder(id: number) {
       clientDueAt: source.promisedAt,
       payrollAccruals: source.payrollAccruals,
       ledgerEntries: source.companyLedgerEntries,
+      calculation: source.calculations[0] ?? null,
     }),
   };
   if (role === Role.DIRECTOR) return order;

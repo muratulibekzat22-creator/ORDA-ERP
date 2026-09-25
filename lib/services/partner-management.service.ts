@@ -848,7 +848,7 @@ export async function getPartnerManagementReadModel(filters: {
     partnerPaid: sum.partnerPaid.add(item.metrics.companyPaidPartner),
     companyDebt: sum.companyDebt.add(item.metrics.companyDebt),
     partnerDebt: sum.partnerDebt.add(item.metrics.partnerDebt),
-    profit: sum.profit.add(item.economy.profit.netProfit),
+    profit: sum.profit.add(item.economy.profit.netProfit!),
   }), {
     orders: 0,
     orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0),
@@ -862,7 +862,7 @@ export async function getPartnerManagementReadModel(filters: {
     const trend = monthMap.get(month) ?? { month, orders: 0, sales: new Prisma.Decimal(0), received: new Prisma.Decimal(0) };
     trend.orders += 1; trend.sales = trend.sales.add(item.metrics.orderAmount); trend.received = trend.received.add(item.metrics.received); monthMap.set(month, trend);
     const byPartner = partnerMap.get(item.partnerId) ?? { partnerId: item.partnerId, name: item.partner.name, orders: 0, sales: new Prisma.Decimal(0), profit: new Prisma.Decimal(0), debt: new Prisma.Decimal(0) };
-    byPartner.orders += 1; byPartner.sales = byPartner.sales.add(item.metrics.orderAmount); byPartner.profit = byPartner.profit.add(item.economy.profit.netProfit); byPartner.debt = byPartner.debt.add(item.metrics.partnerBalance); partnerMap.set(item.partnerId, byPartner);
+    byPartner.orders += 1; byPartner.sales = byPartner.sales.add(item.metrics.orderAmount); byPartner.profit = byPartner.profit.add(item.economy.profit.netProfit!); byPartner.debt = byPartner.debt.add(item.metrics.partnerBalance); partnerMap.set(item.partnerId, byPartner);
   }
   const partnerSummaries = partners.map((partner) => {
     const rows = orderRows.filter((item) => item.partnerId === partner.id);
@@ -873,7 +873,7 @@ export async function getPartnerManagementReadModel(filters: {
         orderAmount: sum.orderAmount.add(item.metrics.orderAmount), received: sum.received.add(item.metrics.received),
         clientRemaining: sum.clientRemaining.add(item.metrics.clientRemaining), partnerAccrued: sum.partnerAccrued.add(item.metrics.partnerAccrued),
         partnerPaid: sum.partnerPaid.add(item.metrics.companyPaidPartner), balance: sum.balance.add(item.metrics.partnerBalance),
-        profit: sum.profit.add(item.economy.profit.netProfit),
+        profit: sum.profit.add(item.economy.profit.netProfit!),
       }), { orders: 0, orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0), partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0), balance: new Prisma.Decimal(0), profit: new Prisma.Decimal(0) }),
     };
   });

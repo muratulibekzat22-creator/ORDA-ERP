@@ -9,6 +9,14 @@ import { prisma } from "../lib/prisma";
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Dashboard integration requires TEST_DATABASE_URL");
 const tag = `dashboard-${Date.now()}`;
 
+type ManagementProjection = {
+  finance: { revenue: number; received: number; directExpenses: number; netProfit: number | null };
+  orders: { active: number; beforeWorkshop: number };
+  attention: Array<{ id: number }>;
+};
+type ManagerProjection = { orders: { active: number; overdue: number } };
+type RestrictedProjection = Record<string, unknown>;
+
 async function main() {
   const month = dashboardPeriodRange("month", new Date("2026-08-31T20:30:00.000Z"));
   const today = dashboardPeriodRange("today", new Date("2026-08-31T20:30:00.000Z"));
@@ -17,6 +25,11 @@ async function main() {
   const userIds: number[] = [], clientIds: number[] = [], orderIds: number[] = [], paymentIds: number[] = [];
   let partnerId = 0;
   try {
+    const baseline = await getDashboardSummary({
+      role: Role.DIRECTOR,
+      userId: -2147483000,
+      period: "month",
+    }) as unknown as ManagementProjection;
     const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "not-used", role: Role.MANAGER } });
     const other = await prisma.user.create({ data: { name: `${tag}-other`, email: `${tag}-other@test.local`, password: "not-used", role: Role.MANAGER } });
     const inactive = await prisma.user.create({ data: { name: `${tag}-inactive`, email: `${tag}-inactive@test.local`, password: "not-used", role: Role.MANAGER, active: false } });
@@ -38,40 +51,38 @@ async function main() {
       getDashboardSummary({ role: Role.ACCOUNTANT, userId: manager.id, period: "month" }),
       getDashboardSummary({ role: Role.PRODUCTION, userId: manager.id, period: "month" }),
       getDashboardSummary({ role: Role.INSTALLER, userId: manager.id, period: "month" }),
-    ]);
-    const scopedMetrics = scopedManager.metrics as Record<string, number | undefined>;
-    const emptyMetrics = emptyManager.metrics as Record<string, number | undefined>;
-    assert("managers" in director && "partnerBalancePayable" in director.metrics, "director projection is incomplete");
-    assert.equal(director.metrics.partnerBalancePayable, 400, "director partner payable is not based on the agreed partner price");
-    assert.equal(director.metrics.ordersWithoutPartner, 1, "director orders-without-workshop count is incorrect");
-    assert.equal(scopedMetrics.newLeads, 1, "manager received another manager's leads");
-    assert.equal(scopedMetrics.orders, 1, "cancelled or foreign order entered manager sales");
-    assert.equal(scopedMetrics.totalSales, 1000, "manager sales are not based on real non-cancelled orders");
-    assert.equal(scopedMetrics.receivedPrepayment, 400, "manager receipts are not based on real Payment rows");
-    assert.equal(scopedMetrics.balanceToReceive, 600, "manager client remaining is incorrect");
-    assert.equal(scopedMetrics.partnerBalancePayable, undefined, "manager received partner settlement");
-    assert.equal(scopedMetrics.payrollBalancePayable, undefined, "manager received company payroll totals");
-    assert.equal(scopedMetrics.expensesForMonth, undefined, "manager received company expenses");
-    assert.equal(emptyMetrics.newLeads, 0); assert.equal(emptyMetrics.orders, 0); assert.equal(emptyMetrics.totalSales, 0);
-    assert(!("newLeads" in accountant.metrics), "accountant received CRM projection");
-    assert("partnerPayable" in accountant.metrics, "accountant partner payable is missing");
-    assert(!("totalSales" in production.metrics), "production received finance projection");
-    assert(!("totalSales" in installer.metrics), "installer received finance projection");
-    assert("managers" in director && !director.managers?.some((row) => row.managerUserId === inactive.id), "inactive manager entered Director aggregation");
+    ]) as unknown as [
+      ManagementProjection,
+      ManagerProjection,
+      ManagerProjection,
+      ManagementProjection,
+      RestrictedProjection,
+      RestrictedProjection,
+    ];
+    assert.equal(director.finance.revenue - baseline.finance.revenue, 3000, "director revenue must use current non-cancelled orders");
+    assert.equal(director.finance.received - baseline.finance.received, 400, "client receipts must use Payment rows");
+    assert.equal(director.finance.directExpenses - baseline.finance.directExpenses, 500, "agreed partner cost must enter direct expenses once");
+    assert.equal(director.finance.netProfit, null, "profit must remain unknown while one order has no cost data");
+    assert.equal(director.orders.active - baseline.orders.active, 2, "cancelled order entered active order counters");
+    assert.equal(director.orders.beforeWorkshop - baseline.orders.beforeWorkshop, 2);
+    assert(director.attention.some((row: { id: number }) => row.id === foreignOrder.id), "incomplete order is missing from attention");
+    assert.equal(scopedManager.orders.active, 1, "manager received another manager's order");
+    assert.equal(scopedManager.orders.overdue, 0);
+    assert.equal(emptyManager.orders.active, 0);
+    assert("finance" in accountant, "accountant finance projection is missing");
+    assert(!("finance" in production), "production received finance projection");
+    assert(!("finance" in installer), "installer received finance projection");
 
     const route = readFileSync("app/api/dashboard/sales/route.ts", "utf8");
     assert(!route.includes("searchParams.get(\"role\")"), "dashboard accepts a role override");
-    assert(route.includes("if (!session?.user)") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
+    assert(route.includes("!session?.user") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Продажи", "Получено", "К получению от клиентов", "К выплате партнёрам", "К выплате сотрудникам", "Мои новые заявки", "Мои отправленные КП", "Payroll к выплате", "Активные сотрудники", "Расходы за месяц", "Требует внимания", "Конверсия", "На заготовке", "Следующая установка"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
-    for (const label of ["Краткий статус бизнеса за выбранный период", "Открыть финансы", "Замеры, требующие закрытия", "Последние важные действия", "Работа идёт стабильно"])
-      assert.ok(dashboard.includes(label), `premium Director hierarchy is missing: ${label}`);
+    for (const label of ["Выручка", "Получено от клиентов", "Прямые расходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить расход", "Требуют внимания"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
     assert(!dashboard.includes("<table"), "Director team performance must not regress to a wide table");
-    for (const routeName of ["/clients", "/orders", "/calendar", "/warehouse", "/finance", "/payroll", "/production", "/partners", "/measurements"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
-    assert(dashboard.includes("/orders?settlement=without-partner") && dashboard.includes("без партнёра"), "orders-without-workshop metric is not clickable");
-    assert(dashboard.includes("/orders?settlement=client-payable") && dashboard.includes("/orders?settlement=without-contract"), "Director attention links are incomplete");
-    assert(dashboard.includes("/measurements?filter=needs-closing"), "Director measurement attention must open the needs-closing queue");
+    for (const routeName of ["/orders?tab=active", "/orders?tab=active&attention=overdue"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
+    for (const removed of ["/clients", "/calendar", "/warehouse", "/production", "/measurements"])
+      assert(!dashboard.includes(`href=\"${removed}`), `legacy Director shortcut remains: ${removed}`);
     const home = readFileSync("app/page.tsx", "utf8");
     assert(home.includes("getServerSession"), "home role projection is not server-side");
     console.log("dashboard role projections, own scope, cancelled exclusion, balances, empty state and routes passed");

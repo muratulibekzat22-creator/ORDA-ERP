@@ -70,7 +70,7 @@ assert.deepEqual(roleHome, {
   PARTNER: "/partner",
 });
 
-const roleDashboard = read("components/dashboard/Dashboard.tsx");
+const roleDashboard = read("app/page.tsx");
 includesAll(
   roleDashboard,
   ["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"],
@@ -89,24 +89,19 @@ includesAll(
   "page proxy",
 );
 
-const sidebar = read("components/layout/Sidebar.tsx");
-assert.match(sidebar, /role === "PARTNER" && id === "finance"/);
-assert.doesNotMatch(sidebar, /title: "Dashboard"|>\s*ONLINE\s*</);
-assert.doesNotMatch(sidebar, />\s*Version 1\.0\.0\s*</);
-
-const dashboard = read("components/dashboard/page.tsx");
-assert.match(dashboard, /can\("orders"\) && \{\s*href: "\/calculator"/);
+const routeShell = read("components/layout/RouteShell.tsx");
+assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll"\]/);
+assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
 const orderList = read("app/api/orders/route.ts");
 includesAll(
   orderList,
   [
     "role !== Role.DIRECTOR && role !== Role.MANAGER",
-    '"partnerPrice" in body',
-    '"partnerPaid" in body',
-    "delete result.companyProfit",
-    '"partnerAgreedAt"',
-    '"partnerBalance"',
+    '["partnerId", "partnerPrice", "partnerPaid", "companyProfit"]',
+    "delete safe.netProfit",
+    "delete safe.netMargin",
+    "delete safe.costDataComplete",
     "partnerAgreedAt: { not: null }",
   ],
   "orders API",

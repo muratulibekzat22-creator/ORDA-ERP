@@ -13,6 +13,13 @@ export type OrderEconomyInput = {
   partnerDueAt?: Date | string | null;
   clientDueAt?: Date | string | null;
   now?: Date;
+  calculation?: {
+    workshopCost: DecimalValue;
+    materialCost: DecimalValue;
+    installationCost: DecimalValue;
+    deliveryCost: DecimalValue;
+    otherDirectCosts: DecimalValue;
+  } | null;
   payrollAccruals?: Array<{
     type: PayrollAccrualType | string;
     direction: PayrollDirection | string;
@@ -106,24 +113,56 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
     entry.category !== "SALARY" &&
     entry.type !== "PARTNER_PAYOUT",
   );
-  const directExpenses = money(directLedger
+  const recordedDirectExpenses = money(directLedger
     .filter((entry) => entry.affectsProfit)
     .reduce((sum, entry) => sum.add(entry.amount), money(0)));
   const paidDirectExpenses = money(directLedger.reduce((sum, entry) => sum.add(entry.amount), money(0)));
   const directCategory = (pattern: RegExp) => money(directLedger
     .filter((entry) => entry.affectsProfit && pattern.test(`${entry.category} ${entry.type} ${entry.source}`))
     .reduce((sum, entry) => sum.add(entry.amount), money(0)));
-  const materials = directCategory(/MATERIAL|МАТЕРИАЛ/i);
-  const delivery = directCategory(/DELIVER|ДОСТАВ/i);
-  const contractors = directCategory(/CONTRACTOR|ПОДРЯД/i);
+  const ledgerMaterials = directCategory(/MATERIAL|МАТЕРИАЛ/i);
+  const ledgerDelivery = directCategory(/DELIVER|ДОСТАВ/i);
+  const ledgerContractors = directCategory(/CONTRACTOR|ПОДРЯД|INSTALL|МОНТАЖ/i);
   const bankFees = directCategory(/BANK|COMMISSION|БАНК|КОМИСС/i);
-  const categorizedDirect = materials.add(delivery).add(contractors).add(bankFees);
-  const otherDirectExpenses = money(positive(directExpenses.sub(categorizedDirect)));
-  const marginBeforePayroll = money(totalSale.sub(partnerAgreed).sub(directExpenses));
-  const netProfit = money(marginBeforePayroll.sub(payrollAccrued));
-  const netMarginPercent = totalSale.eq(0)
-    ? new Prisma.Decimal(0)
-    : netProfit.mul(100).div(totalSale).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+  const categorizedLedger = ledgerMaterials
+    .add(ledgerDelivery)
+    .add(ledgerContractors)
+    .add(bankFees);
+  const ledgerOther = money(positive(recordedDirectExpenses.sub(categorizedLedger)));
+  const calculation = input.calculation;
+  const calculatedWorkshop = calculation ? money(calculation.workshopCost) : null;
+  const productionCost = input.partnerAgreedAt
+    ? partnerAgreed
+    : calculatedWorkshop ?? money(0);
+  // Calculation values are accrued costs. A ledger payment in the same category
+  // is cash evidence, not a second expense. Fall back to the ledger only when
+  // the calculation does not contain that category.
+  const categoryCost = (calculated: DecimalValue | undefined, ledger: Prisma.Decimal) => {
+    const value = calculated === undefined ? null : money(calculated);
+    return value && value.gt(0) ? value : ledger;
+  };
+  const materials = categoryCost(calculation?.materialCost, ledgerMaterials);
+  const delivery = categoryCost(calculation?.deliveryCost, ledgerDelivery);
+  const contractors = categoryCost(calculation?.installationCost, ledgerContractors);
+  const otherDirectExpenses = categoryCost(calculation?.otherDirectCosts, ledgerOther);
+  const directExpenses = money(
+    productionCost
+      .add(materials)
+      .add(delivery)
+      .add(contractors)
+      .add(bankFees)
+      .add(otherDirectExpenses),
+  );
+  const costDataComplete = Boolean(input.partnerAgreedAt || calculation);
+  const marginBeforePayroll = costDataComplete
+    ? money(totalSale.sub(directExpenses))
+    : null;
+  const netProfit = marginBeforePayroll
+    ? money(marginBeforePayroll.sub(payrollAccrued))
+    : null;
+  const netMarginPercent = netProfit && totalSale.gt(0)
+    ? netProfit.mul(100).div(totalSale).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+    : null;
   const cashBalance = money(netReceived.sub(partnerPaid).sub(payrollPaid).sub(paidDirectExpenses));
   const now = input.now ?? new Date();
   const overdue = (value: Date | string | null | undefined) => value ? new Date(value).getTime() < now.getTime() : false;
@@ -144,7 +183,8 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       status: !input.partnerId ? "NOT_ASSIGNED" : !input.partnerAgreedAt ? "NOT_CALCULATED" : partnerRemaining.eq(0) ? "CLOSED" : partnerPaid.gt(0) ? "PARTIALLY_PAID" : "COMPANY_OWES_PARTNER",
     },
     profit: {
-      totalSale, partnerCost: partnerAgreed, directExpenses, materials, delivery, contractors, bankFees, otherDirectExpenses, marginBeforePayroll,
+      dataComplete: costDataComplete,
+      totalSale, partnerCost: productionCost, directExpenses, materials, delivery, contractors, bankFees, otherDirectExpenses, marginBeforePayroll,
       managerBonus, measurer, installers, driver, expediter, otherPayroll,
       payrollAccrued, netProfit, netMarginPercent,
     },

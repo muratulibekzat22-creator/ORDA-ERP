@@ -74,10 +74,11 @@ export type OrderTabData = {
       totalSale: NumericValue; partnerCost: NumericValue; directExpenses: NumericValue;
       materials: NumericValue; delivery: NumericValue; contractors: NumericValue;
       bankFees: NumericValue; otherDirectExpenses: NumericValue;
-      marginBeforePayroll: NumericValue; managerBonus: NumericValue; measurer: NumericValue;
+      dataComplete: boolean;
+      marginBeforePayroll: NumericValue | null; managerBonus: NumericValue; measurer: NumericValue;
       installers: NumericValue; driver: NumericValue; expediter: NumericValue;
-      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue;
-      netMarginPercent: NumericValue;
+      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue | null;
+      netMarginPercent: NumericValue | null;
     };
     cash: {
       clientReceived: NumericValue; partnerPaid: NumericValue; payrollPaid: NumericValue;

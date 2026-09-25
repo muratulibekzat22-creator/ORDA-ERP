@@ -978,6 +978,7 @@ model Order {
   @@index([deletedAt, createdAt, id])
   @@index([managerUserId, deletedAt, createdAt])
   @@index([companyId, deletedAt, createdAt])
+  @@index([companyId, deletedAt, lifecycle, promisedAt])
 }
 
 model CalendarTask {

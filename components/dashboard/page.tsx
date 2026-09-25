@@ -78,10 +78,9 @@ export default function DashboardPage() {
       orders.reduce(
         (value, order) => ({
           amount: value.amount + Number(order.amount),
-          profit: value.profit + Number(order.companyProfit ?? 0),
+          profit: value.profit + Number(order.netProfit ?? 0),
           debt: value.debt + Number(order.balance),
-          partnerBalance:
-            value.partnerBalance + Number(order.partnerBalance ?? 0),
+          partnerBalance: value.partnerBalance,
         }),
         { amount: 0, profit: 0, debt: 0, partnerBalance: 0 },
       ),

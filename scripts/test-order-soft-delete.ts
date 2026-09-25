@@ -466,11 +466,11 @@ async function main() {
       userId: director.id,
       period: "month",
     });
-    const beforeMetrics = dashboardBefore.metrics as { orders: number };
-    const afterMetrics = dashboardAfter.metrics as { orders: number };
+    const beforeMetrics = (dashboardBefore as { orders: { active: number } }).orders;
+    const afterMetrics = (dashboardAfter as { orders: { active: number } }).orders;
     assert.equal(
-      afterMetrics.orders,
-      beforeMetrics.orders - 1,
+      afterMetrics.active,
+      beforeMetrics.active - 1,
     );
     const finance = await getFinanceDashboard({ orderId: orderA.id });
     assert.equal(

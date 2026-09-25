@@ -31,6 +31,19 @@ export async function GET(request: Request) {
     ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }, { whatsapp: { contains: search } }, { city: { contains: search, mode: "insensitive" } }] } : {}),
     ...(city ? { city } : {}), ...(manager ? { manager } : {}), ...(status ? { stage: status as LeadStage } : {}), ...(source ? { sourceCode: source as LeadSource } : {}),
   };
+  if (params.get("compact") === "true") {
+    const [data, total] = await Promise.all([
+      prisma.client.findMany({
+        where,
+        select: { id: true, name: true, phone: true, city: true, stage: true, manager: true, updatedAt: true },
+        orderBy: { updatedAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.client.count({ where }),
+    ]);
+    return NextResponse.json({ data, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } });
+  }
   const [data, total, cities, managers] = await Promise.all([
     prisma.client.findMany({ where, include: { _count: { select: { orders: { where: { deletedAt: null } }, interactions: true } }, nextActions: { where: { completedAt: null }, orderBy: { nextActionAt: "asc" }, take: 1 } }, orderBy: { updatedAt: "desc" }, skip: (page - 1) * limit, take: limit }),
     prisma.client.count({ where }), prisma.client.findMany({ where: { ...managerScope, active: true, deletedAt: null, city: { not: "" } }, distinct: ["city"], select: { city: true }, orderBy: { city: "asc" } }),

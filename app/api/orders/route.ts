@@ -7,48 +7,45 @@ import {
   readIdempotencyKey,
 } from "@/lib/idempotency";
 import { productionLog } from "@/lib/observability";
+import {
+  LIFECYCLE_USER_STATUS,
+  USER_ORDER_STATUSES,
+  type UserOrderStatus,
+} from "@/lib/orders/presentation";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { countOrders, createOrder, getOrders } from "@/lib/services/order.service";
 
 const MAX_MONEY = 9_999_999_999.99;
-const paymentMethods = new Set<string>(
-  PAYMENT_METHODS.map((item) => item.value),
-);
-
-const requiredText = (value: unknown) =>
+const paymentMethods = new Set<string>(PAYMENT_METHODS.map((item) => item.value));
+const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : null;
 const positiveInteger = (value: unknown) => {
-  if (typeof value === "string" && !value.trim()) return null;
-  const result = typeof value === "number" ? value : Number(value);
-  return Number.isInteger(result) && result > 0 ? result : null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 const money = (value: unknown, fallback?: number) => {
-  if (value === undefined && fallback !== undefined) return fallback;
-  if (typeof value === "string" && !value.trim()) return null;
-  const result = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(result) && result >= 0 && result <= MAX_MONEY
-    ? result
+  if ((value === undefined || value === "") && fallback !== undefined) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= MAX_MONEY
+    ? parsed
     : null;
 };
 const dateValue = (value: unknown) => {
   if (typeof value !== "string" || !value.trim()) return null;
-  const result = new Date(value);
-  return Number.isNaN(result.getTime()) ? null : result;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
-const optionalUrl = (value: unknown) => {
-  const result = requiredText(value);
-  if (!result) return "";
-  try {
-    const parsed = new URL(result);
-    return parsed.protocol === "https:" || parsed.protocol === "http:"
-      ? result
-      : null;
-  } catch {
-    return null;
-  }
-};
+
+function lifecycleWhere(status: UserOrderStatus): Prisma.OrderWhereInput {
+  const values = (Object.entries(LIFECYCLE_USER_STATUS) as Array<
+    [OrderLifecycle, UserOrderStatus]
+  >)
+    .filter(([, projected]) => projected === status)
+    .map(([lifecycle]) => lifecycle);
+  return { lifecycle: { in: values } };
+}
 
 export async function GET(request: Request) {
   const auth = await requirePermission("orders");
@@ -57,210 +54,116 @@ export async function GET(request: Request) {
     const role = auth.session!.user.role as Role;
     const userId = Number(auth.session!.user.id);
     const params = new URL(request.url).searchParams;
-    const deletedOnly = params.get("deletedOnly") === "true";
-    const includeDeleted = params.get("includeDeleted") === "true";
-    const requestedPage = Number(params.get("page") ?? 1);
-    const requestedLimit = params.has("limit") ? Number(params.get("limit")) : 50;
+    const page = Number(params.get("page") ?? 1);
+    const limit = Number(params.get("limit") ?? 30);
     if (
-      !Number.isInteger(requestedPage) || requestedPage < 1 ||
-      !Number.isInteger(requestedLimit) ||
-      requestedLimit < 1 ||
-      requestedLimit > 100
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100
     )
       return NextResponse.json({ error: "Некорректная пагинация" }, { status: 400 });
+
+    const deletedOnly = params.get("deletedOnly") === "true";
+    const includeDeleted = params.get("includeDeleted") === "true";
     if (role !== Role.DIRECTOR && (deletedOnly || includeDeleted))
       return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-    const partner =
-      role === Role.PARTNER
-        ? await prisma.partner.findUnique({
-            where: { userId },
-            select: { id: true },
-          })
-        : null;
+
+    const partner = role === Role.PARTNER
+      ? await prisma.partner.findUnique({ where: { userId }, select: { id: true } })
+      : null;
     const roleScope: Prisma.OrderWhereInput = partner
-      ? {
-          partnerId: partner.id,
-          partnerAgreedAt: { not: null },
-          lifecycle: { not: "CANCELLED" },
-        }
+      ? { partnerId: partner.id, partnerAgreedAt: { not: null } }
       : role === Role.MANAGER
-        ? {
-            OR: [
-              { managerUserId: userId },
-              { managerUserId: null, manager: auth.session!.user.name ?? "" },
-              { leadConversion: { managerId: userId } },
-            ],
-          }
+        ? { OR: [
+            { managerUserId: userId },
+            { managerUserId: null, manager: auth.session!.user.name ?? "" },
+            { leadConversion: { managerId: userId } },
+          ] }
         : role === Role.PRODUCTION
-          ? {
-              productions: { some: { masterUserId: userId, archivedAt: null } },
-            }
+          ? { productions: { some: { masterUserId: userId, archivedAt: null } } }
           : role === Role.INSTALLER
             ? { installation: { installerUserId: userId } }
             : role === Role.MEASURER
               ? { measurements: { some: { measurerUserId: userId } } }
               : {};
-    const baseWhere: Prisma.OrderWhereInput = {
-        AND: [roleScope],
-        ...(deletedOnly
-          ? { deletedAt: { not: null } }
-          : includeDeleted
-            ? {}
-            : { deletedAt: null }),
-      };
     const query = params.get("query")?.trim().slice(0, 120);
-    const city = params.get("city")?.trim().slice(0, 120);
-    const lifecycle = params.get("lifecycle");
-    const filter = params.get("filter") ?? "all";
+    const tab = params.get("tab") ?? (params.get("filter") === "completed" ? "completed" : "active");
+    if (!["active", "completed", "all"].includes(tab))
+      return NextResponse.json({ error: "Некорректная вкладка" }, { status: 400 });
+    const status = params.get("status");
+    if (status && !USER_ORDER_STATUSES.includes(status as UserOrderStatus))
+      return NextResponse.json({ error: "Некорректный статус" }, { status: 400 });
     const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(todayStart);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const paintStage: Prisma.ProductionWhereInput = {
-      OR: [
-        { stage: { contains: "paint", mode: "insensitive" } },
-        { stage: { contains: "покрас", mode: "insensitive" } },
-      ],
-    };
-    const filterWhere: Record<string, Prisma.OrderWhereInput> = {
-      all: {},
-      active: { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
-      today: { orderReceivedAt: { gte: todayStart, lt: tomorrow } },
-      measurement: { lifecycle: { in: [OrderLifecycle.CREATED, OrderLifecycle.PREPARATION] } },
-      preparation: {
-        OR: [
-          { lifecycle: OrderLifecycle.READY_FOR_PRODUCTION },
-          { lifecycle: OrderLifecycle.IN_PRODUCTION, productions: { none: paintStage } },
-        ],
-      },
-      painting: { lifecycle: OrderLifecycle.IN_PRODUCTION, productions: { some: paintStage } },
-      ready: { lifecycle: OrderLifecycle.READY_FOR_INSTALLATION },
-      installation: { lifecycle: { in: [OrderLifecycle.INSTALLATION, OrderLifecycle.ACCEPTANCE] } },
-      completed: { lifecycle: OrderLifecycle.COMPLETED },
-      overdue: {
-        lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-        OR: [
-          { productionDeadline: { lt: now } },
-          { installation: { scheduledAt: { lt: now } } },
-        ],
-      },
-      "overdue-order": {
-        lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-        OR: [
-          { productionDeadline: { lt: now } },
-          { installation: { scheduledAt: { lt: now } } },
-        ],
-      },
-      "partner-payable": { partnerAgreedAt: { not: null }, partnerBalance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
-      "without-partner": { partnerId: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
-      "without-partner-price": { partnerId: { not: null }, partnerAgreedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
-      "client-payable": { balance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
-      "without-contract": {
-        lifecycle: { not: OrderLifecycle.CANCELLED },
-        documents: { none: { type: "CONTRACT", status: { notIn: ["ARCHIVED", "CANCELLED"] } } },
-      },
-      "overdue-client": { promisedAt: { lt: now }, balance: { gt: 0 }, lifecycle: { not: OrderLifecycle.CANCELLED } },
-      "overdue-partner": { partnerPlannedReadyAt: { lt: now }, partnerBalance: { gt: 0 }, lifecycle: { notIn: [OrderLifecycle.READY_FOR_INSTALLATION, OrderLifecycle.INSTALLATION, OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
-    };
-    if (!Object.hasOwn(filterWhere, filter))
-      return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
-    const searchWhere: Prisma.OrderWhereInput = {
+    const lifecycleScope: Prisma.OrderWhereInput =
+      tab === "completed"
+        ? { lifecycle: { in: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
+        : tab === "active"
+          ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
+          : {};
+    const overdueScope: Prisma.OrderWhereInput = params.get("attention") === "overdue"
+      ? {
+          lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+          OR: [
+            { promisedAt: { lt: now } },
+            { promisedAt: null, productionDeadline: { lt: now } },
+            { promisedAt: null, productionDeadline: null, installation: { scheduledAt: { lt: now } } },
+          ],
+        }
+      : {};
+    const where: Prisma.OrderWhereInput = {
       AND: [
-        baseWhere,
-        ...(query
-          ? [{ OR: [
-              { number: { contains: query, mode: "insensitive" as const } },
-              { client: { name: { contains: query, mode: "insensitive" as const } } },
-              { client: { phone: { contains: query } } },
-              { client: { city: { contains: query, mode: "insensitive" as const } } },
-            ] }]
-          : []),
-        ...(city ? [{ client: { city: { equals: city, mode: "insensitive" as const } } }] : []),
-        ...(lifecycle && Object.values(OrderLifecycle).includes(lifecycle as OrderLifecycle)
-          ? [{ lifecycle: lifecycle as OrderLifecycle }]
-          : []),
+        roleScope,
+        lifecycleScope,
+        overdueScope,
+        ...(status ? [lifecycleWhere(status as UserOrderStatus)] : []),
+        ...(query ? [{ OR: [
+          { number: { contains: query, mode: "insensitive" as const } },
+          { client: { name: { contains: query, mode: "insensitive" as const } } },
+          { client: { phone: { contains: query } } },
+        ] }] : []),
       ],
+      ...(deletedOnly
+        ? { deletedAt: { not: null } }
+        : includeDeleted
+          ? {}
+          : { deletedAt: null }),
     };
-    const where: Prisma.OrderWhereInput = { AND: [searchWhere, filterWhere[filter]] };
-    const metricEntries = Object.entries(filterWhere);
-    const [orders, total, metricRows, cityRows] = await Promise.all([
+    const [orders, total] = await Promise.all([
       getOrders(where, {
         includeDeleted,
-        skip: (requestedPage - 1) * requestedLimit,
-        take: requestedLimit,
+        skip: (page - 1) * limit,
+        take: limit,
       }),
       countOrders(where),
-      Promise.all(metricEntries.map(async ([key, scope]) => {
-        const aggregate = await prisma.order.aggregate({
-          where: { AND: [searchWhere, scope] },
-          _count: { _all: true },
-          _sum: key === "client-payable" || key === "overdue-client"
-            ? { balance: true }
-            : key === "partner-payable" || key === "overdue-partner"
-              ? { partnerBalance: true }
-              : { amount: true },
-        });
-        const sum = "balance" in aggregate._sum
-          ? aggregate._sum.balance
-          : "partnerBalance" in aggregate._sum
-            ? aggregate._sum.partnerBalance
-            : aggregate._sum.amount;
-        return [key, { count: aggregate._count._all, amount: String(sum ?? 0) }] as const;
-      })),
-      prisma.order.findMany({
-        where: baseWhere,
-        select: { client: { select: { city: true } } },
-        distinct: ["clientId"],
-      }),
     ]);
-    const filterMetrics = Object.fromEntries(metricRows);
-    const cities = [...new Set(cityRows.map((row) => row.client.city.trim()).filter(Boolean))]
-      .sort((left, right) => left.localeCompare(right, "ru"));
-    if (role !== Role.DIRECTOR && role !== Role.ACCOUNTANT) {
-      const projected = orders.map((order) => {
-          const result = { ...order } as Record<string, unknown>;
-          delete result.companyProfit;
-          if (role !== Role.PARTNER)
-            for (const field of [
-              "partnerPrice",
-              "partnerAgreedAt",
-              "partnerPaid",
-              "partnerBalance",
-            ])
-              delete result[field];
-          if (
-            (
-              [
-                Role.PRODUCTION,
-                Role.INSTALLER,
-                Role.MEASURER,
-                Role.PARTNER,
-              ] as Role[]
-            ).includes(role)
-          )
-            for (const field of ["amount", "prepayment", "balance"])
-              delete result[field];
-          return result;
-        });
-      return NextResponse.json({
-        data: projected,
-        pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
-        filterMetrics: Object.fromEntries(Object.entries(filterMetrics).filter(([key]) => !["partner-payable", "without-partner", "without-partner-price", "without-contract", "overdue-client", "overdue-partner"].includes(key))),
-        filters: { cities },
-      });
-    }
-    return NextResponse.json({
-      data: orders,
-      pagination: { page: requestedPage, limit: requestedLimit, total, totalPages: Math.ceil((total ?? 0) / requestedLimit) },
-      filterMetrics,
-      filters: { cities },
+
+    const data = orders.map((order) => {
+      if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
+      const safe = { ...order } as Partial<typeof order>;
+      delete safe.netProfit;
+      delete safe.netMargin;
+      delete safe.costDataComplete;
+      if (
+        role === Role.PRODUCTION ||
+        role === Role.INSTALLER ||
+        role === Role.MEASURER ||
+        role === Role.PARTNER
+      ) {
+        delete safe.amount;
+        delete safe.received;
+        delete safe.balance;
+      }
+      return safe;
     });
-  } catch {
-    return NextResponse.json(
-      { error: "Ошибка получения заказов" },
-      { status: 500 },
-    );
+    return NextResponse.json({
+      data,
+      pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
+    });
+  } catch (error) {
+    productionLog("error", "orders.list_failed", { error });
+    return NextResponse.json({ error: "Ошибка получения заказов" }, { status: 500 });
   }
 }
 
@@ -270,269 +173,130 @@ export async function POST(request: Request) {
   const role = auth.session!.user.role as Role;
   if (role !== Role.DIRECTOR && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-
   try {
     const body = (await request.json()) as Record<string, unknown>;
     if (
       role !== Role.DIRECTOR &&
-      ("partnerId" in body ||
-        "partnerPrice" in body ||
-        "partnerPaid" in body ||
-        "companyProfit" in body)
+      ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"].some((key) => key in body)
     )
       return NextResponse.json(
-        { error: "Внутренние суммы цеха доступны только директору" },
+        { error: "Внутренние суммы производства доступны только директору" },
         { status: 403 },
       );
 
-    const enhanced =
-      role === Role.MANAGER ||
-      "phone" in body ||
-      "orderReceivedAt" in body ||
-      "frameType" in body;
     const clientId = positiveInteger(body.clientId);
-    const clientName = requiredText(body.clientName);
-    const phone = requiredText(body.phone);
-    const city = requiredText(body.city);
-    const address =
-      requiredText(body.address) ?? (enhanced ? "Адрес уточняется" : null);
-    const staircase =
-      requiredText(body.frameType) ?? requiredText(body.staircase);
-    const selectedMaterial = requiredText(body.material);
-    const material =
-      selectedMaterial === "Другое"
-        ? requiredText(body.materialOther)
-        : selectedMaterial;
+    const clientName = text(body.clientName);
+    const phone = text(body.phone);
+    const location = text(body.location);
+    const city = text(body.city) ?? location;
+    const address = text(body.address) ?? location ?? "Адрес уточняется";
     const amount = money(body.amount);
     const prepayment = money(body.initialPayment ?? body.prepayment, 0);
-    const partnerId =
-      role === Role.DIRECTOR && body.partnerId != null && body.partnerId !== ""
-        ? positiveInteger(body.partnerId)
-        : null;
-    const partnerPrice =
-      role === Role.DIRECTOR ? money(body.partnerPrice, 0) : 0;
+    const managerUserId = role === Role.MANAGER
+      ? Number(auth.session!.user.id)
+      : positiveInteger(body.managerUserId);
+    const partnerId = role === Role.DIRECTOR && body.partnerId
+      ? positiveInteger(body.partnerId)
+      : null;
+    const partnerPrice = role === Role.DIRECTOR ? money(body.partnerPrice, 0) : 0;
     const partnerPaid = role === Role.DIRECTOR ? money(body.partnerPaid, 0) : 0;
-    const orderReceivedAt =
-      dateValue(body.orderReceivedAt) ?? (!enhanced ? new Date() : null);
-    const readinessDate = dateValue(body.readinessDate);
-    const calendarDays =
-      body.calendarDays == null || body.calendarDays === ""
-        ? null
-        : Number(body.calendarDays);
-    const mapUrl = optionalUrl(body.mapUrl);
-    const paymentMethod =
-      requiredText(body.paymentMethod) ??
-      (enhanced ? null : "initial_order_posting");
-    const initialPaymentDate =
-      body.paymentDate == null || body.paymentDate === ""
-        ? undefined
-        : (dateValue(body.paymentDate) ?? null);
-    const managerUserId =
-      role === Role.MANAGER
-        ? Number(auth.session!.user.id)
-        : (positiveInteger(body.managerUserId) ??
-          (!enhanced ? Number(auth.session!.user.id) : null));
+    const orderReceivedAt = dateValue(body.orderReceivedAt) ?? new Date();
+    const promisedAt = dateValue(body.readinessDate ?? body.promisedAt);
+    const paymentMethod = text(body.paymentMethod) ?? "BANK_TRANSFER";
+    const initialPaymentDate = dateValue(body.paymentDate) ?? new Date();
 
     if (
-      (!enhanced && !clientId) ||
-      (enhanced && (!phone || !city || !orderReceivedAt || !managerUserId || (!clientId && !clientName))) ||
-      !address ||
-      !staircase ||
-      !material ||
+      (!clientId && (!clientName || !phone || !city)) ||
+      !managerUserId ||
       amount === null ||
       amount <= 0 ||
       prepayment === null ||
+      prepayment > amount ||
       partnerPrice === null ||
       partnerPaid === null ||
-      mapUrl === null ||
-      !paymentMethod ||
-      (enhanced && !paymentMethods.has(paymentMethod)) ||
-      initialPaymentDate === null ||
-      (calendarDays !== null &&
-        (!Number.isInteger(calendarDays) ||
-          calendarDays < 0 ||
-          calendarDays > 3650)) ||
-      (role === Role.DIRECTOR &&
-        body.partnerId != null &&
-        body.partnerId !== "" &&
-        !partnerId)
+      partnerPaid > partnerPrice ||
+      !paymentMethods.has(paymentMethod)
     )
-      return NextResponse.json(
-        { error: "Проверьте обязательные поля заказа" },
-        { status: 400 },
-      );
-    if (prepayment > amount)
-      return NextResponse.json(
-        { error: "Полученная сумма не может превышать сумму заказа" },
-        { status: 400 },
-      );
-    if (partnerPaid > partnerPrice)
-      return NextResponse.json(
-        { error: "Выплата партнёру не может превышать его стоимость" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Проверьте обязательные поля заказа" }, { status: 400 });
 
-    const [managerUser, partner] = await Promise.all([
-      managerUserId
-        ? prisma.user.findFirst({
-            where: {
-              id: managerUserId,
-              active: true,
-          role: Role.MANAGER,
-            },
-            select: { id: true, name: true },
-          })
-        : null,
+    const [manager, partner] = await Promise.all([
+      prisma.user.findFirst({
+        where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR] } },
+        select: { id: true, name: true },
+      }),
       partnerId
         ? prisma.partner.findFirst({
-            where: {
-              id: partnerId,
-              active: true,
-              archived: false,
-              isTest: false,
-            },
+            where: { id: partnerId, active: true, archived: false, isTest: false },
             select: { id: true },
           })
         : null,
     ]);
-    if (!managerUser)
-      return NextResponse.json(
-        { error: "Ответственный менеджер не найден" },
-        { status: 400 },
-      );
+    if (!manager)
+      return NextResponse.json({ error: "Ответственный не найден" }, { status: 400 });
     if (partnerId && !partner)
-      return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 });
+      return NextResponse.json({ error: "Подрядчик не найден" }, { status: 404 });
 
-    const promisedAt =
-      readinessDate ??
-      (calendarDays !== null && orderReceivedAt
-        ? new Date(orderReceivedAt.getTime() + calendarDays * 86_400_000)
-        : null);
     const payload = {
       clientId: clientId ?? undefined,
-      ...(enhanced
-        ? {
-            client: {
-              name: clientName ?? "",
-              phone: phone!,
-              city: city!,
-              address: requiredText(body.address) ?? "",
-            },
-          }
+      ...(!clientId
+        ? { client: { name: clientName!, phone: phone!, city: city!, address } }
         : {}),
       partnerId,
       address,
-      staircase,
-      material,
-      mapUrl,
-      orderReceivedAt: orderReceivedAt!,
+      staircase: text(body.frameType ?? body.staircase) ?? "Не указано",
+      material: text(body.materialOther ?? body.material) ?? "Не указано",
+      mapUrl: text(body.mapUrl) ?? "",
+      orderReceivedAt,
       promisedAt,
-      frameComment: requiredText(body.frameComment) ?? "",
-      railingType: requiredText(body.railingType) ?? "",
-      supportType: requiredText(body.supportType) ?? "",
-      color: requiredText(body.color) ?? "",
+      frameComment: text(body.frameComment) ?? "",
+      railingType: text(body.railingType) ?? "",
+      supportType: text(body.supportType) ?? "",
+      color: text(body.color) ?? "",
       lighting: body.lighting === true,
-      lightingDetails: requiredText(body.lightingDetails) ?? "",
+      lightingDetails: text(body.lightingDetails) ?? "",
       cladding: body.cladding === true,
-      claddingDetails: requiredText(body.claddingDetails) ?? "",
-      additionalDetails: requiredText(body.additionalDetails) ?? "",
+      claddingDetails: text(body.claddingDetails) ?? "",
+      additionalDetails: text(body.comment ?? body.additionalDetails) ?? "",
       paymentMethod,
-      initialPaymentDate: initialPaymentDate ?? undefined,
-      initialPaymentComment: requiredText(body.paymentComment) ?? "",
+      initialPaymentDate,
+      initialPaymentComment: text(body.paymentComment) ?? "",
       amount,
       prepayment,
       partnerPrice,
-      partnerPriceSet:
-        role === Role.DIRECTOR &&
-        Boolean(partnerId) &&
-        Object.hasOwn(body, "partnerPrice"),
+      partnerPriceSet: role === Role.DIRECTOR && Boolean(partnerId) && Object.hasOwn(body, "partnerPrice"),
       partnerPaid,
-      manager: managerUser.name,
-      managerUserId: managerUser.id,
+      manager: manager.name,
+      managerUserId: manager.id,
     };
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
-    const requestHashPayload = {
-      ...payload,
-      orderReceivedAt:
-        body.orderReceivedAt == null || body.orderReceivedAt === ""
-          ? null
-          : orderReceivedAt,
-    };
     const result = await createOrder({
       ...payload,
       actorRole: role,
-      enforceClientOwnership: enhanced,
+      enforceClientOwnership: true,
       idempotencyKey: idempotency.key,
-      requestHash: createRequestHash(requestHashPayload),
+      requestHash: createRequestHash(payload),
     });
     const responseOrder = { ...result.order } as Record<string, unknown>;
     if (role !== Role.DIRECTOR)
-      for (const field of [
-        "companyProfit",
-        "partnerPrice",
-        "partnerAgreedAt",
-        "partnerPaid",
-        "partnerBalance",
-      ])
+      for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"])
         delete responseOrder[field];
-    return NextResponse.json(responseOrder, {
-      status: result.created ? 201 : 200,
-    });
+    return NextResponse.json(responseOrder, { status: result.created ? 201 : 200 });
   } catch (error) {
     if (error instanceof SyntaxError)
       return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
       return idempotencyConflict();
     if (error instanceof Error && error.message === "ORDER_NUMBER_CONFLICT")
-      return NextResponse.json(
-        { error: "Не удалось сгенерировать уникальный номер заказа" },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: "Не удалось создать номер заказа" }, { status: 409 });
     if (error instanceof Error && error.message === "CLIENT_NOT_FOUND")
       return NextResponse.json({ error: "Клиент не найден" }, { status: 404 });
     if (
       error instanceof Error &&
-      ["FORBIDDEN_CLIENT_OWNERSHIP", "CLIENT_PHONE_MISMATCH"].includes(
-        error.message,
-      )
+      ["FORBIDDEN_CLIENT_OWNERSHIP", "CLIENT_PHONE_MISMATCH"].includes(error.message)
     )
-      return NextResponse.json(
-        {
-          error: "Этот телефон уже связан с клиентом другого менеджера",
-          code: error.message,
-        },
-        { status: 409 },
-      );
-    if (
-      error instanceof Error &&
-      ["INVALID_CLIENT_PHONE", "CLIENT_NAME_REQUIRED", "CLIENT_CITY_REQUIRED", "CLIENT_REQUIRED", "MANAGER_REQUIRED"].includes(
-        error.message,
-      )
-    )
-      return NextResponse.json(
-        { error: "Некорректные данные клиента или менеджера" },
-        { status: 400 },
-      );
-    const adapterCause =
-      error && typeof error === "object" && "cause" in error
-        ? (error as { cause?: { kind?: unknown } }).cause
-        : undefined;
-    productionLog("error", "orders.create_failed", {
-      requestId: request.headers.get("x-request-id") ?? undefined,
-      route: new URL(request.url).pathname,
-      method: request.method,
-      reason:
-        error instanceof Prisma.PrismaClientKnownRequestError
-          ? error.code
-          : typeof adapterCause?.kind === "string"
-            ? adapterCause.kind
-            : undefined,
-      error,
-    });
-    return NextResponse.json(
-      { error: "Ошибка создания заказа" },
-      { status: 500 },
-    );
+      return NextResponse.json({ error: "Телефон уже связан с клиентом другого менеджера" }, { status: 409 });
+    productionLog("error", "orders.create_failed", { error });
+    return NextResponse.json({ error: "Ошибка создания заказа" }, { status: 500 });
   }
 }

@@ -13,7 +13,6 @@ import {
   Clock3,
   History,
   Plus,
-  Receipt,
   UserRound,
   X,
 } from "lucide-react";
@@ -483,12 +482,8 @@ export default function PayrollPage() {
     [data.rows],
   );
   const stats: Array<[string, number, LucideIcon, string]> = [
-    ["Оклад начислено", data.breakdown.salaryAccrued, CircleDollarSign, "text-blue-300"],
-    ["Бонусы начислено", data.breakdown.bonusesAccrued, Receipt, "text-cyan-300"],
-    ["Премии", data.breakdown.premiumsAccrued, Receipt, "text-violet-300"],
-    ["Авансы выплачено", data.breakdown.advancesPaid, Check, "text-orange-300"],
-    ["Всего начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
-    ["Всего выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
+    ["Начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
+    ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
     ["К выплате", data.breakdown.payable, Banknote, "text-amber-300"],
   ];
 
@@ -538,30 +533,16 @@ export default function PayrollPage() {
                 {labels[data.period.status]}
               </span>
             )}
-            {director && !data.period && (
-              <button
-                onClick={() =>
-                  void run(
-                    { action: "create-period", ...selected },
-                    "Месяц открыт",
-                  )
-                }
-                className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold"
-              >
-                Открыть месяц
-              </button>
-            )}
-            {director && data.period?.status === "OPEN" && (
-              <button
-                onClick={() => void transitionPeriod("REVIEW")}
-                className="min-h-11 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 font-semibold text-amber-200"
-              >
-                На проверку
-              </button>
-            )}
-            {director && data.period?.status === "REVIEW" && <><button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Вернуть в работу</button><button onClick={() => void transitionPeriod("CLOSED")} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300">Закрыть месяц</button></>}
-            {director && data.period?.status === "CLOSED" && <button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 font-semibold text-blue-200">Открыть месяц снова</button>}
             {director && data.period && !locked && (
+              <button
+                onClick={() => openOperation("salaryAccrual")}
+                disabled={!data.rows.length}
+                className="flex min-h-11 items-center gap-2 rounded-xl border border-blue-500/50 bg-blue-500/10 px-4 font-semibold text-blue-100 disabled:opacity-40"
+              >
+                <Plus size={18} /> Начислить
+              </button>
+            )}
+            {adminView && data.period && !locked && (
               <button
                 onClick={() => openOperation("payment")}
                 disabled={!data.rows.length}
@@ -572,6 +553,17 @@ export default function PayrollPage() {
             )}
           </div>
         </header>
+        {director && (
+          <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-300">Действия с месяцем</summary>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!data.period && <button onClick={() => void run({ action: "create-period", ...selected }, "Месяц открыт")} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">Открыть месяц</button>}
+              {data.period?.status === "OPEN" && <button onClick={() => void transitionPeriod("REVIEW")} className="min-h-11 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 font-semibold text-amber-200">На проверку</button>}
+              {data.period?.status === "REVIEW" && <><button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Вернуть в работу</button><button onClick={() => void transitionPeriod("CLOSED")} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300">Закрыть месяц</button></>}
+              {data.period?.status === "CLOSED" && <button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 font-semibold text-blue-200">Открыть месяц снова</button>}
+            </div>
+          </details>
+        )}
         {(error || notice) && (
           <div
             role={error ? "alert" : "status"}
@@ -589,7 +581,7 @@ export default function PayrollPage() {
             </button>
           </div>
         )}
-        <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        <section className="mt-5 grid gap-3 sm:grid-cols-3">
           {stats.map(([label, value, Icon, color]) => (
             <article
               key={label}
@@ -747,16 +739,11 @@ export default function PayrollPage() {
                     <tr>
                       {[
                         "Сотрудник",
-                        "Должность",
-                        "Оклад",
-                        "Бонусы",
-                        "Премии",
-                        "Аванс",
                         "Начислено",
-                        "Подтверждено выплат",
-                        "Ожидает подтверждения",
+                        "Выплачено",
                         "К выплате",
                         "Статус",
+                        "Действия",
                       ].map((title) => (
                         <th key={title} className="px-4 py-3">
                           {title}
@@ -793,10 +780,9 @@ export default function PayrollPage() {
                         paid={row.totals.paid}
                       />
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                    <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                       <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Подтверждено" value={row.totals.paid} />
-                      <Metric label="Ожидает" value={row.totals.pending} />
+                      <Metric label="Выплачено" value={row.totals.paid} />
                       <Metric
                         label="К выплате"
                         value={row.totals.payable}
@@ -833,6 +819,13 @@ export default function PayrollPage() {
         <OperationModal
           operation={operation}
           row={target}
+          rows={data.rows}
+          onRowChange={(row) => {
+            setTarget(row);
+            setForm(operation === "salaryAccrual"
+              ? { ...emptyForm(), amount: String(row.currentSalary), reason: "Оклад за расчётный период" }
+              : emptyForm());
+          }}
           form={form}
           setForm={setForm}
           onClose={() => setOperation(null)}
@@ -850,22 +843,6 @@ function PayrollTableRow({
   row: PayrollRow;
   onOpen: () => void;
 }) {
-  const bonuses = row.accruals
-      .filter(
-        (x) =>
-          [
-            "GUARANTEED_ORDER_BONUS",
-            "ORDER_BONUS",
-            "EXTRA_BONUS",
-          ].includes(x.type) && x.direction === "INCREASE",
-      )
-      .reduce((s, x) => s + Number(x.amount), 0),
-    premiums = row.accruals
-      .filter((x) => x.type === "PREMIUM" && x.direction === "INCREASE")
-      .reduce((s, x) => s + Number(x.amount), 0),
-    advances = row.payments
-      .filter((x) => x.type === "ADVANCE")
-      .reduce((s, x) => s + Number(x.amount), 0);
   return (
     <tr
       onClick={onOpen}
@@ -873,26 +850,30 @@ function PayrollTableRow({
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()}
       className="cursor-pointer border-t border-slate-800 hover:bg-slate-800/60"
     >
-      <td className="px-4 py-4 font-semibold">{row.user.name}</td>
-      <td className="px-4 py-4 text-slate-400">
-        {employeePosition(row)}
+      <td className="px-4 py-4 font-semibold">
+        {row.user.name}
+        <span className="mt-0.5 block text-xs font-normal text-slate-500">
+          {employeePosition(row)}
+        </span>
       </td>
-      <td className="px-4 py-4">{currency(row.currentSalary)}</td>
-      <td className="px-4 py-4">{currency(bonuses)}</td>
-      <td className="px-4 py-4">{currency(premiums)}</td>
-      <td className="px-4 py-4">{currency(advances)}</td>
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
       <td className="px-4 py-4 text-emerald-300">
         {currency(row.totals.paid)}
-      </td>
-      <td className="px-4 py-4 text-orange-300">
-        {currency(row.totals.pending)}
       </td>
       <td className="px-4 py-4 font-bold text-amber-300">
         {currency(row.totals.payable)}
       </td>
       <td className="px-4 py-4">
         <Status payable={row.totals.payable} paid={row.totals.paid} />
+      </td>
+      <td className="px-4 py-4">
+        <button
+          type="button"
+          onClick={(event) => { event.stopPropagation(); onOpen(); }}
+          className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-semibold hover:border-blue-500"
+        >
+          Открыть
+        </button>
       </td>
     </tr>
   );
@@ -1028,10 +1009,9 @@ function EmployeeDrawer({
             <X />
           </button>
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-5 grid grid-cols-3 gap-2">
           <Metric label="Начислено" value={row.totals.accrued} />
-          <Metric label="Подтверждено выплат" value={row.totals.paid} />
-          <Metric label="Ожидает подтверждения" value={row.totals.pending} />
+          <Metric label="Выплачено" value={row.totals.paid} />
           <Metric label="К выплате" value={row.totals.payable} accent />
         </div>
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
@@ -1075,15 +1055,19 @@ function EmployeeDrawer({
         {(director || accountant) && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {director && <>
+            <div className="grid grid-cols-2 gap-2">
+              {director && (
+                <Action label="Начислить" onClick={() => onOperation("salaryAccrual", row)} />
+              )}
+              <Action label="Выплатить" onClick={() => onOperation("payment", row)} />
+            </div>
+            {director && (
+              <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-300">Дополнительные операции</summary>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <Action
                     label="Изменить оклад"
                     onClick={() => onOperation("salary", row)}
-                  />
-                  <Action
-                    label="Начислить оклад"
-                    onClick={() => onOperation("salaryAccrual", row)}
                   />
                   <Action
                     label="Гарантированный бонус"
@@ -1105,12 +1089,9 @@ function EmployeeDrawer({
                     label="Сторно"
                     onClick={() => onOperation("reversal", row)}
                   />
-              </>}
-              <Action
-                label="Добавить выплату / аванс"
-                onClick={() => onOperation("payment", row)}
-              />
-            </div>
+                </div>
+              </details>
+            )}
           </section>
         )}
         {row.advanceRequests.length > 0 && (
@@ -1275,6 +1256,8 @@ function EmployeeDrawer({
 function OperationModal({
   operation,
   row,
+  rows,
+  onRowChange,
   form,
   setForm,
   onClose,
@@ -1282,6 +1265,8 @@ function OperationModal({
 }: {
   operation: Operation;
   row: PayrollRow;
+  rows: PayrollRow[];
+  onRowChange: (row: PayrollRow) => void;
   form: Form;
   setForm: (value: Form) => void;
   onClose: () => void;
@@ -1324,6 +1309,24 @@ function OperationModal({
           </button>
         </div>
         <div className="mt-5 space-y-4">
+          {rows.length > 1 && (
+            <Field label="Сотрудник">
+              <select
+                value={row.id}
+                onChange={(event) => {
+                  const selected = rows.find((item) => item.id === Number(event.target.value));
+                  if (selected) onRowChange(selected);
+                }}
+                className="control"
+              >
+                {rows.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.user.name} · {employeePosition(item)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           {operation === "reversal" ? (
             <Field label="Начисление">
               <select

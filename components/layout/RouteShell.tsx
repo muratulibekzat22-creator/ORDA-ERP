@@ -58,13 +58,13 @@ export default function RouteShell({
     "/settings": "settings",
   };
   const visible = (href: string) => {
-    if (href === "/partner-management") return role === "DIRECTOR";
+    if (role === "DIRECTOR")
+      return ["/", "/orders", "/payroll"].includes(href);
+    if (href === "/partner-management") return false;
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
     if (role === "MANAGER")
       return ["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"].includes(href);
-    if (role === "DIRECTOR")
-      return ["/", "/clients", "/orders", "/calendar", "/production", "/warehouse", "/employees", "/payroll", "/finance", "/partner-management", "/reports", "/documents", "/settings"].includes(href);
     if (href === "/training" || href === "/measurements") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
