@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
+import RecurringExpensesPanel from "@/components/finance/RecurringExpensesPanel";
 
 type Direction = "INCOME" | "EXPENSE";
 type Option = { id: number; name: string };
@@ -109,6 +110,7 @@ const money = (value: number) =>
   }).format(value || 0);
 const sourceLabels: Record<string, string> = {
   MANUAL: "Ручная",
+  RECURRING_EXPENSE: "Постоянная",
   CLIENT_PAYMENT: "Оплата клиента",
   PARTNER_PAYOUT: "Выплата цеху",
   PAYROLL_PAYMENT: "Зарплата",
@@ -413,6 +415,8 @@ export default function FinanceJournalPage() {
           }
         />
       </div>
+
+      <RecurringExpensesPanel onChanged={() => void load()} />
 
       {form && (
         <form

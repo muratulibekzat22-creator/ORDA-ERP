@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import Header from "@/components/Header";
+import ManagerFollowUpGate from "@/components/clients/ManagerFollowUpGate";
 import { hasDefaultPermission, type Permission } from "@/lib/permissions";
 import { type Role } from "@/lib/roles";
 
@@ -152,7 +153,7 @@ export default function RouteShell({
             })}
           </nav>
         </aside>
-        <div className="min-w-0 flex-1 overflow-auto">{children}</div>
+        <div className="min-w-0 flex-1 overflow-auto"><ManagerFollowUpGate>{children}</ManagerFollowUpGate></div>
       </div>
     </main>
   );

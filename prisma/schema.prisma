@@ -98,6 +98,7 @@ model Company {
   calendarTasks              CalendarTask[]
   companyLedgerEntries       CompanyLedgerEntry[]
   financeCategories          FinanceCategory[]
+  recurringExpensePlans      RecurringExpensePlan[]
   employeePayrollProfiles    EmployeePayrollProfile[]
   payrollPeriods             PayrollPeriod[]
   personalLedgerEntries      PersonalLedgerEntry[]
@@ -660,22 +661,29 @@ model LeadStatusHistory {
 }
 
 model LeadNextAction {
-  id                Int                @id @default(autoincrement())
+  id                Int                 @id @default(autoincrement())
   clientId          Int
-  client            Client             @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client            Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
   nextActionType    LeadNextActionType
   nextActionAt      DateTime
   nextActionComment String?
   createdByUserId   Int
-  createdBy         User               @relation("LeadActionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdBy         User                @relation("LeadActionCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
   completedAt       DateTime?
   completedByUserId Int?
-  completedBy       User?              @relation("LeadActionCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  completedBy       User?               @relation("LeadActionCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
   resultComment     String?
-  createdAt         DateTime           @default(now())
+  proposalId        Int?
+  proposal          CommercialProposal? @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  mandatory         Boolean             @default(false)
+  followUpStep      Int?
+  workflowKey       String?             @unique
+  createdAt         DateTime            @default(now())
 
   @@index([clientId, completedAt, nextActionAt])
   @@index([createdByUserId, completedAt, nextActionAt])
+  @@index([mandatory, completedAt, nextActionAt])
+  @@index([proposalId, followUpStep])
 }
 
 model LeadCalculation {
@@ -736,6 +744,7 @@ model CommercialProposal {
   updatedAt          DateTime               @updatedAt
   conversion         LeadConversion?
   priceApprovals     PriceApprovalRequest[]
+  followUpActions    LeadNextAction[]
   version            Int                    @default(1)
   rootNumber         String?
   total              Decimal?               @db.Decimal(12, 2)
@@ -1216,42 +1225,46 @@ model OrderCalculationLine {
 }
 
 model CompanyLedgerEntry {
-  id               Int                     @id @default(autoincrement())
-  companyId        Int                     @default(dbgenerated())
-  company          Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  type             String
-  category         String
-  categoryId       Int?
-  categoryRef      FinanceCategory?        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  direction        String
-  source           String                  @default("MANUAL")
-  amount           Decimal                 @db.Decimal(14, 2)
-  operationDate    DateTime                @default(now())
-  method           String?
-  counterparty     String?
-  orderId          Int?
-  order            Order?                  @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  clientId         Int?
-  client           Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  partnerId        Int?
-  partner          Partner?                @relation(fields: [partnerId], references: [id], onDelete: SetNull)
-  employeeId       Int?
-  employee         EmployeePayrollProfile? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  comment          String?
-  authorId         Int?
-  author           User?                   @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
-  idempotencyKey   String?                 @unique
-  requestHash      String?
-  affectsProfit    Boolean                 @default(true)
-  payrollAccrualId Int?                    @unique
-  payrollAccrual   PayrollAccrual?         @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
-  payrollPaymentId Int?                    @unique
-  payrollPayment   PayrollPayment?         @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
-  voidedAt         DateTime?
-  voidReason       String?
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  id                     Int                     @id @default(autoincrement())
+  companyId              Int                     @default(dbgenerated())
+  company                Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  type                   String
+  category               String
+  categoryId             Int?
+  categoryRef            FinanceCategory?        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  direction              String
+  source                 String                  @default("MANUAL")
+  amount                 Decimal                 @db.Decimal(14, 2)
+  operationDate          DateTime                @default(now())
+  method                 String?
+  counterparty           String?
+  orderId                Int?
+  order                  Order?                  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  clientId               Int?
+  client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  partnerId              Int?
+  partner                Partner?                @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  employeeId             Int?
+  employee               EmployeePayrollProfile? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  recurringExpensePlanId Int?
+  recurringExpensePlan   RecurringExpensePlan?   @relation(fields: [recurringExpensePlanId], references: [id], onDelete: SetNull)
+  recurringPeriod        String?
+  comment                String?
+  authorId               Int?
+  author                 User?                   @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  idempotencyKey         String?                 @unique
+  requestHash            String?
+  affectsProfit          Boolean                 @default(true)
+  payrollAccrualId       Int?                    @unique
+  payrollAccrual         PayrollAccrual?         @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
+  payrollPaymentId       Int?                    @unique
+  payrollPayment         PayrollPayment?         @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
+  voidedAt               DateTime?
+  voidReason             String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
 
+  @@unique([recurringExpensePlanId, recurringPeriod])
   @@index([operationDate])
   @@index([orderId])
   @@index([categoryId, operationDate])
@@ -1264,21 +1277,44 @@ model CompanyLedgerEntry {
 }
 
 model FinanceCategory {
-  id        Int                  @id @default(autoincrement())
-  companyId Int                  @default(dbgenerated())
-  company   Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  code      String
-  name      String
-  direction String
-  system    Boolean              @default(false)
-  active    Boolean              @default(true)
-  entries   CompanyLedgerEntry[]
-  createdAt DateTime             @default(now())
-  updatedAt DateTime             @updatedAt
+  id                    Int                    @id @default(autoincrement())
+  companyId             Int                    @default(dbgenerated())
+  company               Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code                  String
+  name                  String
+  direction             String
+  system                Boolean                @default(false)
+  active                Boolean                @default(true)
+  entries               CompanyLedgerEntry[]
+  recurringExpensePlans RecurringExpensePlan[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
   @@unique([companyId, direction, code])
   @@index([direction, active, name])
   @@index([companyId, direction, active])
+}
+
+model RecurringExpensePlan {
+  id           Int                  @id @default(autoincrement())
+  companyId    Int                  @default(dbgenerated())
+  company      Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name         String
+  categoryId   Int
+  category     FinanceCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  amount       Decimal              @db.Decimal(14, 2)
+  dayOfMonth   Int                  @default(1)
+  method       String               @default("bank_transfer")
+  counterparty String?
+  comment      String?
+  active       Boolean              @default(true)
+  entries      CompanyLedgerEntry[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId, active, dayOfMonth])
+  @@index([categoryId, active])
 }
 
 model EmployeePayrollProfile {
@@ -1776,6 +1812,8 @@ model CompanySettings {
   whatsapp         String  @default("")
   email            String  @default("")
   bankDetails      String  @default("")
+  kaspiGoldName    String  @default("")
+  kaspiGoldPhone   String  @default("")
   directorName     String  @default("")
   directorFullName String  @default("")
   iik              String  @default("")

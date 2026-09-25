@@ -11,10 +11,10 @@ const text = (value: unknown, required = false) => typeof value === "string" && 
 export async function GET(request: Request) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const params = new URL(request.url).searchParams, role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const includeDeleted = params.get("includeDeleted") === "true";
   const deletedOnly = params.get("deletedOnly") === "true";
-  if (role !== Role.DIRECTOR && (includeDeleted || deletedOnly || params.get("active") === "false"))
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && (includeDeleted || deletedOnly || params.get("active") === "false"))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const search = params.get("search")?.trim(), city = params.get("city")?.trim(), manager = params.get("manager")?.trim(), status = params.get("status")?.trim(), source = params.get("source")?.trim();
   const page = Math.max(1, Number(params.get("page")) || 1), limit = Math.min(100, Math.max(1, Number(params.get("limit")) || 20));
@@ -55,7 +55,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>, rawPhone = text(body.phone, true), city = text(body.city, true), name = text(body.clientName ?? body.name, true), requestText = text(body.comment) ?? text(body.estimateNotes) ?? "", estimatedAmount = amount(body.estimatedAmount ?? body.amount ?? 0);
     const normalized = rawPhone ? normalizePhone(rawPhone) : "";
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     const duplicate = await prisma.client.findFirst({ where: { active: true, deletedAt: null, OR: [{ phone: normalized }, { whatsapp: normalized }] }, select: { id: true, name: true, phone: true, stage: true } });
     if (duplicate && body.allowDuplicate !== true) return NextResponse.json({ error: "Клиент с таким телефоном уже существует", code: "DUPLICATE_PHONE", existingClient: duplicate }, { status: 409 });
     const managerUserId = role === Role.MANAGER ? Number(auth.session!.user.id) : Number(body.managerUserId ?? auth.session!.user.id);
-    const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR] } }, select: { id: true, name: true } });
+    const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] } }, select: { id: true, name: true } });
     if (!managerUser) return NextResponse.json({ error: "Некорректный ответственный менеджер" }, { status: 400 });
     const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source) ?? LeadSource.WHATSAPP;
     const client = await prisma.$transaction(async (tx) => {

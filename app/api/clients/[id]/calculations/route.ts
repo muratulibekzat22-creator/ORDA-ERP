@@ -8,13 +8,13 @@ import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 
 type Context = { params: Promise<{ id: string }> };
 const clientId = async (context: Context) => { const value = Number((await context.params).id); return Number.isInteger(value) && value > 0 ? value : null; };
-const redacted = (value: Record<string, unknown>, role: Role) => { if (role === Role.DIRECTOR) return value; const result: Record<string, unknown> = { ...value, snapshot: publicCalculationSnapshot(value.snapshot) }; delete result.internalCost; if (Array.isArray(result.adjustments)) result.adjustments = result.adjustments.map((item: unknown) => { const row = item as Record<string, unknown>; return { id: row.id, originalPrice: row.originalPrice, newPrice: row.newPrice, authorName: row.authorName, comment: row.comment, createdAt: row.createdAt }; }); return result; };
+const redacted = (value: Record<string, unknown>, role: Role) => { if (role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR) return value; const result: Record<string, unknown> = { ...value, snapshot: publicCalculationSnapshot(value.snapshot) }; delete result.internalCost; if (Array.isArray(result.adjustments)) result.adjustments = result.adjustments.map((item: unknown) => { const row = item as Record<string, unknown>; return { id: row.id, originalPrice: row.originalPrice, newPrice: row.newPrice, authorName: row.authorName, comment: row.comment, createdAt: row.createdAt }; }); return result; };
 
 export async function GET(_: Request, context: Context) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const id = await clientId(context); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const client = await prisma.client.findUnique({ where: { id }, select: { managerUserId: true } });
   if (!client || (role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id))) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
   const values = await prisma.leadCalculation.findMany({ where: { clientId: id }, include: { adjustments: { orderBy: { createdAt: "desc" } } }, orderBy: { createdAt: "desc" } });
@@ -24,7 +24,7 @@ export async function GET(_: Request, context: Context) {
 export async function POST(request: Request, context: Context) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const id = await clientId(context), role = auth.session!.user.role as Role;
-  if (!id || (role !== Role.DIRECTOR && role !== Role.MANAGER)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!id || (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     if ("internalCost" in body || "workshopCost" in body) return NextResponse.json({ error: "Внутренние цены недоступны" }, { status: 403 });

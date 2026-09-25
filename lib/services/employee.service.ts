@@ -72,6 +72,7 @@ export async function ensureUserEmployeeProfiles() {
       hiredAt: user.createdAt,
       active: true,
       payrollEnabled: true,
+      baseSalary: user.role === Role.MANAGER ? 200_000 : 0,
     })),
     skipDuplicates: true,
   });
@@ -170,6 +171,7 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
         hiredAt: new Date(),
         active: input.active ?? true,
         payrollEnabled: true,
+        baseSalary: input.role === Role.MANAGER ? 200_000 : 0,
       },
       include: employeeInclude,
     });

@@ -69,7 +69,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
             operationDate: range(period.start, period.end),
             affectsProfit: true,
             voidedAt: null,
-            source: "MANUAL",
+            source: { in: ["MANUAL", "RECURRING_EXPENSE"] },
           },
           select: { amount: true, direction: true, category: true },
         })

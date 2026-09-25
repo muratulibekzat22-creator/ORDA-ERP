@@ -85,10 +85,10 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
   const [signedFile, setSignedFile] = useState<File | null>(null);
   const [versionComment, setVersionComment] = useState("");
   const [signedComment, setSignedComment] = useState("");
-  const canEdit = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
+  const canEdit = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(
     session?.user.role ?? "",
   );
-  const canSignPackage = ["DIRECTOR", "MANAGER"].includes(
+  const canSignPackage = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(
     session?.user.role ?? "",
   );
 
@@ -484,7 +484,8 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
                         </button>
                       ))}
                     </div>
-                    {session?.user.role === "DIRECTOR" && (
+                    {(session?.user.role === "DIRECTOR" ||
+                      session?.user.role === "OPERATIONS_DIRECTOR") && (
                       <button
                         disabled={saving}
                         onClick={() =>

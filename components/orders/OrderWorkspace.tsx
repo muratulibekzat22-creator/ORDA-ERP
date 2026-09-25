@@ -4,6 +4,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   ClipboardList,
+  FileText,
   Files,
   History,
   MapPin,
@@ -217,6 +218,22 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               readOnly={archived}
             />
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+              {!archived ? (
+                <Link
+                  href={`/orders/${order.id}/offer`}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  <FileText size={17} /> КП
+                </Link>
+              ) : null}
+              {!archived && Number(order.balance) > 0 ? (
+                <Link
+                  href={`/orders/${order.id}/invoice`}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-amber-700/60 bg-amber-500/10 px-4 text-sm font-semibold text-amber-100 hover:bg-amber-500/20"
+                >
+                  <WalletCards size={17} /> Счёт на остаток
+                </Link>
+              ) : null}
               {canAddPayment ? (
                 <button type="button" onClick={() => setPaymentOpen((value) => !value)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-600">
                   <CircleDollarSign size={17} /> Добавить оплату

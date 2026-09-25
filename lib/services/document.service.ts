@@ -15,6 +15,8 @@ import { getOrder } from "@/lib/services/order.service";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export type DocumentActor = { role: Role; userId: number; name: string };
+const leadership = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 export const MAX_DOCUMENT_SIZE = 15 * 1024 * 1024;
 export const DOCUMENT_CONTENT_TYPES = new Set([
   "application/pdf",
@@ -62,7 +64,8 @@ export function allowedDocumentTypes(actor: DocumentActor): DocumentType[] {
 }
 
 async function entityScope(actor: DocumentActor): Promise<{ client: Prisma.ClientWhereInput; order: Prisma.OrderWhereInput }> {
-  if (actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT) return { client: {}, order: {} };
+  if (leadership(actor.role) || actor.role === Role.ACCOUNTANT)
+    return { client: {}, order: {} };
   if (actor.role === Role.MANAGER) {
     const client = { active: true, deletedAt: null, OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] };
     return { client, order: { deletedAt: null, client } };
@@ -158,7 +161,7 @@ async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: num
   if (filters.status && filters.status !== DocumentStatus.READY) return [];
   const allowed = allowedDocumentTypes(actor), scope = await entityScope(actor), rows: Array<Record<string, unknown>> = [];
   const dateWhere = filters.from || filters.to ? { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lt: filters.to } : {}) } : undefined;
-  if ((actor.role === Role.DIRECTOR || actor.role === Role.MANAGER) && allowed.includes(DocumentType.OFFER) && (!filters.type || filters.type === DocumentType.OFFER)) {
+  if ((leadership(actor.role) || actor.role === Role.MANAGER) && allowed.includes(DocumentType.OFFER) && (!filters.type || filters.type === DocumentType.OFFER)) {
     const proposals = await prisma.commercialProposal.findMany({ where: { ...(filters.clientId ? { clientId: filters.clientId } : {}), ...(dateWhere ? { createdAt: dateWhere } : {}), client: scope.client }, select: { id: true, number: true, createdAt: true, createdById: true, createdByName: true, client: { select: { id: true, name: true, phone: true } } }, orderBy: { createdAt: "desc" }, take });
     for (const item of proposals) {
       if (filters.orderId) continue;
@@ -216,7 +219,7 @@ const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "D
 function canCreate(actor: DocumentActor, type: DocumentType) {
   if (legacyReadOnlyTypes.has(type)) return false;
   if (!allowedDocumentTypes(actor).includes(type)) return false;
-  return actor.role === Role.DIRECTOR || actor.role === Role.MANAGER || (actor.role === Role.ACCOUNTANT && financialTypes.includes(type));
+  return leadership(actor.role) || actor.role === Role.MANAGER || (actor.role === Role.ACCOUNTANT && financialTypes.includes(type));
 }
 
 export async function createDocument(input: { clientId?: number | null; orderId?: number | null; paymentId?: number | null; paymentSnapshot?: Prisma.InputJsonObject | null; type: DocumentType; title?: string; number?: string; documentDate: Date; comment?: string; file?: File; source?: DocumentSource; idempotencyKey: string; requestHash: string; actor: DocumentActor }) {
@@ -286,7 +289,7 @@ export async function updateDocument(id: number, actor: DocumentActor, input: { 
   const document = await getDocument(id, actor);
   if (!document) return null;
   if (!canCreate(actor, document.type)) throw new Error("FORBIDDEN");
-  if ((input.status === DocumentStatus.ARCHIVED || input.status === DocumentStatus.CANCELLED) && actor.role !== Role.DIRECTOR) throw new Error("FORBIDDEN");
+  if ((input.status === DocumentStatus.ARCHIVED || input.status === DocumentStatus.CANCELLED) && !leadership(actor.role)) throw new Error("FORBIDDEN");
   if (input.status === DocumentStatus.SIGNED && document.type === DocumentType.CONTRACT && document.source === DocumentSource.GENERATED_ORDER && !document.signedPathname) throw new Error("SIGNED_FILE_REQUIRED");
   const nextStatus = input.status ?? document.status;
   const data = { status: nextStatus, ...(input.comment !== undefined ? { comment: input.comment?.trim().slice(0, 2000) || null } : {}), ...(nextStatus === DocumentStatus.SIGNED ? { signedAt: input.signedAt ?? new Date(), signedComment: input.signedComment?.trim().slice(0, 1000) || null } : {}), ...(nextStatus === DocumentStatus.ARCHIVED ? { archivedAt: new Date(), archivedById: actor.userId } : {}) };

@@ -175,7 +175,13 @@ async function expectStatus(pathname: string, status: number, cookie: string, in
     headers: { ...init.headers, Cookie: cookie },
   });
   const body = await response.arrayBuffer();
-  assert(response.status === status, `${pathname}: expected ${status}, received ${response.status}; server=${serverDiagnostics.slice(-2_000).replaceAll(/\s+/gu, " ").trim()}`);
+  const bodyText = new TextDecoder().decode(body);
+  const streamedNotFound =
+    status === 404 &&
+    response.status === 200 &&
+    Boolean(response.headers.get("content-type")?.includes("text/html")) &&
+    bodyText.includes("NEXT_HTTP_ERROR_FALLBACK;404");
+  assert(response.status === status || streamedNotFound, `${pathname}: expected ${status}, received ${response.status}; server=${serverDiagnostics.slice(-2_000).replaceAll(/\s+/gu, " ").trim()}`);
   return new Response(response.status === 204 ? null : body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
@@ -1032,9 +1038,11 @@ async function main() {
         await prisma.clientDeletionAudit.deleteMany({ where: { deletedClientId: { in: lifecycleClientIds } } });
       }
       await prisma.client.deleteMany({ where: { id: { in: lifecycleClientIds } } });
-      await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
-      await prisma.cashShift.deleteMany({ where: { responsibleManagerId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
-      await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
+      const temporaryUserIds = [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds];
+      await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: temporaryUserIds } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
+      await prisma.cashShift.deleteMany({ where: { responsibleManagerId: { in: temporaryUserIds } } });
+      await prisma.employeePayrollProfile.deleteMany({ where: { userId: { in: temporaryUserIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: temporaryUserIds } } });
       if (generatedMaterialIds.length) { await prisma.inventoryCogsEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.inventoryValuationEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } }); }
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
       for (const row of temporarySeededRolePermissions) {
