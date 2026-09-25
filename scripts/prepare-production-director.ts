@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import { Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 async function main() {
   if (process.env.PREPARE_PRODUCTION_DIRECTOR !== "confirmed") {
@@ -53,4 +54,4 @@ async function main() {
   console.log("Existing production director account prepared for first login");
 }
 
-main().finally(() => prisma.$disconnect());
+runWithSystemAccess(main).finally(() => prisma.$disconnect());
