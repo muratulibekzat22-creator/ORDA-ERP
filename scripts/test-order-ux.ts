@@ -5,11 +5,17 @@ import { OrderLifecycle } from "@prisma/client";
 import { calculateStair } from "../lib/calculator/stair-calculation";
 import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentation";
 import { orderDataGaps } from "../lib/orders/completeness";
+import { orderBoardColumn } from "../lib/orders/board";
 
 assert.equal(USER_ORDER_STATUSES.length, 7);
 assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
 assert.equal(projectOrderStatus(OrderLifecycle.IN_PRODUCTION), "IN_WORK");
 assert.equal(projectOrderStatus(OrderLifecycle.ACCEPTANCE), "INSTALLATION");
+assert.equal(orderBoardColumn(OrderLifecycle.CREATED), "ORDERED");
+assert.equal(orderBoardColumn(OrderLifecycle.PREPARATION), "CONTRACT");
+assert.equal(orderBoardColumn(OrderLifecycle.IN_PRODUCTION), "WORKSHOP");
+assert.equal(orderBoardColumn(OrderLifecycle.COMPLETED), "COMPLETED");
+assert.equal(orderBoardColumn(OrderLifecycle.CANCELLED), null);
 assert.deepEqual(
   orderDataGaps({
     managerUserId: null,
@@ -55,6 +61,8 @@ const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
 const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPanel.tsx", "utf8");
+const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
+const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll", "\/reports"\]/);
@@ -77,8 +85,11 @@ for (const label of ["Клиент", "Телефон", "Город / адрес"
   assert.match(newOrderForm, new RegExp(label));
 assert.match(newOrderForm, /router\.push\(`\/orders\/\$\{body\.id\}`\)/);
 assert.match(newOrderForm, /existingClient\?\.id/);
-for (const tab of ["Заявки", "Активные", "Завершённые"])
+for (const tab of ["Заявки", "Канбан", "Завершённые"])
   assert.match(ordersPage, new RegExp(tab));
+for (const column of ["Заказ оформлен", "Договор", "Передан в цех", "Заказ завершён"])
+  assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(column));
+assert.match(ordersApi, /"active", "board", "completed", "all"/);
 for (const label of ["Цена производства", "Расчёт с цехом", "Поддержка цеху", "Аванс цеху", "Финальный расчёт"])
   assert.match(workshopSettlement, new RegExp(label));
 for (const removed of ["Основание / комментарий", "Дата фиксации", "Поле обязательно до передачи заказа"])

@@ -22,6 +22,7 @@ export type OrderListItem = {
   costDataComplete?: boolean;
   productionPrice?: number | null;
   productionPriceMissing?: boolean;
+  missingFields?: string[];
   client: { id: number; name: string; phone: string; city: string };
 };
 

@@ -51,7 +51,7 @@ assert.equal(
 assert.equal(isOrderOverdue(null, OrderLifecycle.IN_PRODUCTION), false);
 
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
-for (const tab of ["Заявки", "Активные", "Завершённые"])
+for (const tab of ["Заявки", "Канбан", "Завершённые"])
   assert(ordersPage.includes(tab), `Orders page is missing the ${tab} tab`);
 for (const removed of ["without-partner", "partner-payable", "overdue-client"])
   assert(!ordersPage.includes(removed), `Legacy settlement filter remains: ${removed}`);

@@ -90,7 +90,7 @@ export async function GET(request: Request) {
               : {};
     const query = params.get("query")?.trim().slice(0, 120);
     const tab = params.get("tab") ?? (params.get("filter") === "completed" ? "completed" : "active");
-    if (!["active", "completed", "all"].includes(tab))
+    if (!["active", "board", "completed", "all"].includes(tab))
       return NextResponse.json({ error: "Некорректная вкладка" }, { status: 400 });
     const status = params.get("status");
     if (status && !USER_ORDER_STATUSES.includes(status as UserOrderStatus))
@@ -99,6 +99,8 @@ export async function GET(request: Request) {
     const lifecycleScope: Prisma.OrderWhereInput =
       tab === "completed"
         ? { lifecycle: { in: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
+        : tab === "board"
+          ? { lifecycle: { not: OrderLifecycle.CANCELLED } }
         : tab === "active"
           ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
           : {};

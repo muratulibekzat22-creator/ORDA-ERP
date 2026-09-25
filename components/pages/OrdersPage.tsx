@@ -10,13 +10,14 @@ import {
 } from "react";
 
 import OrderTable, { type OrderListItem } from "@/components/orders/OrderTable";
+import OrderKanban from "@/components/orders/OrderKanban";
 import {
   USER_ORDER_STATUSES,
   USER_ORDER_STATUS_LABELS,
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
 
-type Tab = "applications" | "active" | "completed";
+type Tab = "applications" | "board" | "completed";
 type Application = {
   id: number;
   name: string;
@@ -30,12 +31,15 @@ type Pagination = { page: number; total: number; totalPages?: number; pages?: nu
 
 const tabs: Array<[Tab, string]> = [
   ["applications", "Заявки"],
-  ["active", "Активные"],
+  ["board", "Канбан"],
   ["completed", "Завершённые"],
 ];
 
+const normalizeTab = (value: string): Tab =>
+  value === "active" ? "board" : tabs.some(([tab]) => tab === value) ? value as Tab : "board";
+
 export default function OrdersPage({
-  initialTab = "active",
+  initialTab = "board",
   initialStatus = "all",
   initialAttention = "",
 }: {
@@ -43,9 +47,7 @@ export default function OrdersPage({
   initialStatus?: string;
   initialAttention?: string;
 }) {
-  const [tab, setTab] = useState<Tab>(
-    tabs.some(([value]) => value === initialTab) ? (initialTab as Tab) : "active",
-  );
+  const [tab, setTab] = useState<Tab>(normalizeTab(initialTab));
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [status, setStatus] = useState<"all" | UserOrderStatus>(
@@ -77,7 +79,7 @@ export default function OrdersPage({
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ page: String(page), limit: "30" });
+      const params = new URLSearchParams({ page: String(page), limit: tab === "board" ? "100" : "30" });
       if (deferredQuery.trim())
         params.set(tab === "applications" ? "search" : "query", deferredQuery.trim());
       if (tab === "applications") params.set("compact", "true");
@@ -185,7 +187,7 @@ export default function OrdersPage({
       </section>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</p>}
-      {loading ? <div className="h-56 animate-pulse rounded-2xl bg-slate-900" /> : tab === "applications" ? <ApplicationsList applications={applications} /> : orders.length ? <OrderTable orders={orders} /> : <Empty tab={tab} />}
+      {loading ? <div className="h-56 animate-pulse rounded-2xl bg-slate-900" /> : tab === "applications" ? <ApplicationsList applications={applications} /> : orders.length ? tab === "board" ? <OrderKanban orders={orders} /> : <OrderTable orders={orders} /> : <Empty tab={tab} />}
 
       {!loading && pagination.total > 0 && (
         <footer className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
@@ -207,5 +209,5 @@ function ApplicationsList({ applications }: { applications: Application[] }) {
 }
 
 function Empty({ tab }: { tab: Tab }) {
-  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "applications" ? "Заявок пока нет" : tab === "completed" ? "Завершённых заказов пока нет" : "Активных заказов по выбранному фильтру нет"}</div>;
+  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "applications" ? "Заявок пока нет" : tab === "completed" ? "Завершённых заказов пока нет" : "Заказов по выбранному фильтру нет"}</div>;
 }

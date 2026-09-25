@@ -1,6 +1,7 @@
 import { Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { orderDataGaps } from "@/lib/orders/completeness";
 import { orderDeadline, projectOrderStatus } from "@/lib/orders/presentation";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
@@ -118,6 +119,7 @@ export async function getOrders(
         : Number(order.partnerPrice),
       productionPriceMissing:
         order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+      missingFields: orderDataGaps(order),
       deletedAt: order.deletedAt,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
