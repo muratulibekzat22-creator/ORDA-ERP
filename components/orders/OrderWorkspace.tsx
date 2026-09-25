@@ -24,7 +24,7 @@ import {
   orderDeadline,
   projectOrderStatus,
 } from "@/lib/orders/presentation";
-import { paymentMethodLabel } from "@/lib/orders/registration";
+import { PAYMENT_METHODS, paymentMethodLabel } from "@/lib/orders/registration";
 
 import OrderActionsMenu from "./OrderActionsMenu";
 import OrderEconomy from "./OrderEconomy";
@@ -131,6 +131,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     staircase: order.staircase,
     manager: order.manager,
     amount: String(order.amount ?? ""),
+    paymentMethod: order.paymentMethod || "KASPI_TRANSFER",
   });
 
   const role = session?.user.role ?? "";
@@ -361,6 +362,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               ] as const).map(([key, title]) => (
                 <label key={key} className="text-sm text-slate-300">{title}<input type={key === "amount" ? "number" : "text"} value={form[key]} onChange={(event) => setForm((value) => ({ ...value, [key]: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" /></label>
               ))}
+              <label className="text-sm text-slate-300">Способ оплаты<select value={form.paymentMethod} onChange={(event) => setForm((value) => ({ ...value, paymentMethod: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label>
             </div>
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}
             <div className="mt-5 grid grid-cols-2 gap-2">

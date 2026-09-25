@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
 type Option = { id: number; name: string };
+type PaymentMethodOption = { value: string; label: string };
 type RegistrationOptions = {
   role: "DIRECTOR" | "MANAGER";
   currentUserId: number;
@@ -13,6 +14,7 @@ type RegistrationOptions = {
   materials: string[];
   frameTypes: string[];
   railingTypes: string[];
+  paymentMethods: PaymentMethodOption[];
   existingClient: {
     id: number;
     name: string;
@@ -40,6 +42,7 @@ export default function NewOrderForm() {
     managerUserId: "",
     amount: "",
     initialPayment: "0",
+    paymentMethod: "KASPI_TRANSFER",
     readinessDate: "",
     comment: "",
     frameType: "Металлический каркас",
@@ -110,7 +113,6 @@ export default function NewOrderForm() {
           managerUserId: Number(form.managerUserId),
           amount: Number(form.amount),
           initialPayment: Number(form.initialPayment),
-          paymentMethod: "BANK_TRANSFER",
         }),
       });
       const body = (await response.json()) as { id?: number; error?: string };
@@ -144,6 +146,7 @@ export default function NewOrderForm() {
           <Field label="Ответственный" required><select required disabled={options.role === "MANAGER"} value={form.managerUserId} onChange={(event) => set("managerUserId", event.target.value)} className={control}>{options.managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field>
           <Field label="Цена клиенту" required><input required type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(event) => set("amount", event.target.value)} className={control} /></Field>
           <Field label="Полученная оплата"><input type="number" min="0" step="0.01" inputMode="decimal" value={form.initialPayment} onChange={(event) => set("initialPayment", event.target.value)} className={control} /></Field>
+          <Field label="Способ оплаты" required><select required value={form.paymentMethod} onChange={(event) => set("paymentMethod", event.target.value)} className={control}>{options.paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></Field>
           <Field label="Срок"><input type="date" value={form.readinessDate} onChange={(event) => set("readinessDate", event.target.value)} className={control} /></Field>
           <Field label="Комментарий"><textarea rows={3} value={form.comment} onChange={(event) => set("comment", event.target.value)} className={`${control} py-3`} /></Field>
         </div>

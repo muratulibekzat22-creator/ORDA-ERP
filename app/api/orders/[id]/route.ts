@@ -11,6 +11,7 @@ import {
   normalizeOrderStatus,
   ORDER_STATUSES,
 } from "@/lib/orders/lifecycle";
+import { PAYMENT_METHODS } from "@/lib/orders/registration";
 import { prisma } from "@/lib/prisma";
 import {
   assignPartnerToOrder,
@@ -70,6 +71,7 @@ const idOf = (value: string) => {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 };
+const paymentMethods = new Set<string>(PAYMENT_METHODS.map((item) => item.value));
 const text = (value: unknown, max = 1000) =>
   typeof value === "string" ? value.trim().slice(0, max) : null;
 const isDirector = (role: Role) =>
@@ -482,6 +484,12 @@ export async function PATCH(request: Request, { params }: Context) {
         ] as const)
           if (typeof body[key] === "string")
             data[key] = text(body[key], 500) ?? "";
+      if (role !== Role.PARTNER && "paymentMethod" in body) {
+        const paymentMethod = text(body.paymentMethod, 40);
+        if (!paymentMethod || !paymentMethods.has(paymentMethod))
+          throw new Error("INVALID_PAYMENT_METHOD");
+        data.paymentMethod = paymentMethod;
+      }
       if (role !== Role.PARTNER && "amount" in body) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)
@@ -616,7 +624,7 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     if (
       error instanceof Error &&
-      ["INVALID_STATUS", "INVALID_AMOUNT", "INVALID_CLIENT_NAME"].includes(error.message)
+      ["INVALID_STATUS", "INVALID_AMOUNT", "INVALID_CLIENT_NAME", "INVALID_PAYMENT_METHOD"].includes(error.message)
     )
       return NextResponse.json(
         { error: "Некорректные данные заказа" },
