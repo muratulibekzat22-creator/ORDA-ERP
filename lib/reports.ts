@@ -42,7 +42,17 @@ export type ReportsReadModel = {
   summary: ReportSummary;
   sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number | null };
   payments: { received: number; remaining: number };
-  dataQuality: { missingProductionPrice: number };
+  dataQuality: {
+    missingProductionPrice: number;
+    incompleteOrders: number;
+    tasks: Array<{
+      orderId: number;
+      number: string;
+      client: string;
+      manager: string;
+      missingFields: string[];
+    }>;
+  };
   finance?: {
     sales: number;
     customerReceived: number;
@@ -51,6 +61,8 @@ export type ReportsReadModel = {
     partnerPaid: number;
     partnerRemaining: number;
     grossMargin: number | null;
+    recordedExpenses: number;
+    netProfit: number | null;
     payrollAccrued: number;
     payrollPaid: number;
     payrollPayable: number;

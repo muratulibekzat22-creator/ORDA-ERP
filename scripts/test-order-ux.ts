@@ -4,11 +4,32 @@ import { OrderLifecycle } from "@prisma/client";
 
 import { calculateStair } from "../lib/calculator/stair-calculation";
 import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentation";
+import { orderDataGaps } from "../lib/orders/completeness";
 
 assert.equal(USER_ORDER_STATUSES.length, 7);
 assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
 assert.equal(projectOrderStatus(OrderLifecycle.IN_PRODUCTION), "IN_WORK");
 assert.equal(projectOrderStatus(OrderLifecycle.ACCEPTANCE), "INSTALLATION");
+assert.deepEqual(
+  orderDataGaps({
+    managerUserId: null,
+    partnerId: null,
+    partnerPrice: 0,
+    partnerAgreedAt: null,
+    promisedAt: null,
+    productionDeadline: null,
+    installation: null,
+    client: { phone: "", city: "" },
+  }),
+  [
+    "Назначить ответственного менеджера",
+    "Телефон клиента",
+    "Город клиента",
+    "Срок заказа",
+    "Назначить цех",
+    "Цена производства",
+  ],
+);
 
 for (const [material, workshopRate, saleRate] of [
   ["Дуб ламель", 60_000, 85_000],
@@ -36,7 +57,7 @@ const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
 const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPanel.tsx", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
-assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll"\]/);
+assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll", "\/reports"\]/);
 for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));
 for (const label of ["Исполнение", "Добавить оплату", "Редактировать", "Подробнее"])

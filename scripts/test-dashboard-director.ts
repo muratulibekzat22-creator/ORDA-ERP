@@ -11,10 +11,10 @@ const tag = `dashboard-${Date.now()}`;
 
 type ManagementProjection = {
   finance: { revenue: number; received: number; directExpenses: number; netProfit: number | null };
-  orders: { active: number; beforeWorkshop: number };
+  orders: { active: number; beforeWorkshop: number; incompleteData: number };
   attention: Array<{ id: number }>;
 };
-type ManagerProjection = { orders: { active: number; overdue: number } };
+type ManagerProjection = { orders: { active: number; overdue: number; incompleteData: number }; attention: Array<{ missingFields: string[] }> };
 type RestrictedProjection = Record<string, unknown>;
 
 async function main() {
@@ -65,9 +65,12 @@ async function main() {
     assert.equal(director.finance.netProfit, null, "profit must remain unknown while one order has no cost data");
     assert.equal(director.orders.active - baseline.orders.active, 2, "cancelled order entered active order counters");
     assert.equal(director.orders.beforeWorkshop - baseline.orders.beforeWorkshop, 2);
+    assert.equal(director.orders.incompleteData - baseline.orders.incompleteData, 2, "incomplete order counter is wrong");
     assert(director.attention.some((row: { id: number }) => row.id === foreignOrder.id), "incomplete order is missing from attention");
     assert.equal(scopedManager.orders.active, 1, "manager received another manager's order");
     assert.equal(scopedManager.orders.overdue, 0);
+    assert.equal(scopedManager.orders.incompleteData, 1);
+    assert(scopedManager.attention[0]?.missingFields.includes("Срок заказа"), "manager did not receive the exact missing field");
     assert.equal(emptyManager.orders.active, 0);
     assert("finance" in accountant, "accountant finance projection is missing");
     assert(!("finance" in production), "production received finance projection");
@@ -78,7 +81,7 @@ async function main() {
     assert(route.includes("!session?.user") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Выручка", "Получено от клиентов", "Прямые расходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить расход", "Требуют внимания"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    for (const label of ["Выручка", "Получено от клиентов", "Прямые расходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
     assert(!dashboard.includes("<table"), "Director team performance must not regress to a wide table");
     for (const routeName of ["/orders?tab=active", "/orders?tab=active&attention=overdue"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
     for (const removed of ["/clients", "/calendar", "/warehouse", "/production", "/measurements"])

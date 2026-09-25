@@ -90,7 +90,7 @@ includesAll(
 );
 
 const routeShell = read("components/layout/RouteShell.tsx");
-assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll"\]/);
+assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll", "\/reports"\]/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
 const orderList = read("app/api/orders/route.ts");

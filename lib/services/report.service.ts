@@ -1,6 +1,7 @@
 import { Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
+import { orderDataGaps } from "@/lib/orders/completeness";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
 type Actor = { id: number; role: Role };
@@ -25,7 +26,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const [clients, previousClients, orders, previousOrders, measurements, previousMeasurements, payments, previousPayments, production, managerUsers, completed] = await Promise.all([
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.start, period.end) }, select: { id: true, managerUserId: true, stage: true } }),
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.previousStart, period.previousEnd) }, select: { id: true } }),
-    prisma.order.findMany({ where: { ...activeOrder, createdAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, createdAt: true, client: { select: { name: true } }, payments: { select: { amount: true, type: true } } }, orderBy: { createdAt: "desc" } }),
+    prisma.order.findMany({ where: { ...activeOrder, createdAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, createdAt: true, promisedAt: true, productionDeadline: true, installation: { select: { scheduledAt: true } }, client: { select: { name: true, phone: true, city: true } }, payments: { select: { amount: true, type: true } } }, orderBy: { createdAt: "desc" } }),
     prisma.order.findMany({ where: { ...activeOrder, createdAt: range(period.previousStart, period.previousEnd) }, select: { amount: true } }),
     prisma.measurement.findMany({ where: { visitDate: range(period.start, period.end), order: activeOrder }, select: { order: { select: { managerUserId: true } } } }),
     prisma.measurement.count({ where: { visitDate: range(period.previousStart, period.previousEnd), order: activeOrder } }),
@@ -37,7 +38,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   ]);
   const internalFinance = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
-  const [customerBalance, partnerBalance, payrollTotals] = await Promise.all([
+  const [customerBalance, partnerBalance, payrollTotals, expenseEntries] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
     prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null } }, _sum: { partnerBalance: true } }),
     internalFinance ? prisma.$queryRaw<PayrollTotalsRow[]>`
@@ -57,6 +58,20 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       JOIN "User" account ON account.id = employee."userId"
       WHERE employee."companyId" = ${companyId} AND employee.active = true AND employee."payrollEnabled" = true AND account.active = true`
     : Promise.resolve([]),
+    internalFinance
+      ? prisma.companyLedgerEntry.findMany({
+          where: {
+            companyId,
+            direction: "EXPENSE",
+            operationDate: range(period.start, period.end),
+            affectsProfit: true,
+            voidedAt: null,
+            source: { notIn: ["PAYROLL_ACCRUAL", "PAYROLL_PAYMENT", "OTHER_SYSTEM"] },
+            type: { not: "PARTNER_PAYOUT" },
+          },
+          select: { amount: true },
+        })
+      : Promise.resolve([]),
   ]);
   const received = payments.reduce((sum, item) => sum + paymentEffect(item.type, item.amount), 0);
   const previousReceived = previousPayments.reduce((sum, item) => sum + paymentEffect(item.type, item.amount), 0);
@@ -82,6 +97,15 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
         (sum, item) => sum + money(item.amount) - money(item.partnerPrice),
         0,
       );
+  const completionTasks = orders
+    .map((order) => ({
+      orderId: order.id,
+      number: order.number,
+      client: order.client.name,
+      manager: order.manager || "Не назначен",
+      missingFields: orderDataGaps(order),
+    }))
+    .filter((item) => item.missingFields.length > 0);
   const currentCustomerRemaining = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
   const currentPartnerRemaining = Math.max(Number(partnerBalance._sum.partnerBalance ?? 0), 0);
   const payrollAccruedRow = payrollTotals.find((row) => row.kind === "accrual");
@@ -90,6 +114,13 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const payrollPaidAll = Number(payrollPaidRow?.total ?? 0);
   const payrollAccrued = Number(payrollAccruedRow?.period_total ?? 0);
   const payrollPaid = Number(payrollPaidRow?.period_total ?? 0);
+  const recordedExpenses = expenseEntries.reduce(
+    (sum, entry) => sum + Number(entry.amount),
+    0,
+  );
+  const netProfit = grossMargin === null
+    ? null
+    : grossMargin - recordedExpenses - payrollAccrued;
   const partnerAgreed = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.partnerPrice), 0);
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
   return {
@@ -104,8 +135,8 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     },
     sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(actor.role === Role.DIRECTOR ? { grossMargin } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
-    dataQuality: { missingProductionPrice },
-    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, grossMargin, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
+    dataQuality: { missingProductionPrice, incompleteOrders: completionTasks.length, tasks: completionTasks },
+    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, grossMargin, recordedExpenses, netProfit, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
     funnel: [
       { key: "leads", label: "Заявки", value: clients.length, conversionFromPrevious: null },
       { key: "measurements", label: "Замеры", value: measurements.length, conversionFromPrevious: safePercent(measurements.length, clients.length) },

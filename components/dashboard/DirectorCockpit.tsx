@@ -43,6 +43,7 @@ type ManagementPayload = {
     installation: number;
     overdue: number;
     missingProductionPrice: number;
+    incompleteData: number;
   };
   attention: Array<{
     id: number;
@@ -69,13 +70,14 @@ type ManagementPayload = {
 
 type ManagerPayload = {
   role: "MANAGER";
-  orders: { active: number; overdue: number; missingProductionPrice: number };
+  orders: { active: number; overdue: number; missingProductionPrice: number; incompleteData: number };
   attention: Array<{
     id: number;
     number: string;
     client: string;
     status: UserOrderStatus;
     deadline: string | null;
+    missingFields: string[];
     productionPriceMissing: boolean;
   }>;
 };
@@ -275,6 +277,7 @@ function ManagementDashboard({
     ["На монтаже", data.orders.installation, "/orders?tab=active&status=INSTALLATION"],
     ["Просрочено", data.orders.overdue, "/orders?tab=active&attention=overdue"],
     ["Без цены производства", data.orders.missingProductionPrice, "/orders?tab=active&attention=missing-production-price"],
+    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active"],
   ] as const;
   return (
     <>
@@ -350,7 +353,7 @@ function ManagementDashboard({
 
       <section>
         <h2 className="mb-3 text-xl font-bold text-white">Заказы</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-9">
           {orders.map(([label, value, href]) => (
             <Link
               key={label}
@@ -419,21 +422,23 @@ function ManagementDashboard({
 
 function ManagerDashboard({ data }: { data: ManagerPayload }) {
   return (
-    <section className="grid gap-4 sm:grid-cols-3">
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <SimpleCard icon={<ClipboardList />} label="Мои активные заказы" value={String(data.orders.active)} href="/orders" />
       <SimpleCard icon={<AlertTriangle />} label="Просрочено" value={String(data.orders.overdue)} href="/orders?attention=overdue" />
       <SimpleCard icon={<Factory />} label="Без цены производства" value={String(data.orders.missingProductionPrice)} href="/orders?attention=missing-production-price" />
-      <div className="sm:col-span-3 rounded-2xl border border-slate-800 bg-[#101827] p-5">
-        <h2 className="font-bold">Ближайшие заказы</h2>
+      <SimpleCard icon={<ClipboardList />} label="Нужно дополнить" value={String(data.orders.incompleteData)} href="/orders" />
+      <div className="sm:col-span-2 xl:col-span-4 rounded-2xl border border-slate-800 bg-[#101827] p-5">
+        <h2 className="font-bold">Что нужно дополнить по заказам</h2>
         <div className="mt-3 space-y-2">
           {data.attention.map((order) => (
             <Link key={order.id} href={`/orders/${order.id}`} className="block rounded-xl bg-slate-950 p-3">
               <b>{order.number}</b> · {order.client} · {USER_ORDER_STATUS_LABELS[order.status]}
-              {order.productionPriceMissing ? (
-                <span className="ml-2 text-amber-300">· цена производства не заполнена</span>
-              ) : null}
+              {order.missingFields.length ? (
+                <span className="mt-2 block text-sm text-amber-300">{order.missingFields.join(" · ")}</span>
+              ) : <span className="mt-2 block text-sm text-slate-400">Есть неоплаченный остаток</span>}
             </Link>
           ))}
+          {!data.attention.length ? <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Все обязательные данные заполнены.</p> : null}
         </div>
       </div>
     </section>

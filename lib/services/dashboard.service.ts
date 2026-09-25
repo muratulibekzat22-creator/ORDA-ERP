@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { orderDataGaps } from "@/lib/orders/completeness";
 import {
   isOrderOverdue,
   orderDeadline,
@@ -68,7 +69,8 @@ const orderEconomySelect = {
   lifecycle: true,
   orderReceivedAt: true,
   manager: true,
-  client: { select: { name: true } },
+  managerUserId: true,
+  client: { select: { name: true, phone: true, city: true } },
   installation: { select: { scheduledAt: true } },
   commercialAdjustments: { select: { balanceImpact: true } },
   payrollAccruals: {
@@ -310,6 +312,9 @@ async function managementProjection(scope: DashboardScope) {
     (order) =>
       order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
   ).length;
+  const incompleteData = activeOrders.filter(
+    (order) => orderDataGaps(order).length > 0,
+  ).length;
 
   const attention = activeOrders
     .map((order) => {
@@ -319,10 +324,9 @@ async function managementProjection(scope: DashboardScope) {
         ? null
         : Number(economy.profit.netMarginPercent);
       const reasons = [
+        ...orderDataGaps(order),
         isOrderOverdue(deadline, order.lifecycle, now) ? "Просрочен" : null,
-        !deadline ? "Нет срока" : null,
         Number(order.balance) > 0 ? "Есть неоплаченный остаток" : null,
-        !economy.profit.dataComplete ? "Не заполнена себестоимость" : null,
         margin !== null && margin < 15
           ? margin < 0
             ? "Отрицательная маржа"
@@ -376,6 +380,7 @@ async function managementProjection(scope: DashboardScope) {
       installation: counts.INSTALLATION ?? 0,
       overdue,
       missingProductionPrice,
+      incompleteData,
     },
     attention,
     expenses: ledgerEntries
@@ -418,7 +423,9 @@ async function managerProjection(scope: DashboardScope) {
       balance: true,
       partnerPrice: true,
       partnerAgreedAt: true,
-      client: { select: { name: true } },
+      managerUserId: true,
+      partnerId: true,
+      client: { select: { name: true, phone: true, city: true } },
       installation: { select: { scheduledAt: true } },
     },
     orderBy: { promisedAt: "asc" },
@@ -435,14 +442,13 @@ async function managerProjection(scope: DashboardScope) {
         (order) =>
           order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
       ).length,
+      incompleteData: orders.filter((order) => orderDataGaps(order).length > 0).length,
     },
     attention: orders
       .filter(
         (order) =>
-          !orderDeadline(order) ||
-          Number(order.balance) > 0 ||
-          order.partnerAgreedAt === null ||
-          Number(order.partnerPrice) <= 0,
+          orderDataGaps(order).length > 0 ||
+          Number(order.balance) > 0,
       )
       .slice(0, 10)
       .map((order) => ({
@@ -451,6 +457,7 @@ async function managerProjection(scope: DashboardScope) {
         client: order.client.name,
         status: projectOrderStatus(order.lifecycle),
         deadline: orderDeadline(order),
+        missingFields: orderDataGaps(order),
         productionPriceMissing:
           order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
       })),

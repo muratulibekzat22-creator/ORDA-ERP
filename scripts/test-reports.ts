@@ -39,6 +39,8 @@ assert.match(service, /lifecycle: \{ not: "CANCELLED" \}/, "cancelled orders mus
 assert.match(service, /actor\.role === Role\.DIRECTOR \? \{ grossMargin \} : \{\}/, "gross margin must be director-only");
 assert.doesNotMatch(service, /orders\.slice\(/, "period report must not hide orders with missing production prices");
 assert.match(service, /missingProductionPrice/, "report must expose production-price completeness");
+assert.match(service, /completionTasks/, "report must include exact completion tasks by order");
+assert.match(service, /recordedExpenses/, "report must include recorded expenses");
 assert.match(service, /missingProductionPrice > 0[\s\S]*\? null/, "margin must remain unavailable while a production price is missing");
 assert.match(companyFinance, /some\(\(order\) => !order\.partnerAgreedAt\)[\s\S]*\? null/, "company profit must remain unavailable while a production price is missing");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");
