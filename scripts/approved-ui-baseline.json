@@ -1,5 +1,5 @@
 {
-  "components/Header.tsx": "c28a47d7ed26b7b4e4f87f230902a63592a76468320eaf3d0eecb6089de496a8",
+  "components/Header.tsx": "dcdc7635ba4fa79b9f9f2e9595d21b68f0218dc5c52f4fa88d1996e030271fb5",
   "components/layout/RouteShell.tsx": "01732a7e30bb8c53df412a47d52e297932746afda4a169bfafc4e46fff8b7d80",
   "components/dashboard/DirectorCockpit.tsx": "57123851b0f8c9df3ec79b1e2fa51edb5e3ad084d6e990729c343076784e72a5",
   "components/pages/ClientsPage.tsx": "c015fc066432fe86baec6696c8900dd3c0d0e63fc21fcdf73f23dff40d824e85",
