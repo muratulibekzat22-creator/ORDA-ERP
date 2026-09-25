@@ -59,6 +59,8 @@ export async function getAuthorizedOrder(id: number) {
   const { _count, ...sourceOrder } = source;
   const order = {
     ...sourceOrder,
+    productionPrice: source.partnerAgreedAt ? source.partnerPrice : null,
+    productionPriceSetAt: source.partnerAgreedAt,
     deletionImpact: {
       hasFinancialHistory:
         _count.payments > 0 ||
@@ -131,6 +133,10 @@ export async function getAuthorizedOrder(id: number) {
   // manager's browser, even when the interface does not render them.
   return {
     ...order,
+    productionPrice:
+      role === Role.MANAGER ? order.productionPrice : undefined,
+    productionPriceSetAt:
+      role === Role.MANAGER ? order.productionPriceSetAt : undefined,
     managerUser: undefined,
     partnerPrice: undefined,
     partnerAgreedAt: undefined,

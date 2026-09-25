@@ -85,41 +85,41 @@ model Company {
   isDemo   Boolean     @default(false)
   active   Boolean     @default(true)
 
-  users                    User[]
-  clients                  Client[]
-  commercialProposals      CommercialProposal[]
-  partners                 Partner[]
-  partnerOrderRelations    PartnerOrderRelation[]
-  partnerOperations        PartnerSettlementOperation[]
-  partnerAuditEvents       PartnerAuditEvent[]
-  orders                   Order[]
-  calendarTasks            CalendarTask[]
-  companyLedgerEntries     CompanyLedgerEntry[]
-  financeCategories        FinanceCategory[]
-  employeePayrollProfiles  EmployeePayrollProfile[]
-  payrollPeriods           PayrollPeriod[]
-  personalLedgerEntries    PersonalLedgerEntry[]
-  documents                Document[]
-  attachments              Attachment[]
-  materials                Material[]
-  companySettings          CompanySettings[]
-  systemSettings           SystemSettings[]
-  materialMovements        MaterialMovement[]
-  suppliers                Supplier[]
-  purchaseBatches          PurchaseBatch[]
-  inventoryValuations      InventoryValuationEntry[]
-  inventoryCogsEntries     InventoryCogsEntry[]
-  materialReservations     MaterialReservation[]
-  warehouseMutations       WarehouseMutation[]
-  measurements             Measurement[]
-  payments                 Payment[]
-  cashShifts               CashShift[]
-  commercialAdjustments    CommercialAdjustment[]
-  productions              Production[]
-  settings                 Settings[]
-  calculatorTariffs        CalculatorTariff[]
-  orderEvents              OrderEvent[]
-  rolePermissions          RolePermission[]
+  users                   User[]
+  clients                 Client[]
+  commercialProposals     CommercialProposal[]
+  partners                Partner[]
+  partnerOrderRelations   PartnerOrderRelation[]
+  partnerOperations       PartnerSettlementOperation[]
+  partnerAuditEvents      PartnerAuditEvent[]
+  orders                  Order[]
+  calendarTasks           CalendarTask[]
+  companyLedgerEntries    CompanyLedgerEntry[]
+  financeCategories       FinanceCategory[]
+  employeePayrollProfiles EmployeePayrollProfile[]
+  payrollPeriods          PayrollPeriod[]
+  personalLedgerEntries   PersonalLedgerEntry[]
+  documents               Document[]
+  attachments             Attachment[]
+  materials               Material[]
+  companySettings         CompanySettings[]
+  systemSettings          SystemSettings[]
+  materialMovements       MaterialMovement[]
+  suppliers               Supplier[]
+  purchaseBatches         PurchaseBatch[]
+  inventoryValuations     InventoryValuationEntry[]
+  inventoryCogsEntries    InventoryCogsEntry[]
+  materialReservations    MaterialReservation[]
+  warehouseMutations      WarehouseMutation[]
+  measurements            Measurement[]
+  payments                Payment[]
+  cashShifts              CashShift[]
+  commercialAdjustments   CommercialAdjustment[]
+  productions             Production[]
+  settings                Settings[]
+  calculatorTariffs       CalculatorTariff[]
+  orderEvents             OrderEvent[]
+  rolePermissions         RolePermission[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -158,6 +158,13 @@ enum CashShiftStatus {
 enum PaymentReceiptStatus {
   ACTIVE
   VOID
+}
+
+enum PartnerPayoutPurpose {
+  SUPPORT
+  ADVANCE
+  FINAL_PAYMENT
+  OTHER
 }
 
 enum DocumentStatus {
@@ -826,9 +833,9 @@ model ClientDeletionAudit {
 }
 
 model Partner {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   name                     String
   phone                    String?
@@ -873,10 +880,10 @@ model Partner {
 }
 
 model Order {
-  id     Int    @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  number String @unique
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  number    String  @unique
 
   clientId Int
   client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -935,31 +942,31 @@ model Order {
   completedAt                   DateTime?
   status                        String         @default("Новая заявка")
 
-  measurements             Measurement[]
-  payments                 Payment[]
-  productions              Production[]
-  events                   OrderEvent[]
-  materialMovements        MaterialMovement[]
-  documents                Document[]
-  attachments              Attachment[]
-  materialReservations     MaterialReservation[]
-  statusHistory            OrderStatusHistory[]
-  calculations             OrderCalculation[]
-  companyLedgerEntries     CompanyLedgerEntry[]
-  leadConversion           LeadConversion?
-  commercialAdjustments    CommercialAdjustment[]
-  partnerAssignmentHistory PartnerAssignmentHistory[]
-  partnerRelation          PartnerOrderRelation?
+  measurements                Measurement[]
+  payments                    Payment[]
+  productions                 Production[]
+  events                      OrderEvent[]
+  materialMovements           MaterialMovement[]
+  documents                   Document[]
+  attachments                 Attachment[]
+  materialReservations        MaterialReservation[]
+  statusHistory               OrderStatusHistory[]
+  calculations                OrderCalculation[]
+  companyLedgerEntries        CompanyLedgerEntry[]
+  leadConversion              LeadConversion?
+  commercialAdjustments       CommercialAdjustment[]
+  partnerAssignmentHistory    PartnerAssignmentHistory[]
+  partnerRelation             PartnerOrderRelation?
   partnerSettlementOperations PartnerSettlementOperation[]
-  financeAuditEvents       FinanceAuditEvent[]
-  inventoryCogsEntries     InventoryCogsEntry[]
-  payrollAccruals          PayrollAccrual[]
-  blockers                 OrderBlocker[]
-  gateOverrides            OrderGateOverride[]
-  lifecycleEvents          OrderLifecycleEvent[]
-  installation             OrderInstallation?
-  calendarTasks            CalendarTask[]
-  paymentReceipts          PaymentReceipt[]
+  financeAuditEvents          FinanceAuditEvent[]
+  inventoryCogsEntries        InventoryCogsEntry[]
+  payrollAccruals             PayrollAccrual[]
+  blockers                    OrderBlocker[]
+  gateOverrides               OrderGateOverride[]
+  lifecycleEvents             OrderLifecycleEvent[]
+  installation                OrderInstallation?
+  calendarTasks               CalendarTask[]
+  paymentReceipts             PaymentReceipt[]
 
   partnerPlannedReadyAt DateTime?
   partnerComment        String    @default("")
@@ -1679,21 +1686,21 @@ model CompanySettings {
   id               Int     @id @default(autoincrement())
   companyId        Int     @default(dbgenerated())
   company          Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  name             String @default("ALTYN SAPA COMPANY")
-  bin              String @default("220540017969")
-  legalAddress     String @default("")
-  actualAddress    String @default("")
-  phone            String @default("+77085750881")
-  secondaryPhone   String @default("+77760027555")
-  whatsapp         String @default("")
-  email            String @default("")
-  bankDetails      String @default("")
-  directorName     String @default("")
-  directorFullName String @default("")
-  iik              String @default("")
-  bank             String @default("")
-  bik              String @default("")
-  logoUrl          String @default("")
+  name             String  @default("ALTYN SAPA COMPANY")
+  bin              String  @default("220540017969")
+  legalAddress     String  @default("")
+  actualAddress    String  @default("")
+  phone            String  @default("+77085750881")
+  secondaryPhone   String  @default("+77760027555")
+  whatsapp         String  @default("")
+  email            String  @default("")
+  bankDetails      String  @default("")
+  directorName     String  @default("")
+  directorFullName String  @default("")
+  iik              String  @default("")
+  bank             String  @default("")
+  bik              String  @default("")
+  logoUrl          String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1705,21 +1712,21 @@ model SystemSettings {
   id                   Int     @id @default(autoincrement())
   companyId            Int     @default(dbgenerated())
   company              Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  currency             String @default("KZT")
-  timezone             String @default("Asia/Almaty")
-  dateFormat           String @default("dd.MM.yyyy")
-  minimumPrepayment    Int    @default(0)
-  measurementLeadDays  Int    @default(3)
-  measurerOrderBonus   Int    @default(20000)
-  productionLeadDays   Int    @default(40)
-  installationLeadDays Int    @default(7)
-  paydayDayOfMonth     Int    @default(1)
-  nextDocumentNumber   Int    @default(1)
-  nextContractNumber   Int    @default(1)
-  offerPrefix          String @default("КП")
-  contractPrefix       String @default("ДОГ")
-  actPrefix            String @default("АКТ")
-  invoicePrefix        String @default("СЧ")
+  currency             String  @default("KZT")
+  timezone             String  @default("Asia/Almaty")
+  dateFormat           String  @default("dd.MM.yyyy")
+  minimumPrepayment    Int     @default(0)
+  measurementLeadDays  Int     @default(3)
+  measurerOrderBonus   Int     @default(20000)
+  productionLeadDays   Int     @default(40)
+  installationLeadDays Int     @default(7)
+  paydayDayOfMonth     Int     @default(1)
+  nextDocumentNumber   Int     @default(1)
+  nextContractNumber   Int     @default(1)
+  offerPrefix          String  @default("КП")
+  contractPrefix       String  @default("ДОГ")
+  actPrefix            String  @default("АКТ")
+  invoicePrefix        String  @default("СЧ")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1743,9 +1750,9 @@ model RolePermission {
 }
 
 model MaterialMovement {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   materialId Int
   material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
@@ -1994,9 +2001,9 @@ model WarehouseMutation {
 }
 
 model Measurement {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId        Int?
   order          Order?        @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -2200,9 +2207,9 @@ model TrainingAudit {
 }
 
 model Payment {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int?
   order   Order? @relation(fields: [orderId], references: [id], onDelete: Restrict)
@@ -2212,24 +2219,25 @@ model Payment {
 
   amount Decimal @db.Decimal(14, 2)
 
-  type   String
-  method String
+  type                 String
+  method               String
+  partnerPayoutPurpose PartnerPayoutPurpose?
 
-  comment            String?
-  operationDate      DateTime        @default(now())
-  author             String?
-  idempotencyKey     String?         @unique
-  requestHash        String?
-  reversalOfId       Int?            @unique
-  reversalOf         Payment?        @relation("PaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversal           Payment?        @relation("PaymentReversal")
-  reversalReason     String?
-  cashShiftId        Int?
-  cashShift          CashShift?      @relation(fields: [cashShiftId], references: [id], onDelete: Restrict)
-  registeredByUserId Int?
-  registeredBy       User?           @relation("PaymentRegisteredBy", fields: [registeredByUserId], references: [id], onDelete: SetNull)
-  receipt            PaymentReceipt? @relation("PaymentReceiptPayment")
-  voidedReceipt      PaymentReceipt? @relation("PaymentReceiptVoidingPayment")
+  comment                    String?
+  operationDate              DateTime                    @default(now())
+  author                     String?
+  idempotencyKey             String?                     @unique
+  requestHash                String?
+  reversalOfId               Int?                        @unique
+  reversalOf                 Payment?                    @relation("PaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal                   Payment?                    @relation("PaymentReversal")
+  reversalReason             String?
+  cashShiftId                Int?
+  cashShift                  CashShift?                  @relation(fields: [cashShiftId], references: [id], onDelete: Restrict)
+  registeredByUserId         Int?
+  registeredBy               User?                       @relation("PaymentRegisteredBy", fields: [registeredByUserId], references: [id], onDelete: SetNull)
+  receipt                    PaymentReceipt?             @relation("PaymentReceiptPayment")
+  voidedReceipt              PaymentReceipt?             @relation("PaymentReceiptVoidingPayment")
   partnerSettlementOperation PartnerSettlementOperation?
 
   createdAt DateTime   @default(now())
@@ -2239,6 +2247,7 @@ model Payment {
   @@index([operationDate, id])
   @@index([orderId, operationDate])
   @@index([partnerId, operationDate])
+  @@index([partnerPayoutPurpose, operationDate])
   @@index([cashShiftId, operationDate])
   @@index([registeredByUserId, operationDate])
   @@index([companyId, operationDate, id])
@@ -2442,9 +2451,9 @@ model FinanceAuditEvent {
 }
 
 model Production {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -2496,9 +2505,9 @@ model ProductionStageHistory {
 }
 
 model Settings {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   pinePrice Int @default(65000)
   elmPrice  Int @default(85000)
@@ -2536,15 +2545,15 @@ model CalculatorTariff {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  @@unique([companyId, code])
   @@index([active, sortOrder])
   @@index([companyId, active, sortOrder])
-  @@unique([companyId, code])
 }
 
 model OrderEvent {
-  id Int @id @default(autoincrement())
-  companyId Int @default(dbgenerated())
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  id        Int     @id @default(autoincrement())
+  companyId Int     @default(dbgenerated())
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)

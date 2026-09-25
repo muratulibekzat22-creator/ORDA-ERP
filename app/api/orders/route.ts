@@ -102,7 +102,10 @@ export async function GET(request: Request) {
         : tab === "active"
           ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
           : {};
-    const overdueScope: Prisma.OrderWhereInput = params.get("attention") === "overdue"
+    const attention = params.get("attention") ?? "";
+    if (attention && !["overdue", "missing-production-price"].includes(attention))
+      return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
+    const attentionScope: Prisma.OrderWhereInput = attention === "overdue"
       ? {
           lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
           OR: [
@@ -111,12 +114,20 @@ export async function GET(request: Request) {
             { promisedAt: null, productionDeadline: null, installation: { scheduledAt: { lt: now } } },
           ],
         }
-      : {};
+      : attention === "missing-production-price"
+        ? {
+            lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+            OR: [
+              { partnerAgreedAt: null },
+              { partnerPrice: { lte: 0 } },
+            ],
+          }
+        : {};
     const where: Prisma.OrderWhereInput = {
       AND: [
         roleScope,
         lifecycleScope,
-        overdueScope,
+        attentionScope,
         ...(status ? [lifecycleWhere(status as UserOrderStatus)] : []),
         ...(query ? [{ OR: [
           { number: { contains: query, mode: "insensitive" as const } },
@@ -145,6 +156,12 @@ export async function GET(request: Request) {
       delete safe.netProfit;
       delete safe.netMargin;
       delete safe.costDataComplete;
+      if (role !== Role.PARTNER) {
+        delete safe.partnerPrice;
+        delete safe.partnerPaid;
+        delete safe.partnerBalance;
+        delete safe.partnerAgreedAt;
+      }
       if (
         role === Role.PRODUCTION ||
         role === Role.INSTALLER ||
@@ -154,6 +171,10 @@ export async function GET(request: Request) {
         delete safe.amount;
         delete safe.received;
         delete safe.balance;
+        if (role !== Role.PARTNER) {
+          delete safe.productionPrice;
+          delete safe.productionPriceMissing;
+        }
       }
       return safe;
     });
@@ -270,12 +291,17 @@ export async function POST(request: Request) {
     };
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
+    const hashPayload = {
+      ...payload,
+      orderReceivedAt: body.orderReceivedAt ? orderReceivedAt : null,
+      initialPaymentDate: body.paymentDate ? initialPaymentDate : null,
+    };
     const result = await createOrder({
       ...payload,
       actorRole: role,
       enforceClientOwnership: true,
       idempotencyKey: idempotency.key,
-      requestHash: createRequestHash(payload),
+      requestHash: createRequestHash(hashPayload),
     });
     const responseOrder = { ...result.order } as Record<string, unknown>;
     if (role !== Role.DIRECTOR)

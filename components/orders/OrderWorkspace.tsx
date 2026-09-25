@@ -28,6 +28,7 @@ import { paymentMethodLabel } from "@/lib/orders/registration";
 import OrderActionsMenu from "./OrderActionsMenu";
 import OrderEconomy from "./OrderEconomy";
 import OrderProcess from "./OrderProcess";
+import WorkshopSettlementPanel from "./WorkshopSettlementPanel";
 import DocumentsTab from "./tabs/DocumentsTab";
 import FilesTab from "./tabs/FilesTab";
 import type { NumericValue, OrderTabData } from "./tabs/types";
@@ -265,6 +266,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
       ) : null}
 
       {director ? <OrderEconomy order={order} /> : null}
+
+      {["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role) ? (
+        <WorkshopSettlementPanel order={order} readOnly={archived} />
+      ) : null}
 
       <section className={panel}>
         <div className="border-b border-slate-800 p-4 md:p-5">

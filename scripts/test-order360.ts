@@ -46,7 +46,7 @@ async function main() {
     partnerIds.push(partner.id);
     const client = await prisma.client.create({ data: { name: tag, phone: "77000000001", city: "Test", manager: manager.name, managerUserId: manager.id, amount: "1000", status: "WON", stage: "WON" } });
     clientIds.push(client.id);
-    const order = await prisma.order.create({ data: { number: `O360-${Date.now()}`, clientId: client.id, partnerId: partner.id, address: "Test address", staircase: "Straight", material: "Oak", amount: 1000, prepayment: 50, balance: 950, partnerPrice: 400, partnerPaid: 100, partnerBalance: 300, companyProfit: 600, manager: manager.name, managerUserId: manager.id, requiredPrepayment: 50 } });
+    const order = await prisma.order.create({ data: { number: `O360-${Date.now()}`, clientId: client.id, partnerId: partner.id, address: "Test address", staircase: "Straight", material: "Oak", amount: 1000, prepayment: 50, balance: 950, partnerPrice: 400, partnerAgreedAt: new Date(), partnerPaid: 100, partnerBalance: 300, companyProfit: 600, manager: manager.name, managerUserId: manager.id, requiredPrepayment: 50 } });
     orderIds.push(order.id);
     await prisma.production.create({ data: { orderId: order.id, stage: "CUTTING", percent: 0, master: production.name, masterUserId: production.id } });
     const actors = {

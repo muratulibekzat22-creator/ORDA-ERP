@@ -33,6 +33,7 @@ const orderPageAuth = readFileSync("lib/order-page-auth.ts", "utf8");
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
+const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPanel.tsx", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll"\]/);
@@ -46,6 +47,7 @@ for (const label of ["Сумма продажи", "Подрядчик / прои
   assert.match(economy, new RegExp(label));
 assert.match(orderPageAuth, /Server Components serialize their props/);
 assert.match(orderPageAuth, /partnerPrice: undefined/);
+assert.match(orderPageAuth, /productionPrice/);
 assert.doesNotMatch(
   orderPageAuth.slice(orderPageAuth.indexOf("lines: calculation.lines.map")),
   /unitCost: line\.unitCost/,
@@ -56,6 +58,9 @@ assert.match(newOrderForm, /router\.push\(`\/orders\/\$\{body\.id\}`\)/);
 assert.match(newOrderForm, /existingClient\?\.id/);
 for (const tab of ["Заявки", "Активные", "Завершённые"])
   assert.match(ordersPage, new RegExp(tab));
+for (const label of ["Цена производства", "Расчёт с цехом", "Поддержка цеху", "Аванс цеху", "Финальный расчёт"])
+  assert.match(workshopSettlement, new RegExp(label));
+assert.match(ordersPage, /missing-production-price/);
 assert.match(ordersApi, /role !== Role\.DIRECTOR && role !== Role\.MANAGER/);
 for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])
   assert.match(ordersApi, new RegExp(`"${field}"`));

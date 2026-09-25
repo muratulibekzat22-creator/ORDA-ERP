@@ -54,7 +54,9 @@ export default function OrdersPage({
       : "all",
   );
   const [attention, setAttention] = useState(
-    initialAttention === "overdue" ? "overdue" : "",
+    ["overdue", "missing-production-price"].includes(initialAttention)
+      ? initialAttention
+      : "",
   );
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
@@ -127,6 +129,11 @@ export default function OrdersPage({
     setAttention("");
     updateUrl(tab, value);
   };
+  const changeAttention = (value: string) => {
+    setAttention(value);
+    setPage(1);
+    updateUrl(tab, status, value);
+  };
   const pages = pagination.totalPages ?? pagination.pages ?? 1;
 
   return (
@@ -150,7 +157,7 @@ export default function OrdersPage({
         ))}
       </div>
 
-      <section className="grid gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 sm:grid-cols-[minmax(0,1fr)_260px]">
+      <section className="grid gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 sm:grid-cols-[minmax(0,1fr)_220px_240px]">
         <label className="relative min-w-0">
           <span className="sr-only">Поиск</span>
           <Search className="pointer-events-none absolute left-3 top-3 text-slate-500" size={18} />
@@ -165,6 +172,14 @@ export default function OrdersPage({
                 ? value === "COMPLETED" || value === "CANCELLED"
                 : value !== "COMPLETED" && value !== "CANCELLED",
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
+          </select>
+        </label>
+        <label className={tab === "applications" ? "hidden" : "block"}>
+          <span className="sr-only">Контроль данных</span>
+          <select value={attention} onChange={(event) => changeAttention(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
+            <option value="">Все данные</option>
+            <option value="missing-production-price">Без цены производства</option>
+            <option value="overdue">Только просроченные</option>
           </select>
         </label>
       </section>

@@ -737,6 +737,7 @@ async function main() {
     assert(!("grossProfit" in repeatedManagerCalculation), "idempotent calculation replay leaks internal costs");
     const managerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, managerCookie)).json() as Record<string, unknown>;
     for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance", "managerUser", "payrollAccruals"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
+    assert(Number(managerOrderDetail.productionPrice) === Number(firstOrder.partnerPrice), "manager order detail is missing the safe production-price alias");
     const managerSettlement = managerOrderDetail.settlement as Record<string, unknown> | undefined;
     assert(!managerSettlement || (!("manager" in managerSettlement) && !("measurer" in managerSettlement) && !("partner" in managerSettlement)), "manager order detail leaks internal settlement blocks");
     const managerOrderCalculations = managerOrderDetail.calculations as Array<Record<string, unknown>>;
@@ -880,8 +881,10 @@ async function main() {
     const foreignOrderSearch = await (await expectStatus(`/api/orders/search?q=${encodeURIComponent(firstOrder.number)}`, 200, foreignManagerCookie)).json() as { items: Array<{ id: number }> };
     assert(managerOrderSearch.items.some((order) => order.id === firstOrder.id) && foreignOrderSearch.items.every((order) => order.id !== firstOrder.id), "order search ownership/IDOR guard failed");
     assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
+    assert(managerOrders.every((order) => "productionPrice" in order), "manager order list is missing production price accountability");
     const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers?: Array<{ managerUserId: number }> };
-    assert(!/companyProfit|partnerPrice|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
+    assert(!/companyProfit|"partnerPrice"|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
+    assert("missingProductionPrice" in (managerDashboard as unknown as { orders: Record<string, unknown> }).orders, "manager dashboard is missing production-price completeness");
     assert(!managerDashboard.managers || managerDashboard.managers.every((row) => row.managerUserId === manager.id), "manager dashboard contains another manager's indicators");
     const managerCalendar = await (await expectStatus("/api/calendar", 200, managerCookie)).json() as CalendarPayload;
     const managerCalendarMeta = await (await expectStatus("/api/calendar?meta=1", 200, managerCookie)).json() as { assignees: unknown[]; clients: unknown[]; orders: unknown[] };

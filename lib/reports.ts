@@ -42,6 +42,7 @@ export type ReportsReadModel = {
   summary: ReportSummary;
   sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number };
   payments: { received: number; remaining: number };
+  dataQuality: { missingProductionPrice: number };
   finance?: {
     sales: number;
     customerReceived: number;
@@ -58,7 +59,7 @@ export type ReportsReadModel = {
   managers: ManagerReportRow[];
   trend: Array<{ date: string; salesAmount: number; received: number }>;
   production: Array<{ stage: string; count: number }>;
-  orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; received: number; remaining: number; status: string }>;
+  orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; productionPrice: number | null; received: number; remaining: number; status: string }>;
 };
 
 const OFFSET = "+05:00";

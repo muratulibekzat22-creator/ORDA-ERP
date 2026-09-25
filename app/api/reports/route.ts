@@ -13,6 +13,7 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
     [], ["Показатель", "Значение"],
     ["Заявки", report.summary.leads.current], ["Замеры", report.summary.measurements.current], ["Заказы", report.summary.orders.current],
     ["Сумма продаж", report.summary.salesAmount.current], ["Получено", report.summary.received.current], ["Остаток", report.summary.remaining],
+    ["Без цены производства", report.dataQuality.missingProductionPrice],
     ...(report.sales.grossMargin === undefined ? [] : [["Валовая маржа", report.sales.grossMargin]]),
     ...(report.finance ? [
       ["К получению от клиентов", report.finance.customerRemaining],
@@ -25,8 +26,8 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
     ] : []),
     [], ["Менеджер", "Заявки", "Замеры", "Заказы", "Продажи", "Получено", "Конверсия, %"],
     ...report.managers.map((item) => [item.name, item.leads, item.measurements, item.orders, item.salesAmount, item.received, item.conversion ?? "—"]),
-    [], ["№ заказа", "Клиент", "Менеджер", "Сумма", "Получено", "Остаток", "Статус"],
-    ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.received, item.remaining, item.status]),
+    [], ["№ заказа", "Клиент", "Менеджер", "Сумма", "Цена производства", "Получено", "Остаток", "Статус"],
+    ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.productionPrice ?? "Не заполнена", item.received, item.remaining, item.status]),
   ];
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
 }

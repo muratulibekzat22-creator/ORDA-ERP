@@ -306,6 +306,10 @@ async function managementProjection(scope: DashboardScope) {
   const overdue = activeOrders.filter((order) =>
     isOrderOverdue(orderDeadline(order), order.lifecycle, now),
   ).length;
+  const missingProductionPrice = activeOrders.filter(
+    (order) =>
+      order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+  ).length;
 
   const attention = activeOrders
     .map((order) => {
@@ -371,6 +375,7 @@ async function managementProjection(scope: DashboardScope) {
       readyForInstallation: counts.READY_FOR_INSTALLATION ?? 0,
       installation: counts.INSTALLATION ?? 0,
       overdue,
+      missingProductionPrice,
     },
     attention,
     expenses: ledgerEntries
@@ -411,6 +416,8 @@ async function managerProjection(scope: DashboardScope) {
       promisedAt: true,
       productionDeadline: true,
       balance: true,
+      partnerPrice: true,
+      partnerAgreedAt: true,
       client: { select: { name: true } },
       installation: { select: { scheduledAt: true } },
     },
@@ -424,9 +431,19 @@ async function managerProjection(scope: DashboardScope) {
       overdue: orders.filter((order) =>
         isOrderOverdue(orderDeadline(order), order.lifecycle, now),
       ).length,
+      missingProductionPrice: orders.filter(
+        (order) =>
+          order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+      ).length,
     },
     attention: orders
-      .filter((order) => !orderDeadline(order) || Number(order.balance) > 0)
+      .filter(
+        (order) =>
+          !orderDeadline(order) ||
+          Number(order.balance) > 0 ||
+          order.partnerAgreedAt === null ||
+          Number(order.partnerPrice) <= 0,
+      )
       .slice(0, 10)
       .map((order) => ({
         id: order.id,
@@ -434,6 +451,8 @@ async function managerProjection(scope: DashboardScope) {
         client: order.client.name,
         status: projectOrderStatus(order.lifecycle),
         deadline: orderDeadline(order),
+        productionPriceMissing:
+          order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
       })),
   };
 }

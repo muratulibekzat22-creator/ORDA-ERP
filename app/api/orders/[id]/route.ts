@@ -12,7 +12,10 @@ import {
   ORDER_STATUSES,
 } from "@/lib/orders/lifecycle";
 import { prisma } from "@/lib/prisma";
-import { assignPartnerToOrder } from "@/lib/services/partner.service";
+import {
+  assignPartnerToOrder,
+  setProductionPrice,
+} from "@/lib/services/partner.service";
 import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
@@ -94,8 +97,12 @@ function redactForRole<T extends Record<string, unknown>>(
   order: T,
   role: Role,
 ) {
-  if (role === Role.DIRECTOR) return order;
-  const result: Record<string, unknown> = { ...order };
+  const result: Record<string, unknown> = {
+    ...order,
+    productionPrice: order.partnerAgreedAt ? order.partnerPrice : null,
+    productionPriceSetAt: order.partnerAgreedAt ?? null,
+  };
+  if (role === Role.DIRECTOR) return result;
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
     if (Array.isArray(result.calculations))
@@ -163,6 +170,8 @@ function redactForRole<T extends Record<string, unknown>>(
     role === Role.INSTALLER ||
     role === Role.MEASURER
   ) {
+    delete result.productionPrice;
+    delete result.productionPriceSetAt;
     delete result.amount;
     delete result.prepayment;
     delete result.balance;
@@ -287,6 +296,39 @@ export async function PATCH(request: Request, { params }: Context) {
         requestHash: createRequestHash(payload),
       });
       return NextResponse.json(result, { status: result.created ? 201 : 200 });
+    }
+    if (body.action === "setProductionPrice") {
+      if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+        return NextResponse.json(
+          { error: "Недостаточно прав" },
+          { status: 403 },
+        );
+      const amount = Number(body.productionPrice);
+      const reason = text(body.reason, 1000);
+      if (!Number.isFinite(amount) || amount <= 0 || !reason)
+        return NextResponse.json(
+          { error: "Укажите цену производства и основание" },
+          { status: 400 },
+        );
+      const idempotency = readIdempotencyKey(request);
+      if ("response" in idempotency) return idempotency.response;
+      const payload = { orderId: id, productionPrice: amount, reason };
+      const result = await setProductionPrice({
+        orderId: id,
+        amount,
+        reason,
+        actor: {
+          id: Number(auth.session!.user.id),
+          name: auth.session!.user.name ?? "Сотрудник",
+          role,
+        },
+        idempotencyKey: idempotency.key,
+        requestHash: createRequestHash(payload),
+      });
+      return NextResponse.json(
+        redactForRole(result.order as unknown as Record<string, unknown>, role),
+        { status: result.created ? 201 : 200 },
+      );
     }
     const financial = [
       "prepayment",
@@ -556,12 +598,15 @@ export async function PATCH(request: Request, { params }: Context) {
         "COMMERCIAL_ADJUSTMENT_REQUIRED",
         "DIRECTOR_CONFIRMATION_REQUIRED",
         "PARTNER_PRICE_BELOW_PAID",
+        "PRODUCTION_PRICE_BELOW_PAID",
       ].includes(error.message)
     )
       return NextResponse.json(
         {
           error:
-            "Изменение требует контролируемой финансовой операции и подтверждения директора",
+            error.message === "PRODUCTION_PRICE_BELOW_PAID"
+              ? "Цена производства не может быть меньше уже выплаченной суммы цеху"
+              : "Изменение требует контролируемой финансовой операции и подтверждения директора",
         },
         { status: 409 },
       );

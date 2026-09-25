@@ -109,6 +109,15 @@ export async function getOrders(
       netProfit: economy.profit.netProfit === null ? null : Number(economy.profit.netProfit),
       netMargin: economy.profit.netMarginPercent === null ? null : Number(economy.profit.netMarginPercent),
       costDataComplete: economy.profit.dataComplete,
+      partnerPrice: Number(order.partnerPrice),
+      partnerPaid: Number(economy.partner.paid),
+      partnerBalance: Number(economy.partner.remaining),
+      partnerAgreedAt: order.partnerAgreedAt,
+      productionPrice: order.partnerAgreedAt === null
+        ? null
+        : Number(order.partnerPrice),
+      productionPriceMissing:
+        order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
       deletedAt: order.deletedAt,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,

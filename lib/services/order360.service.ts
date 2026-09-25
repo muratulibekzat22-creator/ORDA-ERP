@@ -151,6 +151,12 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
         message: "ЦЕХ не назначен или не подтвердил",
       },
       {
+        code: "PRODUCTION_PRICE",
+        passed:
+          order.partnerAgreedAt !== null && Number(order.partnerPrice) > 0,
+        message: "Цена производства не указана",
+      },
+      {
         code: "DEADLINE",
         passed: !!order.productionDeadline,
         message: "Срок производства не установлен",

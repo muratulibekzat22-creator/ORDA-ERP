@@ -36,6 +36,8 @@ const route = readFileSync(new URL("../app/api/reports/route.ts", import.meta.ur
 assert.match(service, /actor\.role === Role\.MANAGER\) scope = \{ managerUserId: actor\.id \}/, "manager scope must ignore spoofed managerId");
 assert.match(service, /lifecycle: \{ not: "CANCELLED" \}/, "cancelled orders must be excluded");
 assert.match(service, /actor\.role === Role\.DIRECTOR \? \{ grossMargin \} : \{\}/, "gross margin must be director-only");
+assert.doesNotMatch(service, /orders\.slice\(/, "period report must not hide orders with missing production prices");
+assert.match(service, /missingProductionPrice/, "report must expose production-price completeness");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");
 assert.match(route, /report\.sales\.grossMargin === undefined/, "export must redact gross margin");
 console.log("Reports math, period boundaries, refunds, zero denominators and RBAC contracts: OK");

@@ -20,6 +20,8 @@ export type OrderListItem = {
   netProfit?: number | null;
   netMargin?: number | null;
   costDataComplete?: boolean;
+  productionPrice?: number | null;
+  productionPriceMissing?: boolean;
   client: { id: number; name: string; phone: string; city: string };
 };
 
@@ -29,6 +31,9 @@ const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Без срока";
 
 export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
+  const showProductionPrice = orders.some(
+    (order) => order.productionPrice !== undefined,
+  );
   return (
     <>
       <div className="grid gap-3 lg:hidden">
@@ -52,6 +57,12 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
               <Value label="Ответственный" value={order.manager || "—"} />
               <Value label="Срок" value={date(order.deadline)} />
               {order.amount !== undefined && <Value label="Цена" value={money(order.amount)} />}
+              {order.productionPrice !== undefined && (
+                <Value
+                  label="Цена производства"
+                  value={order.productionPrice === null ? "Не заполнена" : money(order.productionPrice)}
+                />
+              )}
               {order.received !== undefined && <Value label="Получено" value={money(order.received)} />}
               {order.balance !== undefined && <Value label="Остаток" value={money(order.balance)} />}
               {order.netProfit !== undefined && (
@@ -82,6 +93,7 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
                 "Ответственный",
                 "Срок",
                 "Цена клиенту",
+                ...(showProductionPrice ? ["Цена производства"] : []),
                 "Получено",
                 "Остаток",
                 "Чистая прибыль",
@@ -98,6 +110,11 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
                 <td className="px-4 py-4">{order.manager || "—"}</td>
                 <td className="px-4 py-4">{date(order.deadline)}</td>
                 <td className="px-4 py-4">{money(order.amount)}</td>
+                {showProductionPrice ? (
+                  <td className={`px-4 py-4 ${order.productionPrice === null ? "font-semibold text-amber-300" : "text-cyan-300"}`}>
+                    {order.productionPrice === null ? "Не заполнена" : money(order.productionPrice)}
+                  </td>
+                ) : null}
                 <td className="px-4 py-4 text-emerald-300">{money(order.received)}</td>
                 <td className="px-4 py-4 text-amber-300">{money(order.balance)}</td>
                 <td className="px-4 py-4 font-semibold">{order.netProfit === null ? "Недостаточно данных" : money(order.netProfit)}</td>

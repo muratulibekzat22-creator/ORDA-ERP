@@ -1,3 +1,5 @@
+import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
+import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation } from "@/lib/services/payment.service";
 
@@ -182,12 +184,95 @@ export async function payPartner(data: {
   operationDate?: Date;
   idempotencyKey?: string;
   requestHash?: string;
+  partnerPayoutPurpose?: PartnerPayoutPurpose;
 }) {
   const result = await createFinanceOperation({
     ...data,
     type: "PARTNER_PAYOUT",
   });
   return result?.payment ?? null;
+}
+
+export async function setProductionPrice(data: {
+  orderId: number;
+  amount: number;
+  reason: string;
+  actor: { id: number; name: string; role: Role };
+  idempotencyKey: string;
+  requestHash: string;
+}) {
+  if (
+    data.actor.role !== Role.DIRECTOR &&
+    data.actor.role !== Role.MANAGER
+  )
+    throw new Error("FORBIDDEN");
+  if (!Number.isFinite(data.amount) || data.amount <= 0)
+    throw new Error("INVALID_PRODUCTION_PRICE");
+  if (!data.reason.trim()) throw new Error("PRODUCTION_PRICE_REASON_REQUIRED");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
+    const eventKey = `production-price:${data.orderId}:${data.idempotencyKey}`;
+    const replay = await tx.orderEvent.findUnique({
+      where: { idempotencyKey: eventKey },
+      select: { requestHash: true },
+    });
+    if (replay) {
+      if (!compareRequestHash(replay.requestHash, data.requestHash))
+        throw new Error("IDEMPOTENCY_CONFLICT");
+      return {
+        order: await tx.order.findUniqueOrThrow({ where: { id: data.orderId } }),
+        created: false,
+      };
+    }
+    const order = await tx.order.findFirst({
+      where: { id: data.orderId, deletedAt: null },
+    });
+    if (!order) throw new Error("ORDER_NOT_FOUND");
+    if (data.amount < Number(order.partnerPaid))
+      throw new Error("PRODUCTION_PRICE_BELOW_PAID");
+    const wasSet = order.partnerAgreedAt !== null;
+    const agreedAt = new Date();
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
+        partnerPrice: new Prisma.Decimal(data.amount),
+        partnerAgreedAt: agreedAt,
+        partnerBalance: new Prisma.Decimal(data.amount).sub(order.partnerPaid),
+        companyProfit: order.amount.sub(data.amount),
+      },
+    });
+    await tx.financeAuditEvent.create({
+      data: {
+        orderId: order.id,
+        action: wasSet ? "PRODUCTION_PRICE_CHANGED" : "PRODUCTION_PRICE_SET",
+        entityType: "Order",
+        entityId: order.id,
+        before: {
+          productionPrice: wasSet ? order.partnerPrice.toString() : null,
+          setAt: order.partnerAgreedAt?.toISOString() ?? null,
+        },
+        after: {
+          productionPrice: updated.partnerPrice.toString(),
+          setAt: agreedAt.toISOString(),
+        },
+        reason: data.reason.trim(),
+        authorId: data.actor.id,
+      },
+    });
+    await tx.orderEvent.create({
+      data: {
+        orderId: order.id,
+        title: wasSet
+          ? "Цена производства изменена"
+          : "Цена производства указана",
+        description: `${data.amount.toLocaleString("ru-RU")} ₸ · ${data.reason.trim()}`,
+        user: data.actor.name,
+        idempotencyKey: eventKey,
+        requestHash: data.requestHash,
+      },
+    });
+    return { order: updated, created: true };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function assignPartnerToOrder(data: {

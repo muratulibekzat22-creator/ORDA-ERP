@@ -83,6 +83,9 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const payrollAccrued = Number(payrollAccruedRow?.period_total ?? 0);
   const payrollPaid = Number(payrollPaidRow?.period_total ?? 0);
   const partnerAgreed = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.partnerPrice), 0);
+  const missingProductionPrice = orders.filter(
+    (item) => item.partnerAgreedAt === null || money(item.partnerPrice) <= 0,
+  ).length;
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
   return {
     generatedAt: new Date().toISOString(), role: actor.role as ReportsReadModel["role"],
@@ -96,6 +99,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     },
     sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(actor.role === Role.DIRECTOR ? { grossMargin } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
+    dataQuality: { missingProductionPrice },
     ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, grossMargin, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
     funnel: [
       { key: "leads", label: "Заявки", value: clients.length, conversionFromPrevious: null },
@@ -104,6 +108,6 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     ], managers,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     production: production.map((item) => ({ stage: item.stage, count: item._count._all })),
-    orders: orders.slice(0, 20).map((item) => { const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0); return { id: item.id, number: item.number, client: item.client.name, manager: item.manager, amount: money(item.amount), received: paid, remaining: Math.max(0, money(item.amount) - paid), status: item.status }; }),
+    orders: orders.map((item) => { const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0); return { id: item.id, number: item.number, client: item.client.name, manager: item.manager, amount: money(item.amount), productionPrice: item.partnerAgreedAt === null ? null : money(item.partnerPrice), received: paid, remaining: Math.max(0, money(item.amount) - paid), status: item.status }; }),
   };
 }
