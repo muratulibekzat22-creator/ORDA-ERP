@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
+import BankStatementPanel from "@/components/finance/BankStatementPanel";
 import RecurringExpensesPanel from "@/components/finance/RecurringExpensesPanel";
 
 type Direction = "INCOME" | "EXPENSE";
@@ -110,6 +111,7 @@ const money = (value: number) =>
   }).format(value || 0);
 const sourceLabels: Record<string, string> = {
   MANUAL: "Ручная",
+  BANK_STATEMENT: "Выписка Kaspi",
   RECURRING_EXPENSE: "Постоянная",
   CLIENT_PAYMENT: "Оплата клиента",
   PARTNER_PAYOUT: "Выплата цеху",
@@ -417,6 +419,8 @@ export default function FinanceJournalPage() {
       </div>
 
       <RecurringExpensesPanel onChanged={() => void load()} />
+
+      <BankStatementPanel onChanged={() => void load()} />
 
       {form && (
         <form

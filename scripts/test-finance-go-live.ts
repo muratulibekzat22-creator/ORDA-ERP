@@ -62,6 +62,12 @@ const steps: Array<{
     timeout: 180_000,
   },
   {
+    label: "Kaspi statement reconciliation",
+    command: npm,
+    args: ["run", "test:bank-statement"],
+    timeout: 240_000,
+  },
+  {
     label: "Finance integrity",
     command: npm,
     args: ["run", "test:finance-integrity"],

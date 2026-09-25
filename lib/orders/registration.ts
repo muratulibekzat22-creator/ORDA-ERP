@@ -17,6 +17,7 @@ export const RAILING_TYPES = [
 export const PAYMENT_METHODS = [
   { value: "CASH", label: "Наличные" },
   { value: "BANK_TRANSFER", label: "Банковский перевод" },
+  { value: "KASPI_TRANSFER", label: "Kaspi перевод / Gold" },
   { value: "KASPI_INSTALLMENT", label: "Kaspi / рассрочка" },
   { value: "OTHER", label: "Другое" },
 ] as const;

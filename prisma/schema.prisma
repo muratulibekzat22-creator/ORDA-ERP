@@ -99,6 +99,9 @@ model Company {
   companyLedgerEntries       CompanyLedgerEntry[]
   financeCategories          FinanceCategory[]
   recurringExpensePlans      RecurringExpensePlan[]
+  bankStatementImports       BankStatementImport[]
+  bankStatementTransactions  BankStatementTransaction[]
+  bankStatementRules         BankStatementRule[]
   employeePayrollProfiles    EmployeePayrollProfile[]
   payrollPeriods             PayrollPeriod[]
   personalLedgerEntries      PersonalLedgerEntry[]
@@ -487,6 +490,9 @@ model User {
   companyLedgerEntries              CompanyLedgerEntry[]          @relation("CompanyLedgerAuthor")
   personalLedgerEntries             PersonalLedgerEntry[]         @relation("PersonalLedgerAuthor")
   financeAuditEvents                FinanceAuditEvent[]           @relation("FinanceAuditAuthor")
+  bankStatementImportsCreated       BankStatementImport[]         @relation("BankStatementImportCreator")
+  bankStatementTransactionsResolved BankStatementTransaction[]    @relation("BankStatementTransactionResolver")
+  bankStatementRulesUpdated         BankStatementRule[]           @relation("BankStatementRuleUpdater")
   commercialAdjustments             CommercialAdjustment[]        @relation("CommercialAdjustmentAuthor")
   partnerAssignments                PartnerAssignmentHistory[]    @relation("PartnerAssignmentAuthor")
   partnersCreated                   Partner[]                     @relation("PartnerCreatedBy")
@@ -599,21 +605,23 @@ model Client {
   deletedById     Int?
   deletedBy       User?           @relation("ClientDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
-  orders               Order[]
-  interactions         ClientInteraction[]
-  attachments          ClientAttachment[]
-  leadActivities       LeadActivity[]
-  leadStatusHistory    LeadStatusHistory[]
-  leadCalculations     LeadCalculation[]
-  commercialProposals  CommercialProposal[]
-  leadConversion       LeadConversion?
-  followUps            LeadFollowUp[]
-  priceApprovals       PriceApprovalRequest[]
-  nextActions          LeadNextAction[]
-  calendarTasks        CalendarTask[]
-  measurements         Measurement[]
-  documents            Document[]
-  companyLedgerEntries CompanyLedgerEntry[]
+  orders                    Order[]
+  interactions              ClientInteraction[]
+  attachments               ClientAttachment[]
+  leadActivities            LeadActivity[]
+  leadStatusHistory         LeadStatusHistory[]
+  leadCalculations          LeadCalculation[]
+  commercialProposals       CommercialProposal[]
+  leadConversion            LeadConversion?
+  followUps                 LeadFollowUp[]
+  priceApprovals            PriceApprovalRequest[]
+  nextActions               LeadNextAction[]
+  calendarTasks             CalendarTask[]
+  measurements              Measurement[]
+  documents                 Document[]
+  companyLedgerEntries      CompanyLedgerEntry[]
+  bankStatementTransactions BankStatementTransaction[]
+  bankStatementRules        BankStatementRule[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -988,6 +996,7 @@ model Order {
   statusHistory               OrderStatusHistory[]
   calculations                OrderCalculation[]
   companyLedgerEntries        CompanyLedgerEntry[]
+  bankStatementTransactions   BankStatementTransaction[]
   leadConversion              LeadConversion?
   commercialAdjustments       CommercialAdjustment[]
   partnerAssignmentHistory    PartnerAssignmentHistory[]
@@ -1225,44 +1234,45 @@ model OrderCalculationLine {
 }
 
 model CompanyLedgerEntry {
-  id                     Int                     @id @default(autoincrement())
-  companyId              Int                     @default(dbgenerated())
-  company                Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  type                   String
-  category               String
-  categoryId             Int?
-  categoryRef            FinanceCategory?        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  direction              String
-  source                 String                  @default("MANUAL")
-  amount                 Decimal                 @db.Decimal(14, 2)
-  operationDate          DateTime                @default(now())
-  method                 String?
-  counterparty           String?
-  orderId                Int?
-  order                  Order?                  @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  clientId               Int?
-  client                 Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  partnerId              Int?
-  partner                Partner?                @relation(fields: [partnerId], references: [id], onDelete: SetNull)
-  employeeId             Int?
-  employee               EmployeePayrollProfile? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  recurringExpensePlanId Int?
-  recurringExpensePlan   RecurringExpensePlan?   @relation(fields: [recurringExpensePlanId], references: [id], onDelete: SetNull)
-  recurringPeriod        String?
-  comment                String?
-  authorId               Int?
-  author                 User?                   @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
-  idempotencyKey         String?                 @unique
-  requestHash            String?
-  affectsProfit          Boolean                 @default(true)
-  payrollAccrualId       Int?                    @unique
-  payrollAccrual         PayrollAccrual?         @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
-  payrollPaymentId       Int?                    @unique
-  payrollPayment         PayrollPayment?         @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
-  voidedAt               DateTime?
-  voidReason             String?
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
+  id                       Int                       @id @default(autoincrement())
+  companyId                Int                       @default(dbgenerated())
+  company                  Company                   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  type                     String
+  category                 String
+  categoryId               Int?
+  categoryRef              FinanceCategory?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  direction                String
+  source                   String                    @default("MANUAL")
+  amount                   Decimal                   @db.Decimal(14, 2)
+  operationDate            DateTime                  @default(now())
+  method                   String?
+  counterparty             String?
+  orderId                  Int?
+  order                    Order?                    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  clientId                 Int?
+  client                   Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  partnerId                Int?
+  partner                  Partner?                  @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  employeeId               Int?
+  employee                 EmployeePayrollProfile?   @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  recurringExpensePlanId   Int?
+  recurringExpensePlan     RecurringExpensePlan?     @relation(fields: [recurringExpensePlanId], references: [id], onDelete: SetNull)
+  recurringPeriod          String?
+  comment                  String?
+  authorId                 Int?
+  author                   User?                     @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  idempotencyKey           String?                   @unique
+  requestHash              String?
+  affectsProfit            Boolean                   @default(true)
+  payrollAccrualId         Int?                      @unique
+  payrollAccrual           PayrollAccrual?           @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
+  payrollPaymentId         Int?                      @unique
+  payrollPayment           PayrollPayment?           @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
+  bankStatementTransaction BankStatementTransaction?
+  voidedAt                 DateTime?
+  voidReason               String?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
 
   @@unique([recurringExpensePlanId, recurringPeriod])
   @@index([operationDate])
@@ -1277,18 +1287,20 @@ model CompanyLedgerEntry {
 }
 
 model FinanceCategory {
-  id                    Int                    @id @default(autoincrement())
-  companyId             Int                    @default(dbgenerated())
-  company               Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  code                  String
-  name                  String
-  direction             String
-  system                Boolean                @default(false)
-  active                Boolean                @default(true)
-  entries               CompanyLedgerEntry[]
-  recurringExpensePlans RecurringExpensePlan[]
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  id                        Int                        @id @default(autoincrement())
+  companyId                 Int                        @default(dbgenerated())
+  company                   Company                    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  code                      String
+  name                      String
+  direction                 String
+  system                    Boolean                    @default(false)
+  active                    Boolean                    @default(true)
+  entries                   CompanyLedgerEntry[]
+  recurringExpensePlans     RecurringExpensePlan[]
+  bankStatementTransactions BankStatementTransaction[]
+  bankStatementRules        BankStatementRule[]
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
 
   @@unique([companyId, direction, code])
   @@index([direction, active, name])
@@ -1296,25 +1308,121 @@ model FinanceCategory {
 }
 
 model RecurringExpensePlan {
-  id           Int                  @id @default(autoincrement())
-  companyId    Int                  @default(dbgenerated())
-  company      Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  name         String
-  categoryId   Int
-  category     FinanceCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  amount       Decimal              @db.Decimal(14, 2)
-  dayOfMonth   Int                  @default(1)
-  method       String               @default("bank_transfer")
-  counterparty String?
-  comment      String?
-  active       Boolean              @default(true)
-  entries      CompanyLedgerEntry[]
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
+  id                        Int                        @id @default(autoincrement())
+  companyId                 Int                        @default(dbgenerated())
+  company                   Company                    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name                      String
+  categoryId                Int
+  category                  FinanceCategory            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  amount                    Decimal                    @db.Decimal(14, 2)
+  dayOfMonth                Int                        @default(1)
+  method                    String                     @default("bank_transfer")
+  counterparty              String?
+  comment                   String?
+  active                    Boolean                    @default(true)
+  entries                   CompanyLedgerEntry[]
+  bankStatementTransactions BankStatementTransaction[]
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
 
   @@unique([companyId, name])
   @@index([companyId, active, dayOfMonth])
   @@index([categoryId, active])
+}
+
+model BankStatementImport {
+  id            Int                        @id @default(autoincrement())
+  companyId     Int                        @default(dbgenerated())
+  company       Company                    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  provider      String                     @default("KASPI")
+  accountLabel  String?
+  fileName      String
+  contentType   String
+  fileSize      Int
+  fileHash      String
+  status        String                     @default("REVIEW")
+  totalRows     Int                        @default(0)
+  importedRows  Int                        @default(0)
+  duplicateRows Int                        @default(0)
+  createdById   Int
+  createdBy     User                       @relation("BankStatementImportCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  transactions  BankStatementTransaction[]
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+
+  @@unique([companyId, fileHash])
+  @@index([companyId, createdAt])
+  @@index([companyId, status, createdAt])
+}
+
+model BankStatementTransaction {
+  id                              Int                   @id @default(autoincrement())
+  companyId                       Int                   @default(dbgenerated())
+  company                         Company               @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  importId                        Int
+  import                          BankStatementImport   @relation(fields: [importId], references: [id], onDelete: Cascade)
+  fingerprint                     String
+  rowNumber                       Int
+  operationDate                   DateTime
+  direction                       String
+  amount                          Decimal               @db.Decimal(14, 2)
+  currency                        String                @default("KZT")
+  counterparty                    String?
+  description                     String?
+  reference                       String?
+  raw                             Json?
+  status                          String                @default("PENDING")
+  suggestedKind                   String                @default("REVIEW")
+  suggestedCategoryId             Int?
+  suggestedCategory               FinanceCategory?      @relation(fields: [suggestedCategoryId], references: [id], onDelete: SetNull)
+  suggestedOrderId                Int?
+  suggestedOrder                  Order?                @relation(fields: [suggestedOrderId], references: [id], onDelete: SetNull)
+  suggestedClientId               Int?
+  suggestedClient                 Client?               @relation(fields: [suggestedClientId], references: [id], onDelete: SetNull)
+  suggestedRecurringExpensePlanId Int?
+  suggestedRecurringExpensePlan   RecurringExpensePlan? @relation(fields: [suggestedRecurringExpensePlanId], references: [id], onDelete: SetNull)
+  confidence                      Int                   @default(0)
+  matchReason                     String?
+  selected                        Boolean               @default(false)
+  postedPaymentId                 Int?                  @unique
+  postedPayment                   Payment?              @relation(fields: [postedPaymentId], references: [id], onDelete: Restrict)
+  postedLedgerEntryId             Int?                  @unique
+  postedLedgerEntry               CompanyLedgerEntry?   @relation(fields: [postedLedgerEntryId], references: [id], onDelete: Restrict)
+  resolvedById                    Int?
+  resolvedBy                      User?                 @relation("BankStatementTransactionResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  resolvedAt                      DateTime?
+  createdAt                       DateTime              @default(now())
+  updatedAt                       DateTime              @updatedAt
+
+  @@unique([companyId, fingerprint])
+  @@index([companyId, status, operationDate])
+  @@index([importId, rowNumber])
+  @@index([suggestedOrderId, status])
+  @@index([suggestedCategoryId, status])
+  @@index([suggestedRecurringExpensePlanId, status])
+}
+
+model BankStatementRule {
+  id                     Int              @id @default(autoincrement())
+  companyId              Int              @default(dbgenerated())
+  company                Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  normalizedCounterparty String
+  direction              String
+  kind                   String
+  categoryId             Int?
+  category               FinanceCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  clientId               Int?
+  client                 Client?          @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  active                 Boolean          @default(true)
+  updatedById            Int?
+  updatedBy              User?            @relation("BankStatementRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  @@unique([companyId, normalizedCounterparty, direction])
+  @@index([companyId, active, direction])
+  @@index([categoryId, active])
+  @@index([clientId, active])
 }
 
 model EmployeePayrollProfile {
@@ -2355,6 +2463,7 @@ model Payment {
   cashShift                  CashShift?                  @relation(fields: [cashShiftId], references: [id], onDelete: Restrict)
   registeredByUserId         Int?
   registeredBy               User?                       @relation("PaymentRegisteredBy", fields: [registeredByUserId], references: [id], onDelete: SetNull)
+  bankStatementTransaction   BankStatementTransaction?
   receipt                    PaymentReceipt?             @relation("PaymentReceiptPayment")
   voidedReceipt              PaymentReceipt?             @relation("PaymentReceiptVoidingPayment")
   partnerSettlementOperation PartnerSettlementOperation?

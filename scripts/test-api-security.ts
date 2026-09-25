@@ -538,6 +538,7 @@ async function main() {
     const orderBoundaryManagerCookie = await session(manager.email);
     await expectStatus("/api/company-finance", 403, firstProductionCookie);
     await expectStatus("/api/personal-finance", 403, firstProductionCookie);
+    await expectStatus("/api/finance/statements", 403, firstProductionCookie);
     await expectStatus("/", 200, directorCookie);
     const orderCreationPayload = {
       clientId: client.id,
@@ -738,6 +739,7 @@ async function main() {
     generatedOrderIds.push(converted.id);
     await expectStatus("/api/company-finance", 403, managerCookie);
     await expectStatus("/api/personal-finance", 403, managerCookie);
+    await expectStatus("/api/finance/statements", 403, managerCookie);
     const managerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in managerCalculation) && !("totalCost" in managerCalculation) && Array.isArray(managerCalculation.lines) && !("unitCost" in (managerCalculation.lines as Array<Record<string, unknown>>)[0]), "manager calculation leaks internal costs");
     const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
@@ -755,6 +757,7 @@ async function main() {
     assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item) && !("managerMinimumPrice" in item)), "manager calculator pricing leaks protected prices");
     const accountantCookie = await session(accountant.email);
     await expectStatus("/api/clients", 403, accountantCookie);
+    await expectStatus("/api/finance/statements", 200, accountantCookie);
     const accountantConfig = await (await expectStatus("/api/calculator-config", 200, accountantCookie)).json() as { items: Array<Record<string, unknown>> };
     assert(accountantConfig.items.length > 0 && accountantConfig.items.every((item) => "internalPrice" in item), "accountant with permission cannot view internal calculator prices");
     await expectStatus("/api/calculator-config", 403, accountantCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(accountantConfig) });
@@ -901,6 +904,7 @@ async function main() {
     console.log("manager API security matrix passed");
 
     const directorOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, directorCookie)).json() as { data: Array<Record<string, unknown> & { id: number }> };
+    await expectStatus("/api/finance/statements", 200, directorCookie);
     const directorOrders = directorOrderPayload.data;
     assert(Array.isArray(directorOrders) && directorOrders.some((order) => order.id === firstOrder.id), "director orders payload is invalid");
     assert(directorOrders.some((order) => order.id === firstOrder.id && ["netProfit", "netMargin", "productionPrice", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");

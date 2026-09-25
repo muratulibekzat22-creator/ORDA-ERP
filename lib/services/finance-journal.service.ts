@@ -9,6 +9,7 @@ import { requireTenantIdentity } from "@/lib/tenant-context";
 export type FinanceDirection = "INCOME" | "EXPENSE";
 export type FinanceSource =
   | "MANUAL"
+  | "BANK_STATEMENT"
   | "RECURRING_EXPENSE"
   | "CLIENT_PAYMENT"
   | "PARTNER_PAYOUT"
