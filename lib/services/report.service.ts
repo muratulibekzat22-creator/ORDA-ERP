@@ -2,6 +2,7 @@ import { Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
 import { orderDataGaps } from "@/lib/orders/completeness";
+import { projectOrderStatus, USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
 type Actor = { id: number; role: Role };
@@ -172,7 +173,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
         (sum, accrual) => sum + (accrual.direction === "INCREASE" ? money(accrual.amount) : -money(accrual.amount)),
         0,
       );
-      return { id: item.id, number: item.number, client: item.client.name, manager: item.manager, amount: money(item.amount), productionPrice, grossMargin: productionPrice === null || money(item.amount) <= 0 ? null : money(item.amount) - productionPrice, payrollAccrued: payrollAccruedForOrder, received: paid, remaining: Math.max(0, money(item.amount) - paid), status: item.status };
+      return { id: item.id, number: item.number, client: item.client.name, manager: item.manager, amount: money(item.amount), productionPrice, grossMargin: productionPrice === null || money(item.amount) <= 0 ? null : money(item.amount) - productionPrice, payrollAccrued: payrollAccruedForOrder, received: paid, remaining: Math.max(0, money(item.amount) - paid), status: USER_ORDER_STATUS_LABELS[projectOrderStatus(item.lifecycle)] };
     }),
   };
 }
