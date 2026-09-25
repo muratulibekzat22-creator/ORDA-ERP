@@ -44,6 +44,9 @@ export default function RouteShell({
   const pathname = usePathname();
   const { data: session } = useSession();
   const role = session?.user.role as Role | undefined;
+  const accountRole = (session?.user.accountRole || role) as Role | undefined;
+  const founder = accountRole === "DIRECTOR";
+  const operationsDirector = accountRole === "OPERATIONS_DIRECTOR";
   const permissionByHref: Partial<Record<string, Permission>> = {
     "/clients": "clients",
     "/orders": "orders",
@@ -61,7 +64,9 @@ export default function RouteShell({
     "/marketing": "marketing",
   };
   const visible = (href: string) => {
-    if (role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR") return true;
+    if (founder)
+      return ["/", "/training", "/finance", "/partner-management", "/reports"].includes(href);
+    if (operationsDirector) return true;
     if (href === "/partner-management") return false;
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
@@ -142,9 +147,9 @@ export default function RouteShell({
                   className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
                 >
                   <Icon size={20} />
-                  {href === "/payroll" && role !== "DIRECTOR" && role !== "OPERATIONS_DIRECTOR" && role !== "ACCOUNTANT"
+                  {href === "/payroll" && accountRole !== "DIRECTOR" && accountRole !== "OPERATIONS_DIRECTOR" && role !== "ACCOUNTANT"
                     ? "Моя зарплата"
-                    : href === "/training" && role === "DIRECTOR"
+                    : href === "/training" && founder
                       ? "Обучение сотрудников"
                       : title}
                 </Link>

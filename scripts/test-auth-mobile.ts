@@ -17,7 +17,9 @@ assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVer
 assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
 assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
 assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"]'), "manager navigation contract changed");
-assert(shell.includes('role === "DIRECTOR"') && shell.includes('["/", "/orders", "/payroll", "/reports"]'), "Director navigation must expose the focused control sections");
+assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/finance", "/partner-management", "/reports"]'), "Founder navigation must stay focused on final controls and reports");
+assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes("if (operationsDirector) return true"), "Operations director must retain the full working navigation");
+assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Эффективность"), "Founder cockpit must show final financial and efficiency indicators");
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");

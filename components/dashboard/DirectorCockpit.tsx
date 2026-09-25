@@ -2,13 +2,18 @@
 
 import {
   AlertTriangle,
+  BarChart3,
   Banknote,
   CalendarDays,
   ClipboardList,
   Factory,
+  GraduationCap,
+  Handshake,
   Plus,
   RefreshCw,
   ReceiptText,
+  Target,
+  Wallet,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -138,7 +143,7 @@ const currentMonth = () => new Date().toISOString().slice(0, 7);
 const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Без срока";
 
-export default function DirectorCockpit() {
+export default function DirectorCockpit({ founder = false }: { founder?: boolean }) {
   const { data: session } = useSession();
   const [month, setMonth] = useState(currentMonth);
   const [data, setData] = useState<Payload | null>(null);
@@ -182,9 +187,11 @@ export default function DirectorCockpit() {
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-300">
             ORDA · ALTYN SAPA
           </p>
-          <h1 className="mt-2 text-3xl font-bold text-white">Главная</h1>
+          <h1 className="mt-2 text-3xl font-bold text-white">{founder ? "Кабинет основателя" : "Главная"}</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Деньги компании и состояние заказов — без лишних модулей.
+            {founder
+              ? "Чистая прибыль, эффективность и итоговые управленческие отчёты."
+              : "Деньги компании и состояние заказов — без лишних модулей."}
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -221,12 +228,14 @@ export default function DirectorCockpit() {
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
       {data?.role === "DIRECTOR" || data?.role === "OPERATIONS_DIRECTOR" || data?.role === "ACCOUNTANT" ? (
-        <ManagementDashboard
-          data={data}
-          historyOpen={historyOpen}
-          onHistory={() => setHistoryOpen((value) => !value)}
-          onAddEntry={setEntryDirection}
-        />
+        founder ? <FounderDashboard data={data} /> : (
+          <ManagementDashboard
+            data={data}
+            historyOpen={historyOpen}
+            onHistory={() => setHistoryOpen((value) => !value)}
+            onAddEntry={setEntryDirection}
+          />
+        )
       ) : null}
       {data?.role === "MANAGER" ? <ManagerDashboard data={data} /> : null}
       {data?.role === "PRODUCTION" ? <ProductionDashboard data={data} /> : null}
@@ -244,6 +253,91 @@ export default function DirectorCockpit() {
       )}
     </main>
   );
+}
+
+function percent(value: number | null) {
+  return value === null || !Number.isFinite(value) ? "—" : `${Math.round(value).toLocaleString("ru-RU")} %`;
+}
+
+function FounderDashboard({ data }: { data: ManagementPayload }) {
+  const totalOrders = data.finance.ordersWithMargin + data.finance.ordersWithoutMargin;
+  const costCoverage = totalOrders > 0 ? data.finance.ordersWithMargin / totalOrders * 100 : null;
+  const collectionRate = data.finance.revenue > 0 ? data.finance.received / data.finance.revenue * 100 : null;
+  const expenseLoad = data.finance.revenue > 0
+    ? (data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued) / data.finance.revenue * 100
+    : null;
+  const reports = [
+    { href: "/reports", title: "Управленческие отчёты", hint: "Продажи, KPI, маркетинг и зарплаты", icon: BarChart3 },
+    { href: "/finance", title: "Финансы", hint: "Доходы, расходы и движение денег", icon: Wallet },
+    { href: "/partner-management", title: "Партнёры", hint: "Согласовано, выплачено и остаток", icon: Handshake },
+    { href: "/training", title: "Обучение сотрудников", hint: "Результаты и прохождение обучения", icon: GraduationCap },
+  ] as const;
+  return (
+    <>
+      <section>
+        <div className="mb-3">
+          <h2 className="text-xl font-bold text-white">Итог компании</h2>
+          <p className="text-sm text-slate-400">Только показатели для принятия решений за выбранный месяц</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
+            <p className="text-sm text-emerald-200">Чистая прибыль</p>
+            <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.netProfit)}</p>
+            <p className="mt-2 text-xs text-emerald-100/70">После производства, расходов и начисленной зарплаты</p>
+          </article>
+          <article className="rounded-2xl border border-blue-500/25 bg-blue-500/5 p-5">
+            <p className="text-sm text-slate-300">Чистая маржа</p>
+            <p className="mt-2 text-3xl font-bold text-white">{percent(data.finance.netMargin)}</p>
+            <p className="mt-2 text-xs text-slate-500">Чистая прибыль относительно заполненных продаж</p>
+          </article>
+          <article className="rounded-2xl border border-slate-800 bg-[#101827] p-5">
+            <p className="text-sm text-slate-400">Получено от клиентов</p>
+            <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.received)}</p>
+            <p className="mt-2 text-xs text-slate-500">Выручка месяца: {money(data.finance.revenue)}</p>
+          </article>
+          <article className="rounded-2xl border border-slate-800 bg-[#101827] p-5">
+            <p className="text-sm text-slate-400">Расходы и зарплата</p>
+            <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.operatingExpenses + data.finance.payrollAccrued)}</p>
+            <p className="mt-2 text-xs text-slate-500">Расходы {money(data.finance.operatingExpenses)} · зарплата {money(data.finance.payrollAccrued)}</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex items-center gap-2">
+          <Target size={20} className="text-amber-300" />
+          <div><h2 className="text-xl font-bold text-white">Эффективность</h2><p className="text-sm text-slate-400">Короткие показатели без операционной работы</p></div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <FounderEfficiency label="Сбор оплаты" value={percent(collectionRate)} hint="Получено относительно продаж месяца" />
+          <FounderEfficiency label="Заполненность себестоимости" value={percent(costCoverage)} hint={`${data.finance.ordersWithMargin} из ${totalOrders} заказов участвуют в прибыли`} />
+          <FounderEfficiency label="Расходная нагрузка" value={percent(expenseLoad)} hint="Производство, расходы и начисленная зарплата" />
+        </div>
+        {data.finance.ordersWithoutMargin > 0 ? (
+          <p className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            В {data.finance.ordersWithoutMargin} заказах ещё нет цены производства. Они не включены в прибыль и не искажают итог.
+          </p>
+        ) : null}
+      </section>
+
+      <section>
+        <div className="mb-3"><h2 className="text-xl font-bold text-white">Итоговые отчёты</h2><p className="text-sm text-slate-400">Операционные разделы ведёт директор; здесь остаётся контроль результата.</p></div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {reports.map(({ href, title, hint, icon: Icon }) => (
+            <Link key={href} href={href} className="rounded-2xl border border-slate-800 bg-[#101827] p-5 transition hover:border-blue-500/50">
+              <Icon size={22} className="text-blue-300" />
+              <p className="mt-4 font-semibold text-white">{title}</p>
+              <p className="mt-1 text-sm leading-5 text-slate-400">{hint}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function FounderEfficiency({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return <article className="rounded-xl bg-slate-950/60 p-4"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p></article>;
 }
 
 function ManagementDashboard({
