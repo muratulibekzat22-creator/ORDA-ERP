@@ -2,6 +2,7 @@ import { Prisma, Role } from "@prisma/client";
 
 const prefixes: Record<Role, string> = {
   DIRECTOR: "DIR",
+  OPERATIONS_DIRECTOR: "OPS",
   MARKETER: "MKT",
   MANAGER: "MGR",
   ACCOUNTANT: "ACC",
@@ -17,6 +18,9 @@ async function nextRoleNumber(tx: Prisma.TransactionClient, role: Role) {
   switch (role) {
     case Role.DIRECTOR:
       rows = await tx.$queryRaw`SELECT nextval('employee_code_dir_seq')::bigint AS value`;
+      break;
+    case Role.OPERATIONS_DIRECTOR:
+      rows = await tx.$queryRaw`SELECT nextval('employee_code_ops_seq')::bigint AS value`;
       break;
     case Role.MARKETER:
       rows = await tx.$queryRaw`SELECT nextval('employee_code_mkt_seq')::bigint AS value`;

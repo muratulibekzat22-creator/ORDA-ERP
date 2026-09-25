@@ -7,7 +7,10 @@ export async function GET() {
   const auth = await requireSettingsDirector();
   if (auth.response) return auth.response;
   try { return NextResponse.json(await getSettingsManagement()); }
-  catch { return NextResponse.json({ error: "Не удалось получить настройки" }, { status: 500 }); }
+  catch (error) {
+    console.error("settings.load_failed", error);
+    return NextResponse.json({ error: "Не удалось получить настройки" }, { status: 500 });
+  }
 }
 
 export async function PATCH(request: Request) {
