@@ -43,6 +43,9 @@ export const TENANT_MODELS = new Set([
   "CalculatorTariff",
   "OrderEvent",
   "RolePermission",
+  "ManagementMarketingTask",
+  "ManagementMarketingMetric",
+  "RecruitmentVacancy",
 ]);
 
 const WHERE_OPERATIONS = new Set([

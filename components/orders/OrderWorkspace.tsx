@@ -124,6 +124,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [form, setForm] = useState({
+    clientName: order.client.name,
     address: order.address,
     material: order.material,
     staircase: order.staircase,
@@ -133,11 +134,11 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
 
   const role = session?.user.role ?? "";
   const archived = Boolean(order.deletedAt);
-  const director = role === "DIRECTOR";
-  const canEdit = !archived && ["DIRECTOR", "MANAGER"].includes(role);
+  const director = ["DIRECTOR", "OPERATIONS_DIRECTOR"].includes(role);
+  const canEdit = !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
   const canAddPayment =
-    !archived && ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
-  const canSeeFinance = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
+    !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
+  const canSeeFinance = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const status = projectOrderStatus(order.lifecycle);
   const deadline = orderDeadline({
     promisedAt: order.promisedAt,
@@ -267,7 +268,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
 
       {director ? <OrderEconomy order={order} /> : null}
 
-      {["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role) ? (
+      {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role) ? (
         <WorkshopSettlementPanel order={order} readOnly={archived} />
       ) : null}
 
@@ -334,6 +335,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             <h2 className="text-xl font-bold text-white">Редактировать заказ</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {([
+                ["clientName", "Имя клиента"],
                 ["address", "Адрес"],
                 ["manager", "Ответственный"],
                 ["staircase", "Каркас"],
@@ -346,7 +348,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}
             <div className="mt-5 grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setEditing(false)} disabled={saving} className="min-h-11 rounded-xl bg-slate-800 px-4">Отмена</button>
-              <button type="button" onClick={() => void saveEdit()} disabled={saving || !form.address.trim() || !Number(form.amount)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button>
+              <button type="button" onClick={() => void saveEdit()} disabled={saving || !form.clientName.trim() || !form.address.trim() || !Number(form.amount)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button>
             </div>
           </div>
         </div>

@@ -189,7 +189,6 @@ async function managementProjection(scope: DashboardScope) {
     prisma.companyLedgerEntry.findMany({
       where: {
         companyId,
-        direction: "EXPENSE",
         operationDate: { gte: period.start, lt: period.end },
         voidedAt: null,
       },
@@ -198,6 +197,7 @@ async function managementProjection(scope: DashboardScope) {
         id: true,
         type: true,
         category: true,
+        direction: true,
         source: true,
         amount: true,
         operationDate: true,
@@ -260,8 +260,15 @@ async function managementProjection(scope: DashboardScope) {
     const amount = Number(row._sum.amount ?? 0);
     return sum + (row.type === "REFUND" ? -amount : amount);
   }, 0);
-  const directExpenses = periodEconomies.reduce(
-    (sum, item) => sum + Number(item.economy.profit.directExpenses),
+  const pricedEconomies = periodEconomies.filter(
+    ({ order }) => Number(order.amount) > 0 && Number(order.partnerPrice) > 0,
+  );
+  const pricedRevenue = pricedEconomies.reduce(
+    (sum, { order }) => sum + Number(order.amount),
+    0,
+  );
+  const directExpenses = pricedEconomies.reduce(
+    (sum, { order }) => sum + Number(order.partnerPrice),
     0,
   );
   const payrollAccrued = payrollAccruals
@@ -273,6 +280,7 @@ async function managementProjection(scope: DashboardScope) {
   );
   const operatingEntries = ledgerEntries.filter(
     (entry) =>
+      entry.direction === "EXPENSE" &&
       entry.orderId === null &&
       entry.affectsProfit &&
       !["PAYROLL_ACCRUAL", "PAYROLL_PAYMENT", "OTHER_SYSTEM"].includes(entry.source) &&
@@ -283,14 +291,21 @@ async function managementProjection(scope: DashboardScope) {
     (sum, entry) => sum + Number(entry.amount),
     0,
   );
-  const dataComplete = periodEconomies.every(
-    (item) => item.economy.profit.dataComplete,
-  );
-  const netProfit = dataComplete
-    ? revenue - directExpenses - payrollAccrued - operatingExpenses
-    : null;
-  const netMargin = netProfit !== null && revenue > 0
-    ? Math.round((netProfit / revenue) * 10_000) / 100
+  const additionalIncome = ledgerEntries
+    .filter(
+      (entry) =>
+        entry.direction === "INCOME" &&
+        entry.orderId === null &&
+        entry.affectsProfit &&
+        entry.source === "MANUAL",
+    )
+    .reduce((sum, entry) => sum + Number(entry.amount), 0);
+  const ordersWithoutMargin = periodEconomies.length - pricedEconomies.length;
+  const dataComplete = ordersWithoutMargin === 0;
+  const netProfit =
+    pricedRevenue + additionalIncome - directExpenses - payrollAccrued - operatingExpenses;
+  const netMargin = pricedRevenue > 0
+    ? Math.round((netProfit / pricedRevenue) * 10_000) / 100
     : null;
 
   const counts = Object.fromEntries(
@@ -364,12 +379,15 @@ async function managementProjection(scope: DashboardScope) {
       revenue,
       received,
       directExpenses,
+      additionalIncome,
       operatingExpenses,
       payrollAccrued,
       payrollPaid,
       netProfit,
       netMargin,
       dataComplete,
+      ordersWithMargin: pricedEconomies.length,
+      ordersWithoutMargin,
     },
     orders: {
       active: activeOrders.length,
@@ -386,6 +404,7 @@ async function managementProjection(scope: DashboardScope) {
     expenses: ledgerEntries
       .filter(
         (entry) =>
+          entry.direction === "EXPENSE" &&
           !["PAYROLL_ACCRUAL", "PAYROLL_PAYMENT", "OTHER_SYSTEM"].includes(entry.source) &&
           entry.type !== "PARTNER_PAYOUT",
       )
@@ -534,7 +553,7 @@ async function installerProjection(scope: DashboardScope) {
 }
 
 export async function getDashboardSummary(scope: DashboardScope) {
-  if (scope.role === Role.DIRECTOR || scope.role === Role.ACCOUNTANT)
+  if (scope.role === Role.DIRECTOR || scope.role === Role.OPERATIONS_DIRECTOR || scope.role === Role.ACCOUNTANT)
     return managementProjection(scope);
   if (scope.role === Role.MANAGER) return managerProjection(scope);
   if (scope.role === Role.PRODUCTION) return productionProjection(scope);

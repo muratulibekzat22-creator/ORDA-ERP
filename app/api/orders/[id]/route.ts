@@ -72,6 +72,8 @@ const idOf = (value: string) => {
 };
 const text = (value: unknown, max = 1000) =>
   typeof value === "string" ? value.trim().slice(0, max) : null;
+const isDirector = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 
 async function canAccess(
   id: number,
@@ -101,7 +103,7 @@ function redactForRole<T extends Record<string, unknown>>(
     ...order,
     productionPrice: order.partnerAgreedAt ? order.partnerPrice : null,
   };
-  if (role === Role.DIRECTOR) return result;
+  if (isDirector(role)) return result;
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
     if (Array.isArray(result.calculations))
@@ -213,7 +215,7 @@ export async function GET(_: Request, { params }: Context) {
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const role = auth.session!.user.role as Role;
   if (
-    !(await canAccess(id, role, auth.session!.user.id, role === Role.DIRECTOR))
+    !(await canAccess(id, role, auth.session!.user.id, isDirector(role)))
   )
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   const order = await prisma.order.findUnique({ where: { id }, include });
@@ -271,7 +273,7 @@ export async function PATCH(request: Request, { params }: Context) {
         { status: 400 },
       );
     if (body.action === "commercialAdjustment") {
-      if (role !== Role.DIRECTOR)
+      if (!isDirector(role))
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -296,7 +298,7 @@ export async function PATCH(request: Request, { params }: Context) {
       return NextResponse.json(result, { status: result.created ? 201 : 200 });
     }
     if (body.action === "setProductionPrice") {
-      if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+      if (!isDirector(role) && role !== Role.MANAGER)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -358,7 +360,7 @@ export async function PATCH(request: Request, { params }: Context) {
         );
     }
     if (body.action === "assignPartner") {
-      if (role !== Role.DIRECTOR)
+      if (!isDirector(role))
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -385,7 +387,7 @@ export async function PATCH(request: Request, { params }: Context) {
         manager: auth.session!.user.name ?? undefined,
         authorId: Number(auth.session!.user.id),
         directorConfirmed:
-          role === Role.DIRECTOR && body.directorConfirmed === true,
+          isDirector(role) && body.directorConfirmed === true,
       });
       return updated
         ? NextResponse.json(
@@ -432,7 +434,7 @@ export async function PATCH(request: Request, { params }: Context) {
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
         where: { id },
-        select: { status: true },
+        select: { status: true, clientId: true },
       });
       if (!current) return null;
       if (commentKey) {
@@ -458,6 +460,14 @@ export async function PATCH(request: Request, { params }: Context) {
         }
       }
       const data: Prisma.OrderUpdateInput = {};
+      if (role !== Role.PARTNER && "clientName" in body) {
+        const clientName = text(body.clientName, 200);
+        if (!clientName) throw new Error("INVALID_CLIENT_NAME");
+        await tx.client.update({
+          where: { id: current.clientId },
+          data: { name: clientName },
+        });
+      }
       if (status) {
         if (!canTransitionOrderStatus(role, current.status, status))
           throw new Error("TRANSITION_FORBIDDEN");
@@ -606,7 +616,7 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     if (
       error instanceof Error &&
-      ["INVALID_STATUS", "INVALID_AMOUNT"].includes(error.message)
+      ["INVALID_STATUS", "INVALID_AMOUNT", "INVALID_CLIENT_NAME"].includes(error.message)
     )
       return NextResponse.json(
         { error: "Некорректные данные заказа" },
@@ -623,7 +633,7 @@ export async function DELETE(request: Request, { params }: Context) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+  if (!isDirector(role) && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = idOf((await params).id);
   if (!id)

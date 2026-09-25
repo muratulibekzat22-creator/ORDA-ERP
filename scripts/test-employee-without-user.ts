@@ -90,7 +90,15 @@ async function main() {
       await prisma.payrollPayment.deleteMany({ where: { employeeId } });
       await prisma.payrollAccrual.deleteMany({ where: { employeeId } });
       await prisma.employeeSalaryRate.deleteMany({ where: { employeeId } });
-      await prisma.employeePayrollProfile.deleteMany({ where: { id: employeeId } });
+      await prisma.employeePayrollProfile.deleteMany({
+        where: {
+          OR: [
+            { id: employeeId },
+            ...(directorId ? [{ userId: directorId }] : []),
+            ...(linkedUserId ? [{ userId: linkedUserId }] : []),
+          ],
+        },
+      });
     }
     if (periodId) await prisma.payrollPeriod.deleteMany({ where: { id: periodId } });
     if (linkedUserId) await prisma.user.deleteMany({ where: { id: linkedUserId } });

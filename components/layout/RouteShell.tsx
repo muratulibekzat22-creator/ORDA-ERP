@@ -20,6 +20,7 @@ import {
   Handshake,
   Warehouse,
   BarChart3,
+  Megaphone,
   X,
 } from "lucide-react";
 import Header from "@/components/Header";
@@ -28,7 +29,7 @@ import { type Role } from "@/lib/roles";
 
 const sections = [
   { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
-  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler]] },
+  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
   { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Партнёры", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
@@ -56,16 +57,17 @@ export default function RouteShell({
     "/employees": "employees",
     "/payroll": "payroll",
     "/settings": "settings",
+    "/marketing": "marketing",
   };
   const visible = (href: string) => {
-    if (role === "DIRECTOR")
-      return ["/", "/orders", "/payroll", "/reports"].includes(href);
+    if (role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR") return true;
     if (href === "/partner-management") return false;
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
     if (role === "MANAGER")
       return ["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"].includes(href);
-    if (href === "/training" || href === "/measurements") return false;
+    if (role === "MARKETER") return ["/", "/marketing", "/calendar"].includes(href);
+    if (href === "/training" || href === "/measurements" || href === "/marketing") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
     Boolean(
@@ -139,7 +141,7 @@ export default function RouteShell({
                   className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
                 >
                   <Icon size={20} />
-                  {href === "/payroll" && role !== "DIRECTOR" && role !== "ACCOUNTANT"
+                  {href === "/payroll" && role !== "DIRECTOR" && role !== "OPERATIONS_DIRECTOR" && role !== "ACCOUNTANT"
                     ? "Моя зарплата"
                     : href === "/training" && role === "DIRECTOR"
                       ? "Обучение сотрудников"

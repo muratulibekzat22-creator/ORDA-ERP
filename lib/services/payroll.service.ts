@@ -33,10 +33,15 @@ const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => 
   return reason;
 };
 const director = (actor: PayrollActor) => {
-  if (actor.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new PayrollError("FORBIDDEN");
 };
 const payrollOperator = (actor: PayrollActor) => {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.ACCOUNTANT)
+  if (
+    actor.role !== Role.DIRECTOR &&
+    actor.role !== Role.OPERATIONS_DIRECTOR &&
+    actor.role !== Role.ACCOUNTANT
+  )
     throw new PayrollError("FORBIDDEN");
 };
 const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
@@ -894,7 +899,9 @@ export async function payrollSummary(
   requestedEmployeeId?: number,
 ) {
   const selfOnly = !(
-    actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT
+    actor.role === Role.DIRECTOR ||
+    actor.role === Role.OPERATIONS_DIRECTOR ||
+    actor.role === Role.ACCOUNTANT
   );
   if (actor.role === Role.PARTNER) throw new PayrollError("FORBIDDEN");
   const self = selfOnly

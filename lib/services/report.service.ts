@@ -7,10 +7,12 @@ import { requireTenantIdentity } from "@/lib/tenant-context";
 type Actor = { id: number; role: Role };
 type Scope = { managerUserId?: number };
 const range = (start: Date, end: Date) => ({ gte: start, lte: end });
+const leadership = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 
 export async function getReportsReadModel(params: URLSearchParams, actor: Actor): Promise<ReportsReadModel> {
   const companyId = requireTenantIdentity().companyId;
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
+  if (!leadership(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
   const period = resolveReportRange(params);
   const requestedManager = params.get("managerId");
   let scope: Scope = {};
@@ -26,17 +28,17 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const [clients, previousClients, orders, previousOrders, measurements, previousMeasurements, payments, previousPayments, production, managerUsers, completed] = await Promise.all([
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.start, period.end) }, select: { id: true, managerUserId: true, stage: true } }),
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.previousStart, period.previousEnd) }, select: { id: true } }),
-    prisma.order.findMany({ where: { ...activeOrder, createdAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, createdAt: true, promisedAt: true, productionDeadline: true, installation: { select: { scheduledAt: true } }, client: { select: { name: true, phone: true, city: true } }, payments: { select: { amount: true, type: true } } }, orderBy: { createdAt: "desc" } }),
+    prisma.order.findMany({ where: { ...activeOrder, createdAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, createdAt: true, promisedAt: true, productionDeadline: true, installation: { select: { scheduledAt: true } }, client: { select: { name: true, phone: true, city: true } }, payments: { select: { amount: true, type: true } }, payrollAccruals: { select: { amount: true, direction: true } } }, orderBy: { createdAt: "desc" } }),
     prisma.order.findMany({ where: { ...activeOrder, createdAt: range(period.previousStart, period.previousEnd) }, select: { amount: true } }),
     prisma.measurement.findMany({ where: { visitDate: range(period.start, period.end), order: activeOrder }, select: { order: { select: { managerUserId: true } } } }),
     prisma.measurement.count({ where: { visitDate: range(period.previousStart, period.previousEnd), order: activeOrder } }),
     prisma.payment.findMany({ where: { operationDate: range(period.start, period.end), order: activeOrder }, select: { amount: true, type: true, operationDate: true, order: { select: { managerUserId: true } } } }),
     prisma.payment.findMany({ where: { operationDate: range(period.previousStart, period.previousEnd), order: activeOrder }, select: { amount: true, type: true } }),
     prisma.production.groupBy({ by: ["stage"], where: { order: { ...orderScope, lifecycle: { not: "CANCELLED" }, createdAt: range(period.start, period.end) } }, _count: { _all: true }, orderBy: { stage: "asc" } }),
-    actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
+    leadership(actor.role) || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
-  const internalFinance = actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const internalFinance = leadership(actor.role) || actor.role === Role.ACCOUNTANT;
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
   const [customerBalance, partnerBalance, payrollTotals, expenseEntries] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
@@ -62,14 +64,13 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       ? prisma.companyLedgerEntry.findMany({
           where: {
             companyId,
-            direction: "EXPENSE",
+            direction: { in: ["INCOME", "EXPENSE"] },
             operationDate: range(period.start, period.end),
             affectsProfit: true,
             voidedAt: null,
-            source: { notIn: ["PAYROLL_ACCRUAL", "PAYROLL_PAYMENT", "OTHER_SYSTEM"] },
-            type: { not: "PARTNER_PAYOUT" },
+            source: "MANUAL",
           },
-          select: { amount: true },
+          select: { amount: true, direction: true, category: true },
         })
       : Promise.resolve([]),
   ]);
@@ -78,10 +79,10 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const salesAmount = orders.reduce((sum, item) => sum + money(item.amount), 0);
   const previousSales = previousOrders.reduce((sum, item) => sum + money(item.amount), 0);
   const cancelled = await prisma.order.count({ where: { ...orderScope, lifecycle: "CANCELLED", createdAt: range(period.start, period.end) } });
-  const managerMap = new Map(managerUsers.map((user) => [user.id, { id: user.id, name: user.name, leads: 0, measurements: 0, orders: 0, salesAmount: 0, received: 0, conversion: null as number | null }]));
+  const managerMap = new Map(managerUsers.map((user) => [user.id, { id: user.id, name: user.name, leads: 0, measurements: 0, orders: 0, salesAmount: 0, received: 0, completed: 0, overdue: 0, conversion: null as number | null }]));
   clients.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) managerMap.get(item.managerUserId)!.leads += 1; });
   measurements.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.measurements += 1; });
-  orders.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) { const row = managerMap.get(item.managerUserId)!; row.orders += 1; row.salesAmount += money(item.amount); } });
+  orders.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) { const row = managerMap.get(item.managerUserId)!; row.orders += 1; row.salesAmount += money(item.amount); if (item.lifecycle === "COMPLETED") row.completed += 1; const due = item.promisedAt ?? item.productionDeadline ?? item.installation?.scheduledAt; if (item.lifecycle !== "COMPLETED" && due && due < new Date()) row.overdue += 1; } });
   payments.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.received += paymentEffect(item.type, item.amount); });
   const managers = [...managerMap.values()].map((item) => ({ ...item, conversion: safePercent(item.orders, item.leads) })).sort((a, b) => b.salesAmount - a.salesAmount);
   const trendMap = new Map<string, { date: string; salesAmount: number; received: number }>();
@@ -89,14 +90,20 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   orders.forEach((item) => { const key = day(item.createdAt); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.salesAmount += money(item.amount); trendMap.set(key, value); });
   payments.forEach((item) => { const key = day(item.operationDate); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.received += paymentEffect(item.type, item.amount); trendMap.set(key, value); });
   const missingProductionPrice = orders.filter(
-    (item) => item.partnerAgreedAt === null || money(item.partnerPrice) <= 0,
+    (item) => money(item.partnerPrice) <= 0,
   ).length;
-  const grossMargin = missingProductionPrice > 0
-    ? null
-    : orders.reduce(
-        (sum, item) => sum + money(item.amount) - money(item.partnerPrice),
-        0,
-      );
+  const pricedOrders = orders.filter(
+    (item) => money(item.amount) > 0 && money(item.partnerPrice) > 0,
+  );
+  const productionCost = pricedOrders.reduce(
+    (sum, item) => sum + money(item.partnerPrice),
+    0,
+  );
+  const pricedSales = pricedOrders.reduce(
+    (sum, item) => sum + money(item.amount),
+    0,
+  );
+  const grossMargin = pricedSales - productionCost;
   const completionTasks = orders
     .map((order) => ({
       orderId: order.id,
@@ -114,14 +121,28 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const payrollPaidAll = Number(payrollPaidRow?.total ?? 0);
   const payrollAccrued = Number(payrollAccruedRow?.period_total ?? 0);
   const payrollPaid = Number(payrollPaidRow?.period_total ?? 0);
-  const recordedExpenses = expenseEntries.reduce(
-    (sum, entry) => sum + Number(entry.amount),
-    0,
-  );
-  const netProfit = grossMargin === null
-    ? null
-    : grossMargin - recordedExpenses - payrollAccrued;
-  const partnerAgreed = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.partnerPrice), 0);
+  const operatingExpenses = expenseEntries
+    .filter((entry) => entry.direction === "EXPENSE")
+    .reduce((sum, entry) => sum + Number(entry.amount), 0);
+  const additionalIncome = expenseEntries
+    .filter((entry) => entry.direction === "INCOME")
+    .reduce((sum, entry) => sum + Number(entry.amount), 0);
+  const expenseCategoryMap = new Map<string, number>();
+  expenseEntries
+    .filter((entry) => entry.direction === "EXPENSE")
+    .forEach((entry) =>
+      expenseCategoryMap.set(
+        entry.category,
+        (expenseCategoryMap.get(entry.category) ?? 0) + Number(entry.amount),
+      ),
+    );
+  const expensesByCategory = [...expenseCategoryMap.entries()]
+    .map(([category, amount]) => ({ category, amount }))
+    .sort((a, b) => b.amount - a.amount);
+  const recordedExpenses = operatingExpenses;
+  const netProfit =
+    grossMargin + additionalIncome - operatingExpenses - payrollAccrued;
+  const partnerAgreed = orders.filter((item) => money(item.partnerPrice) > 0).reduce((sum, item) => sum + money(item.partnerPrice), 0);
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
   return {
     generatedAt: new Date().toISOString(), role: actor.role as ReportsReadModel["role"],
@@ -133,10 +154,10 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       salesAmount: { current: salesAmount, previous: previousSales, changePercent: changePercent(salesAmount, previousSales) },
       received: { current: received, previous: previousReceived, changePercent: changePercent(received, previousReceived) }, remaining: currentCustomerRemaining, conversion: safePercent(orders.length, clients.length),
     },
-    sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(actor.role === Role.DIRECTOR ? { grossMargin } : {}) },
+    sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(leadership(actor.role) ? { grossMargin, ordersWithMargin: pricedOrders.length } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
     dataQuality: { missingProductionPrice, incompleteOrders: completionTasks.length, tasks: completionTasks },
-    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, grossMargin, recordedExpenses, netProfit, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
+    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, productionCost, grossMargin, grossMarginRate: safePercent(grossMargin, pricedSales), ordersWithMargin: pricedOrders.length, ordersWithoutMargin: orders.length - pricedOrders.length, additionalIncome, operatingExpenses, expensesByCategory, recordedExpenses, netProfit, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
     funnel: [
       { key: "leads", label: "Заявки", value: clients.length, conversionFromPrevious: null },
       { key: "measurements", label: "Замеры", value: measurements.length, conversionFromPrevious: safePercent(measurements.length, clients.length) },
@@ -144,6 +165,14 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     ], managers,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     production: production.map((item) => ({ stage: item.stage, count: item._count._all })),
-    orders: orders.map((item) => { const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0); return { id: item.id, number: item.number, client: item.client.name, manager: item.manager, amount: money(item.amount), productionPrice: item.partnerAgreedAt === null ? null : money(item.partnerPrice), received: paid, remaining: Math.max(0, money(item.amount) - paid), status: item.status }; }),
+    orders: orders.map((item) => {
+      const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0);
+      const productionPrice = money(item.partnerPrice) > 0 ? money(item.partnerPrice) : null;
+      const payrollAccruedForOrder = item.payrollAccruals.reduce(
+        (sum, accrual) => sum + (accrual.direction === "INCREASE" ? money(accrual.amount) : -money(accrual.amount)),
+        0,
+      );
+      return { id: item.id, number: item.number, client: item.client.name, manager: item.manager, amount: money(item.amount), productionPrice, grossMargin: productionPrice === null || money(item.amount) <= 0 ? null : money(item.amount) - productionPrice, payrollAccrued: payrollAccruedForOrder, received: paid, remaining: Math.max(0, money(item.amount) - paid), status: item.status };
+    }),
   };
 }

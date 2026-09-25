@@ -30,17 +30,19 @@ export type ManagerReportRow = {
   orders: number;
   salesAmount: number;
   received: number;
+  completed: number;
+  overdue: number;
   conversion: number | null;
 };
 
 export type ReportsReadModel = {
   generatedAt: string;
-  role: "DIRECTOR" | "MANAGER" | "ACCOUNTANT";
+  role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "MANAGER" | "ACCOUNTANT";
   period: Omit<ReportRange, "start" | "end" | "previousStart" | "previousEnd"> & {
     start: string; end: string; previousStart: string; previousEnd: string;
   };
   summary: ReportSummary;
-  sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number | null };
+  sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number; ordersWithMargin?: number };
   payments: { received: number; remaining: number };
   dataQuality: {
     missingProductionPrice: number;
@@ -60,9 +62,16 @@ export type ReportsReadModel = {
     partnerAgreed: number;
     partnerPaid: number;
     partnerRemaining: number;
-    grossMargin: number | null;
+    productionCost: number;
+    grossMargin: number;
+    grossMarginRate: number | null;
+    ordersWithMargin: number;
+    ordersWithoutMargin: number;
+    additionalIncome: number;
+    operatingExpenses: number;
+    expensesByCategory: Array<{ category: string; amount: number }>;
     recordedExpenses: number;
-    netProfit: number | null;
+    netProfit: number;
     payrollAccrued: number;
     payrollPaid: number;
     payrollPayable: number;
@@ -71,7 +80,7 @@ export type ReportsReadModel = {
   managers: ManagerReportRow[];
   trend: Array<{ date: string; salesAmount: number; received: number }>;
   production: Array<{ stage: string; count: number }>;
-  orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; productionPrice: number | null; received: number; remaining: number; status: string }>;
+  orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; productionPrice: number | null; grossMargin: number | null; payrollAccrued: number; received: number; remaining: number; status: string }>;
 };
 
 const OFFSET = "+05:00";

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle, CalendarDays, UserRound } from "lucide-react";
+import { AlertCircle, CalendarDays, CircleDollarSign, UserRound, WalletCards } from "lucide-react";
 import Link from "next/link";
 
 import type { OrderListItem } from "@/components/orders/OrderTable";
@@ -9,6 +9,8 @@ import { USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 
 const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Срок не указан";
+const money = (value: number | null | undefined) =>
+  `${Math.round(Number(value ?? 0)).toLocaleString("ru-RU")} ₸`;
 
 export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
   return (
@@ -38,6 +40,8 @@ export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
                     <div className="mt-3 space-y-1.5 text-xs text-slate-400">
                       <p className="flex items-center gap-2"><UserRound size={13}/><span className="truncate">{order.manager || "Ответственный не назначен"}</span></p>
                       <p className="flex items-center gap-2"><CalendarDays size={13}/><span>{date(order.deadline)}</span></p>
+                      <p className="flex items-center gap-2 text-slate-300"><CircleDollarSign size={13}/><span>Продажа: {money(order.amount)}</span></p>
+                      <p className="flex items-center gap-2 text-amber-200"><WalletCards size={13}/><span>Остаток клиента: {money(order.balance)}</span></p>
                     </div>
                     {order.missingFields?.length ? (
                       <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs text-amber-200">

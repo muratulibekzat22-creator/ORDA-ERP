@@ -17,6 +17,9 @@ import { reverseMeasurerBonusForCancelledOrder } from "@/lib/services/measuremen
 export type Order360Actor = { userId: number; role: Role; name: string };
 export class Order360Error extends Error {}
 
+const isDirector = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
+
 export const LIFECYCLE: OrderLifecycle[] = [
   OrderLifecycle.CREATED,
   OrderLifecycle.PREPARATION,
@@ -50,10 +53,10 @@ export async function canAccessOrder360(
   if (!order) return false;
   if (
     order.deletedAt &&
-    !(actor.role === Role.DIRECTOR && options.includeDeleted)
+    !(isDirector(actor.role) && options.includeDeleted)
   )
     return false;
-  if (actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT)
+  if (isDirector(actor.role) || actor.role === Role.ACCOUNTANT)
     return true;
   if (actor.role === Role.MANAGER)
     return (
@@ -227,11 +230,15 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
   if (target === OrderLifecycle.COMPLETED)
     checks = [
       {
-        code: "ACCEPTANCE",
-        passed: !!order.operationalAcceptedAt,
-        message: "Приёмка не зафиксирована",
+        code: "SALE_AMOUNT",
+        passed: Number(order.amount) > 0,
+        message: "Не указана сумма продажи",
       },
-      noCritical,
+      {
+        code: "PRODUCTION_PRICE",
+        passed: Number(order.partnerPrice) > 0,
+        message: "Не указана сумма производства",
+      },
     ];
   return { target, passed: checks.every((item) => item.passed), checks };
 }
@@ -241,7 +248,14 @@ function roleCanTransition(
   from: OrderLifecycle,
   to: OrderLifecycle,
 ) {
-  if (role === Role.DIRECTOR) return from !== to;
+  if (isDirector(role)) return from !== to;
+  if (
+    role === Role.MANAGER &&
+    to === OrderLifecycle.COMPLETED &&
+    from !== OrderLifecycle.COMPLETED &&
+    from !== OrderLifecycle.CANCELLED
+  )
+    return true;
   if (to === OrderLifecycle.CANCELLED)
     return role === Role.MANAGER && from !== OrderLifecycle.COMPLETED;
   const next = LIFECYCLE.indexOf(to) === LIFECYCLE.indexOf(from) + 1;
@@ -283,7 +297,11 @@ export async function availableTransitions(
   const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
   const preferred = [
     LIFECYCLE[currentIndex + 1],
-    ...(actor.role === Role.DIRECTOR ? [LIFECYCLE[currentIndex - 1]] : []),
+    ...((isDirector(actor.role) || actor.role === Role.MANAGER) &&
+    order.lifecycle !== OrderLifecycle.COMPLETED
+      ? [OrderLifecycle.COMPLETED]
+      : []),
+    ...(isDirector(actor.role) ? [LIFECYCLE[currentIndex - 1]] : []),
     OrderLifecycle.CANCELLED,
   ].filter((value): value is OrderLifecycle => Boolean(value));
   const candidates = [...new Set(preferred)].filter((to) => roleCanTransition(actor.role, order.lifecycle, to));
@@ -330,7 +348,7 @@ export async function transitionLifecycle(
       const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
       const targetIndex = LIFECYCLE.indexOf(input.to);
       if (
-        actor.role === Role.DIRECTOR &&
+        isDirector(actor.role) &&
         targetIndex >= 0 &&
         targetIndex < currentIndex &&
         !input.reason?.trim()
@@ -340,7 +358,7 @@ export async function transitionLifecycle(
       if (!gate.passed) {
         if (!(
           input.override &&
-          actor.role === Role.DIRECTOR &&
+          isDirector(actor.role) &&
           input.reason?.trim()
         ))
           throw new Order360Error("GATE_FAILED");
@@ -360,6 +378,9 @@ export async function transitionLifecycle(
         where: { id: input.orderId, version: input.expectedVersion },
         data: {
           lifecycle: input.to,
+          ...(input.to === OrderLifecycle.COMPLETED
+            ? { status: "Заказ завершён" }
+            : {}),
           version: { increment: 1 },
           ...(input.to === OrderLifecycle.COMPLETED
             ? { completedAt: new Date() }
@@ -408,7 +429,7 @@ export async function completeControlMeasurement(
   actor: Order360Actor,
 ) {
   await assertAccess(input.orderId, actor);
-  if (!(new Set<Role>([Role.DIRECTOR, Role.MANAGER, Role.MEASURER])).has(actor.role))
+  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.MEASURER])).has(actor.role))
     throw new Order360Error("FORBIDDEN");
   if (Number.isNaN(input.completedAt.getTime())) throw new Order360Error("INVALID_DATE");
   const comment = input.comment?.trim().slice(0, 2000) || null;

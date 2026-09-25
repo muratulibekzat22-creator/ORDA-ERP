@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!session?.user || !enterTenantFromSession(session))
     return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
   const role = session.user.role as Role;
-  const allowed: Role[] = [Role.DIRECTOR, Role.MANAGER, Role.ACCOUNTANT, Role.PRODUCTION, Role.INSTALLER];
+  const allowed: Role[] = [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT, Role.PRODUCTION, Role.INSTALLER];
   if (!allowed.includes(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const params = new URL(request.url).searchParams;

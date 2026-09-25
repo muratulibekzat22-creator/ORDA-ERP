@@ -125,7 +125,7 @@ const methodLabels: Record<string, string> = {
 
 export default function FinanceJournalPage() {
   const { data: session } = useSession();
-  const isDirector = session?.user.role === "DIRECTOR";
+  const isDirector = session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR";
   const [journal, setJournal] = useState(emptyJournal);
   const [period, setPeriod] = useState("month");
   const [tab, setTab] = useState("all");

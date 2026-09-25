@@ -58,6 +58,7 @@ const workspace = readFileSync("components/orders/OrderWorkspace.tsx", "utf8");
 const economy = readFileSync("components/orders/OrderEconomy.tsx", "utf8");
 const orderPageAuth = readFileSync("lib/order-page-auth.ts", "utf8");
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
+const orderDetailApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
 const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPanel.tsx", "utf8");
@@ -65,7 +66,8 @@ const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
 const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
-assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll", "\/reports"\]/);
+assert.match(routeShell, /role === "DIRECTOR" \|\| role === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /"\/marketing", "Маркетинг"/);
 for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));
 for (const label of ["Исполнение", "Добавить оплату", "Редактировать", "Подробнее"])
@@ -89,14 +91,20 @@ for (const tab of ["Заявки", "Канбан", "Завершённые"])
   assert.match(ordersPage, new RegExp(tab));
 for (const column of ["Заказ оформлен", "Договор", "Передан в цех", "Заказ завершён"])
   assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(column));
+for (const label of ["Продажа:", "Остаток клиента:", "Срок не указан"])
+  assert.match(orderKanban, new RegExp(label));
+assert.match(workspace, /\["clientName", "Имя клиента"\]/);
+assert.match(orderDetailApi, /tx\.client\.update\([\s\S]*name: clientName/);
 assert.match(ordersApi, /"active", "board", "completed", "all"/);
 for (const label of ["Цена производства", "Расчёт с цехом", "Поддержка цеху", "Аванс цеху", "Финальный расчёт"])
   assert.match(workshopSettlement, new RegExp(label));
 for (const removed of ["Основание / комментарий", "Дата фиксации", "Поле обязательно до передачи заказа"])
   assert.doesNotMatch(workshopSettlement, new RegExp(removed));
-assert.doesNotMatch(readFileSync("lib/services/order360.service.ts", "utf8"), /code: "PRODUCTION_PRICE"/);
+const order360 = readFileSync("lib/services/order360.service.ts", "utf8");
+assert.match(order360, /code: "SALE_AMOUNT"[\s\S]*code: "PRODUCTION_PRICE"/);
+assert.match(order360, /code: "PRODUCTION_PRICE"[\s\S]*Не указана сумма производства/);
 assert.match(ordersPage, /missing-production-price/);
-assert.match(ordersApi, /role !== Role\.DIRECTOR && role !== Role\.MANAGER/);
+assert.match(ordersApi, /!isDirector\(role\) && role !== Role\.MANAGER/);
 for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])
   assert.match(ordersApi, new RegExp(`"${field}"`));
 for (const page of ["offer", "contract", "act", "invoice", "print"])

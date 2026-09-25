@@ -20,7 +20,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;

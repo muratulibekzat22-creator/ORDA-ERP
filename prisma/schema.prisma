@@ -87,41 +87,44 @@ model Company {
   isDemo   Boolean     @default(false)
   active   Boolean     @default(true)
 
-  users                   User[]
-  clients                 Client[]
-  commercialProposals     CommercialProposal[]
-  partners                Partner[]
-  partnerOrderRelations   PartnerOrderRelation[]
-  partnerOperations       PartnerSettlementOperation[]
-  partnerAuditEvents      PartnerAuditEvent[]
-  orders                  Order[]
-  calendarTasks           CalendarTask[]
-  companyLedgerEntries    CompanyLedgerEntry[]
-  financeCategories       FinanceCategory[]
-  employeePayrollProfiles EmployeePayrollProfile[]
-  payrollPeriods          PayrollPeriod[]
-  personalLedgerEntries   PersonalLedgerEntry[]
-  documents               Document[]
-  attachments             Attachment[]
-  materials               Material[]
-  companySettings         CompanySettings[]
-  systemSettings          SystemSettings[]
-  materialMovements       MaterialMovement[]
-  suppliers               Supplier[]
-  purchaseBatches         PurchaseBatch[]
-  inventoryValuations     InventoryValuationEntry[]
-  inventoryCogsEntries    InventoryCogsEntry[]
-  materialReservations    MaterialReservation[]
-  warehouseMutations      WarehouseMutation[]
-  measurements            Measurement[]
-  payments                Payment[]
-  cashShifts              CashShift[]
-  commercialAdjustments   CommercialAdjustment[]
-  productions             Production[]
-  settings                Settings[]
-  calculatorTariffs       CalculatorTariff[]
-  orderEvents             OrderEvent[]
-  rolePermissions         RolePermission[]
+  users                      User[]
+  clients                    Client[]
+  commercialProposals        CommercialProposal[]
+  partners                   Partner[]
+  partnerOrderRelations      PartnerOrderRelation[]
+  partnerOperations          PartnerSettlementOperation[]
+  partnerAuditEvents         PartnerAuditEvent[]
+  orders                     Order[]
+  calendarTasks              CalendarTask[]
+  companyLedgerEntries       CompanyLedgerEntry[]
+  financeCategories          FinanceCategory[]
+  employeePayrollProfiles    EmployeePayrollProfile[]
+  payrollPeriods             PayrollPeriod[]
+  personalLedgerEntries      PersonalLedgerEntry[]
+  documents                  Document[]
+  attachments                Attachment[]
+  materials                  Material[]
+  companySettings            CompanySettings[]
+  systemSettings             SystemSettings[]
+  materialMovements          MaterialMovement[]
+  suppliers                  Supplier[]
+  purchaseBatches            PurchaseBatch[]
+  inventoryValuations        InventoryValuationEntry[]
+  inventoryCogsEntries       InventoryCogsEntry[]
+  materialReservations       MaterialReservation[]
+  warehouseMutations         WarehouseMutation[]
+  measurements               Measurement[]
+  payments                   Payment[]
+  cashShifts                 CashShift[]
+  commercialAdjustments      CommercialAdjustment[]
+  productions                Production[]
+  settings                   Settings[]
+  calculatorTariffs          CalculatorTariff[]
+  orderEvents                OrderEvent[]
+  rolePermissions            RolePermission[]
+  managementMarketingTasks   ManagementMarketingTask[]
+  managementMarketingMetrics ManagementMarketingMetric[]
+  recruitmentVacancies       RecruitmentVacancy[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -203,6 +206,21 @@ enum Permission {
   payroll
   marketing
   operations
+}
+
+enum ManagementMarketingTaskStatus {
+  TODO
+  IN_PROGRESS
+  REVIEW
+  DONE
+}
+
+enum RecruitmentVacancyStatus {
+  OPEN
+  INTERVIEW
+  OFFER
+  HIRED
+  PAUSED
 }
 
 enum LeadStage {
@@ -455,71 +473,75 @@ model User {
   sessionVersion      Int       @default(1)
   employeeCode        String?   @unique
 
-  partnerProfile               Partner?
-  assignedMeasurements         Measurement[]
-  assignedProductions          Production[]
-  uploadedAttachments          Attachment[]                  @relation("AttachmentUploadedBy")
-  clientInteractions           ClientInteraction[]           @relation("ClientInteractionAuthor")
-  clientAttachments            ClientAttachment[]            @relation("ClientAttachmentUploader")
-  warehouseMovements           MaterialMovement[]            @relation("WarehouseMovementEmployee")
-  warehouseReservations        MaterialReservation[]         @relation("WarehouseReservationCreator")
-  warehouseMutations           WarehouseMutation[]           @relation("WarehouseMutationActor")
-  materialPriceChanges         MaterialPriceHistory[]        @relation("MaterialPriceChangedBy")
-  companyLedgerEntries         CompanyLedgerEntry[]          @relation("CompanyLedgerAuthor")
-  personalLedgerEntries        PersonalLedgerEntry[]         @relation("PersonalLedgerAuthor")
-  financeAuditEvents           FinanceAuditEvent[]           @relation("FinanceAuditAuthor")
-  commercialAdjustments        CommercialAdjustment[]        @relation("CommercialAdjustmentAuthor")
-  partnerAssignments           PartnerAssignmentHistory[]    @relation("PartnerAssignmentAuthor")
-  partnersCreated              Partner[]                     @relation("PartnerCreatedBy")
-  partnerRelationsCreated      PartnerOrderRelation[]        @relation("PartnerRelationCreatedBy")
-  partnerOperationsCreated     PartnerSettlementOperation[]  @relation("PartnerOperationCreatedBy")
-  partnerAuditEvents           PartnerAuditEvent[]           @relation("PartnerAuditActor")
-  authAuditEvents              AuthAuditEvent[]
-  managedClients               Client[]                      @relation("ClientManager")
-  deletedClients               Client[]                      @relation("ClientDeletedBy")
-  changedLeadStages            LeadStatusHistory[]           @relation("LeadStageChangedBy")
-  createdLeadActions           LeadNextAction[]              @relation("LeadActionCreatedBy")
-  completedLeadActions         LeadNextAction[]              @relation("LeadActionCompletedBy")
-  responsiblePurchaseBatches   PurchaseBatch[]               @relation("PurchaseBatchResponsible")
-  finalizedPurchaseBatches     PurchaseBatch[]               @relation("PurchaseBatchFinalizer")
-  purchaseAdditionalCosts      PurchaseAdditionalCost[]
-  purchaseCostRevisions        PurchaseCostRevision[]
-  payrollProfile               EmployeePayrollProfile?
-  approvedSalaryRates          EmployeeSalaryRate[]          @relation("SalaryRateApprover")
-  approvedPayrollAccruals      PayrollAccrual[]              @relation("PayrollAccrualApprover")
-  createdPayrollAccruals       PayrollAccrual[]              @relation("PayrollAccrualCreator")
-  payrollPayments              PayrollPayment[]              @relation("PayrollPaymentAuthor")
-  payrollConfirmationsCreated  PayrollPaymentConfirmation[]  @relation("PayrollConfirmationCreator")
-  payrollConfirmationsReviewed PayrollPaymentConfirmation[]  @relation("PayrollConfirmationReviewer")
-  reviewedAdvanceRequests      PayrollAdvanceRequest[]       @relation("AdvanceReviewer")
-  closedPayrollPeriods         PayrollPeriod[]               @relation("PayrollPeriodCloser")
-  payrollAuditEvents           PayrollAuditEvent[]           @relation("PayrollAuditActor")
-  managedOrders                Order[]                       @relation("OrderResponsibleManager")
-  deletedOrders                Order[]                       @relation("OrderDeletedBy")
-  openedOrderBlockers          OrderBlocker[]                @relation("OrderBlockerOpenedBy")
-  responsibleOrderBlockers     OrderBlocker[]                @relation("OrderBlockerResponsible")
-  resolvedOrderBlockers        OrderBlocker[]                @relation("OrderBlockerResolvedBy")
-  orderGateOverrides           OrderGateOverride[]           @relation("OrderGateOverrideAuthor")
-  orderLifecycleEvents         OrderLifecycleEvent[]         @relation("OrderLifecycleEventActor")
-  assignedInstallations        OrderInstallation[]           @relation("OrderInstallationInstaller")
-  assignedCalendarTasks        CalendarTask[]                @relation("CalendarTaskAssignee")
-  createdCalendarTasks         CalendarTask[]                @relation("CalendarTaskCreator")
-  completedCalendarTasks       CalendarTask[]                @relation("CalendarTaskCompleter")
-  calendarTaskAuditEvents      CalendarTaskAudit[]           @relation("CalendarTaskAuditActor")
-  uploadedMeasurementPhotos    MeasurementAttachment[]       @relation("MeasurementAttachmentUploader")
-  measurementAuditEvents       MeasurementAudit[]            @relation("MeasurementAuditActor")
-  authoredDocuments            Document[]                    @relation("DocumentAuthor")
-  archivedDocuments            Document[]                    @relation("DocumentArchivedBy")
-  uploadedDocumentVersions     DocumentVersion[]             @relation("DocumentVersionUploader")
-  documentAuditEvents          DocumentAudit[]               @relation("DocumentAuditActor")
-  memoAcknowledgements         CustomerMemoAcknowledgement[] @relation("MemoAcknowledgedBy")
-  responsibleCashShifts        CashShift[]                   @relation("CashShiftResponsibleManager")
-  closedCashShifts             CashShift[]                   @relation("CashShiftClosedBy")
-  registeredPayments           Payment[]                     @relation("PaymentRegisteredBy")
-  clientDeletionAudits         ClientDeletionAudit[]         @relation("ClientDeletionAuditActor")
-  trainingAssignments          TrainingAssignment[]          @relation("TrainingAssignmentUser")
-  trainingOverrides            TrainingAssignment[]          @relation("TrainingAssignmentOverrideBy")
-  trainingAuditEvents          TrainingAudit[]               @relation("TrainingAuditActor")
+  partnerProfile                    Partner?
+  assignedMeasurements              Measurement[]
+  assignedProductions               Production[]
+  uploadedAttachments               Attachment[]                  @relation("AttachmentUploadedBy")
+  clientInteractions                ClientInteraction[]           @relation("ClientInteractionAuthor")
+  clientAttachments                 ClientAttachment[]            @relation("ClientAttachmentUploader")
+  warehouseMovements                MaterialMovement[]            @relation("WarehouseMovementEmployee")
+  warehouseReservations             MaterialReservation[]         @relation("WarehouseReservationCreator")
+  warehouseMutations                WarehouseMutation[]           @relation("WarehouseMutationActor")
+  materialPriceChanges              MaterialPriceHistory[]        @relation("MaterialPriceChangedBy")
+  companyLedgerEntries              CompanyLedgerEntry[]          @relation("CompanyLedgerAuthor")
+  personalLedgerEntries             PersonalLedgerEntry[]         @relation("PersonalLedgerAuthor")
+  financeAuditEvents                FinanceAuditEvent[]           @relation("FinanceAuditAuthor")
+  commercialAdjustments             CommercialAdjustment[]        @relation("CommercialAdjustmentAuthor")
+  partnerAssignments                PartnerAssignmentHistory[]    @relation("PartnerAssignmentAuthor")
+  partnersCreated                   Partner[]                     @relation("PartnerCreatedBy")
+  partnerRelationsCreated           PartnerOrderRelation[]        @relation("PartnerRelationCreatedBy")
+  partnerOperationsCreated          PartnerSettlementOperation[]  @relation("PartnerOperationCreatedBy")
+  partnerAuditEvents                PartnerAuditEvent[]           @relation("PartnerAuditActor")
+  authAuditEvents                   AuthAuditEvent[]
+  managedClients                    Client[]                      @relation("ClientManager")
+  deletedClients                    Client[]                      @relation("ClientDeletedBy")
+  changedLeadStages                 LeadStatusHistory[]           @relation("LeadStageChangedBy")
+  createdLeadActions                LeadNextAction[]              @relation("LeadActionCreatedBy")
+  completedLeadActions              LeadNextAction[]              @relation("LeadActionCompletedBy")
+  responsiblePurchaseBatches        PurchaseBatch[]               @relation("PurchaseBatchResponsible")
+  finalizedPurchaseBatches          PurchaseBatch[]               @relation("PurchaseBatchFinalizer")
+  purchaseAdditionalCosts           PurchaseAdditionalCost[]
+  purchaseCostRevisions             PurchaseCostRevision[]
+  payrollProfile                    EmployeePayrollProfile?
+  approvedSalaryRates               EmployeeSalaryRate[]          @relation("SalaryRateApprover")
+  approvedPayrollAccruals           PayrollAccrual[]              @relation("PayrollAccrualApprover")
+  createdPayrollAccruals            PayrollAccrual[]              @relation("PayrollAccrualCreator")
+  payrollPayments                   PayrollPayment[]              @relation("PayrollPaymentAuthor")
+  payrollConfirmationsCreated       PayrollPaymentConfirmation[]  @relation("PayrollConfirmationCreator")
+  payrollConfirmationsReviewed      PayrollPaymentConfirmation[]  @relation("PayrollConfirmationReviewer")
+  reviewedAdvanceRequests           PayrollAdvanceRequest[]       @relation("AdvanceReviewer")
+  closedPayrollPeriods              PayrollPeriod[]               @relation("PayrollPeriodCloser")
+  payrollAuditEvents                PayrollAuditEvent[]           @relation("PayrollAuditActor")
+  managedOrders                     Order[]                       @relation("OrderResponsibleManager")
+  deletedOrders                     Order[]                       @relation("OrderDeletedBy")
+  openedOrderBlockers               OrderBlocker[]                @relation("OrderBlockerOpenedBy")
+  responsibleOrderBlockers          OrderBlocker[]                @relation("OrderBlockerResponsible")
+  resolvedOrderBlockers             OrderBlocker[]                @relation("OrderBlockerResolvedBy")
+  orderGateOverrides                OrderGateOverride[]           @relation("OrderGateOverrideAuthor")
+  orderLifecycleEvents              OrderLifecycleEvent[]         @relation("OrderLifecycleEventActor")
+  assignedInstallations             OrderInstallation[]           @relation("OrderInstallationInstaller")
+  assignedCalendarTasks             CalendarTask[]                @relation("CalendarTaskAssignee")
+  createdCalendarTasks              CalendarTask[]                @relation("CalendarTaskCreator")
+  completedCalendarTasks            CalendarTask[]                @relation("CalendarTaskCompleter")
+  calendarTaskAuditEvents           CalendarTaskAudit[]           @relation("CalendarTaskAuditActor")
+  uploadedMeasurementPhotos         MeasurementAttachment[]       @relation("MeasurementAttachmentUploader")
+  measurementAuditEvents            MeasurementAudit[]            @relation("MeasurementAuditActor")
+  authoredDocuments                 Document[]                    @relation("DocumentAuthor")
+  archivedDocuments                 Document[]                    @relation("DocumentArchivedBy")
+  uploadedDocumentVersions          DocumentVersion[]             @relation("DocumentVersionUploader")
+  documentAuditEvents               DocumentAudit[]               @relation("DocumentAuditActor")
+  memoAcknowledgements              CustomerMemoAcknowledgement[] @relation("MemoAcknowledgedBy")
+  responsibleCashShifts             CashShift[]                   @relation("CashShiftResponsibleManager")
+  closedCashShifts                  CashShift[]                   @relation("CashShiftClosedBy")
+  registeredPayments                Payment[]                     @relation("PaymentRegisteredBy")
+  clientDeletionAudits              ClientDeletionAudit[]         @relation("ClientDeletionAuditActor")
+  trainingAssignments               TrainingAssignment[]          @relation("TrainingAssignmentUser")
+  trainingOverrides                 TrainingAssignment[]          @relation("TrainingAssignmentOverrideBy")
+  trainingAuditEvents               TrainingAudit[]               @relation("TrainingAuditActor")
+  assignedManagementMarketingTasks  ManagementMarketingTask[]     @relation("ManagementMarketingTaskAssignee")
+  createdManagementMarketingTasks   ManagementMarketingTask[]     @relation("ManagementMarketingTaskCreator")
+  createdManagementMarketingMetrics ManagementMarketingMetric[]   @relation("ManagementMarketingMetricCreator")
+  createdRecruitmentVacancies       RecruitmentVacancy[]          @relation("RecruitmentVacancyCreator")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1684,6 +1706,61 @@ model MaterialPriceHistory {
   createdAt    DateTime @default(now())
 
   @@index([materialId, createdAt])
+}
+
+model ManagementMarketingTask {
+  id          Int                           @id @default(autoincrement())
+  companyId   Int                           @default(dbgenerated())
+  company     Company                       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  title       String
+  description String?
+  status      ManagementMarketingTaskStatus @default(TODO)
+  priority    Int                           @default(2)
+  dueAt       DateTime?
+  assigneeId  Int?
+  assignee    User?                         @relation("ManagementMarketingTaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdById Int
+  createdBy   User                          @relation("ManagementMarketingTaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime                      @default(now())
+  updatedAt   DateTime                      @updatedAt
+
+  @@index([companyId, status, dueAt])
+}
+
+model ManagementMarketingMetric {
+  id          Int      @id @default(autoincrement())
+  companyId   Int      @default(dbgenerated())
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  metricMonth DateTime
+  channel     String
+  spend       Decimal  @default(0) @db.Decimal(14, 2)
+  leads       Int      @default(0)
+  orders      Int      @default(0)
+  revenue     Decimal  @default(0) @db.Decimal(14, 2)
+  note        String?
+  createdById Int
+  createdBy   User     @relation("ManagementMarketingMetricCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([companyId, metricMonth, channel])
+  @@index([companyId, metricMonth])
+}
+
+model RecruitmentVacancy {
+  id          Int                      @id @default(autoincrement())
+  companyId   Int                      @default(dbgenerated())
+  company     Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  title       String
+  status      RecruitmentVacancyStatus @default(OPEN)
+  candidates  Int                      @default(0)
+  note        String?
+  createdById Int
+  createdBy   User                     @relation("RecruitmentVacancyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@index([companyId, status, updatedAt])
 }
 
 model CompanySettings {

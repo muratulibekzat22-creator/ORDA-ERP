@@ -23,6 +23,7 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
   }, []);
 
   const role = session?.user?.role as Role | undefined;
+  const accountRole = (session?.user?.accountRole || role) as Role | undefined;
 
   return (
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-[#0f172a]/95 px-3 py-2 backdrop-blur md:px-6">
@@ -39,13 +40,13 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
         <div className="relative">
           <button type="button" aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)} className="flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-2 py-2 text-left sm:px-3">
             <UserCircle size={30} className="shrink-0 text-blue-400" />
-            <div className="hidden min-w-0 sm:block"><p className="max-w-36 truncate text-sm font-semibold text-white">{session?.user?.name ?? "Гость"}</p><p className="truncate text-xs text-slate-400">{role ? roleNames[role] : "Не авторизован"}</p></div>
+            <div className="hidden min-w-0 sm:block"><p className="max-w-36 truncate text-sm font-semibold text-white">{session?.user?.name ?? "Гость"}</p><p className="truncate text-xs text-slate-400">{accountRole ? roleNames[accountRole] : "Не авторизован"}</p></div>
             <ChevronDown size={15} className="hidden text-slate-400 sm:block" />
           </button>
           {profileOpen && <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-56 rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
             <Link href="/change-password" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><KeyRound size={17}/>Настройки аккаунта</Link>
-            {role === "DIRECTOR" && <Link href="/settings" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><Settings size={17}/>Настройки компании</Link>}
-            {role === "DIRECTOR" && <Link href="/calculator-config" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><SlidersHorizontal size={17}/>Настройки калькулятора</Link>}
+            {(role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR") && <Link href="/settings" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><Settings size={17}/>Настройки компании</Link>}
+            {(role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR") && <Link href="/calculator-config" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><SlidersHorizontal size={17}/>Настройки калькулятора</Link>}
           </div>}
         </div>
         {session && <button type="button" aria-label="Выйти из системы" title="Выйти" onClick={() => signOut({ callbackUrl: "/login" })} className="grid size-11 shrink-0 place-items-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><LogOut size={20}/></button>}

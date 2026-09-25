@@ -42,10 +42,10 @@ export default function WorkshopSettlementPanel({
   const router = useRouter();
   const { data: session } = useSession();
   const role = session?.user.role ?? "";
-  const canSetPrice = !readOnly && ["DIRECTOR", "MANAGER"].includes(role);
+  const canSetPrice = !readOnly && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
   const canManageSettlement =
-    !readOnly && ["DIRECTOR", "ACCOUNTANT"].includes(role);
-  const director = role === "DIRECTOR";
+    !readOnly && ["DIRECTOR", "OPERATIONS_DIRECTOR", "ACCOUNTANT"].includes(role);
+  const director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR";
   const partnerSettlement = order.settlement?.partner;
   const [productionPrice, setProductionPrice] = useState(
     order.productionPrice == null ? "" : String(order.productionPrice),

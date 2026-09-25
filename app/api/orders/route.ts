@@ -18,6 +18,8 @@ import { requirePermission } from "@/lib/server-auth";
 import { countOrders, createOrder, getOrders } from "@/lib/services/order.service";
 
 const MAX_MONEY = 9_999_999_999.99;
+const isDirector = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 const paymentMethods = new Set<string>(PAYMENT_METHODS.map((item) => item.value));
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : null;
@@ -67,7 +69,7 @@ export async function GET(request: Request) {
 
     const deletedOnly = params.get("deletedOnly") === "true";
     const includeDeleted = params.get("includeDeleted") === "true";
-    if (role !== Role.DIRECTOR && (deletedOnly || includeDeleted))
+    if (!isDirector(role) && (deletedOnly || includeDeleted))
       return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
 
     const partner = role === Role.PARTNER
@@ -153,7 +155,7 @@ export async function GET(request: Request) {
     ]);
 
     const data = orders.map((order) => {
-      if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
+      if (isDirector(role) || role === Role.ACCOUNTANT) return order;
       const safe = { ...order } as Partial<typeof order>;
       delete safe.netProfit;
       delete safe.netMargin;
@@ -198,12 +200,12 @@ export async function POST(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+  if (!isDirector(role) && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = (await request.json()) as Record<string, unknown>;
     if (
-      role !== Role.DIRECTOR &&
+      !isDirector(role) &&
       ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"].some((key) => key in body)
     )
       return NextResponse.json(
@@ -222,11 +224,11 @@ export async function POST(request: Request) {
     const managerUserId = role === Role.MANAGER
       ? Number(auth.session!.user.id)
       : positiveInteger(body.managerUserId);
-    const partnerId = role === Role.DIRECTOR && body.partnerId
+    const partnerId = isDirector(role) && body.partnerId
       ? positiveInteger(body.partnerId)
       : null;
-    const partnerPrice = role === Role.DIRECTOR ? money(body.partnerPrice, 0) : 0;
-    const partnerPaid = role === Role.DIRECTOR ? money(body.partnerPaid, 0) : 0;
+    const partnerPrice = isDirector(role) ? money(body.partnerPrice, 0) : 0;
+    const partnerPaid = isDirector(role) ? money(body.partnerPaid, 0) : 0;
     const orderReceivedAt = dateValue(body.orderReceivedAt) ?? new Date();
     const promisedAt = dateValue(body.readinessDate ?? body.promisedAt);
     const paymentMethod = text(body.paymentMethod) ?? "BANK_TRANSFER";
@@ -248,7 +250,7 @@ export async function POST(request: Request) {
 
     const [manager, partner] = await Promise.all([
       prisma.user.findFirst({
-        where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR] } },
+        where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] } },
         select: { id: true, name: true },
       }),
       partnerId
@@ -290,7 +292,7 @@ export async function POST(request: Request) {
       amount,
       prepayment,
       partnerPrice,
-      partnerPriceSet: role === Role.DIRECTOR && Boolean(partnerId) && Object.hasOwn(body, "partnerPrice"),
+      partnerPriceSet: isDirector(role) && Boolean(partnerId) && Object.hasOwn(body, "partnerPrice"),
       partnerPaid,
       manager: manager.name,
       managerUserId: manager.id,
@@ -310,7 +312,7 @@ export async function POST(request: Request) {
       requestHash: createRequestHash(hashPayload),
     });
     const responseOrder = { ...result.order } as Record<string, unknown>;
-    if (role !== Role.DIRECTOR)
+    if (!isDirector(role))
       for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"])
         delete responseOrder[field];
     return NextResponse.json(responseOrder, { status: result.created ? 201 : 200 });

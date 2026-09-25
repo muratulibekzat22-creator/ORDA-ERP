@@ -10,7 +10,7 @@ if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.T
 const tag = `dashboard-${Date.now()}`;
 
 type ManagementProjection = {
-  finance: { revenue: number; received: number; directExpenses: number; netProfit: number | null };
+  finance: { revenue: number; received: number; directExpenses: number; netProfit: number; ordersWithMargin: number; ordersWithoutMargin: number };
   orders: { active: number; beforeWorkshop: number; incompleteData: number };
   attention: Array<{ id: number }>;
 };
@@ -62,7 +62,9 @@ async function main() {
     assert.equal(director.finance.revenue - baseline.finance.revenue, 3000, "director revenue must use current non-cancelled orders");
     assert.equal(director.finance.received - baseline.finance.received, 400, "client receipts must use Payment rows");
     assert.equal(director.finance.directExpenses - baseline.finance.directExpenses, 500, "agreed partner cost must enter direct expenses once");
-    assert.equal(director.finance.netProfit, null, "profit must remain unknown while one order has no cost data");
+    assert.equal(director.finance.netProfit - baseline.finance.netProfit, 500, "complete orders must keep contributing profit");
+    assert.equal(director.finance.ordersWithMargin - baseline.finance.ordersWithMargin, 1, "priced order counter is wrong");
+    assert.equal(director.finance.ordersWithoutMargin - baseline.finance.ordersWithoutMargin, 1, "incomplete order must be reported separately");
     assert.equal(director.orders.active - baseline.orders.active, 2, "cancelled order entered active order counters");
     assert.equal(director.orders.beforeWorkshop - baseline.orders.beforeWorkshop, 2);
     assert.equal(director.orders.incompleteData - baseline.orders.incompleteData, 2, "incomplete order counter is wrong");
@@ -81,7 +83,7 @@ async function main() {
     assert(route.includes("!session?.user") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Выручка", "Получено от клиентов", "Прямые расходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    for (const label of ["Выручка", "Получено от клиентов", "Цена производства", "Прочие доходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить доход", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
     assert(!dashboard.includes("<table"), "Director team performance must not regress to a wide table");
     for (const routeName of ["/orders?tab=active", "/orders?tab=active&attention=overdue"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
     for (const removed of ["/clients", "/calendar", "/warehouse", "/production", "/measurements"])

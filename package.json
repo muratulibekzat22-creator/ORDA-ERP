@@ -61,6 +61,7 @@
     "test:application-lifecycle": "tsx scripts/test-application-measurement-lifecycle.ts",
     "test:application-go-live": "tsx scripts/test-application-lifecycle-go-live.ts",
     "test:reports": "tsx scripts/test-reports.ts",
+    "test:marketing": "tsx scripts/test-management-marketing.ts",
     "test:orders-module": "tsx scripts/test-orders-module.ts",
     "test:order-soft-delete": "tsx scripts/test-order-soft-delete.ts",
     "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",

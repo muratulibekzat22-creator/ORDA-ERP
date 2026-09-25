@@ -28,7 +28,27 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "installation",
     "warehouse",
     "payroll",
+    "marketing",
   ],
+  [Role.OPERATIONS_DIRECTOR]: [
+    "employees",
+    "clients",
+    "orders",
+    "measurements",
+    "calendar",
+    "documents",
+    "finance",
+    "partners",
+    "reports",
+    "settings",
+    "design",
+    "production",
+    "installation",
+    "warehouse",
+    "payroll",
+    "marketing",
+  ],
+  [Role.MARKETER]: ["marketing", "calendar"],
   [Role.MANAGER]: [
     "clients",
     "orders",
@@ -73,9 +93,14 @@ assert.deepEqual(roleHome, {
 const roleDashboard = read("app/page.tsx");
 includesAll(
   roleDashboard,
-  ["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"],
+  ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"],
   "role dashboards",
 );
+
+const authRoute = read("app/api/auth/[...nextauth]/route.ts");
+assert.match(authRoute, /accountRole === "OPERATIONS_DIRECTOR"[\s\S]*\? "DIRECTOR"/);
+const header = read("components/Header.tsx");
+assert.match(header, /session\?\.user\?\.accountRole \|\| role/);
 
 const proxy = read("proxy.ts");
 includesAll(
@@ -90,14 +115,15 @@ includesAll(
 );
 
 const routeShell = read("components/layout/RouteShell.tsx");
-assert.match(routeShell, /role === "DIRECTOR"[\s\S]*\["\/", "\/orders", "\/payroll", "\/reports"\]/);
+assert.match(routeShell, /role === "DIRECTOR" \|\| role === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar"\]/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
 const orderList = read("app/api/orders/route.ts");
 includesAll(
   orderList,
   [
-    "role !== Role.DIRECTOR && role !== Role.MANAGER",
+    "!isDirector(role) && role !== Role.MANAGER",
     '["partnerId", "partnerPrice", "partnerPaid", "companyProfit"]',
     "delete safe.netProfit",
     "delete safe.netMargin",
@@ -167,7 +193,7 @@ assert.match(
 
 const finance = read("app/api/finance/route.ts");
 const partnerFinanceGuard = finance.indexOf(
-  "auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT",
+  "auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT",
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(

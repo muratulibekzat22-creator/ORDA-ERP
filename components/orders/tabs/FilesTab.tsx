@@ -29,7 +29,7 @@ export default function FilesTab({
   const [error, setError] = useState("");
   const canManage =
     !readOnly &&
-    (session?.user.role === "DIRECTOR" || session?.user.role === "MANAGER");
+    (session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR" || session?.user.role === "MANAGER");
   const load = useCallback(async () => {
     setLoading(true);
     const response = await fetch(`/api/attachments?orderId=${orderId}`, {

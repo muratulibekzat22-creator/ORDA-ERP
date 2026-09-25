@@ -19,7 +19,7 @@ import {
   resolveBlocker,
   transitionLifecycle,
 } from "../lib/services/order360.service";
-import { assignPartnerToOrder } from "../lib/services/partner.service";
+import { assignPartnerToOrder, setProductionPrice } from "../lib/services/partner.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
   throw new Error("Order 360 integration requires TEST_DATABASE_URL");
@@ -126,6 +126,8 @@ async function main() {
     version = Number(acceptance.version);
     const accepted = await confirmMilestone({ orderId: order.id, action: "record-acceptance", expectedVersion: version, key: key("accepted"), requestHash: hash("accepted") }, actors.manager);
     version = Number(accepted.version);
+    await code(() => transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completion-without-price"), requestHash: hash("completion-without-price") }, actors.manager), "GATE_FAILED");
+    await setProductionPrice({ orderId: order.id, amount: 600, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
     const completed = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completed"), requestHash: hash("completed") }, actors.manager);
     assert.equal(Number(completed.version), version + 1);
     const completedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
@@ -165,12 +167,14 @@ async function main() {
       await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderBlocker.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderInstallation.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.productionStageHistory.deleteMany({ where: { production: { orderId: { in: orderIds } } } });
       await prisma.production.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
     }
     if (clientIds.length) await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
     if (partnerIds.length) await prisma.partner.deleteMany({ where: { id: { in: partnerIds } } });
+    if (userIds.length) await prisma.employeePayrollProfile.deleteMany({ where: { userId: { in: userIds } } });
     if (userIds.length) await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     await prisma.$disconnect();
   }

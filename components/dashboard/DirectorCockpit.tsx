@@ -21,18 +21,21 @@ import {
 } from "@/lib/orders/presentation";
 
 type ManagementPayload = {
-  role: "DIRECTOR" | "ACCOUNTANT";
+  role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "ACCOUNTANT";
   month: string;
   finance: {
     revenue: number;
     received: number;
     directExpenses: number;
+    additionalIncome: number;
     operatingExpenses: number;
     payrollAccrued: number;
     payrollPaid: number;
-    netProfit: number | null;
+    netProfit: number;
     netMargin: number | null;
     dataComplete: boolean;
+    ordersWithMargin: number;
+    ordersWithoutMargin: number;
   };
   orders: {
     active: number;
@@ -121,6 +124,12 @@ const expenseCategories = [
   ["COMPANY_LOAN", "Заём компании"],
   ["OTHER", "Другое"],
 ] as const;
+const incomeCategories = [
+  ["OTHER_INCOME", "Прочий доход"],
+  ["INVESTMENT", "Инвестиция"],
+  ["REFUND_INCOME", "Возврат средств"],
+  ["COMPANY_LOAN_INCOME", "Заём компании"],
+] as const;
 const expenseLabel = Object.fromEntries(expenseCategories);
 const money = (value: number) =>
   `${Math.round(value).toLocaleString("ru-RU")} ₸`;
@@ -135,7 +144,7 @@ export default function DirectorCockpit() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [expenseOpen, setExpenseOpen] = useState(false);
+  const [entryDirection, setEntryDirection] = useState<"INCOME" | "EXPENSE" | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -180,6 +189,7 @@ export default function DirectorCockpit() {
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           {(session?.user.role === "DIRECTOR" ||
+            session?.user.role === "OPERATIONS_DIRECTOR" ||
             session?.user.role === "ACCOUNTANT") && (
             <input
               aria-label="Выбранный месяц"
@@ -210,23 +220,24 @@ export default function DirectorCockpit() {
         </p>
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
-      {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
+      {data?.role === "DIRECTOR" || data?.role === "OPERATIONS_DIRECTOR" || data?.role === "ACCOUNTANT" ? (
         <ManagementDashboard
           data={data}
           historyOpen={historyOpen}
           onHistory={() => setHistoryOpen((value) => !value)}
-          onAddExpense={() => setExpenseOpen(true)}
+          onAddEntry={setEntryDirection}
         />
       ) : null}
       {data?.role === "MANAGER" ? <ManagerDashboard data={data} /> : null}
       {data?.role === "PRODUCTION" ? <ProductionDashboard data={data} /> : null}
       {data?.role === "INSTALLER" ? <InstallerDashboard data={data} /> : null}
 
-      {expenseOpen && (
-        <ExpenseDialog
-          onClose={() => setExpenseOpen(false)}
+      {entryDirection && (
+        <FinanceEntryDialog
+          direction={entryDirection}
+          onClose={() => setEntryDirection(null)}
           onSaved={async () => {
-            setExpenseOpen(false);
+            setEntryDirection(null);
             await load();
           }}
         />
@@ -239,33 +250,32 @@ function ManagementDashboard({
   data,
   historyOpen,
   onHistory,
-  onAddExpense,
+  onAddEntry,
 }: {
   data: ManagementPayload;
   historyOpen: boolean;
   onHistory: () => void;
-  onAddExpense: () => void;
+  onAddEntry: (direction: "INCOME" | "EXPENSE") => void;
 }) {
   const finance = [
-    ["Выручка", money(data.finance.revenue), "Продажи действующих заказов месяца"],
+    ["Выручка", money(data.finance.revenue), "Все продажи месяца"],
     ["Получено от клиентов", money(data.finance.received), "Платежи минус возвраты"],
-    ["Прямые расходы", money(data.finance.directExpenses), "Себестоимость заказов"],
+    ["Цена производства", money(data.finance.directExpenses), "По заказам с обеими суммами"],
+    ["Прочие доходы", money(data.finance.additionalIncome), "Внесены директором"],
     ["Операционные расходы", money(data.finance.operatingExpenses), "Расходы компании вне заказов"],
     ["Начисленная зарплата", money(data.finance.payrollAccrued), "Расход месяца"],
     ["Выплаченная зарплата", money(data.finance.payrollPaid), "Фактические выплаты"],
     [
       "Чистая прибыль",
-      data.finance.netProfit === null
-        ? "Недостаточно данных"
-        : money(data.finance.netProfit),
-      "Выручка − расходы − начисленная зарплата",
+      money(data.finance.netProfit),
+      "Маржа заказов + доходы − расходы − зарплата",
     ],
     [
       "Чистая маржа",
       data.finance.netMargin === null
         ? "Недостаточно данных"
         : `${data.finance.netMargin.toLocaleString("ru-RU")} %`,
-      "Чистая прибыль / выручка",
+      "Чистая прибыль / продажи с обеими суммами",
     ],
   ];
   const orders = [
@@ -287,7 +297,7 @@ function ManagementDashboard({
             <h2 className="text-xl font-bold text-white">Финансовый результат</h2>
             <p className="text-sm text-slate-400">За выбранный месяц</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={onHistory}
@@ -297,7 +307,14 @@ function ManagementDashboard({
             </button>
             <button
               type="button"
-              onClick={onAddExpense}
+              onClick={() => onAddEntry("INCOME")}
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-semibold sm:flex-none"
+            >
+              <Plus size={17} /> Добавить доход
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddEntry("EXPENSE")}
               className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold sm:flex-none"
             >
               <Plus size={17} /> Добавить расход
@@ -316,9 +333,15 @@ function ManagementDashboard({
             </article>
           ))}
         </div>
+        <p className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-blue-100">
+          Прибыль рассчитана по {data.finance.ordersWithMargin} заказам с суммой продажи и ценой производства.
+          {data.finance.ordersWithoutMargin > 0
+            ? ` Ещё ${data.finance.ordersWithoutMargin} заказов ждут заполнения и не искажают итог.`
+            : " Все заказы месяца заполнены."}
+        </p>
         {!data.finance.dataComplete && (
           <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-            Чистая прибыль не показана: у части заказов месяца не заполнена стоимость подрядчика или производства.
+            Заполните цену производства в отмеченных заказах, чтобы они вошли в прибыль месяца.
           </p>
         )}
       </section>
@@ -483,8 +506,10 @@ function DashboardSkeleton() {
   return <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{Array.from({ length: 8 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-slate-900" />)}</div>;
 }
 
-function ExpenseDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => Promise<void> }) {
-  const [form, setForm] = useState({ amount: "", category: "OTHER", operationDate: today(), comment: "", orderId: "" });
+function FinanceEntryDialog({ direction, onClose, onSaved }: { direction: "INCOME" | "EXPENSE"; onClose: () => void; onSaved: () => Promise<void> }) {
+  const income = direction === "INCOME";
+  const categories = income ? incomeCategories : expenseCategories;
+  const [form, setForm] = useState<{ amount: string; category: string; operationDate: string; comment: string; orderId: string }>({ amount: "", category: categories[0][0], operationDate: today(), comment: "", orderId: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -494,28 +519,28 @@ function ExpenseDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
       const response = await fetch("/api/company-finance", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({ direction: "EXPENSE", type: "MANUAL_EXPENSE", category: form.category, amount: Number(form.amount), operationDate: form.operationDate, comment: form.comment, orderId: form.orderId ? Number(form.orderId) : undefined }),
+        body: JSON.stringify({ direction, type: income ? "MANUAL_INCOME" : "MANUAL_EXPENSE", category: form.category, amount: Number(form.amount), operationDate: form.operationDate, comment: form.comment, orderId: form.orderId ? Number(form.orderId) : undefined }),
       });
       const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Не удалось добавить расход");
+      if (!response.ok) throw new Error(body.error ?? `Не удалось добавить ${income ? "доход" : "расход"}`);
       await onSaved();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Не удалось добавить расход");
+      setError(cause instanceof Error ? cause.message : `Не удалось добавить ${income ? "доход" : "расход"}`);
     } finally { setSaving(false); }
   }
   const control = "mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white";
   return <div role="dialog" aria-modal="true" className="fixed inset-0 z-[90] grid place-items-end bg-black/70 sm:place-items-center sm:p-4">
     <form onSubmit={submit} className="max-h-[92vh] w-full overflow-y-auto rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:max-w-lg sm:rounded-2xl">
-      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Добавить расход</h2><p className="text-sm text-slate-400">Начисленный расход компании</p></div><button type="button" onClick={onClose} aria-label="Закрыть" className="grid size-11 place-items-center rounded-xl border border-slate-700"><X /></button></div>
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Добавить {income ? "доход" : "расход"}</h2><p className="text-sm text-slate-400">{income ? "Дополнительный доход компании" : "Начисленный расход компании"}</p></div><button type="button" onClick={onClose} aria-label="Закрыть" className="grid size-11 place-items-center rounded-xl border border-slate-700"><X /></button></div>
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <label className="text-sm text-slate-300">Сумма<input required autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={control} /></label>
-        <label className="text-sm text-slate-300">Категория<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={control}>{expenseCategories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="text-sm text-slate-300">Категория<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={control}>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label className="text-sm text-slate-300">Дата<input required type="date" value={form.operationDate} onChange={(e) => setForm({ ...form, operationDate: e.target.value })} className={control} /></label>
         <label className="text-sm text-slate-300">ID заказа <span className="text-slate-500">(необязательно)</span><input type="number" min="1" inputMode="numeric" value={form.orderId} onChange={(e) => setForm({ ...form, orderId: e.target.value })} className={control} /></label>
         <label className="text-sm text-slate-300 sm:col-span-2">Комментарий<textarea rows={3} value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} className={`${control} py-3`} /></label>
       </div>
       {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}
-      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={onClose} className="min-h-11 rounded-xl px-4 text-slate-300">Отмена</button><button disabled={saving} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-50"><Banknote size={17}/>{saving ? "Сохранение…" : "Добавить расход"}</button></div>
+      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={onClose} className="min-h-11 rounded-xl px-4 text-slate-300">Отмена</button><button disabled={saving} className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 font-semibold disabled:opacity-50 ${income ? "bg-emerald-700" : "bg-blue-600"}`}><Banknote size={17}/>{saving ? "Сохранение…" : `Добавить ${income ? "доход" : "расход"}`}</button></div>
     </form>
   </div>;
 }

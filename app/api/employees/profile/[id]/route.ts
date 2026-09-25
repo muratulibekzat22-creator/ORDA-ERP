@@ -7,7 +7,7 @@ import { EmployeeError, updateEmployee } from "@/lib/services/employee.service";
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0)

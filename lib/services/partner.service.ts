@@ -202,6 +202,7 @@ export async function setProductionPrice(data: {
 }) {
   if (
     data.actor.role !== Role.DIRECTOR &&
+    data.actor.role !== Role.OPERATIONS_DIRECTOR &&
     data.actor.role !== Role.MANAGER
   )
     throw new Error("FORBIDDEN");
