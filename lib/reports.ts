@@ -40,7 +40,7 @@ export type ReportsReadModel = {
     start: string; end: string; previousStart: string; previousEnd: string;
   };
   summary: ReportSummary;
-  sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number };
+  sales: { count: number; amount: number; averageOrder: number; completed: number; cancelled: number; grossMargin?: number | null };
   payments: { received: number; remaining: number };
   dataQuality: { missingProductionPrice: number };
   finance?: {
@@ -50,7 +50,7 @@ export type ReportsReadModel = {
     partnerAgreed: number;
     partnerPaid: number;
     partnerRemaining: number;
-    grossMargin: number;
+    grossMargin: number | null;
     payrollAccrued: number;
     payrollPaid: number;
     payrollPayable: number;

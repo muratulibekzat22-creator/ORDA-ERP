@@ -60,6 +60,9 @@ for (const tab of ["Заявки", "Активные", "Завершённые"]
   assert.match(ordersPage, new RegExp(tab));
 for (const label of ["Цена производства", "Расчёт с цехом", "Поддержка цеху", "Аванс цеху", "Финальный расчёт"])
   assert.match(workshopSettlement, new RegExp(label));
+for (const removed of ["Основание / комментарий", "Дата фиксации", "Поле обязательно до передачи заказа"])
+  assert.doesNotMatch(workshopSettlement, new RegExp(removed));
+assert.doesNotMatch(readFileSync("lib/services/order360.service.ts", "utf8"), /code: "PRODUCTION_PRICE"/);
 assert.match(ordersPage, /missing-production-price/);
 assert.match(ordersApi, /role !== Role\.DIRECTOR && role !== Role\.MANAGER/);
 for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])

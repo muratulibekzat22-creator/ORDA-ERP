@@ -73,7 +73,15 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const day = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: period.timezone }).format(date);
   orders.forEach((item) => { const key = day(item.createdAt); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.salesAmount += money(item.amount); trendMap.set(key, value); });
   payments.forEach((item) => { const key = day(item.operationDate); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.received += paymentEffect(item.type, item.amount); trendMap.set(key, value); });
-  const grossMargin = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.amount) - money(item.partnerPrice), 0);
+  const missingProductionPrice = orders.filter(
+    (item) => item.partnerAgreedAt === null || money(item.partnerPrice) <= 0,
+  ).length;
+  const grossMargin = missingProductionPrice > 0
+    ? null
+    : orders.reduce(
+        (sum, item) => sum + money(item.amount) - money(item.partnerPrice),
+        0,
+      );
   const currentCustomerRemaining = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
   const currentPartnerRemaining = Math.max(Number(partnerBalance._sum.partnerBalance ?? 0), 0);
   const payrollAccruedRow = payrollTotals.find((row) => row.kind === "accrual");
@@ -83,9 +91,6 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const payrollAccrued = Number(payrollAccruedRow?.period_total ?? 0);
   const payrollPaid = Number(payrollPaidRow?.period_total ?? 0);
   const partnerAgreed = orders.filter((item) => item.partnerAgreedAt !== null).reduce((sum, item) => sum + money(item.partnerPrice), 0);
-  const missingProductionPrice = orders.filter(
-    (item) => item.partnerAgreedAt === null || money(item.partnerPrice) <= 0,
-  ).length;
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
   return {
     generatedAt: new Date().toISOString(), role: actor.role as ReportsReadModel["role"],

@@ -46,7 +46,6 @@ export async function getAuthorizedOrder(id: number) {
         where: {
           id,
           partnerId: partner.id,
-          partnerAgreedAt: { not: null },
           lifecycle: { not: "CANCELLED" },
         },
         select: { id: true },
@@ -60,7 +59,6 @@ export async function getAuthorizedOrder(id: number) {
   const order = {
     ...sourceOrder,
     productionPrice: source.partnerAgreedAt ? source.partnerPrice : null,
-    productionPriceSetAt: source.partnerAgreedAt,
     deletionImpact: {
       hasFinancialHistory:
         _count.payments > 0 ||
@@ -135,8 +133,6 @@ export async function getAuthorizedOrder(id: number) {
     ...order,
     productionPrice:
       role === Role.MANAGER ? order.productionPrice : undefined,
-    productionPriceSetAt:
-      role === Role.MANAGER ? order.productionPriceSetAt : undefined,
     managerUser: undefined,
     partnerPrice: undefined,
     partnerAgreedAt: undefined,

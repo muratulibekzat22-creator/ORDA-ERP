@@ -47,11 +47,11 @@ async function main() {
     ensure(Number(current.partnerPaid) === 125 && Number(current.partnerBalance) === 275, "concurrent partner payouts lost an update");
     const payoutPurposes = await prisma.payment.findMany({ where: { orderId, type: "PARTNER_PAYOUT" }, select: { partnerPayoutPurpose: true } });
     ensure(payoutPurposes.some((item) => item.partnerPayoutPurpose === PartnerPayoutPurpose.SUPPORT) && payoutPurposes.some((item) => item.partnerPayoutPurpose === PartnerPayoutPurpose.ADVANCE), "workshop support/advance purpose was not preserved");
-    const productionPriceInput = { orderId, amount: 425, reason: "Manager confirmed workshop estimate", actor: { id: manager.id, name: manager.name, role: Role.MANAGER }, idempotencyKey: key("production-price"), requestHash: hash("production-price") };
+    const productionPriceInput = { orderId, amount: 425, actor: { id: manager.id, name: manager.name, role: Role.MANAGER }, idempotencyKey: key("production-price"), requestHash: hash("production-price") };
     await setProductionPrice(productionPriceInput);
     const replayedPrice = await setProductionPrice(productionPriceInput);
     current = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
-    ensure(!replayedPrice.created && Number(current.partnerPrice) === 425 && Number(current.partnerBalance) === 300, "manager production-price command is not idempotent or broke workshop balance");
+    ensure(!replayedPrice.created && Number(current.partnerPrice) === 425 && Number(current.partnerBalance) === 300, "simple production-price command is not idempotent or broke workshop balance");
     await prisma.order.update({ where: { id: orderId }, data: { prepayment: "1", balance: "999" } });
     ensure((await reconcileOrderFinance(orderId)).mismatch, "reconciliation did not detect mirror drift");
     await reconcileOrderFinance(orderId, true); ensure(!(await reconcileOrderFinance(orderId)).mismatch, "reconciliation did not repair mirrors");

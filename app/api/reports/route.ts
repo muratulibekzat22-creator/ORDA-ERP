@@ -14,7 +14,7 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
     ["Заявки", report.summary.leads.current], ["Замеры", report.summary.measurements.current], ["Заказы", report.summary.orders.current],
     ["Сумма продаж", report.summary.salesAmount.current], ["Получено", report.summary.received.current], ["Остаток", report.summary.remaining],
     ["Без цены производства", report.dataQuality.missingProductionPrice],
-    ...(report.sales.grossMargin === undefined ? [] : [["Валовая маржа", report.sales.grossMargin]]),
+    ...(report.sales.grossMargin === undefined ? [] : [["Валовая маржа", report.sales.grossMargin ?? "Недостаточно данных"]]),
     ...(report.finance ? [
       ["К получению от клиентов", report.finance.customerRemaining],
       ["Согласовано партнёрам", report.finance.partnerAgreed],

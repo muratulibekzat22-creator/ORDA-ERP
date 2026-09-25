@@ -196,7 +196,6 @@ export async function payPartner(data: {
 export async function setProductionPrice(data: {
   orderId: number;
   amount: number;
-  reason: string;
   actor: { id: number; name: string; role: Role };
   idempotencyKey: string;
   requestHash: string;
@@ -208,7 +207,6 @@ export async function setProductionPrice(data: {
     throw new Error("FORBIDDEN");
   if (!Number.isFinite(data.amount) || data.amount <= 0)
     throw new Error("INVALID_PRODUCTION_PRICE");
-  if (!data.reason.trim()) throw new Error("PRODUCTION_PRICE_REASON_REQUIRED");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
     const eventKey = `production-price:${data.orderId}:${data.idempotencyKey}`;
@@ -255,7 +253,7 @@ export async function setProductionPrice(data: {
           productionPrice: updated.partnerPrice.toString(),
           setAt: agreedAt.toISOString(),
         },
-        reason: data.reason.trim(),
+        reason: "Цена производства обновлена",
         authorId: data.actor.id,
       },
     });
@@ -265,7 +263,7 @@ export async function setProductionPrice(data: {
         title: wasSet
           ? "Цена производства изменена"
           : "Цена производства указана",
-        description: `${data.amount.toLocaleString("ru-RU")} ₸ · ${data.reason.trim()}`,
+        description: `${data.amount.toLocaleString("ru-RU")} ₸`,
         user: data.actor.name,
         idempotencyKey: eventKey,
         requestHash: data.requestHash,
@@ -278,7 +276,7 @@ export async function setProductionPrice(data: {
 export async function assignPartnerToOrder(data: {
   orderId: number;
   partnerId: number;
-  partnerPrice: number;
+  partnerPrice?: number;
   partnerAgreedAt?: Date;
   manager?: string;
   authorId?: number;
@@ -316,12 +314,24 @@ export async function assignPartnerToOrder(data: {
     const previousPaid = Number(previousPayouts._sum.amount ?? 0),
       paid = Number(newPartnerPayouts._sum.amount ?? 0);
     const samePartner = order.partnerId === partner.id;
-    const agreedAt = data.partnerAgreedAt ?? new Date();
-    if (Number.isNaN(agreedAt.getTime()))
+    const priceSet =
+      data.partnerPrice !== undefined &&
+      Number.isFinite(data.partnerPrice) &&
+      data.partnerPrice > 0;
+    if (
+      data.partnerPrice !== undefined &&
+      (!Number.isFinite(data.partnerPrice) || data.partnerPrice < 0)
+    )
+      throw new Error("INVALID_PARTNER_PRICE");
+    const agreedAt = priceSet ? (data.partnerAgreedAt ?? new Date()) : null;
+    if (agreedAt && Number.isNaN(agreedAt.getTime()))
       throw new Error("INVALID_PARTNER_AGREEMENT_DATE");
+    if (samePartner && data.partnerPrice === undefined)
+      return order;
     if (
       samePartner &&
       order.partnerAgreedAt &&
+      agreedAt &&
       Number(order.partnerPrice) === data.partnerPrice &&
       order.partnerAgreedAt.getTime() === agreedAt.getTime()
     )
@@ -333,17 +343,19 @@ export async function assignPartnerToOrder(data: {
       !data.directorConfirmed
     )
       throw new Error("DIRECTOR_CONFIRMATION_REQUIRED");
-    const reason = data.reason?.trim() || "Partner assignment";
-    if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
-    const companyProfit = Number(order.amount) - data.partnerPrice;
+    const reason = data.reason?.trim() || "Цех назначен";
+    if (!priceSet && paid > 0) throw new Error("PARTNER_PRICE_REQUIRED");
+    const partnerPrice = priceSet ? data.partnerPrice! : 0;
+    if (partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
+    const companyProfit = priceSet ? Number(order.amount) - partnerPrice : 0;
     const updated = await tx.order.update({
       where: { id: order.id },
       data: {
         partnerId: partner.id,
-        partnerPrice: String(data.partnerPrice),
+        partnerPrice: String(partnerPrice),
         partnerAgreedAt: agreedAt,
         partnerPaid: String(paid),
-        partnerBalance: String(data.partnerPrice - paid),
+        partnerBalance: String(partnerPrice - paid),
         companyProfit: String(companyProfit),
       },
     });
@@ -354,7 +366,7 @@ export async function assignPartnerToOrder(data: {
           previousPartnerId: order.partnerId,
           newPartnerId: partner.id,
           previousPayable: order.partnerPrice,
-          newPayable: String(data.partnerPrice),
+          newPayable: String(partnerPrice),
           paidAtChange: String(previousPaid),
           remainingAtChange: String(
             Math.max(Number(order.partnerPrice) - previousPaid, 0),
@@ -383,10 +395,10 @@ export async function assignPartnerToOrder(data: {
           },
           after: {
             partnerId: partner.id,
-            partnerPrice: String(data.partnerPrice),
-            partnerAgreedAt: agreedAt.toISOString(),
+            partnerPrice: String(partnerPrice),
+            partnerAgreedAt: agreedAt?.toISOString() ?? null,
             partnerPaid: String(paid),
-            partnerBalance: String(data.partnerPrice - paid),
+            partnerBalance: String(partnerPrice - paid),
           },
           reason,
           authorId: data.authorId,
@@ -410,7 +422,9 @@ export async function assignPartnerToOrder(data: {
       data: {
         orderId: order.id,
         title: "Передан партнёру",
-        description: `${partner.name} • ${data.partnerPrice.toLocaleString("ru-RU")} ₸`,
+        description: priceSet
+          ? `${partner.name} • ${partnerPrice.toLocaleString("ru-RU")} ₸`
+          : partner.name,
         user: data.manager ?? order.manager,
       },
     });

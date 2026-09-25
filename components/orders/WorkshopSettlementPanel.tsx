@@ -11,7 +11,6 @@ type WorkshopOrder = Pick<
   | "id"
   | "partner"
   | "productionPrice"
-  | "productionPriceSetAt"
   | "settlement"
 >;
 
@@ -51,12 +50,10 @@ export default function WorkshopSettlementPanel({
   const [productionPrice, setProductionPrice] = useState(
     order.productionPrice == null ? "" : String(order.productionPrice),
   );
-  const [priceReason, setPriceReason] = useState("");
   const [partners, setPartners] = useState<
     Array<{ id: number; name: string; active: boolean }>
   >([]);
   const [partnerId, setPartnerId] = useState(String(order.partner?.id ?? ""));
-  const [partnerReason, setPartnerReason] = useState("");
   const [payoutAmount, setPayoutAmount] = useState("");
   const [purpose, setPurpose] = useState("SUPPORT");
   const [operationDate, setOperationDate] = useState(today());
@@ -125,8 +122,6 @@ export default function WorkshopSettlementPanel({
       };
       if (!response.ok) throw new Error(body.error ?? "Операция не выполнена");
       setNotice(success);
-      setPriceReason("");
-      setPartnerReason("");
       setPayoutAmount("");
       setComment("");
       router.refresh();
@@ -144,7 +139,6 @@ export default function WorkshopSettlementPanel({
       {
         action: "setProductionPrice",
         productionPrice: Number(productionPrice),
-        reason: priceReason,
       },
       "Цена производства сохранена",
       "PATCH",
@@ -158,9 +152,6 @@ export default function WorkshopSettlementPanel({
       {
         action: "assignPartner",
         partnerId: Number(partnerId),
-        partnerPrice: Number(productionPrice),
-        partnerAgreedAt: today(),
-        reason: partnerReason,
         directorConfirmed: Boolean(
           order.partner && order.partner.id !== Number(partnerId),
         ),
@@ -198,7 +189,7 @@ export default function WorkshopSettlementPanel({
           <p className="mt-1 text-sm text-slate-400">
             {director || role === "ACCOUNTANT"
               ? "Цена, поддержка, авансы и остаток по заказу — в одном расчёте."
-              : "Поле обязательно до передачи заказа в производство; заполнить может менеджер или директор."}
+              : "Цена не блокирует передачу в цех. Пока она не указана, прибыль и маржа не рассчитываются."}
           </p>
         </div>
         <span
@@ -227,27 +218,22 @@ export default function WorkshopSettlementPanel({
             <Metric label="Осталось выплатить" value={money(partnerSettlement.remaining)} accent />
           </>
         ) : null}
-        <Metric label="Дата фиксации" value={date(order.productionPriceSetAt)} />
       </div>
 
       {canSetPrice ? (
-        <form onSubmit={savePrice} className="mt-4 grid gap-3 rounded-xl bg-slate-950/55 p-3 sm:grid-cols-[minmax(0,180px)_minmax(0,1fr)_auto] sm:items-end">
+        <form onSubmit={savePrice} className="mt-4 grid gap-3 rounded-xl bg-slate-950/55 p-3 sm:grid-cols-[minmax(0,220px)_auto] sm:items-end sm:justify-start">
           <label className="text-sm text-slate-300">
             Цена производства, ₸
             <input type="number" min="1" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} />
           </label>
-          <label className="text-sm text-slate-300">
-            Основание / комментарий
-            <input required maxLength={1000} value={priceReason} onChange={(event) => setPriceReason(event.target.value)} placeholder="Например: согласовано по расчёту цеха" className={`${control} mt-1`} />
-          </label>
-          <button type="submit" disabled={busy || !Number(productionPrice) || !priceReason.trim()} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50">
+          <button type="submit" disabled={busy || !Number(productionPrice)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50">
             Сохранить
           </button>
         </form>
       ) : null}
 
       {director ? (
-        <form onSubmit={assignPartner} className="mt-4 grid gap-3 rounded-xl border border-slate-800 p-3 sm:grid-cols-[minmax(0,240px)_minmax(0,1fr)_auto] sm:items-end">
+        <form onSubmit={assignPartner} className="mt-4 grid gap-3 rounded-xl border border-slate-800 p-3 sm:grid-cols-[minmax(0,280px)_auto] sm:items-end sm:justify-start">
           <label className="text-sm text-slate-300">
             Назначить цех
             <select required value={partnerId} onChange={(event) => setPartnerId(event.target.value)} className={`${control} mt-1`}>
@@ -255,11 +241,7 @@ export default function WorkshopSettlementPanel({
               {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}</option>)}
             </select>
           </label>
-          <label className="text-sm text-slate-300">
-            Основание назначения
-            <input required value={partnerReason} onChange={(event) => setPartnerReason(event.target.value)} placeholder="Договорённость, изменение исполнителя" className={`${control} mt-1`} />
-          </label>
-          <button type="submit" disabled={busy || !partnerId || !Number(productionPrice) || !partnerReason.trim()} className="min-h-11 rounded-xl border border-cyan-700 bg-cyan-950/40 px-4 font-semibold text-cyan-100 disabled:opacity-50">
+          <button type="submit" disabled={busy || !partnerId} className="min-h-11 rounded-xl border border-cyan-700 bg-cyan-950/40 px-4 font-semibold text-cyan-100 disabled:opacity-50">
             Назначить
           </button>
         </form>

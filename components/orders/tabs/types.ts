@@ -32,7 +32,6 @@ export type OrderTabData = {
   partnerPaid: NumericValue;
   partnerBalance: NumericValue;
   productionPrice?: NumericValue | null;
-  productionPriceSetAt?: Date | string | null;
   client: {
     id: number;
     name: string;

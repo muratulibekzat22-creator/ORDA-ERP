@@ -135,7 +135,7 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
         { leadConversion: { managerId: actor.userId } },
       ] }
     : actor.role === Role.PARTNER
-      ? { partner: { userId: actor.userId }, partnerAgreedAt: { not: null } }
+      ? { partner: { userId: actor.userId } }
       : actor.role === Role.PRODUCTION
         ? { productions: { some: { masterUserId: actor.userId, archivedAt: null } } }
         : actor.role === Role.INSTALLER

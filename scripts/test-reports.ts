@@ -32,12 +32,15 @@ assert.equal(paymentEffect("REFUND", 250), -250);
 assert.equal(paymentEffect("PARTNER_PAYOUT", 500), 0);
 
 const service = readFileSync(new URL("../lib/services/report.service.ts", import.meta.url), "utf8");
+const companyFinance = readFileSync(new URL("../lib/services/management-finance.service.ts", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/reports/route.ts", import.meta.url), "utf8");
 assert.match(service, /actor\.role === Role\.MANAGER\) scope = \{ managerUserId: actor\.id \}/, "manager scope must ignore spoofed managerId");
 assert.match(service, /lifecycle: \{ not: "CANCELLED" \}/, "cancelled orders must be excluded");
 assert.match(service, /actor\.role === Role\.DIRECTOR \? \{ grossMargin \} : \{\}/, "gross margin must be director-only");
 assert.doesNotMatch(service, /orders\.slice\(/, "period report must not hide orders with missing production prices");
 assert.match(service, /missingProductionPrice/, "report must expose production-price completeness");
+assert.match(service, /missingProductionPrice > 0[\s\S]*\? null/, "margin must remain unavailable while a production price is missing");
+assert.match(companyFinance, /some\(\(order\) => !order\.partnerAgreedAt\)[\s\S]*\? null/, "company profit must remain unavailable while a production price is missing");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");
 assert.match(route, /report\.sales\.grossMargin === undefined/, "export must redact gross margin");
 console.log("Reports math, period boundaries, refunds, zero denominators and RBAC contracts: OK");

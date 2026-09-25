@@ -102,7 +102,7 @@ includesAll(
     "delete safe.netProfit",
     "delete safe.netMargin",
     "delete safe.costDataComplete",
-    "partnerAgreedAt: { not: null }",
+    "? { partnerId: partner.id }",
   ],
   "orders API",
 );

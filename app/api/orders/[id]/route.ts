@@ -100,7 +100,6 @@ function redactForRole<T extends Record<string, unknown>>(
   const result: Record<string, unknown> = {
     ...order,
     productionPrice: order.partnerAgreedAt ? order.partnerPrice : null,
-    productionPriceSetAt: order.partnerAgreedAt ?? null,
   };
   if (role === Role.DIRECTOR) return result;
   if (role === Role.ACCOUNTANT) {
@@ -171,7 +170,6 @@ function redactForRole<T extends Record<string, unknown>>(
     role === Role.MEASURER
   ) {
     delete result.productionPrice;
-    delete result.productionPriceSetAt;
     delete result.amount;
     delete result.prepayment;
     delete result.balance;
@@ -304,19 +302,17 @@ export async function PATCH(request: Request, { params }: Context) {
           { status: 403 },
         );
       const amount = Number(body.productionPrice);
-      const reason = text(body.reason, 1000);
-      if (!Number.isFinite(amount) || amount <= 0 || !reason)
+      if (!Number.isFinite(amount) || amount <= 0)
         return NextResponse.json(
-          { error: "Укажите цену производства и основание" },
+          { error: "Укажите цену производства" },
           { status: 400 },
         );
       const idempotency = readIdempotencyKey(request);
       if ("response" in idempotency) return idempotency.response;
-      const payload = { orderId: id, productionPrice: amount, reason };
+      const payload = { orderId: id, productionPrice: amount };
       const result = await setProductionPrice({
         orderId: id,
         amount,
-        reason,
         actor: {
           id: Number(auth.session!.user.id),
           name: auth.session!.user.name ?? "Сотрудник",
@@ -367,19 +363,16 @@ export async function PATCH(request: Request, { params }: Context) {
           { error: "Недостаточно прав" },
           { status: 403 },
         );
-      const partnerId = Number(body.partnerId),
-        partnerPrice = Number(body.partnerPrice);
-      const partnerAgreedAt = body.partnerAgreedAt
-        ? new Date(String(body.partnerAgreedAt))
-        : new Date();
-      const partnerReason = text(body.reason, 1000);
+      const partnerId = Number(body.partnerId);
+      const partnerPrice =
+        body.partnerPrice === undefined || body.partnerPrice === ""
+          ? undefined
+          : Number(body.partnerPrice);
       if (
         !Number.isInteger(partnerId) ||
         partnerId <= 0 ||
-        !Number.isFinite(partnerPrice) ||
-        partnerPrice < 0 ||
-        Number.isNaN(partnerAgreedAt.getTime()) ||
-        !partnerReason
+        (partnerPrice !== undefined &&
+          (!Number.isFinite(partnerPrice) || partnerPrice <= 0))
       )
         return NextResponse.json(
           { error: "Некорректные данные цеха" },
@@ -389,10 +382,8 @@ export async function PATCH(request: Request, { params }: Context) {
         orderId: id,
         partnerId,
         partnerPrice,
-        partnerAgreedAt,
         manager: auth.session!.user.name ?? undefined,
         authorId: Number(auth.session!.user.id),
-        reason: partnerReason,
         directorConfirmed:
           role === Role.DIRECTOR && body.directorConfirmed === true,
       });
@@ -598,6 +589,7 @@ export async function PATCH(request: Request, { params }: Context) {
         "COMMERCIAL_ADJUSTMENT_REQUIRED",
         "DIRECTOR_CONFIRMATION_REQUIRED",
         "PARTNER_PRICE_BELOW_PAID",
+        "PARTNER_PRICE_REQUIRED",
         "PRODUCTION_PRICE_BELOW_PAID",
       ].includes(error.message)
     )
@@ -606,6 +598,8 @@ export async function PATCH(request: Request, { params }: Context) {
           error:
             error.message === "PRODUCTION_PRICE_BELOW_PAID"
               ? "Цена производства не может быть меньше уже выплаченной суммы цеху"
+              : error.message === "PARTNER_PRICE_REQUIRED"
+                ? "Сначала укажите цену производства для цеха с выплатами"
               : "Изменение требует контролируемой финансовой операции и подтверждения директора",
         },
         { status: 409 },

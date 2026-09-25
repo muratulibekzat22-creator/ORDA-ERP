@@ -27,11 +27,12 @@ export async function GET() {
 
   const [orders, recentPayments] = await Promise.all([
     prisma.order.findMany({
-      where: { partnerId: partner.id, deletedAt: null, partnerAgreedAt: { not: null }, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      where: { partnerId: partner.id, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
       select: {
         status: true,
         lifecycle: true,
         partnerPrice: true,
+        partnerAgreedAt: true,
         partnerPaid: true,
         partnerBalance: true,
       },
@@ -55,11 +56,15 @@ export async function GET() {
   ]);
 
   const totals = orders.reduce(
-    (accumulator, order) => ({
-      price: accumulator.price + Number(order.partnerPrice),
-      paid: accumulator.paid + Number(order.partnerPaid),
-      balance: accumulator.balance + Math.max(Number(order.partnerBalance), 0),
-    }),
+    (accumulator, order) =>
+      order.partnerAgreedAt
+        ? {
+            price: accumulator.price + Number(order.partnerPrice),
+            paid: accumulator.paid + Number(order.partnerPaid),
+            balance:
+              accumulator.balance + Math.max(Number(order.partnerBalance), 0),
+          }
+        : accumulator,
     { price: 0, paid: 0, balance: 0 },
   );
 

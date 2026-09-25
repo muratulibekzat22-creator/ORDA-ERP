@@ -151,12 +151,6 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
         message: "ЦЕХ не назначен или не подтвердил",
       },
       {
-        code: "PRODUCTION_PRICE",
-        passed:
-          order.partnerAgreedAt !== null && Number(order.partnerPrice) > 0,
-        message: "Цена производства не указана",
-      },
-      {
         code: "DEADLINE",
         passed: !!order.productionDeadline,
         message: "Срок производства не установлен",
@@ -948,6 +942,7 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
       prepayment: true,
       balance: true,
       partnerPrice: true,
+      partnerAgreedAt: true,
       partnerPaid: true,
       partnerBalance: true,
       companyProfit: true,
@@ -1011,10 +1006,10 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
       receivable: order.balance,
       ...(actor.role === Role.DIRECTOR
         ? {
-            workshopPrice: order.partnerPrice,
+            workshopPrice: order.partnerAgreedAt ? order.partnerPrice : null,
             workshopPaid: order.partnerPaid,
-            workshopPayable: order.partnerBalance,
-            companyProfit: order.companyProfit,
+            workshopPayable: order.partnerAgreedAt ? order.partnerBalance : null,
+            companyProfit: order.partnerAgreedAt ? order.companyProfit : null,
           }
         : {}),
     };
@@ -1026,9 +1021,9 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
     };
   else if (actor.role === Role.PARTNER)
     result.workshop = {
-      price: order.partnerPrice,
+      price: order.partnerAgreedAt ? order.partnerPrice : null,
       paid: order.partnerPaid,
-      payable: order.partnerBalance,
+      payable: order.partnerAgreedAt ? order.partnerBalance : null,
     };
   return result;
 }
@@ -1042,6 +1037,7 @@ export async function orderFinance(orderId: number, actor: Order360Actor) {
       prepayment: true,
       balance: true,
       partnerPrice: true,
+      partnerAgreedAt: true,
       partnerPaid: true,
       partnerBalance: true,
       companyProfit: true,
@@ -1055,9 +1051,9 @@ export async function orderFinance(orderId: number, actor: Order360Actor) {
     throw new Order360Error("FORBIDDEN");
   if (actor.role === Role.PARTNER)
     return {
-      workshopPrice: order.partnerPrice,
+      workshopPrice: order.partnerAgreedAt ? order.partnerPrice : null,
       workshopPaid: order.partnerPaid,
-      workshopPayable: order.partnerBalance,
+      workshopPayable: order.partnerAgreedAt ? order.partnerBalance : null,
     };
   if (actor.role === Role.MANAGER)
     return {
@@ -1069,11 +1065,11 @@ export async function orderFinance(orderId: number, actor: Order360Actor) {
     clientPrice: order.amount,
     received: order.prepayment,
     receivable: order.balance,
-    workshopPrice: order.partnerPrice,
+    workshopPrice: order.partnerAgreedAt ? order.partnerPrice : null,
     workshopPaid: order.partnerPaid,
-    workshopPayable: order.partnerBalance,
+    workshopPayable: order.partnerAgreedAt ? order.partnerBalance : null,
     ...(actor.role === Role.DIRECTOR
-      ? { companyProfit: order.companyProfit }
+      ? { companyProfit: order.partnerAgreedAt ? order.companyProfit : null }
       : {}),
   };
 }

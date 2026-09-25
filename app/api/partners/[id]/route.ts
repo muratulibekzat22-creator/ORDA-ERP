@@ -17,7 +17,7 @@ export async function GET(_: Request, { params }: Context) {
   const partner = await getPartner(id);
   if (!partner) return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 });
   if (role === Role.MANAGER) return NextResponse.json({ id: partner.id, name: partner.name, phone: partner.phone, city: partner.city, email: partner.email, active: partner.active });
-  if (role === Role.PARTNER) return NextResponse.json({ id: partner.id, name: partner.name, phone: partner.phone, city: partner.city, email: partner.email, active: partner.active, orders: partner.orders.filter((order) => order.partnerAgreedAt && order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, status: order.status, partnerPrice: order.partnerPrice, partnerPaid: order.partnerPaid, partnerBalance: order.partnerBalance })) });
+  if (role === Role.PARTNER) return NextResponse.json({ id: partner.id, name: partner.name, phone: partner.phone, city: partner.city, email: partner.email, active: partner.active, orders: partner.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, status: order.status, partnerPrice: order.partnerAgreedAt ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: order.partnerAgreedAt ? order.partnerBalance : null })) });
   return NextResponse.json(partner);
 }
 

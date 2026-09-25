@@ -74,7 +74,7 @@ export async function GET(request: Request) {
       ? await prisma.partner.findUnique({ where: { userId }, select: { id: true } })
       : null;
     const roleScope: Prisma.OrderWhereInput = partner
-      ? { partnerId: partner.id, partnerAgreedAt: { not: null } }
+      ? { partnerId: partner.id }
       : role === Role.MANAGER
         ? { OR: [
             { managerUserId: userId },
@@ -161,6 +161,10 @@ export async function GET(request: Request) {
         delete safe.partnerPaid;
         delete safe.partnerBalance;
         delete safe.partnerAgreedAt;
+      } else if (!order.partnerAgreedAt) {
+        delete safe.partnerPrice;
+        delete safe.partnerPaid;
+        delete safe.partnerBalance;
       }
       if (
         role === Role.PRODUCTION ||
