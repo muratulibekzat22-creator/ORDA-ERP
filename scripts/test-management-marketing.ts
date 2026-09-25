@@ -8,6 +8,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "../lib/prisma";
+import { marketingMonthRange } from "../lib/marketing";
 import { runWithTenant } from "../lib/tenant-context";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
@@ -19,6 +20,10 @@ const tenant = {
   companyName: "ТОО ALTYN SAPA COMPANY",
   isDemo: false,
 };
+
+const september = marketingMonthRange(new Date("2026-09-25T12:00:00Z"));
+assert.equal(september.start.toISOString(), "2026-08-31T19:00:00.000Z");
+assert.equal(september.end.toISOString(), "2026-09-30T19:00:00.000Z");
 
 async function main() {
   const tag = `marketing-test-${Date.now()}`;

@@ -60,13 +60,15 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
-    const period = await prisma.payrollPeriod.findUnique({
+    const identity = actor(auth.session!);
+    let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
+    if (!period && (identity.role === Role.DIRECTOR || identity.role === Role.OPERATIONS_DIRECTOR))
+      period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.upsert({
       where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
     });
-    const identity = actor(auth.session!);
     const unconfigured = identity.role === Role.DIRECTOR || identity.role === Role.OPERATIONS_DIRECTOR
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
       : [];

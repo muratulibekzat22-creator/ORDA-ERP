@@ -6,6 +6,7 @@ import {
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
+import { marketingMonthRange } from "@/lib/marketing";
 import { requirePermission } from "@/lib/server-auth";
 
 const canUseMarketing = (role: Role) =>
@@ -29,16 +30,14 @@ export async function GET() {
   const role = auth.session!.user.role as Role;
   if (!canUseMarketing(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-  const start = new Date();
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
+  const month = marketingMonthRange();
   const [tasks, metrics, vacancies, assignees] = await Promise.all([
     prisma.managementMarketingTask.findMany({
       include: { assignee: { select: { id: true, name: true } } },
       orderBy: [{ status: "asc" }, { priority: "desc" }, { dueAt: "asc" }],
     }),
     prisma.managementMarketingMetric.findMany({
-      where: { metricMonth: { gte: start } },
+      where: { metricMonth: { gte: month.start, lt: month.end } },
       orderBy: [{ metricMonth: "desc" }, { channel: "asc" }],
     }),
     prisma.recruitmentVacancy.findMany({ orderBy: { updatedAt: "desc" } }),
