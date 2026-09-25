@@ -6,6 +6,7 @@ export type Permission = (typeof permissionKeys)[number];
 const all: Permission[] = [...permissionKeys];
 export const defaultPermissions: Record<Role, Permission[]> = {
   DIRECTOR: all,
+  MARKETER: [],
   MANAGER: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse", "partners"],
   ACCOUNTANT: ["documents", "finance", "partners", "reports", "warehouse", "payroll"],
   MEASURER: ["measurements", "calendar", "documents"],

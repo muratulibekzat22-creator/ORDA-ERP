@@ -53,6 +53,7 @@ export async function proxy(request: NextRequest) {
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
+    MARKETER: [],
     MANAGER: [
       "clients",
       "orders",

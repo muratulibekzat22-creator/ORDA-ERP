@@ -8,6 +8,7 @@ datasource db {
 
 enum Role {
   DIRECTOR
+  MARKETER
   MANAGER
   ACCOUNTANT
   MEASURER
@@ -199,6 +200,7 @@ enum Permission {
   installation
   warehouse
   payroll
+  marketing
 }
 
 enum LeadStage {
