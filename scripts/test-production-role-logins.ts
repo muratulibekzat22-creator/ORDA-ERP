@@ -40,9 +40,12 @@ async function main() {
       DIRECTOR: ["/api/employees", "/api/settings", "/api/finance", "/api/company-finance", "/api/personal-finance", "/api/warehouse"],
       MANAGER: ["/api/clients", "/api/orders", "/api/partners", "/api/documents", "/api/calendar", "/api/production", "/api/warehouse"],
       ACCOUNTANT: ["/api/finance", "/api/company-finance", "/api/reports", "/api/warehouse"],
-      MEASURER: ["/api/measurements", "/api/calendar"], PRODUCTION: ["/api/production", "/api/calendar", "/api/warehouse"], INSTALLER: ["/api/production", "/api/calendar", "/api/warehouse"], PARTNER: ["/api/partner/dashboard", "/api/orders", "/api/finance", "/api/partners", "/api/documents"],
+      MEASURER: ["/api/measurements", "/api/calendar"], PRODUCTION: ["/api/production", "/api/calendar", "/api/warehouse"], INSTALLER: ["/api/production", "/api/calendar", "/api/warehouse"], PARTNER: ["/api/partner/dashboard", "/api/orders", "/api/partners", "/api/documents"],
     };
-    for (const path of expected[role] ?? []) check((await status(path, result.cookie)) === 200, `${role} cannot access ${path}`);
+    for (const path of expected[role] ?? []) {
+      const responseStatus = await status(path, result.cookie);
+      check(responseStatus === 200, `${role} cannot access ${path} (HTTP ${responseStatus})`);
+    }
     if (role === Role.MANAGER) {
       for (const path of ["/api/finance", "/api/company-finance", "/api/personal-finance", "/api/employees", "/api/settings", "/api/reports"]) check((await status(path, result.cookie)) === 403, `MANAGER accessed ${path}`);
       const orderPayload = await (await fetch(`${baseUrl}/api/orders?page=1&limit=100`, { headers: { Cookie: result.cookie } })).json() as { data: Array<Record<string, unknown>> };
@@ -50,7 +53,11 @@ async function main() {
       check(orders.every((order) => !["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].some((field) => field in order)), "MANAGER order payload leaks finance");
     }
     if (role === Role.ACCOUNTANT) check((await status("/api/personal-finance", result.cookie)) === 403, "ACCOUNTANT accessed personal finance");
-    if (role === Role.PARTNER) { check((await status("/api/warehouse", result.cookie)) === 403, "WORKSHOP accessed warehouse"); check((await status("/api/employees", result.cookie)) === 403, "WORKSHOP accessed employees"); }
+    if (role === Role.PARTNER) {
+      check((await status("/api/finance", result.cookie)) === 403, "WORKSHOP accessed the internal finance journal");
+      check((await status("/api/warehouse", result.cookie)) === 403, "WORKSHOP accessed warehouse");
+      check((await status("/api/employees", result.cookie)) === 403, "WORKSHOP accessed employees");
+    }
   }
   const directorPassword = process.env.ORDA_TEST_DIRECTOR_PASSWORD!;
   check((await login("  DIRECTOR.TEST@ALTYNSAPA.KZ  ", directorPassword)).session.user?.role === Role.DIRECTOR, "normalized email login failed");

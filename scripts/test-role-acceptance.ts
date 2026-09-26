@@ -28,7 +28,27 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "installation",
     "warehouse",
     "payroll",
+    "marketing",
   ],
+  [Role.OPERATIONS_DIRECTOR]: [
+    "employees",
+    "clients",
+    "orders",
+    "measurements",
+    "calendar",
+    "documents",
+    "finance",
+    "partners",
+    "reports",
+    "settings",
+    "design",
+    "production",
+    "installation",
+    "warehouse",
+    "payroll",
+    "marketing",
+  ],
+  [Role.MARKETER]: ["marketing", "calendar"],
   [Role.MANAGER]: [
     "clients",
     "orders",
@@ -70,12 +90,17 @@ assert.deepEqual(roleHome, {
   PARTNER: "/partner",
 });
 
-const roleDashboard = read("components/dashboard/Dashboard.tsx");
+const roleDashboard = read("app/page.tsx");
 includesAll(
   roleDashboard,
-  ["DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"],
+  ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT", "PRODUCTION", "INSTALLER"],
   "role dashboards",
 );
+
+const authRoute = read("app/api/auth/[...nextauth]/route.ts");
+assert.match(authRoute, /accountRole === "OPERATIONS_DIRECTOR"[\s\S]*\? "DIRECTOR"/);
+const header = read("components/Header.tsx");
+assert.match(header, /session\?\.user\?\.accountRole \|\| role/);
 
 const proxy = read("proxy.ts");
 includesAll(
@@ -89,25 +114,22 @@ includesAll(
   "page proxy",
 );
 
-const sidebar = read("components/layout/Sidebar.tsx");
-assert.match(sidebar, /role === "PARTNER" && id === "finance"/);
-assert.doesNotMatch(sidebar, /title: "Dashboard"|>\s*ONLINE\s*</);
-assert.doesNotMatch(sidebar, />\s*Version 1\.0\.0\s*</);
-
-const dashboard = read("components/dashboard/page.tsx");
-assert.match(dashboard, /can\("orders"\) && \{\s*href: "\/calculator"/);
+const routeShell = read("components/layout/RouteShell.tsx");
+assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
+assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar"\]/);
+assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
 const orderList = read("app/api/orders/route.ts");
 includesAll(
   orderList,
   [
-    "role !== Role.DIRECTOR && role !== Role.MANAGER",
-    '"partnerPrice" in body',
-    '"partnerPaid" in body',
-    "delete result.companyProfit",
-    '"partnerAgreedAt"',
-    '"partnerBalance"',
-    "partnerAgreedAt: { not: null }",
+    "!isDirector(role) && role !== Role.MANAGER",
+    '["partnerId", "partnerPrice", "partnerPaid", "companyProfit"]',
+    "delete safe.netProfit",
+    "delete safe.netMargin",
+    "delete safe.costDataComplete",
+    "? { partnerId: partner.id }",
   ],
   "orders API",
 );
@@ -172,7 +194,7 @@ assert.match(
 
 const finance = read("app/api/finance/route.ts");
 const partnerFinanceGuard = finance.indexOf(
-  "auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT",
+  "auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT",
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(

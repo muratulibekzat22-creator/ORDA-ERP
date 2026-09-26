@@ -32,7 +32,9 @@ type Form = {
 };
 type EmployeeFilter = "active" | "inactive" | "all";
 
-const employeeRoles = Object.values(Role).filter((role) => role !== Role.PARTNER);
+const employeeRoles = Object.values(Role).filter(
+  (role) => role !== Role.PARTNER && role !== Role.MARKETER,
+);
 const blank: Form = {
   name: "",
   position: "",

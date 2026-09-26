@@ -46,7 +46,6 @@ export async function getAuthorizedOrder(id: number) {
         where: {
           id,
           partnerId: partner.id,
-          partnerAgreedAt: { not: null },
           lifecycle: { not: "CANCELLED" },
         },
         select: { id: true },
@@ -59,6 +58,7 @@ export async function getAuthorizedOrder(id: number) {
   const { _count, ...sourceOrder } = source;
   const order = {
     ...sourceOrder,
+    productionPrice: source.partnerAgreedAt ? source.partnerPrice : null,
     deletionImpact: {
       hasFinancialHistory:
         _count.payments > 0 ||
@@ -79,6 +79,7 @@ export async function getAuthorizedOrder(id: number) {
       clientDueAt: source.promisedAt,
       payrollAccruals: source.payrollAccruals,
       ledgerEntries: source.companyLedgerEntries,
+      calculation: source.calculations[0] ?? null,
     }),
   };
   if (role === Role.DIRECTOR) return order;
@@ -130,6 +131,8 @@ export async function getAuthorizedOrder(id: number) {
   // manager's browser, even when the interface does not render them.
   return {
     ...order,
+    productionPrice:
+      role === Role.MANAGER ? order.productionPrice : undefined,
     managerUser: undefined,
     partnerPrice: undefined,
     partnerAgreedAt: undefined,

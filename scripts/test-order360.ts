@@ -19,6 +19,7 @@ import {
   resolveBlocker,
   transitionLifecycle,
 } from "../lib/services/order360.service";
+import { assignPartnerToOrder, setProductionPrice } from "../lib/services/partner.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
   throw new Error("Order 360 integration requires TEST_DATABASE_URL");
@@ -46,9 +47,12 @@ async function main() {
     partnerIds.push(partner.id);
     const client = await prisma.client.create({ data: { name: tag, phone: "77000000001", city: "Test", manager: manager.name, managerUserId: manager.id, amount: "1000", status: "WON", stage: "WON" } });
     clientIds.push(client.id);
-    const order = await prisma.order.create({ data: { number: `O360-${Date.now()}`, clientId: client.id, partnerId: partner.id, address: "Test address", staircase: "Straight", material: "Oak", amount: 1000, prepayment: 50, balance: 950, partnerPrice: 400, partnerPaid: 100, partnerBalance: 300, companyProfit: 600, manager: manager.name, managerUserId: manager.id, requiredPrepayment: 50 } });
+    const order = await prisma.order.create({ data: { number: `O360-${Date.now()}`, clientId: client.id, address: "Test address", staircase: "Straight", material: "Oak", amount: 1000, prepayment: 50, balance: 950, partnerPrice: 0, partnerAgreedAt: null, partnerPaid: 0, partnerBalance: 0, companyProfit: 0, manager: manager.name, managerUserId: manager.id, requiredPrepayment: 50 } });
     orderIds.push(order.id);
-    await prisma.production.create({ data: { orderId: order.id, stage: "CUTTING", percent: 0, master: production.name, masterUserId: production.id } });
+    const assignedWithoutPrice = await assignPartnerToOrder({ orderId: order.id, partnerId: partner.id, manager: manager.name });
+    assert.equal(assignedWithoutPrice?.partnerId, partner.id, "workshop was not assigned without a production price");
+    assert.equal(assignedWithoutPrice?.partnerAgreedAt, null, "workshop assignment invented a production price date");
+    await prisma.production.updateMany({ where: { orderId: order.id }, data: { stage: "CUTTING", master: production.name, masterUserId: production.id } });
     const actors = {
       director: { userId: director.id, role: Role.DIRECTOR, name: director.name },
       manager: { userId: manager.id, role: Role.MANAGER, name: manager.name },
@@ -95,7 +99,7 @@ async function main() {
       const result = await confirmMilestone({ orderId: order.id, action, value, expectedVersion: version, key: key(action), requestHash: hash(action) }, actors.manager);
       version = Number(result.version);
     }
-    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true);
+    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "missing production price blocked transfer to workshop");
     const preparation = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.PREPARATION, expectedVersion: version, key: key("preparation"), requestHash: hash("preparation") }, actors.manager);
     version = Number(preparation.version);
     const blockerResult = await openBlocker({ orderId: order.id, type: "MATERIAL", severity: OrderBlockerSeverity.CRITICAL, title: "Critical test", key: key("blocker"), requestHash: hash("blocker") }, actors.manager);
@@ -122,6 +126,8 @@ async function main() {
     version = Number(acceptance.version);
     const accepted = await confirmMilestone({ orderId: order.id, action: "record-acceptance", expectedVersion: version, key: key("accepted"), requestHash: hash("accepted") }, actors.manager);
     version = Number(accepted.version);
+    await code(() => transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completion-without-price"), requestHash: hash("completion-without-price") }, actors.manager), "GATE_FAILED");
+    await setProductionPrice({ orderId: order.id, amount: 600, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
     const completed = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completed"), requestHash: hash("completed") }, actors.manager);
     assert.equal(Number(completed.version), version + 1);
     const completedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
@@ -161,12 +167,14 @@ async function main() {
       await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderBlocker.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.orderInstallation.deleteMany({ where: { orderId: { in: orderIds } } });
+      await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.productionStageHistory.deleteMany({ where: { production: { orderId: { in: orderIds } } } });
       await prisma.production.deleteMany({ where: { orderId: { in: orderIds } } });
       await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
     }
     if (clientIds.length) await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
     if (partnerIds.length) await prisma.partner.deleteMany({ where: { id: { in: partnerIds } } });
+    if (userIds.length) await prisma.employeePayrollProfile.deleteMany({ where: { userId: { in: userIds } } });
     if (userIds.length) await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     await prisma.$disconnect();
   }

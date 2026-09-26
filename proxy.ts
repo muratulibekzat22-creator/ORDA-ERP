@@ -53,6 +53,8 @@ export async function proxy(request: NextRequest) {
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
+    OPERATIONS_DIRECTOR: ["*"],
+    MARKETER: ["marketing", "calendar"],
     MANAGER: [
       "clients",
       "orders",
@@ -101,17 +103,20 @@ export async function proxy(request: NextRequest) {
     "partner",
     "payroll",
     "training",
+    "marketing",
     "change-password",
   ].includes(firstSegment);
   if (
     firstSegment === "training" &&
     role !== "MEASURER" &&
-    role !== "DIRECTOR"
+    role !== "DIRECTOR" &&
+    role !== "OPERATIONS_DIRECTOR"
   )
     return redirect(new URL("/", request.url));
   if (
     firstSegment === "calculator-config" &&
     role !== "DIRECTOR" &&
+    role !== "OPERATIONS_DIRECTOR" &&
     role !== "ACCOUNTANT"
   )
     return redirect(new URL("/", request.url));
@@ -127,7 +132,7 @@ export async function proxy(request: NextRequest) {
   const selfPayroll = firstSegment === "payroll" && role !== "PARTNER";
   const trainingWorkspace =
     firstSegment === "training" &&
-    (role === "MEASURER" || role === "DIRECTOR");
+    (role === "MEASURER" || role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR");
   if (
     firstSegment !== "calculator-config" &&
     firstSegment !== "change-password" &&

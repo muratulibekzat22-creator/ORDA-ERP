@@ -53,9 +53,9 @@ async function main() {
   delete process.env.BLOB_READ_WRITE_TOKEN;
 
   await prisma.companySettings.upsert({
-    where: { id: 1 },
+    where: { companyId: 1 },
     create: {
-      id: 1,
+      companyId: 1,
       name: "ALTYN SAPA COMPANY",
       bin: "220540017969",
       actualAddress: "г. Алматы",

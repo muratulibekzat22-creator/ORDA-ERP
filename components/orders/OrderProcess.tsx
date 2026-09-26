@@ -1,31 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { useCallback, useEffect, useState } from "react";
+
 import {
-  ORDER_STAGE_KEYS,
-  ORDER_STAGE_LABELS,
-  projectOrderStage,
+  USER_ORDER_STATUS_LABELS,
+  projectOrderStatus,
 } from "@/lib/orders/presentation";
 
 type Transition = {
   to: string;
-  gate: {
-    passed: boolean;
-    checks: Array<{ passed: boolean; message: string }>;
-  };
+  gate: { passed: boolean; checks: Array<{ passed: boolean; message: string }> };
 };
 type Payload = { version: number; transitions: Transition[] };
-const actionLabel: Record<string, string> = {
-  PREPARATION: "Замер снят",
-  READY_FOR_PRODUCTION: "Передать в заготовку",
-  IN_PRODUCTION: "Заготовка завершена",
-  READY_FOR_INSTALLATION: "Покраска завершена",
-  INSTALLATION: "Начать установку",
-  ACCEPTANCE: "Монтаж завершён",
-  COMPLETED: "Завершить заказ",
-};
 
 export default function OrderProcess({
   orderId,
@@ -39,74 +27,42 @@ export default function OrderProcess({
   readOnly?: boolean;
 }) {
   const router = useRouter();
-  const { data: session } = useSession();
   const [data, setData] = useState<Payload>({ version, transitions: [] });
-  const [attention, setAttention] = useState<
-    Array<{ message: string; severity: string }>
-  >([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [measurementOpen, setMeasurementOpen] = useState(false);
   const [measurementDate, setMeasurementDate] = useState(new Date().toISOString().slice(0, 10));
   const [measurementComment, setMeasurementComment] = useState("");
   const load = useCallback(async () => {
-    const [transitions, signals] = await Promise.all([
-      fetch(`/api/orders/${orderId}/available-transitions`),
-      fetch(`/api/orders/${orderId}/attention`),
-    ]);
-    if (transitions.ok) setData((await transitions.json()) as Payload);
-    if (signals.ok)
-      setAttention(
-        (await signals.json()) as Array<{ message: string; severity: string }>,
-      );
+    const response = await fetch(`/api/orders/${orderId}/available-transitions`, { cache: "no-store" });
+    if (response.ok) setData((await response.json()) as Payload);
   }, [orderId]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
-  const current = projectOrderStage(lifecycle);
-  const currentIndex = ORDER_STAGE_KEYS.indexOf(current);
-  const next = data.transitions[0];
-  const previous = session?.user.role === "DIRECTOR" ? data.transitions.find((item) => {
-    const target = projectOrderStage(item.to);
-    return ORDER_STAGE_KEYS.indexOf(target) < currentIndex;
-  }) : undefined;
-  async function run(target = next, reason?: string, override = false) {
-    if (!target) return;
-    setBusy(true);
-    setError("");
+
+  const complete = data.transitions.find((item) => item.to === "COMPLETED");
+  const next = data.transitions.find(
+    (item) => item.to !== "CANCELLED" && item.to !== "COMPLETED",
+  );
+  const nextLabel = next
+    ? USER_ORDER_STATUS_LABELS[projectOrderStatus(next.to)]
+    : null;
+  async function run(transition: Transition | undefined) {
+    if (!transition) return;
+    setBusy(true); setError("");
     try {
       const response = await fetch(`/api/orders/${orderId}/commands`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          action: "transition",
-          to: target.to,
-          expectedVersion: data.version,
-          reason,
-          override,
-        }),
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ action: "transition", to: transition.to, expectedVersion: data.version }),
       });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok)
-        throw new Error(
-          payload.error === "GATE_FAILED"
-            ? target.gate.checks
-                .filter((item) => !item.passed)
-                .map((item) => item.message)
-                .join(" · ")
-            : (payload.error ?? "Переход недоступен"),
-        );
-      await load();
-      router.refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Переход недоступен");
-    } finally {
-      setBusy(false);
-    }
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error === "GATE_FAILED" ? transition.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ") : body.error ?? "Переход недоступен");
+      await load(); router.refresh();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Переход недоступен"); }
+    finally { setBusy(false); }
   }
   async function completeMeasurement() {
     setBusy(true); setError("");
@@ -116,79 +72,24 @@ export default function OrderProcess({
         headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({ action: "complete-control-measurement", expectedVersion: data.version, completedAt: `${measurementDate}T12:00:00`, comment: measurementComment }),
       });
-      const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Не удалось завершить замер");
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Не удалось зафиксировать замер");
       setMeasurementOpen(false); await load(); router.refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось завершить замер"); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось зафиксировать замер"); }
     finally { setBusy(false); }
   }
-  return (
-    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-5">
-      <h2 className="text-lg font-semibold text-white">Процесс</h2>
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {ORDER_STAGE_KEYS.map((key, index) => (
-          <div
-            key={key}
-            className={`rounded-xl border p-3 text-sm ${index === currentIndex ? "border-blue-500 bg-blue-500/15 text-blue-200" : index < currentIndex ? "border-emerald-900 bg-emerald-500/10 text-emerald-300" : "border-slate-800 text-slate-500"}`}
-          >
-            <span className="block text-xs">
-              {index < currentIndex
-                ? "✓ Выполнено"
-                : index === currentIndex
-                  ? "Сейчас"
-                  : "Далее"}
-            </span>
-            {ORDER_STAGE_LABELS[key]}
-          </div>
-        ))}
-      </div>
-      {attention.length > 0 && (
-        <div className="mt-4 rounded-xl bg-amber-500/10 p-3">
-          <strong className="text-amber-200">Требует внимания</strong>
-          {attention.slice(0, 3).map((item, index) => (
-            <p
-              key={`${item.message}-${index}`}
-              className="mt-1 text-sm text-amber-100/80"
-            >
-              {item.message}
-            </p>
-          ))}
-        </div>
-      )}
-      {error && (
-        <p role="alert" className="mt-3 text-sm text-red-300">
-          {error}
-        </p>
-      )}
-      {current === "measurement" && !readOnly && !measurementOpen && (
-        <button type="button" onClick={() => setMeasurementOpen(true)} className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white">Замер снят</button>
-      )}
-      {current === "measurement" && !readOnly && measurementOpen && <div className="mt-4 grid gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 p-4 sm:grid-cols-2">
-        <label className="text-sm text-slate-300">Дата замера<input type="date" required value={measurementDate} onChange={(event) => setMeasurementDate(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white"/></label>
+  if (readOnly || lifecycle === "COMPLETED" || lifecycle === "CANCELLED") return null;
+  return <div>
+    {lifecycle === "CREATED" ? <>
+      <div className="flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => setMeasurementOpen(true)} disabled={busy} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50 sm:w-auto">Следующий этап <ArrowRight size={17}/></button>{complete ? <button type="button" onClick={() => void run(complete)} disabled={busy || !complete.gate.passed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 size={17}/>{busy ? "Выполняется…" : "Завершить заказ"}</button> : null}</div>
+      {measurementOpen && <div className="mt-3 grid gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 p-4 sm:grid-cols-2">
+        <label className="text-sm text-slate-300">Дата контрольного замера<input type="date" required value={measurementDate} onChange={(event) => setMeasurementDate(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white"/></label>
         <label className="text-sm text-slate-300">Комментарий<input value={measurementComment} onChange={(event) => setMeasurementComment(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white"/></label>
-        <p className="text-sm text-slate-400 sm:col-span-2">Следующий этап: <strong className="text-white">Заготовка</strong>. Фотографии сохраняются в карточке назначенного замера.</p>
-        <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => void completeMeasurement()} disabled={busy || !measurementDate} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50">{busy ? "Сохранение…" : "Подтвердить"}</button><button type="button" onClick={() => setMeasurementOpen(false)} className="min-h-11 rounded-xl bg-slate-800 px-4 text-white">Отмена</button></div>
+        <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => void completeMeasurement()} disabled={busy || !measurementDate} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-50">{busy ? "Сохранение…" : "Подтвердить"}</button><button type="button" onClick={() => setMeasurementOpen(false)} className="min-h-11 rounded-xl bg-slate-800 px-4">Отмена</button></div>
       </div>}
-      {next && current !== "measurement" && !readOnly && (
-        <button
-          type="button"
-          onClick={() => void run()}
-          disabled={busy || !next.gate.passed}
-          className="mt-4 min-h-11 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? "Выполняется…" : (actionLabel[next.to] ?? "Следующий этап")}
-        </button>
-      )}
-      {next && current !== "measurement" && !readOnly && !next.gate.passed && (
-        <p className="mt-2 text-sm text-slate-400">
-          Сначала:{" "}
-          {next.gate.checks
-            .filter((item) => !item.passed)
-            .map((item) => item.message)
-            .join(" · ")}
-        </p>
-      )}
-      {previous && !readOnly && <button type="button" disabled={busy} onClick={() => { const reason = window.prompt("Обязательный комментарий для возврата этапа")?.trim(); if (reason) void run(previous, reason, true); }} className="mt-3 min-h-11 rounded-xl border border-slate-700 px-4 text-sm text-slate-300">Вернуть предыдущий этап</button>}
-    </section>
-  );
+    </> : <div className="flex flex-col items-stretch gap-2 sm:items-end"><div className="flex flex-col gap-2 sm:flex-row">{next ? <button type="button" onClick={() => void run(next)} disabled={busy || !next.gate.passed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Выполняется…" : "Следующий этап"}<ArrowRight size={17}/></button> : null}{complete ? <button type="button" onClick={() => void run(complete)} disabled={busy || !complete.gate.passed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 size={17}/>{busy ? "Выполняется…" : "Завершить заказ"}</button> : null}</div>{nextLabel && <span className="text-xs text-slate-400">Далее: {nextLabel}</span>}</div>}
+    {next && !next.gate.passed && <p className="mt-2 text-sm text-amber-200">Для следующего этапа: {next.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ")}</p>}
+    {complete && !complete.gate.passed && <p className="mt-2 text-sm text-amber-200">Для завершения нужны только: {complete.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ")}</p>}
+    {error && <p role="alert" className="mt-2 text-sm text-red-300">{error}</p>}
+  </div>;
 }

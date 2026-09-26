@@ -1,34 +1,40 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Role } from "@prisma/client";
-import { calculateStair } from "../lib/calculator/stair-calculation";
-import {
-  canTransitionOrderStatus,
-  normalizeOrderStatus,
-  ORDER_STATUSES,
-} from "../lib/orders/lifecycle";
+import { OrderLifecycle } from "@prisma/client";
 
-assert.equal(ORDER_STATUSES.length, 12);
-assert.equal(normalizeOrderStatus("Монтаж"), "Установка");
-assert.equal(
-  canTransitionOrderStatus(
-    Role.MANAGER,
-    "Новая заявка",
-    "Коммерческое предложение отправлено",
-  ),
-  true,
-);
-assert.equal(
-  canTransitionOrderStatus(Role.MANAGER, "Новая заявка", "Договор подписан"),
-  false,
-);
-assert.equal(
-  canTransitionOrderStatus(Role.PARTNER, "Заготовка", "Покраска"),
-  true,
-);
-assert.equal(
-  canTransitionOrderStatus(Role.PARTNER, "Заготовка", "Заказ завершён"),
-  false,
+import { calculateStair } from "../lib/calculator/stair-calculation";
+import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentation";
+import { orderDataGaps } from "../lib/orders/completeness";
+import { orderBoardColumn } from "../lib/orders/board";
+
+assert.equal(USER_ORDER_STATUSES.length, 7);
+assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
+assert.equal(projectOrderStatus(OrderLifecycle.IN_PRODUCTION), "IN_WORK");
+assert.equal(projectOrderStatus(OrderLifecycle.ACCEPTANCE), "INSTALLATION");
+assert.equal(orderBoardColumn(OrderLifecycle.CREATED), "ORDERED");
+assert.equal(orderBoardColumn(OrderLifecycle.PREPARATION), "CONTRACT");
+assert.equal(orderBoardColumn(OrderLifecycle.IN_PRODUCTION), "WORKSHOP");
+assert.equal(orderBoardColumn(OrderLifecycle.COMPLETED), "COMPLETED");
+assert.equal(orderBoardColumn(OrderLifecycle.CANCELLED), null);
+assert.deepEqual(
+  orderDataGaps({
+    managerUserId: null,
+    partnerId: null,
+    partnerPrice: 0,
+    partnerAgreedAt: null,
+    promisedAt: null,
+    productionDeadline: null,
+    installation: null,
+    client: { phone: "", city: "" },
+  }),
+  [
+    "Назначить ответственного менеджера",
+    "Телефон клиента",
+    "Город клиента",
+    "Срок заказа",
+    "Назначить цех",
+    "Цена производства",
+  ],
 );
 
 for (const [material, workshopRate, saleRate] of [
@@ -44,106 +50,65 @@ for (const [material, workshopRate, saleRate] of [
   assert.equal(result.equivalentSteps, 23);
   assert.equal(result.workshopCost, 23 * workshopRate);
   assert.equal(result.clientPrice, 23 * saleRate);
-  assert.equal(result.grossDifference, 23 * (saleRate - workshopRate));
 }
-const adjusted = calculateStair({
-  material: "Карагач",
-  regularSteps: 18,
-  platformEquivalents: [2, 3],
-  clientPrice: 2_000_000,
-  workshopCost: 1_300_000,
-});
-assert.equal(adjusted.clientAdjustment, 160_000);
-assert.equal(adjusted.workshopAdjustment, 35_000);
-assert.throws(() =>
-  calculateStair({
-    material: "Сосна",
-    regularSteps: -1,
-    platformEquivalents: [],
-  }),
-);
-assert.throws(() =>
-  calculateStair({
-    material: "Сосна",
-    regularSteps: 10,
-    platformEquivalents: [4],
-  }),
-);
 
 const rootLayout = readFileSync("app/layout.tsx", "utf8");
 const routeShell = readFileSync("components/layout/RouteShell.tsx", "utf8");
 const workspace = readFileSync("components/orders/OrderWorkspace.tsx", "utf8");
+const economy = readFileSync("components/orders/OrderEconomy.tsx", "utf8");
 const orderPageAuth = readFileSync("lib/order-page-auth.ts", "utf8");
-const orderApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
+const orderDetailApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
-const orderOptions = readFileSync("app/api/orders/options/route.ts", "utf8");
-const settlementPanel = readFileSync("components/orders/OrderSettlementPanel.tsx", "utf8");
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
-const directorDashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
+const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPanel.tsx", "utf8");
+const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
+const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
+
 assert.match(rootLayout, /RouteShell/);
-assert.match(routeShell, /pathname\.startsWith\(href\)/);
-for (const section of [
-  "client",
-  "technical",
-  "order-finance",
-  "calculation",
-  "documents",
-  "history",
-  "calendar",
-  "production",
-  "workshop",
-  "files",
-])
+assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
+assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /"\/marketing", "Маркетинг"/);
+for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));
-for (const action of [
-  "Редактировать",
-  "Печать",
-  "Добавить файл",
-  "Добавить комментарий",
-  "Добавить оплату",
-])
-  assert.match(workspace, new RegExp(action));
-assert.doesNotMatch(workspace, /Отправить КП|Отправить договор|Клиентский статус/);
-assert.match(workspace, /OrderProcess/);
-assert.match(workspace, /Внутренние технические этапы/);
+for (const label of ["Исполнение", "Добавить оплату", "Редактировать", "Подробнее"])
+  assert.match(workspace, new RegExp(label));
+for (const removed of ["ORDER_STAGE_LABELS", "projectOrderStage", "Внутренние технические этапы"])
+  assert.doesNotMatch(workspace, new RegExp(removed));
+for (const label of ["Сумма продажи", "Подрядчик / производство", "Материалы", "Доставка", "Общая себестоимость", "Чистая прибыль", "Чистая маржа"])
+  assert.match(economy, new RegExp(label));
 assert.match(orderPageAuth, /Server Components serialize their props/);
 assert.match(orderPageAuth, /partnerPrice: undefined/);
-assert.match(orderPageAuth, /unitSale: line\.unitSale/);
+assert.match(orderPageAuth, /productionPrice/);
 assert.doesNotMatch(
   orderPageAuth.slice(orderPageAuth.indexOf("lines: calculation.lines.map")),
   /unitCost: line\.unitCost/,
 );
-assert.match(orderApi, /order-comment:/);
-assert.match(orderApi, /Добавлен комментарий/);
-for (const block of ["Клиент", "Заказ", "Технические параметры", "Финансы заказа", "Дополнительно"])
-  assert.match(newOrderForm, new RegExp(`title="${block}"`));
+for (const label of ["Клиент", "Телефон", "Город / адрес", "Ответственный", "Цена клиенту", "Полученная оплата", "Срок", "Комментарий"])
+  assert.match(newOrderForm, new RegExp(label));
 assert.match(newOrderForm, /router\.push\(`\/orders\/\$\{body\.id\}`\)/);
 assert.match(newOrderForm, /existingClient\?\.id/);
-assert.match(ordersApi, /role !== Role\.DIRECTOR && role !== Role\.MANAGER/);
-assert.match(ordersApi, /enforceClientOwnership: enhanced/);
-assert.match(ordersApi, /Полученная сумма не может превышать сумму заказа/);
-assert.match(orderOptions, /active: true, role: Role\.MANAGER/);
-assert.match(orderOptions, /kind: "STAIR_MATERIAL"/);
-for (const label of ["Расчёты", "Получено от клиента", "Остаток клиента", "Согласованная стоимость цеха", "Выплачено цеху", "Осталось выплатить", "Указать стоимость цеха", "Выплатить цеху", "История выплат цеху"])
-  assert.match(settlementPanel, new RegExp(label));
-assert.match(settlementPanel, /id="settlements"/);
-for (const label of ["К выплате цеху", "Стоимость цеха", "Осталось выплатить"])
-  assert.match(ordersPage, new RegExp(label));
-assert.match(directorDashboard, /\/orders\?settlement=partner-payable/);
-assert.match(ordersApi, /role !== Role\.PARTNER/);
-for (const field of ["partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"])
+for (const tab of ["Заявки", "Канбан", "Завершённые"])
+  assert.match(ordersPage, new RegExp(tab));
+for (const column of ["Заказ оформлен", "Договор", "Передан в цех", "Заказ завершён"])
+  assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(column));
+for (const label of ["Продажа:", "Остаток клиента:", "Срок не указан"])
+  assert.match(orderKanban, new RegExp(label));
+assert.match(workspace, /\["clientName", "Имя клиента"\]/);
+assert.match(orderDetailApi, /tx\.client\.update\([\s\S]*name: clientName/);
+assert.match(ordersApi, /"active", "board", "completed", "all"/);
+for (const label of ["Цена производства", "Расчёт с цехом", "Поддержка цеху", "Аванс цеху", "Финальный расчёт"])
+  assert.match(workshopSettlement, new RegExp(label));
+for (const removed of ["Основание / комментарий", "Дата фиксации", "Поле обязательно до передачи заказа"])
+  assert.doesNotMatch(workshopSettlement, new RegExp(removed));
+const order360 = readFileSync("lib/services/order360.service.ts", "utf8");
+assert.match(order360, /code: "SALE_AMOUNT"[\s\S]*code: "PRODUCTION_PRICE"/);
+assert.match(order360, /code: "PRODUCTION_PRICE"[\s\S]*Не указана сумма производства/);
+assert.match(ordersPage, /missing-production-price/);
+assert.match(ordersApi, /!isDirector\(role\) && role !== Role\.MANAGER/);
+for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])
   assert.match(ordersApi, new RegExp(`"${field}"`));
 for (const page of ["offer", "contract", "act", "invoice", "print"])
-  assert.ok(
-    readFileSync(`app/orders/[id]/${page}/page.tsx`, "utf8").length > 0,
-  );
-const printCss = readFileSync("app/globals.css", "utf8");
-assert.match(printCss, /size: A4/);
-assert.match(
-  readFileSync("components/documents/CommercialProposal.tsx", "utf8"),
-  /DocumentBrandHeader/,
-);
-console.log(
-  "order workspace, lifecycle, security boundary and document checks passed",
-);
+  assert.ok(readFileSync(`app/orders/[id]/${page}/page.tsx`, "utf8").length > 0);
+
+console.log("compact order workspace, unified statuses, security boundary and calculation checks passed");

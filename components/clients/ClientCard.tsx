@@ -321,7 +321,7 @@ export default function ClientCard({ clientId }: { clientId: number }) {
           </p>
         </div>
         <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
-          {client.deletedAt && session?.user.role === "DIRECTOR" ? <button onClick={() => void restore()} disabled={saving} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:opacity-60">Восстановить заявку</button> : <>
+          {client.deletedAt && (session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR") ? <button onClick={() => void restore()} disabled={saving} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:opacity-60">Восстановить заявку</button> : <>
           <a
             href={`https://wa.me/${(client.whatsapp || client.phone).replace(/\D/g, "")}`}
             target="_blank"

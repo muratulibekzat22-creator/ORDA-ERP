@@ -11,6 +11,7 @@ import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { ensureUserEmployeeProfiles } from "@/lib/services/employee.service";
 import {
   changeAllowance,
   changeSalary,
@@ -55,17 +56,20 @@ export async function GET(request: Request) {
   const auth = await requirePermission("payroll");
   if (auth.response) return auth.response;
   try {
+    await ensureUserEmployeeProfiles();
     const params = new URL(request.url).searchParams;
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
-    const period = await prisma.payrollPeriod.findUnique({
+    const identity = actor(auth.session!);
+    let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
+    if (!period && (identity.role === Role.DIRECTOR || identity.role === Role.OPERATIONS_DIRECTOR))
+      period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.upsert({
       where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
     });
-    const identity = actor(auth.session!);
-    const unconfigured = identity.role === Role.DIRECTOR
+    const unconfigured = identity.role === Role.DIRECTOR || identity.role === Role.OPERATIONS_DIRECTOR
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
       : [];
     if (!period)
@@ -102,7 +106,7 @@ export async function POST(request: Request) {
     const action = String(body.action ?? "");
     const hash = createRequestHash(body);
     if (action === "create-period") {
-      if (identity.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
+      if (identity.role !== Role.DIRECTOR && identity.role !== Role.OPERATIONS_DIRECTOR) throw new PayrollError("FORBIDDEN");
       return NextResponse.json(
         await ensurePeriod(Number(body.year), Number(body.month)),
       );

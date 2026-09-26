@@ -320,8 +320,10 @@ async function main() {
       payable: 180000,
     });
     assert.equal(summary.settings.paydayDayOfMonth, 1);
-    assert(summary.rows[0].bonusAccruals.some((item) => item.id === guaranteed.accrual.id && item.status === "PAID"));
-    assert(summary.rows[0].bonusAccruals.some((item) => item.id === orderBonus.accrual.id && item.status === "ACCRUED"));
+    const managerSummary = summary.rows.find((row) => row.id === profile.id);
+    assert(managerSummary, "manager payroll summary row is missing");
+    assert(managerSummary.bonusAccruals.some((item) => item.id === guaranteed.accrual.id && item.status === "PAID"));
+    assert(managerSummary.bonusAccruals.some((item) => item.id === orderBonus.accrual.id && item.status === "ACCRUED"));
     await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("formula-salary"), requestHash: "formula-salary" }, directorActor);
     await createAccrual({ employeeId: profile.id, periodId: formulaPeriod.id, type: PayrollAccrualType.PREMIUM, amount: 30000, reason: "Премия", key: key("formula-premium"), requestHash: "formula-premium" }, directorActor);
     const formulaAdvance = await requestAdvance({ periodId: formulaPeriod.id, amount: 50000, comment: "Аванс", key: key("formula-advance"), requestHash: "formula-advance" }, managerActor);
@@ -465,8 +467,10 @@ async function main() {
       accountantActor,
     );
     let bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
+    let trackedBonusSummary = bonusStatusSummary.rows.find((row) => row.id === profile.id);
+    assert(trackedBonusSummary, "tracked employee payroll summary row is missing");
     assert.equal(
-      bonusStatusSummary.rows[0].bonusAccruals.find(
+      trackedBonusSummary.bonusAccruals.find(
         (item) => item.id === trackedBonus.accrual.id,
       )?.status,
       "PARTIALLY_PAID",
@@ -504,8 +508,10 @@ async function main() {
       directorActor,
     );
     bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
+    trackedBonusSummary = bonusStatusSummary.rows.find((row) => row.id === profile.id);
+    assert(trackedBonusSummary, "tracked employee payroll summary row is missing after final payment");
     assert.equal(
-      bonusStatusSummary.rows[0].bonusAccruals.find(
+      trackedBonusSummary.bonusAccruals.find(
         (item) => item.id === trackedBonus.accrual.id,
       )?.status,
       "PAID",

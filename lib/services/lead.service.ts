@@ -1,12 +1,13 @@
 import { LeadLostReason, LeadNextActionType, LeadStage, Prisma, Role } from "@prisma/client";
 
 import { canAccessLead, isTerminalStage, requiresNextAction } from "@/lib/leads/domain";
+import { completeMandatoryProposalFollowUp } from "@/lib/leads/proposal-follow-up";
 import { prisma } from "@/lib/prisma";
 
 export type LeadActor = { userId: number; name: string; role: Role };
 
 export class LeadError extends Error {
-  constructor(public code: "NOT_FOUND" | "FORBIDDEN" | "NEXT_ACTION_REQUIRED" | "LOST_REASON_REQUIRED" | "LOST_COMMENT_REQUIRED" | "INVALID" | "ACTION_NOT_FOUND" | "ACTION_ALREADY_COMPLETED" | "NEXT_ACTION_AFTER_COMPLETION_REQUIRED" | "ALREADY_CONVERTED") { super(code); }
+  constructor(public code: "NOT_FOUND" | "FORBIDDEN" | "NEXT_ACTION_REQUIRED" | "LOST_REASON_REQUIRED" | "LOST_COMMENT_REQUIRED" | "INVALID" | "ACTION_NOT_FOUND" | "ACTION_ALREADY_COMPLETED" | "NEXT_ACTION_AFTER_COMPLETION_REQUIRED" | "MANDATORY_FOLLOW_UP_PENDING" | "RESULT_REQUIRED" | "ALREADY_CONVERTED") { super(code); }
 }
 
 const activeActionWhere = { completedAt: null } as const;
@@ -42,6 +43,8 @@ export async function createNextAction(input: { clientId: number; type: LeadNext
   return prisma.$transaction(async (tx) => {
     const lead = await accessibleLead(tx, input.clientId, input.actor);
     if (isTerminalStage(lead.stage)) throw new LeadError("INVALID");
+    const mandatory = await tx.leadNextAction.findFirst({ where: { clientId: input.clientId, completedAt: null, mandatory: true }, select: { id: true } });
+    if (mandatory) throw new LeadError("MANDATORY_FOLLOW_UP_PENDING");
     await tx.leadNextAction.updateMany({ where: { clientId: input.clientId, completedAt: null }, data: { completedAt: new Date(), completedByUserId: input.actor.userId, resultComment: "Заменено новым действием" } });
     return tx.leadNextAction.create({ data: { clientId: input.clientId, nextActionType: input.type, nextActionAt: input.at, nextActionComment: input.comment?.trim() || null, createdByUserId: input.actor.userId } });
   });
@@ -53,6 +56,16 @@ export async function completeNextAction(input: { clientId: number; actionId: nu
     const action = await tx.leadNextAction.findFirst({ where: { id: input.actionId, clientId: input.clientId } });
     if (!action) throw new LeadError("ACTION_NOT_FOUND");
     if (action.completedAt) throw new LeadError("ACTION_ALREADY_COMPLETED");
+    if (action.mandatory) {
+      const resultComment = input.resultComment?.trim();
+      if (!resultComment || resultComment.length < 3) throw new LeadError("RESULT_REQUIRED");
+      return completeMandatoryProposalFollowUp(tx, {
+        action,
+        resultComment,
+        actorId: input.actor.userId,
+        actorName: input.actor.name,
+      });
+    }
     if (!isTerminalStage(lead.stage) && !input.nextAction) throw new LeadError("NEXT_ACTION_AFTER_COMPLETION_REQUIRED");
     if (input.nextAction && (!Number.isFinite(input.nextAction.at.getTime()) || input.nextAction.at <= new Date())) throw new LeadError("INVALID");
     await tx.leadNextAction.update({ where: { id: action.id }, data: { completedAt: new Date(), completedByUserId: input.actor.userId, resultComment: input.resultComment?.trim() || null } });
@@ -67,6 +80,8 @@ export function leadErrorResponse(error: unknown) {
     LOST_REASON_REQUIRED: "Укажите причину проигрыша", LOST_COMMENT_REQUIRED: "Для причины «Другое» обязателен комментарий",
     INVALID: "Некорректные данные", ACTION_NOT_FOUND: "Действие не найдено", ACTION_ALREADY_COMPLETED: "Действие уже выполнено",
     NEXT_ACTION_AFTER_COMPLETION_REQUIRED: "Для открытой заявки необходимо назначить следующее действие", ALREADY_CONVERTED: "Заявка уже конвертирована",
+    MANDATORY_FOLLOW_UP_PENDING: "Сначала выполните обязательный контакт после КП",
+    RESULT_REQUIRED: "Напишите, что ответил клиент или что сообщение отправлено",
   };
   return { message: messages[error.code], status: error.code === "NOT_FOUND" || error.code === "ACTION_NOT_FOUND" ? 404 : error.code === "ACTION_ALREADY_COMPLETED" || error.code === "ALREADY_CONVERTED" ? 409 : 400 };
 }

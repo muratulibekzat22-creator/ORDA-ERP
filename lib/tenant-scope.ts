@@ -19,6 +19,10 @@ export const TENANT_MODELS = new Set([
   "CalendarTask",
   "CompanyLedgerEntry",
   "FinanceCategory",
+  "RecurringExpensePlan",
+  "BankStatementImport",
+  "BankStatementTransaction",
+  "BankStatementRule",
   "EmployeePayrollProfile",
   "PayrollPeriod",
   "PersonalLedgerEntry",
@@ -43,6 +47,9 @@ export const TENANT_MODELS = new Set([
   "CalculatorTariff",
   "OrderEvent",
   "RolePermission",
+  "ManagementMarketingTask",
+  "ManagementMarketingMetric",
+  "RecruitmentVacancy",
 ]);
 
 const WHERE_OPERATIONS = new Set([

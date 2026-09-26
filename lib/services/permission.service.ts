@@ -12,7 +12,6 @@ function isRole(value: string): value is Role {
 }
 
 export async function ensureRolePermissions() {
-  if (await prisma.rolePermission.count()) return;
   await prisma.rolePermission.createMany({
     data: Object.entries(defaultPermissions).flatMap(([role, values]) => values.map((permission) => ({ role: role as PrismaRole, permission: permission as PrismaPermission }))),
     skipDuplicates: true,
@@ -28,7 +27,10 @@ export async function getPermissionMatrix() {
   await ensureRolePermissions();
   const rows = await prisma.rolePermission.findMany({ select: { role: true, permission: true } });
   return Object.values(Role).reduce<Record<Role, Permission[]>>((matrix, role) => {
-    matrix[role] = rows.filter((row) => row.role === role).map((row) => row.permission as Permission).sort((a, b) => permissionKeys.indexOf(a) - permissionKeys.indexOf(b));
+    matrix[role] = rows
+      .filter((row) => row.role === role && permissionKeys.includes(row.permission as Permission))
+      .map((row) => row.permission as Permission)
+      .sort((a, b) => permissionKeys.indexOf(a) - permissionKeys.indexOf(b));
     return matrix;
   }, {} as Record<Role, Permission[]>);
 }
@@ -45,7 +47,9 @@ export async function replacePermissionMatrix(value: unknown) {
   if (criticalDirectorPermissions.some((permission) => !next.DIRECTOR.includes(permission))) throw new Error("DIRECTOR_CRITICAL_PERMISSION");
 
   await prisma.$transaction(async (tx) => {
-    await tx.rolePermission.deleteMany();
+    await tx.rolePermission.deleteMany({
+      where: { permission: { in: [...permissionKeys] as PrismaPermission[] } },
+    });
     await tx.rolePermission.createMany({ data: Object.entries(next).flatMap(([role, permissions]) => permissions.map((permission) => ({ role: role as PrismaRole, permission: permission as PrismaPermission }))) });
   });
   return next;

@@ -1,5 +1,8 @@
-import { DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
+import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { orderDataGaps } from "@/lib/orders/completeness";
+import { orderDeadline, projectOrderStatus } from "@/lib/orders/presentation";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf } from "@/lib/services/payment-receipt.service";
@@ -17,66 +20,60 @@ export async function getOrders(
     select: {
       id: true,
       number: true,
-      address: true,
-      staircase: true,
-      material: true,
       amount: true,
-      prepayment: true,
-      balance: true,
+      partnerId: true,
       partnerPrice: true,
       partnerAgreedAt: true,
-      companyProfit: true,
-      partnerPaid: true,
-      partnerBalance: true,
+      partnerPlannedReadyAt: true,
       manager: true,
       managerUserId: true,
       deletedAt: true,
-      deletedById: true,
-      deletedBy: { select: { id: true, name: true } },
       lifecycle: true,
-      version: true,
-      status: true,
       productionDeadline: true,
       promisedAt: true,
-      partnerPlannedReadyAt: true,
-      completedAt: true,
       createdAt: true,
       updatedAt: true,
       client: { select: { id: true, name: true, phone: true, city: true } },
-      partner: { select: { id: true, name: true } },
-      productions: {
-        take: 1,
-        orderBy: { createdAt: "desc" },
-        select: { stage: true, master: true, plannedEndAt: true },
-      },
-      installation: {
+      installation: { select: { scheduledAt: true } },
+      commercialAdjustments: { select: { balanceImpact: true } },
+      payments: {
         select: {
-          scheduledAt: true,
-          installerUser: { select: { name: true } },
+          type: true,
+          amount: true,
+          partnerId: true,
         },
       },
-      blockers: {
-        where: { status: "OPEN" },
-        take: 1,
-        orderBy: { createdAt: "desc" },
-        select: { title: true, severity: true },
-      },
-      documents: {
-        where: {
-          type: DocumentType.CONTRACT,
-          status: {
-            notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED],
-          },
-        },
-        take: 1,
-        select: { id: true },
-      },
-      _count: {
+      payrollAccruals: {
         select: {
-          payments: true,
-          companyLedgerEntries: true,
-          financeAuditEvents: true,
-          payrollAccruals: true,
+          type: true,
+          direction: true,
+          amount: true,
+          reversalOfId: true,
+          reversedBy: { select: { id: true } },
+          employee: { select: { position: true, user: { select: { role: true } } } },
+          payments: { select: { amount: true, reversalOfId: true, reversedAt: true } },
+        },
+      },
+      companyLedgerEntries: {
+        select: {
+          direction: true,
+          amount: true,
+          source: true,
+          category: true,
+          type: true,
+          affectsProfit: true,
+          voidedAt: true,
+        },
+      },
+      calculations: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          workshopCost: true,
+          materialCost: true,
+          installationCost: true,
+          deliveryCost: true,
+          otherDirectCosts: true,
         },
       },
     },
@@ -84,14 +81,50 @@ export async function getOrders(
     skip: Math.max(0, options.skip ?? 0),
     take: Math.min(100, Math.max(1, options.take ?? 100)),
   });
-  return orders.map(({ _count, ...order }) => ({
-    ...order,
-    hasFinancialHistory:
-      _count.payments > 0 ||
-      _count.companyLedgerEntries > 0 ||
-      _count.financeAuditEvents > 0 ||
-      _count.payrollAccruals > 0,
-  }));
+  return orders.map((order) => {
+    const economy = calculateOrderEconomy({
+      totalSale: order.amount,
+      commercialAdjustments: order.commercialAdjustments,
+      payments: order.payments,
+      partnerId: order.partnerId,
+      partnerAgreed: order.partnerPrice,
+      partnerAgreedAt: order.partnerAgreedAt,
+      partnerDueAt: order.partnerPlannedReadyAt,
+      clientDueAt: order.promisedAt,
+      payrollAccruals: order.payrollAccruals,
+      ledgerEntries: order.companyLedgerEntries,
+      calculation: order.calculations[0] ?? null,
+    });
+    return {
+      id: order.id,
+      number: order.number,
+      client: order.client,
+      lifecycle: order.lifecycle,
+      userStatus: projectOrderStatus(order.lifecycle),
+      manager: order.manager,
+      managerUserId: order.managerUserId,
+      deadline: orderDeadline(order),
+      amount: Number(order.amount),
+      received: Number(economy.client.netReceived),
+      balance: Number(economy.client.remaining),
+      netProfit: economy.profit.netProfit === null ? null : Number(economy.profit.netProfit),
+      netMargin: economy.profit.netMarginPercent === null ? null : Number(economy.profit.netMarginPercent),
+      costDataComplete: economy.profit.dataComplete,
+      partnerPrice: Number(order.partnerPrice),
+      partnerPaid: Number(economy.partner.paid),
+      partnerBalance: Number(economy.partner.remaining),
+      partnerAgreedAt: order.partnerAgreedAt,
+      productionPrice: order.partnerAgreedAt === null
+        ? null
+        : Number(order.partnerPrice),
+      productionPriceMissing:
+        order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+      missingFields: orderDataGaps(order),
+      deletedAt: order.deletedAt,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+    };
+  });
 }
 
 export type OrderSearchActor = { role: Role; userId: number; name: string };
@@ -100,11 +133,11 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
   const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
     ? { OR: [
         { managerUserId: actor.userId },
-        { managerUserId: null, manager: actor.name },
+        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
         { leadConversion: { managerId: actor.userId } },
       ] }
     : actor.role === Role.PARTNER
-      ? { partner: { userId: actor.userId }, partnerAgreedAt: { not: null } }
+      ? { partner: { userId: actor.userId } }
       : actor.role === Role.PRODUCTION
         ? { productions: { some: { masterUserId: actor.userId, archivedAt: null } } }
         : actor.role === Role.INSTALLER
@@ -166,6 +199,7 @@ export async function getOrder(id: number) {
         orderBy: { createdAt: "desc" },
       },
       productions: true,
+      installation: true,
       commercialAdjustments: { orderBy: { createdAt: "asc" } },
       companyLedgerEntries: { orderBy: { operationDate: "asc" } },
       documents: true,

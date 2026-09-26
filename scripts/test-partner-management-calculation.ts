@@ -58,8 +58,8 @@ equal(economy.client.remaining, "2200000.00", "client remaining is independent f
 equal(economy.partner.accrued, "3700000.00", "agreed partner cost creates full accrual");
 equal(economy.partner.paid, "0.00", "agreed cost is not a payout");
 equal(economy.partner.remaining, "3700000.00", "partner remaining before payout");
-equal(economy.profit.marginBeforePayroll, "1480000.00", "margin before payroll acceptance example");
+equal(economy.profit.marginBeforePayroll!, "1480000.00", "margin before payroll acceptance example");
 equal(economy.profit.payrollAccrued, "180000.00", "order-linked payroll accruals");
-equal(economy.profit.netProfit, "1300000.00", "net profit acceptance example");
-equal(economy.profit.netMarginPercent, "25.00", "net margin acceptance example");
+equal(economy.profit.netProfit!, "1300000.00", "net profit acceptance example");
+equal(economy.profit.netMarginPercent!, "25.00", "net margin acceptance example");
 console.log("Partner calculations: fixed/order/paid/profit/manual, Decimal precision, debt and reversal PASS");

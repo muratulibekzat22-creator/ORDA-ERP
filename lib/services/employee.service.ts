@@ -4,6 +4,7 @@ import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { allocateEmployeeCode } from "@/lib/employee-code";
 import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 const employeeInclude = {
   user: {
@@ -29,6 +30,55 @@ type EmployeeWithAccount = Prisma.EmployeePayrollProfileGetPayload<{
 
 export class EmployeeError extends Error {}
 
+const positionByRole: Partial<Record<Role, string>> = {
+  [Role.DIRECTOR]: "Основатель / CEO",
+  [Role.OPERATIONS_DIRECTOR]: "Директор",
+  [Role.MARKETER]: "Маркетолог",
+  [Role.MANAGER]: "Менеджер",
+  [Role.ACCOUNTANT]: "Бухгалтер",
+  [Role.MEASURER]: "Замерщик",
+  [Role.DESIGNER]: "Конструктор",
+  [Role.PRODUCTION]: "Производство",
+  [Role.INSTALLER]: "Монтажник",
+};
+
+export async function ensureUserEmployeeProfiles() {
+  const companyId = requireTenantIdentity().companyId;
+  const users = await prisma.user.findMany({
+    where: {
+      companyId,
+      active: true,
+      role: { not: Role.PARTNER },
+      payrollProfile: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+  if (!users.length) return 0;
+  const result = await prisma.employeePayrollProfile.createMany({
+    data: users.map((user) => ({
+      companyId,
+      userId: user.id,
+      name: user.name,
+      position: positionByRole[user.role] ?? "Сотрудник",
+      email: user.email,
+      phone: user.phone,
+      hiredAt: user.createdAt,
+      active: true,
+      payrollEnabled: true,
+      baseSalary: user.role === Role.MANAGER ? 200_000 : 0,
+    })),
+    skipDuplicates: true,
+  });
+  return result.count;
+}
+
 export function employeeDto(employee: EmployeeWithAccount) {
   const account = employee.user;
   return {
@@ -52,6 +102,7 @@ export function employeeDto(employee: EmployeeWithAccount) {
 }
 
 export async function listEmployees(status: "active" | "inactive" | "all") {
+  await ensureUserEmployeeProfiles();
   const active = status === "all" ? undefined : status === "active";
   const employees = await prisma.employeePayrollProfile.findMany({
     where: active === undefined ? undefined : { active },
@@ -120,6 +171,7 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
         hiredAt: new Date(),
         active: input.active ?? true,
         payrollEnabled: true,
+        baseSalary: input.role === Role.MANAGER ? 200_000 : 0,
       },
       include: employeeInclude,
     });

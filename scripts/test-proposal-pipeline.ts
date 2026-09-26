@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { calculateStair, DELIVERY_CHARGES, STAIR_RATES } from "@/lib/calculator/stair-calculation";
 import { companyDisplayPhones, normalizeCompanyPhone } from "@/lib/company-contacts";
 import { normalizePhone } from "@/lib/leads/domain";
+import { proposalFollowUpSchedule } from "@/lib/leads/proposal-follow-up";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { prisma } from "@/lib/prisma";
 import { MATERIAL_PRESENTATION, PROPOSAL_VALIDITY_DAYS } from "@/lib/proposals/presentation";
@@ -14,11 +15,19 @@ const assert = (value: unknown, message: string) => { if (!value) throw new Erro
 async function main() {
   const proposalApi = readFileSync("app/api/clients/[id]/proposals/route.ts", "utf8");
   const proposalUi = readFileSync("components/clients/LeadProposalWorkspace.tsx", "utf8");
+  const followUpGate = readFileSync("components/clients/ManagerFollowUpGate.tsx", "utf8");
   const proposalPdf = readFileSync("lib/services/proposal-pdf.service.ts", "utf8");
   for (const contract of ["PROPOSAL_VALIDITY_DAYS * 86400000", "productionLeadDays", "warrantyMonths", "Сосна", "Карагач", "Дуб ламель", "[\"Сосна\", 6]", "[\"Карагач\", 12]", "[\"Дуб ламель\", 60]"])
     assert(proposalApi.includes(contract), `proposal validity/settings contract is missing ${contract}`);
   assert(PROPOSAL_VALIDITY_DAYS === 3, "proposal validity is not 3 calendar days");
   assert(proposalUi.includes("Срок действия истёк") && proposalUi.includes("Действительно до"), "proposal expiry state is missing");
+  assert(proposalUi.includes("Я отправила КП вручную") && proposalUi.includes("Контрольные сообщения назначены автоматически"), "automatic proposal follow-up UI is missing");
+  assert(followUpGate.includes("Сначала ответьте клиентам после КП") && followUpGate.includes("Что сделано и что ответил клиент"), "mandatory manager follow-up gate is missing");
+  const mondaySchedule = proposalFollowUpSchedule(new Date("2026-09-28T08:00:00.000Z"));
+  assert(mondaySchedule.first.toISOString() === "2026-10-01T05:00:00.000Z", "third business-day follow-up is incorrect");
+  assert(mondaySchedule.second.toISOString() === "2026-10-08T05:00:00.000Z", "ten-day follow-up is incorrect");
+  const weekendSchedule = proposalFollowUpSchedule(new Date("2026-10-01T08:00:00.000Z"));
+  assert(weekendSchedule.second.toISOString() === "2026-10-12T05:00:00.000Z", "weekend follow-up was not moved to the next business day");
   assert(normalizePhone("8 777 123-45-67") === "+77771234567", "Kazakhstan phone normalization failed");
   assert(normalizePhone("7771234567") === "+77771234567", "ten digit phone normalization failed");
   assert(normalizePhone("123") === "", "invalid phone accepted");

@@ -31,6 +31,7 @@ export type OrderTabData = {
   companyProfit: NumericValue;
   partnerPaid: NumericValue;
   partnerBalance: NumericValue;
+  productionPrice?: NumericValue | null;
   client: {
     id: number;
     name: string;
@@ -52,7 +53,7 @@ export type OrderTabData = {
     client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
     partner?: {
       partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; remaining: number; overpayment: number; status: string;
-      payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
+      payouts: Array<{ id: number; amount: number; type: string; purpose: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
     };
     manager?: EmployeeSettlement;
@@ -74,10 +75,11 @@ export type OrderTabData = {
       totalSale: NumericValue; partnerCost: NumericValue; directExpenses: NumericValue;
       materials: NumericValue; delivery: NumericValue; contractors: NumericValue;
       bankFees: NumericValue; otherDirectExpenses: NumericValue;
-      marginBeforePayroll: NumericValue; managerBonus: NumericValue; measurer: NumericValue;
+      dataComplete: boolean;
+      marginBeforePayroll: NumericValue | null; managerBonus: NumericValue; measurer: NumericValue;
       installers: NumericValue; driver: NumericValue; expediter: NumericValue;
-      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue;
-      netMarginPercent: NumericValue;
+      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue | null;
+      netMarginPercent: NumericValue | null;
     };
     cash: {
       clientReceived: NumericValue; partnerPaid: NumericValue; payrollPaid: NumericValue;

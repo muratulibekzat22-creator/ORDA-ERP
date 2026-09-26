@@ -4,8 +4,8 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 
 type Entry = { id: number; type: string; category: string; direction: "INCOME" | "EXPENSE"; amount: string; operationDate: string; comment: string | null };
-type LedgerData = { entries: Entry[]; totals: Record<string, number> };
-const money = (value: number | string) => `${Number(value).toLocaleString("ru-RU")} ₸`;
+type LedgerData = { entries: Entry[]; totals: Record<string, number | null> };
+const money = (value: number | string | null) => value === null ? "Недостаточно данных" : `${Number(value).toLocaleString("ru-RU")} ₸`;
 
 export default function LedgerPage({ personal = false }: { personal?: boolean }) {
   const endpoint = personal ? "/api/personal-finance" : "/api/company-finance";

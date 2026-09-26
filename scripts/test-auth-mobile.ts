@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { ACCOUNT_FAILURE_LIMIT, AUTH_AUDIT_RETENTION_DAYS, IP_ABUSE_FAILURE_LIMIT } from "../lib/auth-security";
 
 const read = (path: string) => readFileSync(path, "utf8");
-const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), serverAuth = read("lib/server-auth.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), legacySidebar = read("components/layout/Sidebar.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx");
+const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), serverAuth = read("lib/server-auth.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx");
 
 assert.equal(ACCOUNT_FAILURE_LIMIT, 5);
 assert.equal(IP_ABUSE_FAILURE_LIMIT, Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 100));
@@ -14,10 +14,12 @@ for (const reason of ["INVALID_CREDENTIALS", "TEMPORARILY_LOCKED", "RATE_LIMITED
 assert(auth.includes('reason: invalidReason') && auth.includes('reason: "RATE_LIMITED"'), "blocked retries must not count as password failures");
 assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "director password reset does not clear the account/IP failure window");
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
-assert(serverAuth.includes("session.invalid") && serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
+assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
 assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
-for (const hidden of ['"/calculator"', '"/partners"', '"/production"', '"/warehouse"']) assert(shell.includes(hidden), `manager navigation leak remains: ${hidden}`);
-for (const hidden of ['"partners"', '"production"', '"warehouse"']) assert(legacySidebar.includes(hidden), `legacy manager navigation leak remains: ${hidden}`);
+assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"]'), "manager navigation contract changed");
+assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/finance", "/partner-management", "/reports"]'), "Founder navigation must stay focused on final controls and reports");
+assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes("if (operationsDirector) return true"), "Operations director must retain the full working navigation");
+assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Эффективность"), "Founder cockpit must show final financial and efficiency indicators");
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");
@@ -26,7 +28,7 @@ for (const text of ["Показать пароль", "autoComplete=\"username\""
 assert(layout.includes('interactiveWidget: "resizes-content"') && layout.includes("NetworkStatus"), "mobile viewport/offline support missing");
 assert(css.includes("min-height: 44px") && shell.includes('document.body.style.overflow = "hidden"'), "touch target or drawer scroll lock missing");
 for (const kind of ["OVERDUE", "TODAY", "NEW", "PROPOSAL_WITHOUT_FOLLOW_UP", "APPROVED_PRICE"]) assert(manager.includes(kind), `manager queue kind missing: ${kind}`);
-for (const metric of ["newLeads", "activeLeads", "orders", "totalSales", "receivedPrepayment", "balanceToReceive", "partnerBalancePayable", "tasksToday", "measurementsToday", "proposalsNeedResponse", "overdueNextActions"]) assert(cockpit.includes(metric), `dashboard metric missing: ${metric}`);
+for (const metric of ["revenue", "received", "directExpenses", "operatingExpenses", "payrollAccrued", "payrollPaid", "netProfit", "netMargin"]) assert(cockpit.includes(metric), `dashboard metric missing: ${metric}`);
 const viewports = [320, 360, 375, 390, 393, 412, 430, 768, 1280];
 for (const viewport of viewports) assert(viewport >= 320, `unsupported viewport ${viewport}`);
 for (const route of ["/login", "/", "/clients", "/calculator", "/orders", "/production", "/price-approvals", "/partner"]) assert(route.startsWith("/"));

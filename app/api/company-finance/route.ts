@@ -7,14 +7,14 @@ import { COMPANY_EXPENSE_CATEGORIES, createCompanyEntry, getCompanyFinance } fro
 function date(value: string | null) { if (!value) return undefined; const result = new Date(value); return Number.isNaN(result.getTime()) ? null : result; }
 export async function GET(request: Request) {
   const auth = await requirePermission("finance"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const url = new URL(request.url), from = date(url.searchParams.get("from")), to = date(url.searchParams.get("to"));
   if (from === null || to === null) return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
   return NextResponse.json(await getCompanyFinance(from, to));
 }
 export async function POST(request: Request) {
   const auth = await requirePermission("finance"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   try {
     const body = await request.json() as Record<string, unknown>, amount = Number(body.amount), operationDate = date(typeof body.operationDate === "string" ? body.operationDate : null);

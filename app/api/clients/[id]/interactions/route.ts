@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: Context) {
     const comment = typeof body.comment === "string" ? body.comment.trim() : "";
     if (!comment || comment.length > 2000) return NextResponse.json({ error: "Введите комментарий до 2000 символов" }, { status: 400 });
     const client = await prisma.client.findUnique({ where: { id: clientId }, select: { managerUserId: true } });
-    if (!client || (auth.session!.user.role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id)) || (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.MANAGER)) return NextResponse.json({ error: "Клиент не найден" }, { status: 404 });
+    if (!client || (auth.session!.user.role === Role.MANAGER && client.managerUserId !== Number(auth.session!.user.id)) || (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.MANAGER)) return NextResponse.json({ error: "Клиент не найден" }, { status: 404 });
     const interaction = await prisma.clientInteraction.create({ data: { clientId, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Сотрудник", comment }, include: { author: { select: { id: true, name: true } } } });
     return NextResponse.json(interaction, { status: 201 });
   } catch (error) {

@@ -11,15 +11,19 @@ export async function GET(request: Request) {
   if (!session?.user || !enterTenantFromSession(session))
     return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
   const role = session.user.role as Role;
-  const allowed: Role[] = [Role.DIRECTOR, Role.MANAGER, Role.ACCOUNTANT, Role.PRODUCTION, Role.INSTALLER];
+  const allowed: Role[] = [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT, Role.PRODUCTION, Role.INSTALLER];
   if (!allowed.includes(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-  const period = new URL(request.url).searchParams.get("period") ?? "month";
-  if (!["today", "week", "month"].includes(period))
-    return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
+  const params = new URL(request.url).searchParams;
+  const period = params.get("period") ?? "month";
+  const month = params.get("month") ?? undefined;
+  if (month && !/^\d{4}-\d{2}$/.test(month))
+    return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   try {
-    return NextResponse.json(await getDashboardSummary({ role, userId: Number(session.user.id), period }));
-  } catch {
+    return NextResponse.json(await getDashboardSummary({ role, userId: Number(session.user.id), period, month }));
+  } catch (error) {
+    if (error instanceof Error && error.message === "INVALID_MONTH")
+      return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
     return NextResponse.json({ error: "Не удалось загрузить показатели" }, { status: 500 });
   }
 }

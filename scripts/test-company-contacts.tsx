@@ -28,8 +28,8 @@ async function main() {
   assert.deepEqual(companyDisplayPhones(), ["+7 708 575 0881", "+7 776 002 7555"]);
 
   const original = await prisma.companySettings.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
+    where: { companyId: 1 },
+    create: { companyId: 1 },
     update: {},
     select: { phone: true, secondaryPhone: true },
   });
@@ -43,7 +43,7 @@ async function main() {
     assert.equal(result.company.phone, "+77085750881");
     assert.equal(result.company.secondaryPhone, "+77760027555");
   } finally {
-    await prisma.companySettings.update({ where: { id: 1 }, data: original });
+    await prisma.companySettings.update({ where: { companyId: 1 }, data: original });
   }
 
   const order: DocumentOrder = {
@@ -67,6 +67,8 @@ async function main() {
       whatsapp: "",
       email: "",
       bankDetails: "",
+      kaspiGoldName: "Тестовый получатель",
+      kaspiGoldPhone: "+77015554433",
       directorName: "",
       logoUrl: "",
     },
@@ -79,6 +81,10 @@ async function main() {
     assert(markup.includes("+7 708 575 0881"), `${name} is missing primary phone`);
     assert(markup.includes("+7 776 002 7555"), `${name} is missing secondary phone`);
   }
+  const invoiceMarkup = renderToStaticMarkup(<Invoice order={order}/>);
+  assert(invoiceMarkup.includes("СЧ-ORD-CONTACTS"), "invoice fallback number is missing");
+  assert(invoiceMarkup.includes("Остаток к оплате") && invoiceMarkup.includes("300 000"), "invoice does not show the outstanding balance");
+  assert(invoiceMarkup.includes("Kaspi Gold") && invoiceMarkup.includes("+77015554433"), "invoice does not show Kaspi Gold details");
 
   for (const file of [
     "app/api/clients/[id]/proposals/route.ts",
