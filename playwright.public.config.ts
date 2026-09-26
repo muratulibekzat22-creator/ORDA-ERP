@@ -8,6 +8,7 @@ export default defineConfig({
   expect: { timeout: 8_000 },
   use: {
     baseURL: process.env.STAGING_URL ?? "https://orda-erp-staging.vercel.app",
+    extraHTTPHeaders: { "x-vercel-skip-toolbar": "1" },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
