@@ -66,7 +66,8 @@ const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
 const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
-assert.match(routeShell, /role === "DIRECTOR" \|\| role === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
+assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /"\/marketing", "Маркетинг"/);
 for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));

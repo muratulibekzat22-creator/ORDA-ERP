@@ -3,7 +3,17 @@
 import { ArrowLeft, CheckCircle2, ChevronDown, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  clearNewOrderDraft,
+  EMPTY_NEW_ORDER_FORM,
+  readNewOrderDraft,
+  resolveOrderSubmission,
+  type DraftClient,
+  type NewOrderFormValues,
+  type OrderDraftSubmission,
+  writeNewOrderDraft,
+} from "@/lib/orders/new-order-draft";
 
 type Option = { id: number; name: string };
 type PaymentMethodOption = { value: string; label: string };
@@ -15,14 +25,7 @@ type RegistrationOptions = {
   frameTypes: string[];
   railingTypes: string[];
   paymentMethods: PaymentMethodOption[];
-  existingClient: {
-    id: number;
-    name: string;
-    phone: string;
-    city: string;
-    address: string;
-    managerUserId?: number | null;
-  } | null;
+  existingClient: DraftClient | null;
   ownershipConflict: boolean;
 };
 
@@ -35,43 +38,48 @@ export default function NewOrderForm() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [existingClient, setExistingClient] = useState<RegistrationOptions["existingClient"]>(null);
-  const [form, setForm] = useState({
-    clientName: "",
-    phone: "",
-    location: "",
-    managerUserId: "",
-    amount: "",
-    initialPayment: "0",
-    paymentMethod: "KASPI_TRANSFER",
-    readinessDate: "",
-    comment: "",
-    frameType: "Металлический каркас",
-    material: "",
-    railingType: "",
-    color: "",
-    lighting: false,
-    lightingDetails: "",
-    cladding: false,
-    claddingDetails: "",
-  });
+  const [form, setForm] = useState<NewOrderFormValues>(EMPTY_NEW_ORDER_FORM);
+  const [draftReady, setDraftReady] = useState(false);
+  const [submission, setSubmission] = useState<OrderDraftSubmission | null>(null);
+  const submitting = useRef(false);
+  const draftCleared = useRef(false);
 
   useEffect(() => {
     void fetch("/api/orders/options", { cache: "no-store" })
       .then(async (response) => {
         const body = (await response.json()) as RegistrationOptions & { error?: string };
         if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить форму");
-        setOptions(body);
-        setForm((current) => ({
-          ...current,
+        const saved = readNewOrderDraft(window.localStorage, body.currentUserId);
+        const defaults = {
+          ...EMPTY_NEW_ORDER_FORM,
           managerUserId: String(body.role === "MANAGER" ? body.currentUserId : body.managers[0]?.id ?? ""),
           material: body.materials[0] ?? "",
-          frameType: body.frameTypes[0] ?? current.frameType,
+          frameType: body.frameTypes[0] ?? EMPTY_NEW_ORDER_FORM.frameType,
           railingType: body.railingTypes[0] ?? "",
-        }));
+        };
+        const restored = saved ? { ...defaults, ...saved.form } : defaults;
+        if (body.role === "MANAGER") restored.managerUserId = String(body.currentUserId);
+        setOptions(body);
+        setForm(restored);
+        setExistingClient(saved?.existingClient ?? null);
+        setSubmission(saved?.submission ?? null);
+        setDraftReady(true);
       })
       .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить форму"))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!draftReady || !options || draftCleared.current) return;
+    writeNewOrderDraft(window.localStorage, {
+      version: 1,
+      userId: options.currentUserId,
+      form,
+      existingClient,
+      submission,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [draftReady, existingClient, form, options, submission]);
 
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -99,28 +107,48 @@ export default function NewOrderForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting.current) return;
     setError("");
     if (Number(form.initialPayment) > Number(form.amount))
       return setError("Полученная сумма не может превышать цену заказа");
+    submitting.current = true;
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        clientId: existingClient?.id,
+        managerUserId: Number(form.managerUserId),
+        amount: Number(form.amount),
+        initialPayment: Number(form.initialPayment),
+      };
+      const payloadText = JSON.stringify(payload);
+      const nextSubmission = resolveOrderSubmission(submission, payloadText, () => crypto.randomUUID());
+      setSubmission(nextSubmission);
+      if (options)
+        writeNewOrderDraft(window.localStorage, {
+          version: 1,
+          userId: options.currentUserId,
+          form,
+          existingClient,
+          submission: nextSubmission,
+          updatedAt: new Date().toISOString(),
+        });
       const response = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({
-          ...form,
-          clientId: existingClient?.id,
-          managerUserId: Number(form.managerUserId),
-          amount: Number(form.amount),
-          initialPayment: Number(form.initialPayment),
-        }),
+        headers: { "Content-Type": "application/json", "Idempotency-Key": nextSubmission.key },
+        body: payloadText,
       });
       const body = (await response.json()) as { id?: number; error?: string };
       if (!response.ok || !body.id) throw new Error(body.error ?? "Не удалось создать заказ");
+      if (options) {
+        draftCleared.current = true;
+        clearNewOrderDraft(window.localStorage, options.currentUserId);
+      }
       router.push(`/orders/${body.id}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось создать заказ");
     } finally {
+      submitting.current = false;
       setSaving(false);
     }
   }

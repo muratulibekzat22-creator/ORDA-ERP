@@ -115,7 +115,8 @@ includesAll(
 );
 
 const routeShell = read("components/layout/RouteShell.tsx");
-assert.match(routeShell, /role === "DIRECTOR" \|\| role === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
+assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar"\]/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 

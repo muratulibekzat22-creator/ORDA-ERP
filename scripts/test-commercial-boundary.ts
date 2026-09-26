@@ -40,7 +40,7 @@ if (settings.includes("Цены калькулятора"))
     "Calculator configuration still exists inside general settings",
   );
 if (
-  !header.includes('role === "DIRECTOR"') ||
+  !header.includes('accountRole === "OPERATIONS_DIRECTOR"') ||
   !header.includes('/calculator-config') ||
   !header.includes("Настройки калькулятора")
 )
