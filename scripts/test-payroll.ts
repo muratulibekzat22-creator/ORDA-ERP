@@ -467,8 +467,10 @@ async function main() {
       accountantActor,
     );
     let bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
+    let trackedBonusSummary = bonusStatusSummary.rows.find((row) => row.id === profile.id);
+    assert(trackedBonusSummary, "tracked employee payroll summary row is missing");
     assert.equal(
-      bonusStatusSummary.rows[0].bonusAccruals.find(
+      trackedBonusSummary.bonusAccruals.find(
         (item) => item.id === trackedBonus.accrual.id,
       )?.status,
       "PARTIALLY_PAID",
@@ -506,8 +508,10 @@ async function main() {
       directorActor,
     );
     bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
+    trackedBonusSummary = bonusStatusSummary.rows.find((row) => row.id === profile.id);
+    assert(trackedBonusSummary, "tracked employee payroll summary row is missing after final payment");
     assert.equal(
-      bonusStatusSummary.rows[0].bonusAccruals.find(
+      trackedBonusSummary.bonusAccruals.find(
         (item) => item.id === trackedBonus.accrual.id,
       )?.status,
       "PAID",

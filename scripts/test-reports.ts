@@ -37,7 +37,9 @@ const route = readFileSync(new URL("../app/api/reports/route.ts", import.meta.ur
 assert.match(service, /actor\.role === Role\.MANAGER\) scope = \{ managerUserId: actor\.id \}/, "manager scope must ignore spoofed managerId");
 assert.match(service, /lifecycle: \{ not: "CANCELLED" \}/, "cancelled orders must be excluded");
 assert.match(service, /leadership\(actor\.role\) \? \{ grossMargin, ordersWithMargin: pricedOrders\.length \} : \{\}/, "gross margin must be leadership-only");
-assert.doesNotMatch(service, /orders\.slice\(/, "period report must not hide orders with missing production prices");
+assert.match(service, /includeFullDetails = params\.get\("export"\) === "csv"/, "CSV export must keep complete report details");
+assert.match(service, /visibleCompletionTasks = includeFullDetails \? completionTasks : completionTasks\.slice\(0, 20\)/, "interactive report must cap completion details");
+assert.match(service, /visibleOrders = includeFullDetails \? orders : orders\.slice\(0, 20\)/, "interactive report must cap order details");
 assert.match(service, /missingProductionPrice/, "report must expose production-price completeness");
 assert.match(service, /completionTasks/, "report must include exact completion tasks by order");
 assert.match(service, /recordedExpenses/, "report must include recorded expenses");

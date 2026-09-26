@@ -114,6 +114,9 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
       missingFields: orderDataGaps(order),
     }))
     .filter((item) => item.missingFields.length > 0);
+  const includeFullDetails = params.get("export") === "csv";
+  const visibleCompletionTasks = includeFullDetails ? completionTasks : completionTasks.slice(0, 20);
+  const visibleOrders = includeFullDetails ? orders : orders.slice(0, 20);
   const currentCustomerRemaining = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
   const currentPartnerRemaining = Math.max(Number(partnerBalance._sum.partnerBalance ?? 0), 0);
   const payrollAccruedRow = payrollTotals.find((row) => row.kind === "accrual");
@@ -157,7 +160,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     },
     sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(leadership(actor.role) ? { grossMargin, ordersWithMargin: pricedOrders.length } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
-    dataQuality: { missingProductionPrice, incompleteOrders: completionTasks.length, tasks: completionTasks },
+    dataQuality: { missingProductionPrice, incompleteOrders: completionTasks.length, tasks: visibleCompletionTasks },
     ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, productionCost, grossMargin, grossMarginRate: safePercent(grossMargin, pricedSales), ordersWithMargin: pricedOrders.length, ordersWithoutMargin: orders.length - pricedOrders.length, additionalIncome, operatingExpenses, expensesByCategory, recordedExpenses, netProfit, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
     funnel: [
       { key: "leads", label: "Заявки", value: clients.length, conversionFromPrevious: null },
@@ -166,7 +169,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     ], managers,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     production: production.map((item) => ({ stage: item.stage, count: item._count._all })),
-    orders: orders.map((item) => {
+    orders: visibleOrders.map((item) => {
       const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0);
       const productionPrice = money(item.partnerPrice) > 0 ? money(item.partnerPrice) : null;
       const payrollAccruedForOrder = item.payrollAccruals.reduce(

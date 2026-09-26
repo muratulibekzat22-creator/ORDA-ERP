@@ -83,21 +83,22 @@ All paths below were included in the successful production route build.
 
 | Section | Route | Role | Checked element or action | Expected result | Actual result | Automated test | Status |
 |---|---|---|---|---|---|---|---|
-| Mandatory contacts | Global route shell + `/api/clients/follow-up-gate` | MANAGER | Initial check, repeated polling, slow response, failure, mandatory-item overlay | Only the initial check may block; route remains mounted afterward; no duplicate request | State contract and single-flight regression pass; implementation renders children before non-blocking error/overlay | `test:order-form-regression`; authenticated Playwright spec added | PASS (local unit/static); authenticated E2E pending DB access |
-| New order draft | `/orders/new` | MANAGER / leadership | Fill, unmount/reload/back-forward, restore, per-user separation | All entered fields and selected existing client return for the same user only | Storage round-trip, isolation, corruption tolerance and clearing contracts pass | `test:order-form-regression`; authenticated Playwright spec added | PASS (local unit); authenticated E2E pending DB access |
-| Order submission | `POST /api/orders` | MANAGER / leadership | Double submit, network retry, HTTP 400/401/403/409/500, successful create | One in-flight request; same key for unchanged retry; data retained; draft cleared only on success | Client guard and stable payload-bound key implemented; server transaction already replays the unique order event | `test:order-form-regression`, `test:idempotency`, authenticated Playwright spec | PASS (local client contract); DB integration pending DB access |
-| Validation | `/orders/new`, `POST /api/orders` | MANAGER / leadership | Required fields, payment > amount, invalid payload | Clear error without deleting fields | Native/custom/API paths retain form and persisted draft | `test:order-ux`, authenticated Playwright spec | PASS (static); authenticated E2E pending DB access |
+| Mandatory contacts | Global route shell + `/api/clients/follow-up-gate` | MANAGER | Initial check, actual 65-second poll, slow response, failure, mandatory-item overlay | Only the initial check may block; later checks must keep the form mounted | State/single-flight contracts pass; authenticated staging form retained every field through the real polling interval | `test:order-form-regression`, Playwright order regression | PASS |
+| New order draft | `/orders/new` | MANAGER / leadership | Fill, reload, back/forward navigation, unmount/restore, per-user separation | Every field and selected existing client return for the same user only | Local storage contracts pass; staging restored client, phone, address, amount, date and comment after reload/navigation | `test:order-form-regression`, Playwright order regression | PASS |
+| Order submission | `POST /api/orders` | MANAGER / leadership | Double click, retry, HTTP 400/401/403/409/500 and successful create | One in-flight request; stable key for unchanged retry; clear draft only after success | Local API/idempotency suites pass; staging double click created exactly one order | `test:idempotency`, Playwright order regression | PASS |
+| Validation | `/orders/new`, `POST /api/orders` | MANAGER / leadership | Required fields, rejected request and preserved draft | Clear error without deleting fields | Browser and static regression scenarios retain the form/draft | `test:order-ux`, Playwright order regression | PASS |
 | Authentication boundary | `/orders/new`, order/follow-up APIs | Public | Direct page/API access | Redirect page to login; API returns 401 | Confirmed on staging for desktop and mobile | `test:e2e:public` | PASS |
 | Login responsive UI | `/login` | Public | Inputs, disabled submit, mobile/desktop overflow, application console errors | Usable at desktop/mobile with no application console/page errors | Confirmed on staging at Desktop Chrome and Pixel 5 viewports; Vercel's injected Preview Toolbar CSP warning is tracked separately | `test:e2e:public`, `test:auth-mobile` | PASS |
-| Clients/CRM | `/clients*`, `/crm`, client APIs | MANAGER / operations | CRUD, filters, ownership, stages, proposals and follow-ups | Role-scoped actions and server enforcement | Source/API contracts pass | `test:clients`, `test:sales-funnel`, `test:proposal-pipeline`, `test:recurring-followup`, `test:role-acceptance` | PASS static; DB suites pending DB access |
-| Orders | `/orders*`, order APIs | Role-scoped | List filters, kanban, details, finance redaction, CRUD | Correct role visibility and lifecycle behavior | Domain/static contracts pass; build includes all routes | `test:orders-module`, `test:order-ux`, `test:order360`, `test:manager-orders`, `test:order-soft-delete` | PASS static; DB suites pending DB access |
-| Calendar/measurements | `/calendar`, `/measurements` | Manager/measurer/operations | CRUD, statuses, search, responsive contracts | Correct timezone, permission and lifecycle behavior | Static contracts pass | `test:calendar`, `test:measurements`, `test:application-lifecycle` | PASS static; DB suites pending DB access |
-| Documents/contracts | `/documents*`, printable order routes | Permission-scoped | Create/update/version/sign/download/generate | Role-safe document lifecycle | Static contract generation and route build pass | `test:contracts`, `test:contract-package`, `test:documents` | PASS static; DB suites pending DB access |
-| Production/warehouse | `/production`, `/warehouse` | Operations/production/installer | Filters, CRUD, stock movement, photos, batches | Correct domain and role boundaries | Static/domain suites pass | `test:production:domain`, `test:production:kanban`, `test:warehouse` | PASS static; DB suites pending DB access |
-| Finance/payroll | Finance and payroll routes/APIs | Director/accountant/self | Journal, recurring, reconciliation, payroll boundaries | Totals and authorization remain correct | Financial/domain/static suites pass | `test:financial-model`, `test:finance-integrity`, `test:payroll`, related suites | PASS static; DB suites pending DB access |
-| Partners | `/partner*`, partner APIs | Partner/leadership | Workspace, settlements, redaction and statements | Role isolation and exact calculations | Calculation and existing static/E2E contracts compile | `test:partner-management:unit`, Playwright partner spec | PASS unit/static; authenticated E2E pending DB access |
-| Training | `/training`, training APIs | Measurer/leadership | Assignment, attempt, heartbeat and report | Correct progress/security/mobile behavior | Contract suite passes | `test:training:contract`, `test:training` | PASS static; DB suite pending DB access |
-| Route/role acceptance | All protected pages | All 10 roles | Navigation visibility and direct-route/API boundaries | Only permitted UI/routes/actions are exposed | Role acceptance and tenant/static safety suites pass | `test:role-acceptance`, `test:tenant-safety`, `test:commercial-boundary` | PASS (static contracts) |
+| Clients/CRM | `/clients*`, `/crm`, client APIs | MANAGER / operations | CRUD, filters, ownership, stages, proposals and follow-ups | Role-scoped actions and server enforcement | Static and isolated-DB suites pass | Client, funnel, proposal, follow-up and force-delete suites | PASS |
+| Orders | `/orders*`, order APIs | Role-scoped | Lists, kanban, details, finance redaction, CRUD and concurrency | Correct role visibility and lifecycle behavior | Static, service and isolated-DB suites pass | Order 360, manager orders, soft delete, idempotency and business E2E | PASS |
+| Calendar/measurements | `/calendar`, `/measurements` | Manager/measurer/operations | CRUD, statuses, global search and lifecycle | Correct timezone, permission and lifecycle behavior | Application lifecycle/go-live and domain suites pass | Calendar, measurements, application lifecycle/go-live | PASS |
+| Documents/contracts | `/documents*`, printable order routes | Permission-scoped | Create/update/version/sign/private download/generate | Role-safe, tenant-safe document lifecycle | Full three-page package, schedules, immutable source, private Blob, IDOR, receipts, QR and void pass | Documents, contracts, contract-package | PASS |
+| Production/warehouse | `/production`, `/warehouse` | Operations/production/installer | Filters, CRUD, stock, landed cost, photos and batches | Correct domain and role boundaries | API, warehouse and landed-cost integration suites pass | Production API, warehouse, purchase cost | PASS |
+| Finance/payroll | Finance and payroll routes/APIs | Director/accountant/self | Journal, recurring, bank reconciliation, payroll boundaries | Totals, idempotency and authorization remain correct | Finance go-live, proposal go-live, payroll and journal suites pass | Finance integrity/go-live, bank statement, payroll, settlements | PASS |
+| Partners | `/partner*`, partner APIs | Partner/leadership | Workspace, settlements, redaction, dashboard and statements | Role isolation and exact calculations | Authenticated partner API boundary, calculations and Playwright workspace pass | Partner finance/management/settlements, Playwright | PASS |
+| Training | `/training`, training APIs | Measurer/leadership | Assignment, attempt, heartbeat and report | Correct progress/security/mobile behavior | Static and isolated-DB suites pass | Training contract and integration | PASS |
+| Route/role acceptance | Protected pages and APIs | All 10 roles / 7 seeded login roles | Navigation visibility, login and direct-route/API boundaries | Only permitted UI/routes/actions are exposed | Static coverage for all roles; live local login/API matrix for 7 operational roles | Role acceptance, API security, production role logins | PASS |
+| Reports/performance | `/reports`, `/api/reports` | Leadership/accountant/manager | Month report at 10k orders; full CSV export | Interactive payload stays bounded; totals/export remain complete | JSON reduced from 154,685 to 13,777 bytes; UI shows 20 detail rows and counts; CSV retains all rows | Reports contracts, performance load/phase 2 | PASS |
 | Production build | All 40 pages and 112 API routes | N/A | Next production compilation/type generation | Build completes and emits every route | 80 static/data pages generated; build successful | `npm run build` | PASS |
 | Health | `/api/health` | Public | Database health | HTTP 200, `{status:"ok",database:"ok"}` | Confirmed on current staging | `test:e2e:public` | PASS |
 
@@ -107,19 +108,27 @@ All paths below were included in the successful production route build.
 |---|---|
 | `npm ci` | PASS, 0 vulnerabilities at install time |
 | `npm run prisma:generate` | PASS |
-| `npx prisma validate` | PASS |
-| `npm run lint` | PASS |
-| `npx tsc --noEmit` | PASS |
-| 21 database-free project suites, including the new order regression | PASS |
+| 82 migrations on isolated PostgreSQL 18 databases | PASS |
+| `npx prisma validate`, `npm run lint`, `npx tsc --noEmit`, `git diff --check` | PASS |
+| 21 database-free suites plus role/performance/report contracts | PASS |
+| Authenticated Playwright (`npm run test:e2e:playwright`) | PASS, 4/4 |
+| API security, business E2E, idempotency, production, warehouse and tenant isolation | PASS |
+| Client, order, calendar, measurement, application, proposal and training integration/go-live suites | PASS |
+| Finance, payroll, journal, bank statement, settlements and landed-cost suites | PASS |
+| Documents, contracts and private-Blob contract package | PASS |
+| Production role login matrix | PASS, 7/7 roles plus negative cases |
+| Performance audit seed | PASS: 5k clients/documents, 10k orders/measurements/production, 30k tasks/finance operations |
+| `npm run test:performance:load` and `test:performance:phase2` | PASS; report 13,777 bytes, cursor/search/counter checks pass |
 | `npm audit --omit=dev` and `npm audit` | PASS, 0 vulnerabilities |
-| `npm run build` | PASS |
-| `npm run test:e2e:public` | PASS, desktop + mobile |
-| Authenticated Playwright suite | Added; local execution requires `TEST_DATABASE_URL` |
-| Database mutation/integration suites | Not executed locally: Vercel exposes encrypted values as redacted and no `TEST_DATABASE_URL` is available in the workspace |
-| `git diff --check` | PASS before report generation; repeated in final gate |
+| `npm run build` | PASS, 80 routes/pages generated |
+| Public staging Playwright | PASS, desktop + mobile |
 
-## Access limitation
+## Authenticated staging evidence
 
-The authenticated and mutation suites deliberately refuse to use `DATABASE_URL`; they require a separate `TEST_DATABASE_URL`. The connected Vercel project lists encrypted Preview variables but returns their values redacted/empty to the local process, and no test database credential is present in the workspace. The required owner action, if CI secrets are also absent, is to provide a dedicated non-production PostgreSQL URL as the repository secret `TEST_DATABASE_URL` (with `NEXTAUTH_SECRET_TEST`) or as local `TEST_DATABASE_URL`. Production database credentials must not be used.
+An isolated synthetic company and manager were created only in the Preview database. The manager filled every new-order field, waited 65 seconds for the real follow-up poll, reloaded, navigated away/back and used browser back/forward; values remained intact at every step. A rapid double click on `Создать заказ` opened one order and created exactly one order row. Cleanup then deleted exactly one order, one client and one user. The temporary bootstrap route and environment variables were removed, and the public alias was restored to the normal staging deployment.
+
+## CI note
+
+GitHub Actions run `36252229328` passed the static gate. Its database job remained conditionally skipped because the repository currently has no `TEST_DATABASE_URL` or `NEXTAUTH_SECRET_TEST` secrets; the same database test matrix was executed locally against disposable PostgreSQL 18 databases instead. This does not block the verified branch or staging deployment, but adding those two non-production secrets would make the database gate automatic on later pull requests.
 
 The public alias points to a Preview deployment because the project has no custom `staging` environment and the repository forbids a `--prod` deployment. Vercel injects its Preview Toolbar script on that alias; the application's CSP blocks it and Vercel emits one browser-console CSP warning. The smoke test allowlists only that exact platform URL/message and still fails on every application console error, page error, or HTTP 5xx.

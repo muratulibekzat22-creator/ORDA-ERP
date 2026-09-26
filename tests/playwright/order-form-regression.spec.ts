@@ -45,10 +45,10 @@ test("new order survives polling, failures, reload and duplicate submission", as
   await page.clock.install();
   await page.goto("/orders/new");
 
-  const clientName = page.getByLabel("Клиент", { exact: true });
-  const phone = page.getByLabel("Телефон", { exact: true });
-  const location = page.getByLabel("Город / адрес", { exact: true });
-  const amount = page.getByLabel("Цена клиенту", { exact: true });
+  const clientName = page.getByLabel("Клиент *", { exact: true });
+  const phone = page.getByLabel("Телефон *", { exact: true });
+  const location = page.getByLabel("Город / адрес *", { exact: true });
+  const amount = page.getByLabel("Цена клиенту *", { exact: true });
   await clientName.fill("Synthetic Order Draft");
   await phone.fill(`+7700${Date.now().toString().slice(-7)}`);
   await location.fill("Кызылорда, тестовый адрес");
@@ -117,11 +117,12 @@ test("new order survives polling, failures, reload and duplicate submission", as
   await expect.poll(() => pendingOrder !== null).toBe(true);
   await expect(clientName).toHaveValue("Synthetic Order Draft");
   await pendingOrder!.abort("failed");
-  await expect(page.getByRole("alert")).toBeVisible();
+  const formAlert = page.locator('p[role="alert"]');
+  await expect(formAlert).toBeVisible();
 
   for (const status of [400, 401, 403, 409, 500]) {
     await page.getByRole("button", { name: "Создать заказ" }).click();
-    await expect(page.getByRole("alert")).toContainText(`Synthetic HTTP ${status}`);
+    await expect(formAlert).toContainText(`Synthetic HTTP ${status}`);
     await expect(clientName).toHaveValue("Synthetic Order Draft");
   }
 
