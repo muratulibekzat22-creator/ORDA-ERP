@@ -22,6 +22,8 @@ export type OrderTabData = {
   cladding: boolean;
   claddingDetails: string;
   additionalDetails: string;
+  designStyle: string;
+  designNotes: string;
   paymentMethod: string;
   manager: string;
   amount: NumericValue;

@@ -31,6 +31,12 @@ type RegistrationOptions = {
 
 const control = "mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white outline-none focus:border-blue-500";
 
+function todayForInput() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
 export default function NewOrderForm() {
   const router = useRouter();
   const [options, setOptions] = useState<RegistrationOptions | null>(null);
@@ -52,6 +58,7 @@ export default function NewOrderForm() {
         const saved = readNewOrderDraft(window.localStorage, body.currentUserId);
         const defaults = {
           ...EMPTY_NEW_ORDER_FORM,
+          orderReceivedAt: todayForInput(),
           managerUserId: String(body.role === "MANAGER" ? body.currentUserId : body.managers[0]?.id ?? ""),
           material: body.materials[0] ?? "",
           frameType: body.frameTypes[0] ?? EMPTY_NEW_ORDER_FORM.frameType,
@@ -120,6 +127,7 @@ export default function NewOrderForm() {
         managerUserId: Number(form.managerUserId),
         amount: Number(form.amount),
         initialPayment: Number(form.initialPayment),
+        paymentDate: Number(form.initialPayment) > 0 ? form.orderReceivedAt : undefined,
       };
       const payloadText = JSON.stringify(payload);
       const nextSubmission = resolveOrderSubmission(submission, payloadText, () => crypto.randomUUID());
@@ -175,6 +183,7 @@ export default function NewOrderForm() {
           <Field label="Цена клиенту" required><input required type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(event) => set("amount", event.target.value)} className={control} /></Field>
           <Field label="Полученная оплата"><input type="number" min="0" step="0.01" inputMode="decimal" value={form.initialPayment} onChange={(event) => set("initialPayment", event.target.value)} className={control} /></Field>
           <Field label="Способ оплаты" required><select required value={form.paymentMethod} onChange={(event) => set("paymentMethod", event.target.value)} className={control}>{options.paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></Field>
+          <Field label="Дата заказа" required><input required type="date" max={todayForInput()} value={form.orderReceivedAt} onChange={(event) => set("orderReceivedAt", event.target.value)} className={control} /><span className="mt-1 block text-xs text-slate-500">Можно указать прошлую дату для регистрации старого заказа.</span></Field>
           <Field label="Срок"><input type="date" value={form.readinessDate} onChange={(event) => set("readinessDate", event.target.value)} className={control} /></Field>
           <Field label="Комментарий"><textarea rows={3} value={form.comment} onChange={(event) => set("comment", event.target.value)} className={`${control} py-3`} /></Field>
         </div>

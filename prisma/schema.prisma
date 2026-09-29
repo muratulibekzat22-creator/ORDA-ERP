@@ -948,6 +948,8 @@ model Order {
   cladding          Boolean  @default(false)
   claddingDetails   String   @default("")
   additionalDetails String   @default("")
+  designStyle      String   @default("")
+  designNotes      String   @default("")
   paymentMethod     String   @default("")
 
   amount Decimal @db.Decimal(12, 2)
@@ -1780,12 +1782,14 @@ model Attachment {
   fileName       String
   pathname       String    @unique
   contentType    String
+  purpose        String    @default("GENERAL")
   size           Int
   idempotencyKey String?   @unique
   requestHash    String?
   createdAt      DateTime  @default(now())
 
   @@index([orderId, createdAt])
+  @@index([orderId, purpose, createdAt])
   @@index([documentId, createdAt])
   @@index([companyId, createdAt])
 }

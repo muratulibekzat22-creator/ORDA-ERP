@@ -29,8 +29,23 @@ export async function PATCH(request: Request, { params }: Context) {
   if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const body = await request.json() as Record<string, unknown>;
   if (typeof body.name !== "string" || !body.name.trim()) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
-  try { return NextResponse.json(await updatePartner(id, { name: body.name.trim(), phone: typeof body.phone === "string" ? body.phone : undefined, city: typeof body.city === "string" ? body.city : undefined, email: typeof body.email === "string" ? body.email : undefined, active: typeof body.active === "boolean" ? body.active : undefined })); }
-  catch { return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 }); }
+  try { return NextResponse.json(await updatePartner(id, {
+    name: body.name.trim(),
+    phone: typeof body.phone === "string" ? body.phone.trim() : undefined,
+    city: typeof body.city === "string" ? body.city.trim() : undefined,
+    email: typeof body.email === "string" ? body.email.trim() : undefined,
+    contactPerson: typeof body.contactPerson === "string" ? body.contactPerson.trim() : undefined,
+    active: typeof body.active === "boolean" ? body.active : undefined,
+    accessEmail: typeof body.accessEmail === "string" ? body.accessEmail : undefined,
+    accessPassword: typeof body.accessPassword === "string" ? body.accessPassword : undefined,
+  })); }
+  catch (error) {
+    if (error instanceof Error && error.message === "PARTNER_NOT_FOUND") return NextResponse.json({ error: "Цех не найден" }, { status: 404 });
+    if (error instanceof Error && error.message === "PARTNER_ACCESS_FIELDS_REQUIRED") return NextResponse.json({ error: "Для входа укажите корректный e-mail и пароль не короче 12 символов" }, { status: 400 });
+    if (error instanceof Error && error.message === "INVALID_EMAIL") return NextResponse.json({ error: "Некорректный e-mail для входа" }, { status: 400 });
+    if (error instanceof Error && "code" in error && error.code === "P2002") return NextResponse.json({ error: "Этот e-mail уже используется" }, { status: 409 });
+    return NextResponse.json({ error: "Не удалось сохранить цех" }, { status: 500 });
+  }
 }
 
 export async function DELETE(_: Request, { params }: Context) {

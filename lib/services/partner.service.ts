@@ -1,4 +1,5 @@
 import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
+import bcrypt from "bcrypt";
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation } from "@/lib/services/payment.service";
@@ -56,6 +57,7 @@ export async function getPartners(options: { includeArchived?: boolean } = {}) {
       ? { isTest: false, managementDirectory: false }
       : { active: true, archived: false, isTest: false, managementDirectory: false },
     include: {
+      user: { select: { id: true, email: true, active: true } },
       orders: {
         include: {
           client: true,
@@ -86,6 +88,7 @@ export async function getPartner(id: number) {
       managementDirectory: false,
     },
     include: {
+      user: { select: { id: true, email: true, active: true } },
       orders: {
         include: {
           client: true,
@@ -120,14 +123,45 @@ export async function createPartner(data: {
   phone?: string;
   city?: string;
   email?: string;
+  contactPerson?: string;
+  accessEmail?: string;
+  accessPassword?: string;
 }) {
-  return prisma.partner.create({
-    data: {
-      ...data,
-      active: true,
-      archived: false,
-      isTest: false,
-    },
+  const accessEmail = data.accessEmail?.trim().toLowerCase();
+  const accessPassword = data.accessPassword ?? "";
+  if (Boolean(accessEmail) !== Boolean(accessPassword) || (accessPassword && accessPassword.length < 12))
+    throw new Error("PARTNER_ACCESS_FIELDS_REQUIRED");
+  if (accessEmail && !accessEmail.includes("@")) throw new Error("INVALID_EMAIL");
+  const password = accessPassword ? await bcrypt.hash(accessPassword, 12) : null;
+  return prisma.$transaction(async (tx) => {
+    const user = accessEmail && password
+      ? await tx.user.create({
+          data: {
+            name: data.contactPerson?.trim() || data.name,
+            email: accessEmail,
+            password,
+            phone: data.phone?.trim() || null,
+            role: Role.PARTNER,
+            active: true,
+            mustChangePassword: false,
+            passwordChangedAt: new Date(),
+          },
+        })
+      : null;
+    return tx.partner.create({
+      data: {
+        name: data.name,
+        phone: data.phone,
+        city: data.city,
+        email: data.email,
+        contactPerson: data.contactPerson,
+        userId: user?.id,
+        active: true,
+        archived: false,
+        isTest: false,
+      },
+      include: { user: { select: { id: true, email: true, active: true } } },
+    });
   });
 }
 
@@ -138,24 +172,67 @@ export async function updatePartner(
     phone?: string;
     city?: string;
     email?: string;
+    contactPerson?: string;
     active?: boolean;
+    accessEmail?: string;
+    accessPassword?: string;
   },
 ) {
-  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true } });
+  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true, userId: true } });
   if (!partner) throw new Error("PARTNER_NOT_FOUND");
-  return prisma.partner.update({
-    where: {
-      id,
-    },
-    data: {
-      ...data,
-      ...(typeof data.active === "boolean" ? { archived: !data.active } : {}),
-    },
+  const accessEmail = data.accessEmail?.trim().toLowerCase();
+  const accessPassword = data.accessPassword ?? "";
+  if (accessEmail && !accessEmail.includes("@")) throw new Error("INVALID_EMAIL");
+  if (accessPassword && accessPassword.length < 12) throw new Error("PARTNER_ACCESS_FIELDS_REQUIRED");
+  if (!partner.userId && (Boolean(accessEmail) !== Boolean(accessPassword)))
+    throw new Error("PARTNER_ACCESS_FIELDS_REQUIRED");
+  const password = accessPassword ? await bcrypt.hash(accessPassword, 12) : null;
+  return prisma.$transaction(async (tx) => {
+    let userId = partner.userId;
+    if (userId) {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          name: data.contactPerson?.trim() || data.name,
+          phone: data.phone?.trim() || null,
+          ...(accessEmail ? { email: accessEmail } : {}),
+          ...(password ? { password, passwordChangedAt: new Date(), mustChangePassword: false, sessionVersion: { increment: 1 } } : {}),
+          ...(typeof data.active === "boolean" ? { active: data.active, sessionVersion: { increment: 1 } } : {}),
+        },
+      });
+    } else if (accessEmail && password) {
+      const user = await tx.user.create({
+        data: {
+          name: data.contactPerson?.trim() || data.name,
+          email: accessEmail,
+          password,
+          phone: data.phone?.trim() || null,
+          role: Role.PARTNER,
+          active: data.active ?? true,
+          mustChangePassword: false,
+          passwordChangedAt: new Date(),
+        },
+      });
+      userId = user.id;
+    }
+    return tx.partner.update({
+      where: { id },
+      data: {
+        name: data.name,
+        phone: data.phone,
+        city: data.city,
+        email: data.email,
+        contactPerson: data.contactPerson,
+        userId,
+        ...(typeof data.active === "boolean" ? { active: data.active, archived: !data.active } : {}),
+      },
+      include: { user: { select: { id: true, email: true, active: true } } },
+    });
   });
 }
 
 export async function deletePartner(id: number) {
-  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true } });
+  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true, userId: true } });
   if (!partner) throw new Error("PARTNER_NOT_FOUND");
   const orders = await prisma.order.count({
     where: { partnerId: id, deletedAt: null },
@@ -167,10 +244,11 @@ export async function deletePartner(id: number) {
     );
   }
 
-  return prisma.partner.delete({
-    where: {
-      id,
-    },
+  return prisma.$transaction(async (tx) => {
+    const deleted = await tx.partner.delete({ where: { id } });
+    if (partner.userId)
+      await tx.user.update({ where: { id: partner.userId }, data: { active: false, sessionVersion: { increment: 1 } } });
+    return deleted;
   });
 }
 

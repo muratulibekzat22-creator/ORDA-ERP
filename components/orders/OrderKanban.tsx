@@ -43,6 +43,7 @@ export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
                       <p className="flex items-center gap-2 text-slate-300"><CircleDollarSign size={13}/><span>Продажа: {money(order.amount)}</span></p>
                       <p className="flex items-center gap-2 text-amber-200"><WalletCards size={13}/><span>Остаток клиента: {money(order.balance)}</span></p>
                     </div>
+                    {order.managerConfirmationMissing ? <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs font-semibold text-amber-200"><AlertCircle size={13} className="mr-1 inline" />Менеджер не подтвердил комплектность</p> : null}
                     {order.missingFields?.length ? (
                       <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs text-amber-200">
                         <p className="flex items-center gap-1 font-semibold"><AlertCircle size={13}/>Нужно дополнить: {order.missingFields.length}</p>

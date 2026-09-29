@@ -107,7 +107,7 @@ export async function GET(request: Request) {
           ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
           : {};
     const attention = params.get("attention") ?? "";
-    if (attention && !["overdue", "missing-production-price"].includes(attention))
+    if (attention && !["overdue", "missing-production-price", "not-confirmed"].includes(attention))
       return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
     const attentionScope: Prisma.OrderWhereInput = attention === "overdue"
       ? {
@@ -126,7 +126,12 @@ export async function GET(request: Request) {
               { partnerPrice: { lte: 0 } },
             ],
           }
-        : {};
+        : attention === "not-confirmed"
+          ? {
+              lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+              completenessConfirmedAt: null,
+            }
+          : {};
     const where: Prisma.OrderWhereInput = {
       AND: [
         roleScope,
@@ -235,6 +240,7 @@ export async function POST(request: Request) {
     const initialPaymentDate = dateValue(body.paymentDate) ?? new Date();
 
     if (
+      (body.orderReceivedAt !== undefined && (dateValue(body.orderReceivedAt) === null || orderReceivedAt.getTime() > Date.now())) ||
       (!clientId && (!clientName || !phone || !city)) ||
       !managerUserId ||
       amount === null ||

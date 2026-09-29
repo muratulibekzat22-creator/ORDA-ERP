@@ -164,7 +164,7 @@ export async function getProductionOptions(actor: ProductionActor) {
       orderBy: { name: "asc" },
     }),
     prisma.partner.findMany({
-      where: { active: true, archived: false, isTest: false },
+      where: { active: true, archived: false, isTest: false, managementDirectory: false },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),

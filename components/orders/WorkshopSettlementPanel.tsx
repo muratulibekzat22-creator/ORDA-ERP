@@ -152,6 +152,7 @@ export default function WorkshopSettlementPanel({
       {
         action: "assignPartner",
         partnerId: Number(partnerId),
+        partnerPrice: Number(productionPrice),
         directorConfirmed: Boolean(
           order.partner && order.partner.id !== Number(partnerId),
         ),
@@ -220,7 +221,7 @@ export default function WorkshopSettlementPanel({
         ) : null}
       </div>
 
-      {canSetPrice ? (
+      {canSetPrice && !director ? (
         <form onSubmit={savePrice} className="mt-4 grid gap-3 rounded-xl bg-slate-950/55 p-3 sm:grid-cols-[minmax(0,220px)_auto] sm:items-end sm:justify-start">
           <label className="text-sm text-slate-300">
             Цена производства, ₸
@@ -233,17 +234,19 @@ export default function WorkshopSettlementPanel({
       ) : null}
 
       {director ? (
-        <form onSubmit={assignPartner} className="mt-4 grid gap-3 rounded-xl border border-slate-800 p-3 sm:grid-cols-[minmax(0,280px)_auto] sm:items-end sm:justify-start">
+        <form onSubmit={assignPartner} className="mt-4 grid gap-3 rounded-xl border border-cyan-800/60 bg-cyan-950/10 p-3 sm:grid-cols-[minmax(0,280px)_minmax(0,220px)_auto] sm:items-end sm:justify-start">
           <label className="text-sm text-slate-300">
-            Назначить цех
+            Цех
             <select required value={partnerId} onChange={(event) => setPartnerId(event.target.value)} className={`${control} mt-1`}>
               <option value="">Выберите цех</option>
               {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}</option>)}
             </select>
           </label>
-          <button type="submit" disabled={busy || !partnerId} className="min-h-11 rounded-xl border border-cyan-700 bg-cyan-950/40 px-4 font-semibold text-cyan-100 disabled:opacity-50">
-            Назначить
+          <label className="text-sm text-slate-300">Цена производства, ₸<input type="number" min="1" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} /></label>
+          <button type="submit" disabled={busy || !partnerId || !Number(productionPrice)} className="min-h-11 rounded-xl bg-cyan-700 px-4 font-semibold text-white disabled:opacity-50">
+            Передать заказ
           </button>
+          <p className="text-xs text-slate-500 sm:col-span-3">Одно действие назначает цех и фиксирует цену производства.</p>
         </form>
       ) : null}
 

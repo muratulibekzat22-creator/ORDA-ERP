@@ -346,6 +346,15 @@ export async function PATCH(request: Request, { params }: Context) {
         },
         { status: 400 },
       );
+    const designFields = ["designStyle", "designNotes"];
+    if (
+      designFields.some((key) => key in body) &&
+      !(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(role)
+    )
+      return NextResponse.json(
+        { error: "Недостаточно прав для изменения 3D-брифа" },
+        { status: 403 },
+      );
     if (role === Role.PARTNER) {
       const allowed = new Set([
         "status",
@@ -422,6 +431,8 @@ export async function PATCH(request: Request, { params }: Context) {
       partnerComment: body.partnerComment ?? null,
       readyForInstallation: body.readyForInstallation,
       installationCompleted: body.installationCompleted,
+      designStyle: body.designStyle ?? null,
+      designNotes: body.designNotes ?? null,
     };
     const requestHash = createRequestHash(payload);
     const historyKey =
@@ -490,6 +501,10 @@ export async function PATCH(request: Request, { params }: Context) {
           throw new Error("INVALID_PAYMENT_METHOD");
         data.paymentMethod = paymentMethod;
       }
+      if (role !== Role.PARTNER && typeof body.designStyle === "string")
+        data.designStyle = text(body.designStyle, 120) ?? "";
+      if (role !== Role.PARTNER && typeof body.designNotes === "string")
+        data.designNotes = text(body.designNotes, 2000) ?? "";
       if (role !== Role.PARTNER && "amount" in body) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)

@@ -323,8 +323,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           {() => <DocumentsTab orderId={order.id} readOnly={archived} />}
         </Collapsible>
 
-        <Collapsible id="files" icon={<Files size={19} />} title="Файлы" description="Фото, видео, PDF и чертежи">
-          {() => <FilesTab orderId={order.id} readOnly={archived} />}
+        <Collapsible id="files" icon={<Files size={19} />} title="Файлы и 3D-проект" description="Фото клиента, каркаса, референсы и быстрый промпт">
+          {() => <FilesTab orderId={order.id} readOnly={archived} brief={{ number: order.number, address: order.address, staircase: order.staircase, material: order.material, railingType: order.railingType, color: order.color, lighting: order.lighting, lightingDetails: order.lightingDetails, cladding: order.cladding, claddingDetails: order.claddingDetails, designStyle: order.designStyle, designNotes: order.designNotes }} />}
         </Collapsible>
 
         <Collapsible id="history" icon={<History size={19} />} title="История" description="Статусы, действия и комментарии">

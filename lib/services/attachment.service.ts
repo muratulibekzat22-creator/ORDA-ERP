@@ -3,6 +3,7 @@ import { del, get, put } from "@/lib/private-blob";
 import { Role } from "@prisma/client";
 
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
+import { type AttachmentPurpose } from "@/lib/orders/design-brief";
 import { prisma } from "@/lib/prisma";
 import { canUseEntities } from "@/lib/services/document.service";
 
@@ -24,6 +25,7 @@ const publicSelect = {
   documentId: true,
   fileName: true,
   contentType: true,
+  purpose: true,
   size: true,
   createdAt: true,
   uploadedBy: { select: { id: true, name: true } },
@@ -137,11 +139,12 @@ function validFileContent(
 export async function uploadAttachment(input: {
   orderId: number;
   documentId?: number;
+  purpose: AttachmentPurpose;
   file: File;
   idempotencyKey: string;
   actor: AttachmentActor;
 }) {
-  if (input.actor.role !== Role.DIRECTOR && input.actor.role !== Role.MANAGER)
+  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(input.actor.role))
     throw new Error("FORBIDDEN");
   const fileName = safeFileName(input.file.name);
   const bytes = Buffer.from(await input.file.arrayBuffer());
@@ -154,6 +157,7 @@ export async function uploadAttachment(input: {
         documentId: input.documentId ?? null,
         fileName,
         contentType: input.file.type,
+        purpose: input.purpose,
         size: bytes.byteLength,
       }),
     )
@@ -197,6 +201,7 @@ export async function uploadAttachment(input: {
         fileName,
         pathname: blob.pathname,
         contentType: input.file.type,
+        purpose: input.purpose,
         size: bytes.byteLength,
         idempotencyKey: input.idempotencyKey,
         requestHash,

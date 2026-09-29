@@ -6,6 +6,7 @@ export type NewOrderFormValues = {
   amount: string;
   initialPayment: string;
   paymentMethod: string;
+  orderReceivedAt: string;
   readinessDate: string;
   comment: string;
   frameType: string;
@@ -51,6 +52,7 @@ export const EMPTY_NEW_ORDER_FORM: NewOrderFormValues = {
   amount: "",
   initialPayment: "0",
   paymentMethod: "KASPI_TRANSFER",
+  orderReceivedAt: "",
   readinessDate: "",
   comment: "",
   frameType: "Металлический каркас",
@@ -82,6 +84,7 @@ function parseForm(value: unknown): NewOrderFormValues | null {
     amount: stringValue(candidate.amount),
     initialPayment: stringValue(candidate.initialPayment, "0"),
     paymentMethod: stringValue(candidate.paymentMethod, "KASPI_TRANSFER"),
+    orderReceivedAt: stringValue(candidate.orderReceivedAt),
     readinessDate: stringValue(candidate.readinessDate),
     comment: stringValue(candidate.comment),
     frameType: stringValue(candidate.frameType, EMPTY_NEW_ORDER_FORM.frameType),

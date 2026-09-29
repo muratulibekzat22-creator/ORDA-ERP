@@ -11,6 +11,7 @@ import {
   resolveOrderSubmission,
   writeNewOrderDraft,
 } from "@/lib/orders/new-order-draft";
+import { buildDesignPrompt, isAttachmentPurpose } from "@/lib/orders/design-brief";
 
 class MemoryStorage {
   private readonly values = new Map<string, string>();
@@ -28,6 +29,9 @@ async function main() {
   assert.match(formSource, /resolveOrderSubmission\(submission, payloadText/);
   assert.match(formSource, /clearNewOrderDraft\(window\.localStorage/);
   assert.match(formSource, /if \(submitting\.current\) return/);
+  assert.match(formSource, /Дата заказа/);
+  assert.match(formSource, /orderReceivedAt/);
+  assert.match(formSource, /paymentDate: Number\(form\.initialPayment\) > 0 \? form\.orderReceivedAt/);
 
   assert.equal(
     followUpGateMode({ sessionLoading: false, manager: true, checked: false, itemCount: 0 }),
@@ -62,7 +66,7 @@ async function main() {
   const draft = {
     version: 1 as const,
     userId: 17,
-    form: { ...EMPTY_NEW_ORDER_FORM, clientName: "Synthetic Client", phone: "+77000000000", amount: "125000" },
+    form: { ...EMPTY_NEW_ORDER_FORM, clientName: "Synthetic Client", phone: "+77000000000", amount: "125000", orderReceivedAt: "2026-08-15" },
     existingClient: null,
     submission: null,
     updatedAt: new Date(0).toISOString(),
@@ -81,6 +85,26 @@ async function main() {
   assert.equal(storage.getItem(newOrderDraftKey(17)), null, "a successful order must clear its draft");
   storage.setItem(newOrderDraftKey(17), "not-json");
   assert.equal(readNewOrderDraft(storage, 17), null, "a corrupt draft must never block the form");
+
+  const designPrompt = buildDesignPrompt({
+    number: "ORD-DESIGN",
+    address: "Кызылорда",
+    staircase: "Металлический каркас",
+    material: "Ясень",
+    railingType: "Латунь",
+    color: "Тёмный орех",
+    lighting: true,
+    lightingDetails: "под каждой ступенью",
+    cladding: false,
+    claddingDetails: "",
+    designStyle: "Классика",
+    designNotes: "Сохранить свободный проход",
+  }, [{ fileName: "room.jpg", purpose: "CLIENT_SPACE" }, { fileName: "reference.jpg", purpose: "PAST_WORK" }]);
+  assert.match(designPrompt, /ORD-DESIGN/);
+  assert.match(designPrompt, /room\.jpg/);
+  assert.match(designPrompt, /reference\.jpg/);
+  assert.equal(isAttachmentPurpose("FRAME"), true);
+  assert.equal(isAttachmentPurpose("PRIVATE_UNKNOWN"), false);
 
   console.log("order form regression scenarios passed");
 }

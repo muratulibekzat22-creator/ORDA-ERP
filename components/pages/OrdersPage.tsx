@@ -17,7 +17,7 @@ import {
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
 
-type Tab = "applications" | "board" | "completed";
+type Tab = "applications" | "board" | "all" | "completed";
 type Application = {
   id: number;
   name: string;
@@ -32,6 +32,7 @@ type Pagination = { page: number; total: number; totalPages?: number; pages?: nu
 const tabs: Array<[Tab, string]> = [
   ["applications", "Заявки"],
   ["board", "Канбан"],
+  ["all", "Все заказы"],
   ["completed", "Завершённые"],
 ];
 
@@ -56,7 +57,7 @@ export default function OrdersPage({
       : "all",
   );
   const [attention, setAttention] = useState(
-    ["overdue", "missing-production-price"].includes(initialAttention)
+    ["overdue", "missing-production-price", "not-confirmed"].includes(initialAttention)
       ? initialAttention
       : "",
   );
@@ -151,7 +152,7 @@ export default function OrdersPage({
         </Link>
       </header>
 
-      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-800 bg-[#101827] p-1">
+      <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-800 bg-[#101827] p-1 sm:grid-cols-4">
         {tabs.map(([value, label]) => (
           <button key={value} type="button" onClick={() => changeTab(value)} className={`min-h-11 rounded-xl px-2 text-sm font-semibold transition sm:px-4 ${tab === value ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}>
             {label}
@@ -172,7 +173,7 @@ export default function OrdersPage({
             {USER_ORDER_STATUSES.filter((value) =>
               tab === "completed"
                 ? value === "COMPLETED" || value === "CANCELLED"
-                : value !== "COMPLETED" && value !== "CANCELLED",
+                : tab === "all" || (value !== "COMPLETED" && value !== "CANCELLED"),
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
           </select>
         </label>
@@ -180,6 +181,7 @@ export default function OrdersPage({
           <span className="sr-only">Контроль данных</span>
           <select value={attention} onChange={(event) => changeAttention(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
             <option value="">Все данные</option>
+            <option value="not-confirmed">Не подтверждено менеджером</option>
             <option value="missing-production-price">Без цены производства</option>
             <option value="overdue">Только просроченные</option>
           </select>

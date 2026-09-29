@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Clock3, MapPin, UserRound } from "lucide-react";
+import { CalendarDays, Clock3, Factory, MapPin, UserRound } from "lucide-react";
 
 import { isProductionOverdue } from "@/lib/production/kanban";
 import { getAllowedProductionStageTransitions, PRODUCTION_STAGES, type ProductionStage } from "@/lib/production/stage-policy";
@@ -87,6 +87,7 @@ export default function ProductionKanban({ columns, savingIds, onDropCard, onEdi
                       <span className="rounded-md bg-blue-500/15 px-2 py-1 text-xs font-semibold text-blue-300">P{item.priority}</span>
                     </div>
                     <p className="mt-2 flex gap-1 text-xs text-slate-400"><MapPin size={14} className="shrink-0" />{item.order.address || "Адрес не указан"}</p>
+                    <p className={`mt-1 flex items-center gap-1 text-xs font-semibold ${item.order.partner ? "text-cyan-300" : "text-amber-300"}`}><Factory size={14} />{item.order.partner?.name ?? "Цех не назначен"}</p>
                     <p className="mt-1 text-xs text-slate-400">Материал: {item.order.material || "—"}</p>
                     <p className="mt-2 flex gap-1 text-xs text-slate-300"><UserRound size={14} />{item.master || "Не назначен"}</p>
                     <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-slate-400">
