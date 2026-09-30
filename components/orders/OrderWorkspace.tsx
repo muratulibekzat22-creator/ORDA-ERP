@@ -213,6 +213,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               orderId={order.id}
               lifecycle={order.lifecycle}
               version={order.version}
+              partnerId={order.partner?.id ?? null}
+              productionPrice={order.productionPrice}
               readOnly={archived}
             />
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">

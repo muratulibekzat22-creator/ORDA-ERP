@@ -5,20 +5,23 @@ import { createPartner, getPartner, getPartners } from "@/lib/services/partner.s
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 
+export const dynamic = "force-dynamic";
+const noStore = { "cache-control": "no-store" };
+
 export async function GET(request: Request) {
   const auth = await requirePermission("partners"); if (auth.response) return auth.response;
   if (auth.session!.user.role === Role.PARTNER) {
     const partner = await prisma.partner.findFirst({ where: { userId: Number(auth.session!.user.id), active: true, archived: false, isTest: false }, select: { id: true } });
-    if (!partner) return NextResponse.json({ error: "Профиль цеха не найден" }, { status: 404 });
+    if (!partner) return NextResponse.json({ error: "Профиль цеха не найден" }, { status: 404, headers: noStore });
     const item = await getPartner(partner.id);
-    if (!item) return NextResponse.json([]);
-    return NextResponse.json([{ id: item.id, name: item.name, phone: item.phone, city: item.city, email: item.email, active: item.active, orders: item.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, address: order.address, staircase: order.staircase, material: order.material, status: order.status, partnerPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null, partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment, readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted, productions: order.productions, payments: order.payments.filter((payment) => payment.type === "PARTNER_PAYOUT").map((payment) => ({ id: payment.id, amount: payment.amount, method: payment.method, comment: payment.comment, operationDate: payment.operationDate })) })), stats: { totalOrders: item.stats.totalOrders, partnerPaid: item.stats.partnerPaid, partnerBalance: item.stats.partnerBalance } }]);
+    if (!item) return NextResponse.json([], { headers: noStore });
+    return NextResponse.json([{ id: item.id, name: item.name, phone: item.phone, city: item.city, email: item.email, active: item.active, orders: item.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, address: order.address, staircase: order.staircase, material: order.material, status: order.status, partnerPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null, partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment, readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted, productions: order.productions, payments: order.payments.filter((payment) => payment.type === "PARTNER_PAYOUT").map((payment) => ({ id: payment.id, amount: payment.amount, method: payment.method, comment: payment.comment, operationDate: payment.operationDate })) })), stats: { totalOrders: item.stats.totalOrders, activeOrders: item.stats.activeOrders, partnerPaid: item.stats.partnerPaid, partnerBalance: item.stats.partnerBalance } }], { headers: noStore });
   }
   const { searchParams } = new URL(request.url);
   const includeArchived = auth.session!.user.role === Role.DIRECTOR && searchParams.get("view") === "all";
   const items = await getPartners({ includeArchived });
-  if (auth.session!.user.role === Role.MANAGER) return NextResponse.json(items.map((item) => ({ id: item.id, name: item.name, phone: item.phone, city: item.city, email: item.email, active: item.active, stats: { totalOrders: item.stats.totalOrders } })));
-  return NextResponse.json(items);
+  if (auth.session!.user.role === Role.MANAGER) return NextResponse.json(items.map((item) => ({ id: item.id, name: item.name, phone: item.phone, city: item.city, email: item.email, active: item.active, stats: { totalOrders: item.stats.totalOrders, activeOrders: item.stats.activeOrders } })), { headers: noStore });
+  return NextResponse.json(items, { headers: noStore });
 }
 
 export async function POST(request: Request) {

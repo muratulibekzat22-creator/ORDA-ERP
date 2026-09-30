@@ -46,7 +46,7 @@ async function main() {
     await assert.rejects(() => createManagedPartner({ name: "Forbidden", kind: PartnerBusinessType.OTHER, defaultRewardRule: PartnerRewardRule.FIXED, defaultRewardFixedAmount: "1" }, forbiddenActor), (error: unknown) => error instanceof PartnerManagementError && error.message === "FORBIDDEN");
 
     const partner = await createManagedPartner({ name: `Integration Partner ${nonce}`, kind: PartnerBusinessType.SALES_AGENT, phone, city: "Алматы", defaultRewardRule: PartnerRewardRule.FIXED, defaultRewardFixedAmount: "100000", comment: nonce }, actor);
-    assert.equal((await getWorkshopPartners({ includeArchived: true })).some((item) => item.id === partner.id), false, "director partner directory is not exposed through workshop API service");
+    assert.equal((await getWorkshopPartners({ includeArchived: true })).some((item) => item.id === partner.id), true, "director workshop directory is shared with order assignment");
     const client = await prisma.client.create({ data: { name: `Existing Client ${nonce}`, phone: `+7708${String(Date.now() + 1).slice(-7)}`, city: "Алматы", address: "Абая 1", manager: managerUser.name, managerUserId: managerUser.id, amount: "1000000", status: "Новая" } });
     const existingOrder = await prisma.order.create({ data: { number: `PARTNER-EXISTING-${nonce}`, clientId: client.id, address: "Абая 1", staircase: "Прямая", material: "Дуб", amount: "1000000", balance: "1000000", companyProfit: "900000", manager: managerUser.name, managerUserId: managerUser.id, status: "Новый" } });
     const linked = await linkPartnerOrder({ partnerId: partner.id, orderId: existingOrder.id }, actor);

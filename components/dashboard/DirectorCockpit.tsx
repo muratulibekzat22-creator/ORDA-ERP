@@ -269,7 +269,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   const reports = [
     { href: "/reports", title: "Управленческие отчёты", hint: "Продажи, KPI, маркетинг и зарплаты", icon: BarChart3 },
     { href: "/finance", title: "Финансы", hint: "Доходы, расходы и движение денег", icon: Wallet },
-    { href: "/partner-management", title: "Партнёры", hint: "Согласовано, выплачено и остаток", icon: Handshake },
+    { href: "/partner-management", title: "Цехи и расчёты", hint: "Заказы, выплаты и остаток по каждому цеху", icon: Handshake },
     { href: "/training", title: "Обучение сотрудников", hint: "Результаты и прохождение обучения", icon: GraduationCap },
   ] as const;
   return (

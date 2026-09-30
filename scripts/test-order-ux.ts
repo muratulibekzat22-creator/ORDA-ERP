@@ -76,6 +76,7 @@ const orderDetailApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
 const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPanel.tsx", "utf8");
+const orderProcess = readFileSync("components/orders/OrderProcess.tsx", "utf8");
 const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
 const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
 
@@ -123,6 +124,10 @@ for (const label of ["Цена производства", "Расчёт с це�
   assert.match(workshopSettlement, new RegExp(label));
 assert.match(workshopSettlement, /canManageWorkshop/);
 assert.match(workshopSettlement, /role === "MANAGER"/);
+for (const label of ["Передать заказ в цех", "Выберите цех", "Цена производства, ₸", "Подтвердить и передать"])
+  assert.match(orderProcess, new RegExp(label));
+assert.match(orderProcess, /action: "assignPartner"/);
+assert.match(orderProcess, /action: "transition"/);
 for (const removed of ["Основание / комментарий", "Дата фиксации", "Поле обязательно до передачи заказа"])
   assert.doesNotMatch(workshopSettlement, new RegExp(removed));
 const order360 = readFileSync("lib/services/order360.service.ts", "utf8");

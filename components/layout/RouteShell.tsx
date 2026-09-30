@@ -32,7 +32,7 @@ const sections = [
   { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
   { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
-  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Партнёры", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
+  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 

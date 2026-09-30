@@ -25,7 +25,9 @@ export default async function PartnerPage({
     notFound();
   }
 
-  const partnerPayments = partner.orders.flatMap((order) =>
+  const visibleOrders = partner.orders.filter((order) => order.lifecycle !== "CANCELLED");
+
+  const partnerPayments = visibleOrders.flatMap((order) =>
     order.payments
       .filter((payment) => payment.type === "PARTNER_PAYOUT")
       .map((payment) => ({ ...payment, orderNumber: order.number }))
@@ -130,12 +132,12 @@ export default async function PartnerPage({
 
           <div className="space-y-4">
 
-            {partner.orders.length === 0 ? (
+            {visibleOrders.length === 0 ? (
               <p className="text-slate-400">
                 Заказов пока нет
               </p>
             ) : (
-              partner.orders.map((order) => (
+              visibleOrders.map((order) => (
                 <div
                   key={order.id}
                   className="rounded-xl bg-slate-900 p-4"
@@ -159,7 +161,7 @@ export default async function PartnerPage({
 
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-400">
-                    <span>Цена партнёра: {hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? `${Number(order.partnerPrice).toLocaleString()} ₸` : "не указана"}</span>
+                    <span>Цена производства: {hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? `${Number(order.partnerPrice).toLocaleString()} ₸` : "не указана"}</span>
                     <span>Выплачено: {Number(order.partnerPaid).toLocaleString()} ₸</span>
                     <span>Остаток: {hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? `${Math.max(Number(order.partnerBalance), 0).toLocaleString()} ₸` : "—"}</span>
                     <span>Производство: {order.productions[0]?.stage ?? order.status}</span>
@@ -178,7 +180,7 @@ export default async function PartnerPage({
       <div className="grid gap-6 xl:grid-cols-2">
 
         <PartnerPaymentForm
-          orders={partner.orders.filter((order) => order.partnerAgreedAt).map((order) => ({
+          orders={visibleOrders.filter((order) => order.partnerAgreedAt).map((order) => ({
             id: order.id,
             number: order.number,
             partnerBalance: Number(order.partnerBalance),
