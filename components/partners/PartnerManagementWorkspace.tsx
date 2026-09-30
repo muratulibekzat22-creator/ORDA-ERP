@@ -115,7 +115,7 @@ function Overview({ data }: { data: Payload }) {
     ["Всего заказов цехов", data.totals.orders, "count"], ["Без выбранного цеха", data.totals.unassignedOrders, "count"],
     ["Все неотменённые заказы", data.totals.allOrders, "count"],
     ["Сумма заказов", data.totals.orderAmount, "money"], ["Получено от клиентов", data.totals.received, "money"],
-    ["Остаток клиентов", data.totals.clientRemaining, "money"], ["Сумма компании", data.totals.companyAmount, "money"],
+    ["Остаток клиентов", data.totals.clientRemaining, "money"],
     ["Согласовано с цехами", data.totals.partnerAccrued, "money"], ["Выплачено цехам", data.totals.partnerPaid, "money"],
     ["Осталось выплатить цехам", data.totals.companyDebt, "money"], ["Цехи должны компании", data.totals.partnerDebt, "money"],
     ["Средний заказ", data.totals.averageOrder, "money"], ["Прибыль", data.totals.profit, "money"],
