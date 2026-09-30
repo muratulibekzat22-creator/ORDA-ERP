@@ -67,7 +67,7 @@ export type MeasurementOutcomeInput = {
 export type ScheduleMeasurementInput = {
   clientId: number;
   orderId?: number;
-  measurerUserId: number;
+  measurerUserId?: number;
   visitDate: Date;
   city?: string;
   address?: string;
@@ -924,7 +924,7 @@ export async function scheduleMeasurement(
     throw new MeasurementError("FORBIDDEN");
   if (
     !Number.isInteger(input.clientId) ||
-    !Number.isInteger(input.measurerUserId) ||
+    (input.measurerUserId !== undefined && (!Number.isInteger(input.measurerUserId) || input.measurerUserId <= 0)) ||
     Number.isNaN(input.visitDate.getTime())
   )
     throw new MeasurementError("INVALID_INPUT");
@@ -949,10 +949,10 @@ export async function scheduleMeasurement(
           status: true,
         },
       });
-      const measurer = await tx.user.findUnique({
+      const measurer = input.measurerUserId ? await tx.user.findUnique({
         where: { id: input.measurerUserId },
         select: { id: true, name: true, role: true, active: true },
-      });
+      }) : null;
       const order = input.orderId
         ? await tx.order.findFirst({
             where: { id: input.orderId, deletedAt: null },
@@ -970,7 +970,7 @@ export async function scheduleMeasurement(
         throw new MeasurementError("CLIENT_NOT_FOUND");
       if (!client.phone.trim())
         throw new MeasurementError("CLIENT_PHONE_REQUIRED");
-      if (!measurer?.active || measurer.role !== Role.MEASURER)
+      if (input.measurerUserId && (!measurer?.active || measurer.role !== Role.MEASURER))
         throw new MeasurementError("MEASURER_NOT_FOUND");
       if (input.orderId && (!order || order.clientId !== client.id))
         throw new MeasurementError("INVALID_INPUT");
@@ -978,7 +978,7 @@ export async function scheduleMeasurement(
       const address = trim(input.address, 1000) ?? client.address.trim();
       const mapLink = trim(input.mapLink, 2000);
       if (!address && !mapLink) throw new MeasurementError("LOCATION_REQUIRED");
-      const task = await tx.calendarTask.create({
+      const task = measurer ? await tx.calendarTask.create({
         data: {
           title: `Замер: ${client.name}`,
           description: [city, address, mapLink, trim(input.comment)]
@@ -992,8 +992,8 @@ export async function scheduleMeasurement(
           clientId: client.id,
           orderId: order?.id,
         },
-      });
-      await tx.calendarTaskAudit.create({
+      }) : null;
+      if (task && measurer) await tx.calendarTaskAudit.create({
         data: {
           taskId: task.id,
           action: "CREATED",
@@ -1009,9 +1009,9 @@ export async function scheduleMeasurement(
         data: {
           clientId: client.id,
           orderId: order?.id,
-          calendarTaskId: task.id,
-          measurer: measurer.name,
-          measurerUserId: measurer.id,
+          calendarTaskId: task?.id,
+          measurer: measurer?.name ?? "Замерщик не выбран",
+          measurerUserId: measurer?.id,
           visitDate: input.visitDate,
           city,
           address,
@@ -1026,7 +1026,7 @@ export async function scheduleMeasurement(
           actorId: actor.userId,
           after: {
             visitDate: input.visitDate,
-            measurerUserId: measurer.id,
+            measurerUserId: measurer?.id ?? null,
             city,
             address,
             mapLink,
@@ -1076,7 +1076,7 @@ export async function scheduleMeasurement(
         data: {
           clientId: client.id,
           type: "MEASUREMENT_SCHEDULED",
-          comment: `${measurer.name} · ${input.visitDate.toISOString()}`,
+          comment: `${measurer?.name ?? "Замерщик не выбран"} · ${input.visitDate.toISOString()}`,
           authorId: actor.userId,
           authorName: actor.name,
         },
@@ -1090,7 +1090,7 @@ export async function scheduleMeasurement(
           city,
           address,
           mapLink,
-          measurerName: measurer.name,
+          measurerName: measurer?.name ?? "не выбран",
           managerName: client.manager,
           comment: trim(input.comment),
         }),
@@ -1114,7 +1114,7 @@ async function editableMeasurement(
     throw new MeasurementError("NOT_FOUND");
   const client = await tx.client.findUniqueOrThrow({
     where: { id: measurement.clientId },
-    select: { managerUserId: true, manager: true },
+    select: { name: true, managerUserId: true, manager: true },
   });
   const attachments = await tx.measurementAttachment.findMany({
     where: { measurementId: id },
@@ -1730,9 +1730,10 @@ export async function rescheduleMeasurement(
       address = trim(input.address, 1000) ?? current.address,
       mapLink = trim(input.mapLink, 2000) ?? current.mapLink;
     if (!address && !mapLink) throw new MeasurementError("LOCATION_REQUIRED");
-    if (current.calendarTaskId) {
+    let calendarTaskId = current.calendarTaskId;
+    if (calendarTaskId) {
       await tx.calendarTask.update({
-        where: { id: current.calendarTaskId },
+        where: { id: calendarTaskId },
         data: {
           dueAt: input.visitDate,
           assigneeId: measurer.id,
@@ -1743,7 +1744,7 @@ export async function rescheduleMeasurement(
       });
       await tx.calendarTaskAudit.create({
         data: {
-          taskId: current.calendarTaskId,
+          taskId: calendarTaskId,
           action:
             current.measurerUserId !== measurer.id
               ? "REASSIGNED"
@@ -1757,6 +1758,35 @@ export async function rescheduleMeasurement(
             dueAt: input.visitDate,
             assigneeId: measurer.id,
             comment: trim(input.comment),
+          },
+        },
+      });
+    } else {
+      const task = await tx.calendarTask.create({
+        data: {
+          title: `Замер: ${current.client.name}`,
+          description: [city, address, mapLink, trim(input.comment)]
+            .filter(Boolean)
+            .join(" · "),
+          type: CalendarTaskType.MEASUREMENT,
+          dueAt: input.visitDate,
+          priority: CalendarTaskPriority.IMPORTANT,
+          assigneeId: measurer.id,
+          creatorId: actor.userId,
+          clientId: current.clientId,
+          orderId: current.orderId,
+        },
+      });
+      calendarTaskId = task.id;
+      await tx.calendarTaskAudit.create({
+        data: {
+          taskId: task.id,
+          action: "CREATED_FROM_UNASSIGNED_MEASUREMENT",
+          actorId: actor.userId,
+          after: {
+            dueAt: input.visitDate,
+            assigneeId: measurer.id,
+            clientId: current.clientId,
           },
         },
       });
@@ -1794,6 +1824,7 @@ export async function rescheduleMeasurement(
     return tx.measurement.update({
       where: { id },
       data: {
+        calendarTaskId,
         visitDate: input.visitDate,
         measurerUserId: measurer.id,
         measurer: measurer.name,

@@ -17,6 +17,14 @@ export async function GET(request: Request) {
   if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && (includeDeleted || deletedOnly || params.get("active") === "false"))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const search = params.get("search")?.trim(), city = params.get("city")?.trim(), manager = params.get("manager")?.trim(), status = params.get("status")?.trim(), source = params.get("source")?.trim();
+  const searchDigits = search?.replace(/\D/g, "") ?? "";
+  const normalizedSearchPhone = search ? normalizePhone(search) : "";
+  const phoneSearchTerms = [...new Set([
+    search,
+    searchDigits.length >= 3 ? searchDigits : "",
+    searchDigits.length >= 3 && searchDigits.startsWith("8") ? `7${searchDigits.slice(1)}` : "",
+    normalizedSearchPhone,
+  ].filter((value): value is string => Boolean(value)))];
   const page = Math.max(1, Number(params.get("page")) || 1), limit = Math.min(100, Math.max(1, Number(params.get("limit")) || 20));
   const managerScope: Prisma.ClientWhereInput = role === Role.MANAGER
     ? { managerUserId: Number(auth.session!.user.id) }
@@ -28,7 +36,11 @@ export async function GET(request: Request) {
       : includeDeleted
         ? {}
         : { active: true, deletedAt: null }),
-    ...(search ? { OR: [{ name: { contains: search, mode: "insensitive" } }, { phone: { contains: search } }, { whatsapp: { contains: search } }, { city: { contains: search, mode: "insensitive" } }] } : {}),
+    ...(search ? { OR: [
+      { name: { contains: search, mode: "insensitive" } },
+      { city: { contains: search, mode: "insensitive" } },
+      ...phoneSearchTerms.flatMap((term) => [{ phone: { contains: term } }, { whatsapp: { contains: term } }]),
+    ] } : {}),
     ...(city ? { city } : {}), ...(manager ? { manager } : {}), ...(status ? { stage: status as LeadStage } : {}), ...(source ? { sourceCode: source as LeadSource } : {}),
   };
   if (params.get("compact") === "true") {

@@ -296,6 +296,9 @@ function OperationalMeasurementWorkspace() {
   const [scheduleOpen, setScheduleOpen] = useState(false),
     [scheduleClients, setScheduleClients] = useState<ScheduleClient[]>([]),
     [scheduleMeasurers, setScheduleMeasurers] = useState<ActiveMeasurer[]>([]),
+    [scheduleClientSearch, setScheduleClientSearch] = useState(""),
+    [scheduleClientSearching, setScheduleClientSearching] = useState(false),
+    [scheduleSelectedClient, setScheduleSelectedClient] = useState<ScheduleClient | null>(null),
     [whatsappText, setWhatsappText] = useState(""),
     [scheduleForm, setScheduleForm] = useState({ clientId: "", measurerUserId: "", visitDate: "", city: "", address: "", mapLink: "", comment: "" });
   const photoRef = useRef<HTMLInputElement>(null),
@@ -318,6 +321,30 @@ function OperationalMeasurementWorkspace() {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [search]);
+  useEffect(() => {
+    if (!scheduleOpen || scheduleSelectedClient) return;
+    const query = scheduleClientSearch.trim();
+    if (query.length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setScheduleClientSearching(true);
+      try {
+        const params = new URLSearchParams({ active: "true", limit: "20", search: query });
+        const response = await fetch(`/api/clients?${params}`, { cache: "no-store", signal: controller.signal });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) setError(body.error ?? "Не удалось найти заявку");
+        else setScheduleClients((body.data ?? []) as ScheduleClient[]);
+      } catch (reason) {
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) setError("Не удалось найти заявку");
+      } finally {
+        if (!controller.signal.aborted) setScheduleClientSearching(false);
+      }
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [scheduleClientSearch, scheduleOpen, scheduleSelectedClient]);
   const load = useCallback(async (cursor?: string) => {
     const backendFilter = tab === "overdue" ? "needs-closing" : tab;
     const params = new URLSearchParams({ workspace: "1", filter: backendFilter, limit: "30" });
@@ -470,19 +497,12 @@ function OperationalMeasurementWorkspace() {
   async function openSchedule() {
     const next = !scheduleOpen;
     if (!next) return setScheduleOpen(false);
-    if (scheduleClients.length || scheduleMeasurers.length) return setScheduleOpen(true);
     setError("");
-    const [clientsResponse, metaResponse] = await Promise.all([
-      fetch("/api/clients?active=true&limit=100", { cache: "no-store" }),
-      fetch("/api/measurements?meta=1", { cache: "no-store" }),
-    ]);
-    const clientsBody = await clientsResponse.json().catch(() => ({}));
+    const metaResponse = await fetch("/api/measurements?meta=1", { cache: "no-store" });
     const metaBody = await metaResponse.json().catch(() => ({}));
-    if (!clientsResponse.ok || !metaResponse.ok) return setError(clientsBody.error ?? metaBody.error ?? "Не удалось загрузить форму назначения");
-    const clients = (clientsBody.data ?? []) as ScheduleClient[], active = (metaBody.measurers ?? []) as ActiveMeasurer[];
-    setScheduleClients(clients); setScheduleMeasurers(active);
-    const first = clients[0];
-    setScheduleForm((current) => ({ ...current, clientId: first ? String(first.id) : "", city: first?.city ?? "", address: first?.address ?? "", measurerUserId: active.length === 1 ? String(active[0].id) : "" }));
+    if (!metaResponse.ok) return setError(metaBody.error ?? "Не удалось загрузить форму назначения");
+    setScheduleMeasurers((metaBody.measurers ?? []) as ActiveMeasurer[]);
+    setScheduleForm((current) => ({ ...current, measurerUserId: "" }));
     setScheduleOpen(true);
   }
   async function openReschedule() {
@@ -500,14 +520,25 @@ function OperationalMeasurementWorkspace() {
   }
   function chooseScheduleClient(clientId: string) {
     const client = scheduleClients.find((row) => String(row.id) === clientId);
+    setScheduleSelectedClient(client ?? null);
+    if (client) setScheduleClientSearch(client.phone);
     setScheduleForm((current) => ({ ...current, clientId, city: client?.city ?? "", address: client?.address ?? "" }));
   }
   async function scheduleMeasurement(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setWhatsappText("");
-    const response = await fetch("/api/measurements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...scheduleForm, clientId: Number(scheduleForm.clientId), measurerUserId: Number(scheduleForm.measurerUserId) }) });
+    const response = await fetch("/api/measurements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...scheduleForm, clientId: Number(scheduleForm.clientId), measurerUserId: scheduleForm.measurerUserId ? Number(scheduleForm.measurerUserId) : undefined }) });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
-    else { setNotice("Замер назначен и появился в календаре замерщика"); setWhatsappText(body.whatsappText ?? ""); setScheduleOpen(false); await load(); }
+    else {
+      setNotice(body.measurement?.measurerUserId ? "Замер назначен и появился в календаре замерщика" : "Замер сохранён. Замерщика можно назначить позже");
+      setWhatsappText(body.whatsappText ?? "");
+      setScheduleOpen(false);
+      setScheduleClients([]);
+      setScheduleClientSearch("");
+      setScheduleSelectedClient(null);
+      setScheduleForm({ clientId: "", measurerUserId: "", visitDate: "", city: "", address: "", mapLink: "", comment: "" });
+      await load();
+    }
     setBusy(false);
   }
   return (
@@ -532,15 +563,49 @@ function OperationalMeasurementWorkspace() {
       </header>
       {canSchedule && scheduleOpen && <form onSubmit={scheduleMeasurement} className="grid gap-3 rounded-2xl border border-amber-800 bg-[#101827] p-4 sm:grid-cols-2 lg:grid-cols-3">
         <h2 className="text-lg font-semibold text-white sm:col-span-2 lg:col-span-3">Назначить замер по заявке</h2>
-        <Field label="Клиент / заявка"><select required className={input} value={scheduleForm.clientId} onChange={(event) => chooseScheduleClient(event.target.value)}><option value="">Выберите заявку</option>{scheduleClients.map((client) => <option key={client.id} value={client.id}>{client.name || "Без имени"} · {client.phone}</option>)}</select></Field>
-        {scheduleMeasurers.length === 0 ? <p role="alert" className="rounded-xl bg-red-950/50 p-3 text-red-300">Нет активного замерщика</p> : scheduleMeasurers.length === 1 ? <div className="text-sm text-slate-300">Замерщик<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{scheduleMeasurers[0].name} · выбран автоматически</b></div> : <Field label="Замерщик"><select required className={input} value={scheduleForm.measurerUserId} onChange={(event) => setScheduleForm({...scheduleForm, measurerUserId:event.target.value})}><option value="">Выберите</option>{scheduleMeasurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}
+        <div className="relative sm:col-span-2 lg:col-span-3">
+          <label htmlFor="measurement-client-search" className="mb-1 block text-sm text-slate-300">Телефон или имя клиента</label>
+          <input
+            id="measurement-client-search"
+            type="search"
+            autoComplete="tel"
+            className={input}
+            value={scheduleClientSearch}
+            onChange={(event) => {
+              const value = event.target.value;
+              setScheduleClientSearch(value);
+              setScheduleClients([]);
+              setScheduleClientSearching(value.trim().length >= 2);
+              if (scheduleSelectedClient) {
+                setScheduleSelectedClient(null);
+                setScheduleForm((current) => ({ ...current, clientId: "", city: "", address: "" }));
+              }
+            }}
+            placeholder="Например: 8 707 123 45 67 или имя"
+          />
+          {!scheduleSelectedClient && scheduleClientSearch.trim().length < 2 && <p className="mt-1 text-xs text-slate-500">Введите номер вручную — система найдёт заявку по телефону.</p>}
+          {!scheduleSelectedClient && scheduleClientSearching && <p className="mt-2 text-sm text-slate-400">Поиск заявки…</p>}
+          {!scheduleSelectedClient && !scheduleClientSearching && scheduleClientSearch.trim().length >= 2 && scheduleClients.length === 0 && <p className="mt-2 rounded-xl border border-dashed border-slate-700 p-3 text-sm text-slate-400">Заявка не найдена. Проверьте номер или имя клиента.</p>}
+          {!scheduleSelectedClient && scheduleClients.length > 0 && <div className="mt-2 max-h-64 space-y-1 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950 p-2">
+            {scheduleClients.map((client) => <button key={client.id} type="button" onClick={() => chooseScheduleClient(String(client.id))} className="block min-h-12 w-full rounded-lg px-3 py-2 text-left hover:bg-slate-800">
+              <b className="block text-sm text-white">{client.name || "Без имени"}</b>
+              <span className="block text-sm text-blue-200">{client.phone}</span>
+              {(client.city || client.address) && <span className="block truncate text-xs text-slate-500">{[client.city, client.address].filter(Boolean).join(" · ")}</span>}
+            </button>)}
+          </div>}
+          {scheduleSelectedClient && <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-800 bg-emerald-950/20 p-3">
+            <span><b className="block text-emerald-100">{scheduleSelectedClient.name || "Без имени"}</b><span className="text-sm text-emerald-200">{scheduleSelectedClient.phone}</span></span>
+            <button type="button" onClick={() => { setScheduleSelectedClient(null); setScheduleClients([]); setScheduleClientSearching(scheduleClientSearch.trim().length >= 2); setScheduleForm((current) => ({ ...current, clientId: "", city: "", address: "" })); }} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm text-white">Изменить</button>
+          </div>}
+        </div>
+        <Field label="Замерщик (необязательно)"><select className={input} value={scheduleForm.measurerUserId} onChange={(event) => setScheduleForm({...scheduleForm, measurerUserId:event.target.value})}><option value="">Замерщик не выбран</option>{scheduleMeasurers.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select><span className="mt-1 block text-xs text-slate-500">Можно назначить сотрудника позже.</span></Field>
         <Field label="Дата замера"><input required type="date" className={input} value={scheduleForm.visitDate.split("T")[0] ?? ""} onChange={(event) => setScheduleForm({...scheduleForm,visitDate:event.target.value ? `${event.target.value}T${scheduleForm.visitDate.split("T")[1] || "09:00"}` : ""})}/></Field>
         <Field label="Время"><input required type="time" className={input} value={scheduleForm.visitDate.split("T")[1] ?? ""} onChange={(event) => setScheduleForm({...scheduleForm,visitDate:scheduleForm.visitDate.split("T")[0] ? `${scheduleForm.visitDate.split("T")[0]}T${event.target.value}` : ""})}/></Field>
         <Field label="Город"><input className={input} value={scheduleForm.city} onChange={(event) => setScheduleForm({...scheduleForm,city:event.target.value})}/></Field>
         <Field label="Адрес"><input className={input} value={scheduleForm.address} onChange={(event) => setScheduleForm({...scheduleForm,address:event.target.value})}/></Field>
         <Field label="Ссылка на карту"><input type="url" className={input} value={scheduleForm.mapLink} onChange={(event) => setScheduleForm({...scheduleForm,mapLink:event.target.value})}/></Field>
         <Field label="Комментарий менеджера"><input className={input} value={scheduleForm.comment} onChange={(event) => setScheduleForm({...scheduleForm,comment:event.target.value})}/></Field>
-        <button disabled={busy || !scheduleForm.clientId || !scheduleForm.measurerUserId || !scheduleForm.visitDate || (!scheduleForm.address.trim() && !scheduleForm.mapLink.trim())} className="min-h-12 rounded-xl bg-amber-500 px-4 font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2 lg:col-span-3">Назначить замер</button>
+        <button disabled={busy || !scheduleForm.clientId || !scheduleForm.visitDate || (!scheduleForm.address.trim() && !scheduleForm.mapLink.trim())} className="min-h-12 rounded-xl bg-amber-500 px-4 font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2 lg:col-span-3">Сохранить замер</button>
       </form>}
       {whatsappText && <section className="rounded-2xl border border-green-900 bg-green-950/20 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><b className="text-green-200">WhatsApp-текст (копирование)</b><button type="button" onClick={() => void navigator.clipboard.writeText(whatsappText).then(() => setNotice("Текст скопирован"))} className="min-h-11 rounded-xl bg-green-700 px-4 text-sm font-semibold">Копировать</button></div><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-200">{whatsappText}</pre></section>}
       {measurer && createOpen && <form onSubmit={createOwnMeasurement} className="grid gap-3 rounded-2xl border border-blue-900 bg-[#101827] p-4 sm:grid-cols-2">
@@ -695,6 +760,7 @@ function OperationalMeasurementWorkspace() {
                       Назначил:{" "}
                       {row.client.managerUser?.name ?? "менеджер не указан"}
                     </span>
+                    <span className="mt-1 block text-xs text-slate-500">Замерщик: {row.measurerUser?.name ?? "не выбран"}</span>
                     <span className="mt-3 block text-sm font-semibold text-blue-300">
                       Открыть замер →
                     </span>
