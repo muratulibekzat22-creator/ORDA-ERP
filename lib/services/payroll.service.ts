@@ -280,25 +280,57 @@ type AccrualInput = {
 
 export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
   director(actor);
+  return createAccrualInternal(input, actor);
+}
+
+export async function createSelfAccrual(
+  input: Omit<AccrualInput, "employeeId">,
+  actor: PayrollActor,
+) {
+  if (actor.role !== Role.MANAGER) throw new PayrollError("FORBIDDEN");
+  if (
+    input.type !== PayrollAccrualType.ORDER_BONUS &&
+    input.type !== PayrollAccrualType.DEDUCTION
+  )
+    throw new PayrollError("FORBIDDEN");
+  const employee = await prisma.employeePayrollProfile.findUnique({
+    where: { userId: actor.userId },
+    select: { id: true, active: true, payrollEnabled: true },
+  });
+  if (!employee?.active || !employee.payrollEnabled)
+    throw new PayrollError("EMPLOYEE_NOT_FOUND");
+  return createAccrualInternal(
+    { ...input, employeeId: employee.id },
+    actor,
+    { managerUserId: actor.userId, managerName: actor.name },
+  );
+}
+
+async function createAccrualInternal(
+  input: AccrualInput,
+  actor: PayrollActor,
+  orderScope?: { managerUserId: number; managerName: string },
+) {
   if (input.type === PayrollAccrualType.MEASUREMENT_BONUS)
     throw new PayrollError("MEASUREMENT_BONUS_AUTOMATIC_ONLY");
   const reason = requiredReason(input.reason);
-  return prisma.$transaction(
-    async (tx) => {
-      const existing = await tx.payrollAccrual.findUnique({
-        where: { idempotencyKey: input.key },
-      });
-      if (existing) {
-        if (!compareRequestHash(existing.requestHash, input.requestHash))
-          throw new PayrollError("IDEMPOTENCY_CONFLICT");
-        return { accrual: existing, created: false };
-      }
-      const period = await openPeriod(tx, input.periodId);
-      const employee = await tx.employeePayrollProfile.findUnique({
-        where: { id: input.employeeId },
-      });
-      if (!employee?.payrollEnabled || !employee.active)
-        throw new PayrollError("EMPLOYEE_NOT_FOUND");
+  try {
+    return await prisma.$transaction(
+      async (tx) => {
+        const existing = await tx.payrollAccrual.findUnique({
+          where: { idempotencyKey: input.key },
+        });
+        if (existing) {
+          if (!compareRequestHash(existing.requestHash, input.requestHash))
+            throw new PayrollError("IDEMPOTENCY_CONFLICT");
+          return { accrual: existing, created: false };
+        }
+        const period = await openPeriod(tx, input.periodId);
+        const employee = await tx.employeePayrollProfile.findUnique({
+          where: { id: input.employeeId },
+        });
+        if (!employee?.payrollEnabled || !employee.active)
+          throw new PayrollError("EMPLOYEE_NOT_FOUND");
       if (
         (input.type === PayrollAccrualType.ORDER_BONUS ||
           input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS) &&
@@ -308,11 +340,41 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
       let cancelledOrderWarning = false;
       if (input.orderId) {
         const order = await tx.order.findFirst({
-          where: { id: input.orderId, deletedAt: null },
+          where: {
+            id: input.orderId,
+            deletedAt: null,
+            ...(orderScope
+              ? {
+                  OR: [
+                    { managerUserId: orderScope.managerUserId },
+                    {
+                      managerUserId: null,
+                      manager: {
+                        equals: orderScope.managerName,
+                        mode: "insensitive" as const,
+                      },
+                    },
+                    { leadConversion: { managerId: orderScope.managerUserId } },
+                  ],
+                }
+              : {}),
+          },
           select: { status: true },
         });
         if (!order) throw new PayrollError("ORDER_NOT_FOUND");
         cancelledOrderWarning = /отмен|cancel/i.test(order.status);
+      }
+      if (input.type === PayrollAccrualType.ORDER_BONUS) {
+        const duplicate = await tx.payrollAccrual.findFirst({
+          where: {
+            orderId: input.orderId,
+            type: PayrollAccrualType.ORDER_BONUS,
+            direction: PayrollDirection.INCREASE,
+            reversalOfId: null,
+          },
+          select: { id: true },
+        });
+        if (duplicate) throw new PayrollError("ORDER_BONUS_ALREADY_EXISTS");
       }
       const decreases: PayrollAccrualType[] = [
         PayrollAccrualType.DEDUCTION,
@@ -386,9 +448,18 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
         idempotencyKey: `${input.key}:audit`,
       });
       return { accrual, payment, created: true, cancelledOrderWarning };
-    },
-    { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+      },
+      { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  } catch (error) {
+    if (
+      input.type === PayrollAccrualType.ORDER_BONUS &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      throw new PayrollError("ORDER_BONUS_ALREADY_EXISTS");
+    throw error;
+  }
 }
 
 type PaymentInput = {
@@ -782,6 +853,7 @@ export async function payAdvance(
     requestHash: string;
     method?: string;
     comment?: string;
+    paymentDate?: Date;
   },
   actor: PayrollActor,
 ) {
@@ -815,7 +887,7 @@ export async function payAdvance(
           periodId: request.periodId,
           amount: Number(request.approvedAmount),
           type: PayrollPaymentType.ADVANCE,
-          paymentDate: new Date(),
+          paymentDate: input.paymentDate ?? new Date(),
           method: input.method,
           comment: input.comment,
           key: input.key,
@@ -920,8 +992,26 @@ export async function payrollSummary(
     include: {
       user: { select: { id: true, name: true, role: true, active: true } },
       salaryRates: { include: { approvedBy: { select: { id: true, name: true } } }, orderBy: { effectiveFrom: "desc" } },
-      accruals: { where: { periodId }, include: { payments: true, reversedBy: { select: { id: true } } }, orderBy: { createdAt: "desc" } },
-      payments: { where: { periodId }, orderBy: { paymentDate: "desc" } },
+      accruals: {
+        where: { periodId },
+        include: {
+          payments: true,
+          reversedBy: { select: { id: true } },
+          order: {
+            select: {
+              id: true,
+              number: true,
+              client: { select: { name: true, phone: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      payments: {
+        where: { periodId },
+        include: { paidBy: { select: { id: true, name: true } } },
+        orderBy: { paymentDate: "desc" },
+      },
       paymentConfirmations: { where: { periodId }, orderBy: { createdAt: "desc" } },
       advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
     },
@@ -967,6 +1057,7 @@ export async function payrollSummary(
         return {
           id: row.id,
           orderId: row.orderId,
+          order: row.order,
           measurementId: row.measurementId,
           type: row.type,
           amount: Number(row.amount),

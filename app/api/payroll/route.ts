@@ -242,6 +242,10 @@ export async function POST(request: Request) {
             method: typeof body.method === "string" ? body.method : undefined,
             comment:
               typeof body.comment === "string" ? body.comment : undefined,
+            paymentDate:
+              body.paymentDate == null
+                ? undefined
+                : new Date(String(body.paymentDate)),
           },
           identity,
         ),

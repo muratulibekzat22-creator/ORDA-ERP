@@ -17,6 +17,7 @@ import {
   changeSalary,
   closePeriod,
   createAccrual,
+  createSelfAccrual,
   createPayment,
   ensurePeriod,
   payAdvance,
@@ -48,9 +49,10 @@ async function expectCode(run: () => Promise<unknown>, code: string) {
 }
 
 async function main() {
-  const ids: { users: number[]; periods: number[]; client?: number; order?: number } = {
+  const ids: { users: number[]; periods: number[]; client?: number; orders: number[] } = {
     users: [],
     periods: [],
+    orders: [],
   };
   try {
     const [director, manager, accountant, partner] = await Promise.all([
@@ -184,7 +186,7 @@ async function main() {
         status: "Оформлен",
       },
     });
-    ids.order = order.id;
+    ids.orders.push(order.id);
     const base = { employeeId: profile.id, periodId: period.id };
     await expectCode(
       () =>
@@ -238,6 +240,21 @@ async function main() {
         requestHash: "order-bonus",
       },
       directorActor,
+    );
+    await expectCode(
+      () => createAccrual(
+        {
+          ...base,
+          type: PayrollAccrualType.ORDER_BONUS,
+          amount: 1,
+          orderId: order.id,
+          reason: "Повторный бонус",
+          key: key("duplicate-order-bonus"),
+          requestHash: "duplicate-order-bonus",
+        },
+        directorActor,
+      ),
+      "ORDER_BONUS_ALREADY_EXISTS",
     );
     await createAccrual(
       {
@@ -440,18 +457,70 @@ async function main() {
       140000,
       "cash payroll total",
     );
+    const trackedOrder = await prisma.order.create({
+      data: {
+        number: `PAY-TRACKED-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Test",
+        amount: 100000,
+        manager: manager.name,
+        managerUserId: manager.id,
+        status: "Оформлен",
+      },
+    });
+    ids.orders.push(trackedOrder.id);
     const trackedBonus = await createAccrual(
       {
         employeeId: profile.id,
         periodId: bonusStatusPeriod.id,
         type: PayrollAccrualType.ORDER_BONUS,
         amount: 30000,
-        orderId: order.id,
+        orderId: trackedOrder.id,
         reason: "Tracked order bonus",
         key: key("tracked-order-bonus"),
         requestHash: "tracked-order-bonus",
       },
       directorActor,
+    );
+    const selfOrder = await prisma.order.create({
+      data: {
+        number: `PAY-SELF-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Test",
+        amount: 100000,
+        manager: manager.name,
+        managerUserId: manager.id,
+        status: "Оформлен",
+      },
+    });
+    ids.orders.push(selfOrder.id);
+    await createSelfAccrual(
+      {
+        periodId: bonusStatusPeriod.id,
+        type: PayrollAccrualType.ORDER_BONUS,
+        amount: 5000,
+        orderId: selfOrder.id,
+        reason: "Бонус менеджера",
+        key: key("self-order-bonus"),
+        requestHash: "self-order-bonus",
+      },
+      managerActor,
+    );
+    await createSelfAccrual(
+      {
+        periodId: bonusStatusPeriod.id,
+        type: PayrollAccrualType.DEDUCTION,
+        amount: 1000,
+        orderId: selfOrder.id,
+        reason: "Штраф за несвоевременную работу",
+        key: key("self-deduction"),
+        requestHash: "self-deduction",
+      },
+      managerActor,
     );
     await createPayment(
       {
@@ -584,17 +653,27 @@ async function main() {
       -20000,
       "late bonus and reversal formula",
     );
-    await prisma.order.update({
-      where: { id: order.id },
-      data: { status: "Отменён" },
+    const cancelledOrder = await prisma.order.create({
+      data: {
+        number: `PAY-CANCELLED-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Test",
+        amount: 100000,
+        manager: manager.name,
+        managerUserId: manager.id,
+        status: "Отменён",
+      },
     });
+    ids.orders.push(cancelledOrder.id);
     const warning = await createAccrual(
       {
         employeeId: profile.id,
         periodId: nextPeriod.id,
         type: PayrollAccrualType.ORDER_BONUS,
         amount: 1000,
-        orderId: order.id,
+        orderId: cancelledOrder.id,
         reason: "Решение директора",
         key: key("cancelled-warning"),
         requestHash: "cancelled-warning",
@@ -682,8 +761,8 @@ async function main() {
       await prisma.employeePayrollProfile.deleteMany({
         where: { id: { in: employeeIds } },
       });
-      if (ids.order)
-        await prisma.order.deleteMany({ where: { id: ids.order } });
+      if (ids.orders.length)
+        await prisma.order.deleteMany({ where: { id: { in: ids.orders } } });
       if (ids.client)
         await prisma.client.deleteMany({ where: { id: ids.client } });
       await prisma.payrollPeriod.deleteMany({ where: { id: { in: ids.periods }, accruals: { none: {} }, payments: { none: {} } } });

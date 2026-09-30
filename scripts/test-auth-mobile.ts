@@ -16,8 +16,9 @@ assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "dir
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
 assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
 assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
-assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar", "/documents", "/payroll"]'), "manager navigation contract changed");
-assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/finance", "/partner-management", "/reports"]'), "Founder navigation must stay focused on final controls and reports");
+assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar", "/production", "/documents", "/payroll"]'), "manager navigation contract changed");
+assert(shell.includes('["/", "/marketing", "/calendar", "/payroll"]'), "marketer personal payroll navigation is missing");
+assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/payroll", "/finance", "/partner-management", "/reports"]'), "Founder navigation must keep payroll with final controls and reports");
 assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes("if (operationsDirector) return true"), "Operations director must retain the full working navigation");
 assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Эффективность"), "Founder cockpit must show final financial and efficiency indicators");
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");

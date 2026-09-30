@@ -25,6 +25,7 @@ type Accrual = {
   direction: "INCREASE" | "DECREASE";
   reason: string;
   orderId?: number | null;
+  order?: OrderOption | null;
   createdAt: string;
   reversalOfId?: number | null;
   reversedBy?: { id: number } | null;
@@ -35,6 +36,8 @@ type Payment = {
   amount: string;
   paymentDate: string;
   comment?: string | null;
+  method?: string | null;
+  paidBy?: { id: number; name: string } | null;
   reversalOfId?: number | null;
   reversedAt?: string | null;
   reversal?: { id: number } | null;
@@ -83,7 +86,7 @@ type PayrollRow = {
   advanceRequests: Advance[];
   totals: { accrued: number; paid: number; pending: number; payable: number };
   breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
-  bonusAccruals: Array<{ id: number; orderId?: number | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
+  bonusAccruals: Array<{ id: number; orderId?: number | null; order?: OrderOption | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
 };
 type Payload = {
   period: { id: number; year: number; month: number; status: string } | null;
@@ -94,7 +97,12 @@ type Payload = {
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
-  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "reversal";
+  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advancePayment" | "reversal";
+type OrderOption = {
+  id: number;
+  number: string;
+  client: { id?: number; name: string; phone?: string | null };
+};
 type Form = {
   amount: string;
   reason: string;
@@ -121,6 +129,8 @@ const months = [
 ];
 const roleNames: Record<string, string> = {
   DIRECTOR: "Директор",
+  OPERATIONS_DIRECTOR: "Директор",
+  MARKETER: "Маркетолог",
   MANAGER: "Менеджер",
   ACCOUNTANT: "Бухгалтер",
   MEASURER: "Замерщик",
@@ -135,7 +145,7 @@ const labels: Record<string, string> = {
   MEASUREMENT_BONUS: "Бонус за замер",
   EXTRA_BONUS: "Бонус",
   PREMIUM: "Премия",
-  DEDUCTION: "Удержание",
+  DEDUCTION: "Штраф / удержание",
   ADJUSTMENT_INCREASE: "Корректировка",
   ADJUSTMENT_DECREASE: "Корректировка",
   BONUS_REVERSAL: "Сторно",
@@ -174,7 +184,14 @@ const errorLabels: Record<string, string> = {
   EMPLOYEE_NOT_FOUND: "Сотрудник не найден",
   ORDER_REQUIRED: "Для бонуса за заказ укажите заказ",
   ORDER_NOT_FOUND: "Заказ не найден",
+  ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
   INVALID_ACTION: "Операция не поддерживается",
+};
+const methodLabels: Record<string, string> = {
+  cash: "Наличные",
+  kaspi: "Kaspi",
+  bank_transfer: "Банковский перевод",
+  other: "Другое",
 };
 const emptyForm = (): Form => ({
   amount: "",
@@ -216,9 +233,10 @@ export default function PayrollPage() {
     comment: "",
   });
   const role = session?.user.role ?? "",
-    director = role === "DIRECTOR",
+    director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
     accountant = role === "ACCOUNTANT",
     adminView = director || accountant,
+    managerSelfService = role === "MANAGER" && !adminView,
     closed = data.period?.status === "CLOSED",
     locked = Boolean(data.period && data.period.status !== "OPEN");
 
@@ -256,6 +274,29 @@ export default function PayrollPage() {
     setError("");
     setNotice("");
     const response = await fetch("/api/payroll", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify(body),
+      }),
+      result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setError(errorLabels[result.error] ?? "Не удалось выполнить операцию");
+      return false;
+    }
+    setNotice(success);
+    await load();
+    return true;
+  };
+  const runSelf = async (
+    body: Record<string, unknown>,
+    success: string,
+  ) => {
+    setError("");
+    setNotice("");
+    const response = await fetch("/api/payroll/self", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -311,6 +352,14 @@ export default function PayrollPage() {
         comment: form.reason,
         relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
       };
+    else if (operation === "advancePayment")
+      body = {
+        action: "pay-advance",
+        id: Number(form.accrualId),
+        paymentDate: form.date,
+        method: form.method,
+        comment: form.reason,
+      };
     else if (operation === "reversal")
       body = {
         action: "reverse-accrual",
@@ -333,7 +382,7 @@ export default function PayrollPage() {
               ? "PREMIUM"
               : operation === "deduction"
                 ? "DEDUCTION"
-                : "EXTRA_BONUS"
+                : "ORDER_BONUS"
           ],
         type:
           operation === "salaryAccrual"
@@ -342,12 +391,13 @@ export default function PayrollPage() {
             ? "PREMIUM"
             : operation === "deduction"
               ? "DEDUCTION"
-              : form.orderId
-                ? "ORDER_BONUS"
-                : "EXTRA_BONUS",
+              : "ORDER_BONUS",
         orderId: form.orderId ? Number(form.orderId) : undefined,
       };
-    if (await run(body)) {
+    const saved = managerSelfService && (operation === "bonus" || operation === "deduction")
+      ? await runSelf(body, operation === "bonus" ? "Бонус за заказ добавлен" : "Штраф добавлен")
+      : await run(body, operation === "advancePayment" ? "Выплата аванса зарегистрирована" : "Операция выполнена");
+    if (saved) {
       setOperation(null);
       setDetails(null);
     }
@@ -375,11 +425,21 @@ export default function PayrollPage() {
       },
       decision === "APPROVED" ? "Аванс одобрен" : "Запрос отклонён",
     );
-  const payAdvance = (item: Advance) =>
-    run(
-      { action: "pay-advance", id: item.id },
-      "Выплата аванса зарегистрирована",
+  const payAdvance = async (item: Advance) => {
+    const employee = data.rows.find((row) =>
+      row.advanceRequests.some((request) => request.id === item.id),
     );
+    if (!employee) return;
+    setTarget(employee);
+    setOperation("advancePayment");
+    setForm({
+      ...emptyForm(),
+      amount: String(item.approvedAmount ?? item.requestedAmount),
+      accrualId: String(item.id),
+      method: "cash",
+      reason: item.comment ?? "Аванс",
+    });
+  };
   const reviewConfirmation = async (
     item: Confirmation,
     decision: "CONFIRM" | "REJECT",
@@ -667,6 +727,24 @@ export default function PayrollPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+        {!adminView && data.rows[0] && (
+          <section className="mt-5 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-semibold">Мой расчёт за месяц</h2>
+                <p className="mt-1 text-sm text-slate-300">
+                  Оклад: <b>{currency(data.rows[0].currentSalary)}</b> · бонусы: <b>{currency(data.rows[0].breakdown.bonusesAccrued)}</b> · штрафы: <b>{currency(data.rows[0].accruals.filter((item) => item.type === "DEDUCTION").reduce((sum, item) => sum + Number(item.amount), 0))}</b> · авансы: <b>{currency(data.rows[0].breakdown.advancesPaid)}</b>
+                </p>
+              </div>
+              {managerSelfService && data.period && !locked && (
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => openOperation("bonus", data.rows[0])} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
+                  <button onClick={() => openOperation("deduction", data.rows[0])} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-200">+ Штраф</button>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -963,7 +1041,7 @@ function EmployeeDrawer({
     ...row.accruals.map((item) => ({
       id: `a-${item.id}`,
       date: item.createdAt,
-      title: labels[item.type] ?? item.type,
+      title: `${labels[item.type] ?? item.type}${item.order ? ` · ${item.order.number}` : ""}`,
       amount: Number(item.amount) * (item.direction === "DECREASE" ? -1 : 1),
       reason: item.reason,
     })),
@@ -1082,7 +1160,7 @@ function EmployeeDrawer({
                     onClick={() => onOperation("premium", row)}
                   />
                   <Action
-                    label="Удержание"
+                    label="Штраф / удержание"
                     onClick={() => onOperation("deduction", row)}
                   />
                   <Action
@@ -1146,7 +1224,7 @@ function EmployeeDrawer({
           <section className="mt-5">
             <h3 className="font-semibold">Бонусы</h3>
             <div className="mt-2 space-y-2">
-              {row.bonusAccruals.map((item) => <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span>{labels[item.type] ?? item.type}{item.orderId ? ` · заказ ${item.orderId}` : ""}</span><b>{currency(item.amount)}</b></div><div className="mt-1 flex flex-wrap justify-between gap-2 text-slate-400"><span>{item.status === "PAID" ? "Выплачено" : item.status === "PARTIALLY_PAID" ? "Частично выплачено" : "Начислено"}</span><span>Выплачено {currency(item.paid)} · к выплате {currency(item.payable)}</span></div></div>)}
+              {row.bonusAccruals.map((item) => <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span>{labels[item.type] ?? item.type}{item.order ? ` · ${item.order.number} · ${item.order.client.name}` : item.orderId ? ` · заказ ${item.orderId}` : ""}</span><b>{currency(item.amount)}</b></div><div className="mt-1 flex flex-wrap justify-between gap-2 text-slate-400"><span>{item.status === "PAID" ? "Выплачено" : item.status === "PARTIALLY_PAID" ? "Частично выплачено" : "Начислено"}</span><span>Выплачено {currency(item.paid)} · к выплате {currency(item.payable)}</span></div></div>)}
             </div>
           </section>
         )}
@@ -1176,7 +1254,7 @@ function EmployeeDrawer({
                 return (
                   <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div><p>{labels[item.type] ?? item.type}</p><p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.comment ? ` · ${item.comment}` : ""}</p></div>
+                      <div><p>{labels[item.type] ?? item.type}</p><p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.method ? ` · ${methodLabels[item.method] ?? item.method}` : ""}{item.paidBy?.name ? ` · выдал(а): ${item.paidBy.name}` : ""}{item.comment ? ` · ${item.comment}` : ""}</p></div>
                       <b className={reversal ? "text-red-300" : "text-emerald-300"}>{reversal ? "−" : ""}{currency(item.amount)}</b>
                     </div>
                     {director && !closed && !reversal && !reversed && (
@@ -1276,10 +1354,11 @@ function OperationModal({
       salary: "Назначить новый оклад",
       salaryAccrual: "Начислить оклад за период",
       allowance: "Изменить гарантированный бонус",
-      bonus: "Добавить бонус",
+      bonus: "Добавить бонус за заказ",
       premium: "Назначить премию",
-      deduction: "Добавить удержание",
+      deduction: "Добавить штраф / удержание",
       payment: "Зарегистрировать выплату",
+      advancePayment: "Зарегистрировать выплату аванса",
       reversal: "Сторнировать начисление",
     },
     reversible = row.accruals.filter(
@@ -1288,6 +1367,31 @@ function OperationModal({
         !item.reversedBy &&
         item.type !== "BONUS_REVERSAL",
     );
+  const orderOperation = operation === "bonus" || operation === "deduction";
+  const [orderQuery, setOrderQuery] = useState("");
+  const [orders, setOrders] = useState<OrderOption[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  useEffect(() => {
+    if (!orderOperation) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setOrdersLoading(true);
+      try {
+        const params = new URLSearchParams({ q: orderQuery, limit: "30" });
+        const response = await fetch(`/api/orders/search?${params}`, {
+          signal: controller.signal,
+        });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok) setOrders(Array.isArray(body.items) ? body.items : []);
+      } finally {
+        if (!controller.signal.aborted) setOrdersLoading(false);
+      }
+    }, 250);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [orderOperation, orderQuery]);
   return (
     <div
       className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4"
@@ -1309,7 +1413,7 @@ function OperationModal({
           </button>
         </div>
         <div className="mt-5 space-y-4">
-          {rows.length > 1 && (
+          {rows.length > 1 && operation !== "advancePayment" && (
             <Field label="Сотрудник">
               <select
                 value={row.id}
@@ -1352,15 +1456,17 @@ function OperationModal({
                 min="1"
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                readOnly={operation === "advancePayment"}
                 className="control"
               />
             </Field>
           )}
-          {operation === "payment" && (
+          {(operation === "payment" || operation === "advancePayment") && (
             <Field label="Тип выплаты">
               <select
-                value={form.type}
+                value={operation === "advancePayment" ? "ADVANCE" : form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
+                disabled={operation === "advancePayment"}
                 className="control"
               >
                 <option value="SALARY_PAYMENT">Зарплата</option>
@@ -1373,7 +1479,7 @@ function OperationModal({
               </select>
             </Field>
           )}
-          {operation === "payment" && (
+          {(operation === "payment" || operation === "advancePayment") && (
             <Field label="Способ выплаты">
               <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control">
                 <option value="cash">Наличные</option>
@@ -1387,23 +1493,35 @@ function OperationModal({
             <Field label="Начисление бонуса (необязательно)">
               <select value={form.accrualId} onChange={(e) => { const item = row.bonusAccruals.find((value) => value.id === Number(e.target.value)); setForm({ ...form, accrualId: e.target.value, amount: item ? String(item.payable) : form.amount, type: item ? "ORDER_BONUS_PAYMENT" : form.type }); }} className="control">
                 <option value="">Общая выплата без привязки</option>
-                {row.bonusAccruals.filter((item) => item.payable > 0).map((item) => <option key={item.id} value={item.id}>{labels[item.type] ?? item.type}{item.orderId ? ` · заказ ${item.orderId}` : ""} · {currency(item.payable)}</option>)}
+                {row.bonusAccruals.filter((item) => item.payable > 0).map((item) => <option key={item.id} value={item.id}>{labels[item.type] ?? item.type}{item.order ? ` · ${item.order.number}` : item.orderId ? ` · заказ ${item.orderId}` : ""} · {currency(item.payable)}</option>)}
               </select>
             </Field>
           )}
-          {operation === "bonus" && (
-            <Field label="Заказ (необязательно)">
-              <input
-                type="number"
-                min="1"
-                value={form.orderId}
-                onChange={(e) => setForm({ ...form, orderId: e.target.value })}
-                placeholder="ID заказа"
-                className="control"
-              />
+          {orderOperation && (
+            <Field label={operation === "bonus" ? "Заказ (обязательно)" : "Заказ (необязательно)"}>
+              <div className="space-y-2">
+                <input
+                  value={orderQuery}
+                  onChange={(e) => setOrderQuery(e.target.value)}
+                  placeholder="Поиск по номеру заказа, клиенту или телефону"
+                  className="control"
+                />
+                <select
+                  value={form.orderId}
+                  onChange={(e) => setForm({ ...form, orderId: e.target.value })}
+                  className="control"
+                >
+                  <option value="">{ordersLoading ? "Загрузка заказов…" : operation === "bonus" ? "Выберите заказ" : "Без привязки к заказу"}</option>
+                  {orders.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.number} · {item.client.name}{item.client.phone ? ` · ${item.client.phone}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </Field>
           )}
-          {(operation === "salary" || operation === "payment") && (
+          {(operation === "salary" || operation === "payment" || operation === "advancePayment") && (
             <Field
               label={
                 operation === "salary" ? "Дата начала действия" : "Дата выплаты"
@@ -1428,6 +1546,7 @@ function OperationModal({
               rows={3}
               value={form.reason}
               onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              placeholder={operation === "deduction" ? "Например: не выполнена работа или замечание по заказу" : undefined}
               className="control resize-none"
             />
           </Field>
@@ -1446,7 +1565,9 @@ function OperationModal({
                 ? !form.accrualId || !form.reason.trim()
                 : operation === "allowance"
                   ? form.amount === "" || Number(form.amount) < 0
-                  : Number(form.amount) <= 0
+                  : Number(form.amount) <= 0 ||
+                    (operation === "bonus" && !form.orderId) ||
+                    (operation === "deduction" && !form.reason.trim())
             }
             className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-40"
           >

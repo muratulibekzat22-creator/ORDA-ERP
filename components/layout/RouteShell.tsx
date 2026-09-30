@@ -65,14 +65,14 @@ export default function RouteShell({
   };
   const visible = (href: string) => {
     if (founder)
-      return ["/", "/training", "/finance", "/partner-management", "/reports"].includes(href);
+      return ["/", "/training", "/payroll", "/finance", "/partner-management", "/reports"].includes(href);
     if (operationsDirector) return true;
     if (href === "/partner-management") return false;
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
     if (role === "MANAGER")
       return ["/", "/clients", "/orders", "/measurements", "/calendar", "/production", "/documents", "/payroll"].includes(href);
-    if (role === "MARKETER") return ["/", "/marketing", "/calendar"].includes(href);
+    if (role === "MARKETER") return ["/", "/marketing", "/calendar", "/payroll"].includes(href);
     if (href === "/training" || href === "/measurements" || href === "/marketing") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
