@@ -43,7 +43,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
   const [customerBalance, partnerBalance, payrollTotals, expenseEntries] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
-    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null } }, _sum: { partnerBalance: true } }),
+    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null }, partnerPrice: { gt: 0 } }, _sum: { partnerBalance: true } }),
     internalFinance ? prisma.$queryRaw<PayrollTotalsRow[]>`
       SELECT 'accrual'::text AS kind,
         COALESCE(SUM(CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END), 0) AS total,

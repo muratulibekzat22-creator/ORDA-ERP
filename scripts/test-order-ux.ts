@@ -36,6 +36,18 @@ assert.deepEqual(
     "Цена производства",
   ],
 );
+assert.equal(
+  orderDataGaps({
+    managerUserId: 1,
+    partnerId: 1,
+    partnerPrice: 500_000,
+    partnerAgreedAt: null,
+    promisedAt: new Date(),
+    client: { phone: "77000000000", city: "Караганда" },
+  }).includes("Цена производства"),
+  true,
+  "a legacy amount without a confirmed production-price date must stay visible for repair",
+);
 
 for (const [material, workshopRate, saleRate] of [
   ["Дуб ламель", 60_000, 85_000],

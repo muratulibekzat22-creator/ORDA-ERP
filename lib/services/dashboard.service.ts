@@ -8,6 +8,7 @@ import {
 
 import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { orderDataGaps } from "@/lib/orders/completeness";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import {
   isOrderOverdue,
   orderDeadline,
@@ -325,7 +326,7 @@ async function managementProjection(scope: DashboardScope) {
   ).length;
   const missingProductionPrice = activeOrders.filter(
     (order) =>
-      order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+      !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
   ).length;
   const incompleteData = activeOrders.filter(
     (order) => orderDataGaps(order).length > 0,
@@ -459,7 +460,7 @@ async function managerProjection(scope: DashboardScope) {
       ).length,
       missingProductionPrice: orders.filter(
         (order) =>
-          order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+          !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
       ).length,
       incompleteData: orders.filter((order) => orderDataGaps(order).length > 0).length,
     },
@@ -478,7 +479,7 @@ async function managerProjection(scope: DashboardScope) {
         deadline: orderDeadline(order),
         missingFields: orderDataGaps(order),
         productionPriceMissing:
-          order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+          !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
       })),
   };
 }

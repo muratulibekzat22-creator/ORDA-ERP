@@ -19,11 +19,8 @@ import { useSession } from "next-auth/react";
 import { type ReactNode, useState } from "react";
 
 import ProjectPayments from "@/components/project/ProjectPayments";
-import {
-  USER_ORDER_STATUS_LABELS,
-  orderDeadline,
-  projectOrderStatus,
-} from "@/lib/orders/presentation";
+import { orderBoardLabel } from "@/lib/orders/board";
+import { orderDeadline } from "@/lib/orders/presentation";
 import { PAYMENT_METHODS, paymentMethodLabel } from "@/lib/orders/registration";
 
 import OrderActionsMenu from "./OrderActionsMenu";
@@ -35,6 +32,7 @@ import FilesTab from "./tabs/FilesTab";
 import type { NumericValue, OrderTabData } from "./tabs/types";
 
 type WorkspaceOrder = OrderTabData & {
+  contractConfirmedAt?: Date | string | null;
   productionDeadline?: Date | string | null;
   workshopConfirmedAt?: Date | string | null;
   partnerPlannedReadyAt?: Date | string | null;
@@ -141,14 +139,13 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const canAddPayment =
     !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canSeeFinance = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
-  const status = projectOrderStatus(order.lifecycle);
   const deadline = orderDeadline({
     promisedAt: order.promisedAt,
     productionDeadline: order.productionDeadline,
     installation: order.installation ?? null,
   });
   const production = order.productions[0];
-  const totalCost = order.economy
+  const totalCost = order.economy?.profit.dataComplete
     ? Number(order.economy.profit.directExpenses) +
       Number(order.economy.profit.payrollAccrued)
     : null;
@@ -200,7 +197,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
                 Заказ {order.number}
               </h1>
               <span className="rounded-full bg-blue-500/15 px-3 py-1 text-sm font-semibold text-blue-200">
-                {USER_ORDER_STATUS_LABELS[status]}
+                {orderBoardLabel(order.lifecycle)}
               </span>
             </div>
             <div className="mt-4 grid gap-x-6 gap-y-2 text-sm text-slate-300 sm:grid-cols-2 xl:grid-cols-3">
@@ -273,12 +270,13 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
 
       {canSeeFinance ? (
         <section className={panel}>
-          <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6 md:p-5">
+          <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-7 md:p-5">
             <Field title="Сумма продажи" value={money(order.amount)} />
-            <Field title="Получено" value={money(order.prepayment)} />
-            <Field title="Остаток" value={money(order.balance)} />
+            <Field title="Получено от клиента" value={money(order.prepayment)} />
+            <Field title="Остаток клиента" value={money(order.balance)} />
+            {director ? <Field title="Цена производства" value={money(order.productionPrice)} /> : null}
             {director ? <Field title="Себестоимость" value={money(totalCost)} /> : null}
-            {director ? <Field title="Прибыль" value={money(order.economy?.profit.netProfit)} /> : null}
+            {director ? <Field title="Чистая прибыль" value={money(order.economy?.profit.netProfit)} /> : null}
             {director ? <Field title="Маржа" value={order.economy?.profit.netMarginPercent == null ? "Недостаточно данных" : `${Number(order.economy.profit.netMarginPercent).toLocaleString("ru-RU")} %`} /> : null}
           </div>
         </section>
@@ -295,11 +293,12 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           <h2 className="text-lg font-semibold text-white">Исполнение</h2>
           <p className="mt-1 text-sm text-slate-400">Исполнитель, передача и текущий срок в одном блоке.</p>
         </div>
-        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5 md:p-5">
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6 md:p-5">
+          <Field title="Договор" value={order.contractConfirmedAt ? `Подтверждён ${date(order.contractConfirmedAt)}` : "Не подтверждён"} />
           <Field title="Исполнитель" value={order.partner?.name ?? production?.master ?? "Не назначен"} />
           <Field title="Передано в цех" value={date(order.workshopConfirmedAt)} />
           <Field title="Срок готовности" value={date(order.partnerPlannedReadyAt ?? order.productionDeadline ?? production?.plannedEndAt)} />
-          <Field title="Текущий статус" value={USER_ORDER_STATUS_LABELS[status]} />
+          <Field title="Текущий статус" value={orderBoardLabel(order.lifecycle)} />
           <Field title="Комментарий" value={order.partnerComment || production?.comment || "Комментария нет"} />
         </div>
       </section>

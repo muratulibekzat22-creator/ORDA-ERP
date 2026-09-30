@@ -1,3 +1,5 @@
+import { hasProductionPrice } from "@/lib/orders/production-price";
+
 type OrderCompletenessSource = {
   managerUserId?: number | null;
   partnerId?: number | null;
@@ -17,7 +19,7 @@ export function orderDataGaps(order: OrderCompletenessSource) {
   if (!order.promisedAt && !order.productionDeadline && !order.installation?.scheduledAt)
     gaps.push("Срок заказа");
   if (!order.partnerId) gaps.push("Назначить цех");
-  if (!order.partnerAgreedAt || Number(order.partnerPrice) <= 0)
+  if (!hasProductionPrice(order.partnerPrice, order.partnerAgreedAt))
     gaps.push("Цена производства");
   return gaps;
 }

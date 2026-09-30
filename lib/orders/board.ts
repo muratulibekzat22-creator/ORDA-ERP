@@ -25,6 +25,10 @@ export const ORDER_BOARD_COLUMNS = [
 
 export type OrderBoardColumn = (typeof ORDER_BOARD_COLUMNS)[number]["key"];
 
+export const ORDER_BOARD_LABELS = Object.fromEntries(
+  ORDER_BOARD_COLUMNS.map((column) => [column.key, column.label]),
+) as Record<OrderBoardColumn, string>;
+
 export function orderBoardColumn(lifecycle: OrderLifecycle | string): OrderBoardColumn | null {
   if (lifecycle === OrderLifecycle.CREATED) return "ORDERED";
   if (lifecycle === OrderLifecycle.PREPARATION) return "CONTRACT";
@@ -37,4 +41,9 @@ export function orderBoardColumn(lifecycle: OrderLifecycle | string): OrderBoard
   ) return "WORKSHOP";
   if (lifecycle === OrderLifecycle.COMPLETED) return "COMPLETED";
   return null;
+}
+
+export function orderBoardLabel(lifecycle: OrderLifecycle | string) {
+  const column = orderBoardColumn(lifecycle);
+  return column ? ORDER_BOARD_LABELS[column] : "Отменён";
 }

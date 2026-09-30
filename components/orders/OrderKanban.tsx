@@ -5,7 +5,6 @@ import Link from "next/link";
 
 import type { OrderListItem } from "@/components/orders/OrderTable";
 import { ORDER_BOARD_COLUMNS, orderBoardColumn } from "@/lib/orders/board";
-import { USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 
 const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Срок не указан";
@@ -35,7 +34,6 @@ export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
                         <strong className="block truncate text-sm text-blue-200">{order.number}</strong>
                         <p className="mt-1 truncate font-medium text-white">{order.client.name || "Клиент не указан"}</p>
                       </div>
-                      {column.key === "WORKSHOP" ? <span className="shrink-0 rounded-full bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-200">{USER_ORDER_STATUS_LABELS[order.userStatus]}</span> : null}
                     </div>
                     <div className="mt-3 space-y-1.5 text-xs text-slate-400">
                       <p className="flex items-center gap-2"><UserRound size={13}/><span className="truncate">{order.manager || "Ответственный не назначен"}</span></p>
@@ -43,7 +41,6 @@ export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
                       <p className="flex items-center gap-2 text-slate-300"><CircleDollarSign size={13}/><span>Продажа: {money(order.amount)}</span></p>
                       <p className="flex items-center gap-2 text-amber-200"><WalletCards size={13}/><span>Остаток клиента: {money(order.balance)}</span></p>
                     </div>
-                    {order.managerConfirmationMissing ? <p className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs font-semibold text-amber-200"><AlertCircle size={13} className="mr-1 inline" />Менеджер не подтвердил комплектность</p> : null}
                     {order.missingFields?.length ? (
                       <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-xs text-amber-200">
                         <p className="flex items-center gap-1 font-semibold"><AlertCircle size={13}/>Нужно дополнить: {order.missingFields.length}</p>

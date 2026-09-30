@@ -1,6 +1,7 @@
-import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
+import { OrderBlockerStatus, PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
 import bcrypt from "bcrypt";
 import { compareRequestHash } from "@/lib/idempotency";
+import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation } from "@/lib/services/payment.service";
 
@@ -13,12 +14,36 @@ type PartnerOrderStatsSource = {
   lifecycle: string;
 };
 
+async function resolveAutomaticSetupBlockers(
+  tx: Prisma.TransactionClient,
+  input: {
+    orderId: number;
+    actorId?: number;
+    partnerAssigned: boolean;
+    productionPriceSet: boolean;
+  },
+) {
+  const resolvedAt = new Date();
+  const resolve = (type: "PARTNER_REQUIRED" | "PARTNER_COST_REQUIRED") =>
+    tx.orderBlocker.updateMany({
+      where: { orderId: input.orderId, type, status: OrderBlockerStatus.OPEN },
+      data: {
+        status: OrderBlockerStatus.RESOLVED,
+        resolvedAt,
+        ...(input.actorId ? { resolvedById: input.actorId } : {}),
+        resolution: "Закрыто автоматически: данные цеха и цены уже заполнены",
+      },
+    });
+  if (input.partnerAssigned) await resolve("PARTNER_REQUIRED");
+  if (input.productionPriceSet) await resolve("PARTNER_COST_REQUIRED");
+}
+
 function partnerStats(orders: PartnerOrderStatsSource[]) {
   const financialOrders = orders.filter(
     (order) => order.lifecycle !== "CANCELLED",
   );
   const agreedOrders = financialOrders.filter(
-    (order) => order.partnerAgreedAt !== null,
+    (order) => hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
   );
   const partnerAgreed = agreedOrders.reduce(
     (sum, order) => sum + Number(order.partnerPrice),
@@ -284,7 +309,7 @@ export async function setProductionPrice(data: {
     data.actor.role !== Role.MANAGER
   )
     throw new Error("FORBIDDEN");
-  if (!Number.isFinite(data.amount) || data.amount <= 0)
+  if (!isProductionPriceAmount(data.amount))
     throw new Error("INVALID_PRODUCTION_PRICE");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
@@ -317,6 +342,12 @@ export async function setProductionPrice(data: {
         partnerBalance: new Prisma.Decimal(data.amount).sub(order.partnerPaid),
         companyProfit: order.amount.sub(data.amount),
       },
+    });
+    await resolveAutomaticSetupBlockers(tx, {
+      orderId: order.id,
+      actorId: data.actor.id,
+      partnerAssigned: Boolean(order.partnerId),
+      productionPriceSet: true,
     });
     await tx.financeAuditEvent.create({
       data: {
@@ -395,18 +426,24 @@ export async function assignPartnerToOrder(data: {
     const samePartner = order.partnerId === partner.id;
     const priceSet =
       data.partnerPrice !== undefined &&
-      Number.isFinite(data.partnerPrice) &&
-      data.partnerPrice > 0;
+      isProductionPriceAmount(data.partnerPrice);
     if (
       data.partnerPrice !== undefined &&
-      (!Number.isFinite(data.partnerPrice) || data.partnerPrice < 0)
+      !isProductionPriceAmount(data.partnerPrice)
     )
       throw new Error("INVALID_PARTNER_PRICE");
     const agreedAt = priceSet ? (data.partnerAgreedAt ?? new Date()) : null;
     if (agreedAt && Number.isNaN(agreedAt.getTime()))
       throw new Error("INVALID_PARTNER_AGREEMENT_DATE");
-    if (samePartner && data.partnerPrice === undefined)
+    if (samePartner && data.partnerPrice === undefined) {
+      await resolveAutomaticSetupBlockers(tx, {
+        orderId: order.id,
+        actorId: data.authorId,
+        partnerAssigned: true,
+        productionPriceSet: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
+      });
       return order;
+    }
     if (
       samePartner &&
       order.partnerAgreedAt &&
@@ -437,6 +474,12 @@ export async function assignPartnerToOrder(data: {
         partnerBalance: String(partnerPrice - paid),
         companyProfit: String(companyProfit),
       },
+    });
+    await resolveAutomaticSetupBlockers(tx, {
+      orderId: order.id,
+      actorId: data.authorId,
+      partnerAssigned: true,
+      productionPriceSet: priceSet,
     });
     if (data.authorId) {
       await tx.partnerAssignmentHistory.create({

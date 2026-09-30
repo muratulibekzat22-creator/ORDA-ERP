@@ -1,5 +1,6 @@
 import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
 
@@ -302,7 +303,7 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
   const rows = orders.map((order) => {
     const received = order.payments.reduce((sum, item) => { const kind = operationKind(item.type); return sum + (kind === "CLIENT_PAYMENT" ? Number(item.amount) : kind === "REFUND" ? -Number(item.amount) : 0); }, 0);
     const partnerPaid = order.payments.reduce((sum, item) => sum + (item.partnerId === order.partnerId && operationKind(item.type) === payoutType ? Number(item.amount) : item.partnerId === order.partnerId && item.type === "PARTNER_PAYOUT_REVERSAL" ? -Number(item.amount) : 0), 0);
-    const amount = Number(order.amount), priceSet = order.partnerAgreedAt !== null;
+    const amount = Number(order.amount), priceSet = hasProductionPrice(order.partnerPrice, order.partnerAgreedAt);
     const partnerPrice = priceSet ? Number(order.partnerPrice) : null;
     const rawBalance = amount - received, rawPartnerBalance = partnerPrice === null ? 0 : partnerPrice - partnerPaid;
     const payrollRemaining = (types: string[]) => order.payrollAccruals

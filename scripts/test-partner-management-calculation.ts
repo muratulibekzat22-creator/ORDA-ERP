@@ -62,4 +62,12 @@ equal(economy.profit.marginBeforePayroll!, "1480000.00", "margin before payroll 
 equal(economy.profit.payrollAccrued, "180000.00", "order-linked payroll accruals");
 equal(economy.profit.netProfit!, "1300000.00", "net profit acceptance example");
 equal(economy.profit.netMarginPercent!, "25.00", "net margin acceptance example");
+const importedEconomy = calculateOrderEconomy({
+  totalSale: "1000000",
+  partnerId: 1,
+  partnerAgreed: "600000",
+  partnerAgreedAt: null,
+});
+assert.equal(importedEconomy.profit.dataComplete, false, "an imported amount without a confirmed agreement date stays incomplete until repaired");
+assert.equal(importedEconomy.profit.netProfit, null, "unconfirmed legacy production price must not create profit");
 console.log("Partner calculations: fixed/order/paid/profit/manual, Decimal precision, debt and reversal PASS");

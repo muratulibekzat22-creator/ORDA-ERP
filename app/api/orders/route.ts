@@ -13,6 +13,7 @@ import {
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
+import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { countOrders, createOrder, getOrders } from "@/lib/services/order.service";
@@ -107,7 +108,7 @@ export async function GET(request: Request) {
           ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
           : {};
     const attention = params.get("attention") ?? "";
-    if (attention && !["overdue", "missing-production-price", "not-confirmed"].includes(attention))
+    if (attention && !["overdue", "missing-production-price"].includes(attention))
       return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
     const attentionScope: Prisma.OrderWhereInput = attention === "overdue"
       ? {
@@ -121,17 +122,9 @@ export async function GET(request: Request) {
       : attention === "missing-production-price"
         ? {
             lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-            OR: [
-              { partnerAgreedAt: null },
-              { partnerPrice: { lte: 0 } },
-            ],
+            partnerPrice: { lt: 2 },
           }
-        : attention === "not-confirmed"
-          ? {
-              lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-              completenessConfirmedAt: null,
-            }
-          : {};
+        : {};
     const where: Prisma.OrderWhereInput = {
       AND: [
         roleScope,
@@ -170,7 +163,7 @@ export async function GET(request: Request) {
         delete safe.partnerPaid;
         delete safe.partnerBalance;
         delete safe.partnerAgreedAt;
-      } else if (!order.partnerAgreedAt) {
+      } else if (!hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)) {
         delete safe.partnerPrice;
         delete safe.partnerPaid;
         delete safe.partnerBalance;
@@ -249,6 +242,8 @@ export async function POST(request: Request) {
       prepayment > amount ||
       partnerPrice === null ||
       partnerPaid === null ||
+      (partnerId !== null && !isProductionPriceAmount(partnerPrice)) ||
+      (partnerId === null && partnerPrice !== 0) ||
       partnerPaid > partnerPrice ||
       !paymentMethods.has(paymentMethod)
     )
@@ -298,7 +293,7 @@ export async function POST(request: Request) {
       amount,
       prepayment,
       partnerPrice,
-      partnerPriceSet: isDirector(role) && Boolean(partnerId) && Object.hasOwn(body, "partnerPrice"),
+      partnerPriceSet: isDirector(role) && Boolean(partnerId) && isProductionPriceAmount(partnerPrice),
       partnerPaid,
       manager: manager.name,
       managerUserId: manager.id,

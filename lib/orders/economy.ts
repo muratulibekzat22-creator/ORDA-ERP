@@ -1,5 +1,7 @@
 import { PayrollAccrualType, PayrollDirection, Prisma, Role } from "@prisma/client";
 
+import { hasProductionPrice } from "@/lib/orders/production-price";
+
 type DecimalValue = Prisma.Decimal | string | number;
 
 export type OrderEconomyInput = {
@@ -72,7 +74,8 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
   }
   const netReceived = money(clientReceived.sub(clientRefunds));
   const clientRemaining = money(positive(totalSale.sub(netReceived)));
-  const partnerAgreed = input.partnerAgreedAt ? money(input.partnerAgreed ?? 0) : money(0);
+  const productionPriceSet = hasProductionPrice(input.partnerAgreed, input.partnerAgreedAt);
+  const partnerAgreed = productionPriceSet ? money(input.partnerAgreed ?? 0) : money(0);
   const partnerRemaining = money(positive(partnerAgreed.sub(partnerPaid)));
 
   const payroll = (input.payrollAccruals ?? []).filter(
@@ -131,7 +134,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
   const ledgerOther = money(positive(recordedDirectExpenses.sub(categorizedLedger)));
   const calculation = input.calculation;
   const calculatedWorkshop = calculation ? money(calculation.workshopCost) : null;
-  const productionCost = input.partnerAgreedAt
+  const productionCost = productionPriceSet
     ? partnerAgreed
     : calculatedWorkshop ?? money(0);
   // Calculation values are accrued costs. A ledger payment in the same category
@@ -153,7 +156,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       .add(bankFees)
       .add(otherDirectExpenses),
   );
-  const costDataComplete = Boolean(input.partnerAgreedAt || calculation);
+  const costDataComplete = Boolean(productionPriceSet || calculation);
   const marginBeforePayroll = costDataComplete
     ? money(totalSale.sub(directExpenses))
     : null;
@@ -180,7 +183,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
       agreed: partnerAgreed, agreedAt: input.partnerAgreedAt ?? null, agreedBy: input.partnerAgreedBy ?? null,
       accrued: partnerAgreed, paid: money(partnerPaid), remaining: partnerRemaining,
       dueAt: input.partnerDueAt ?? null,
-      status: !input.partnerId ? "NOT_ASSIGNED" : !input.partnerAgreedAt ? "NOT_CALCULATED" : partnerRemaining.eq(0) ? "CLOSED" : partnerPaid.gt(0) ? "PARTIALLY_PAID" : "COMPANY_OWES_PARTNER",
+      status: !input.partnerId ? "NOT_ASSIGNED" : !productionPriceSet ? "NOT_CALCULATED" : partnerRemaining.eq(0) ? "CLOSED" : partnerPaid.gt(0) ? "PARTIALLY_PAID" : "COMPANY_OWES_PARTNER",
     },
     profit: {
       dataComplete: costDataComplete,

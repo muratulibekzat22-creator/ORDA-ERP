@@ -57,7 +57,7 @@ export default function OrdersPage({
       : "all",
   );
   const [attention, setAttention] = useState(
-    ["overdue", "missing-production-price", "not-confirmed"].includes(initialAttention)
+    ["overdue", "missing-production-price"].includes(initialAttention)
       ? initialAttention
       : "",
   );
@@ -181,7 +181,6 @@ export default function OrdersPage({
           <span className="sr-only">Контроль данных</span>
           <select value={attention} onChange={(event) => changeAttention(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
             <option value="">Все данные</option>
-            <option value="not-confirmed">Не подтверждено менеджером</option>
             <option value="missing-production-price">Без цены производства</option>
             <option value="overdue">Только просроченные</option>
           </select>

@@ -1,5 +1,6 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { createPartner, getPartner, getPartners } from "@/lib/services/partner.service";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
     if (!partner) return NextResponse.json({ error: "Профиль цеха не найден" }, { status: 404 });
     const item = await getPartner(partner.id);
     if (!item) return NextResponse.json([]);
-    return NextResponse.json([{ id: item.id, name: item.name, phone: item.phone, city: item.city, email: item.email, active: item.active, orders: item.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, address: order.address, staircase: order.staircase, material: order.material, status: order.status, partnerPrice: order.partnerAgreedAt ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: order.partnerAgreedAt ? order.partnerBalance : null, partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment, readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted, productions: order.productions, payments: order.payments.filter((payment) => payment.type === "PARTNER_PAYOUT").map((payment) => ({ id: payment.id, amount: payment.amount, method: payment.method, comment: payment.comment, operationDate: payment.operationDate })) })), stats: { totalOrders: item.stats.totalOrders, partnerPaid: item.stats.partnerPaid, partnerBalance: item.stats.partnerBalance } }]);
+    return NextResponse.json([{ id: item.id, name: item.name, phone: item.phone, city: item.city, email: item.email, active: item.active, orders: item.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, address: order.address, staircase: order.staircase, material: order.material, status: order.status, partnerPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null, partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment, readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted, productions: order.productions, payments: order.payments.filter((payment) => payment.type === "PARTNER_PAYOUT").map((payment) => ({ id: payment.id, amount: payment.amount, method: payment.method, comment: payment.comment, operationDate: payment.operationDate })) })), stats: { totalOrders: item.stats.totalOrders, partnerPaid: item.stats.partnerPaid, partnerBalance: item.stats.partnerBalance } }]);
   }
   const { searchParams } = new URL(request.url);
   const includeArchived = auth.session!.user.role === Role.DIRECTOR && searchParams.get("view") === "all";

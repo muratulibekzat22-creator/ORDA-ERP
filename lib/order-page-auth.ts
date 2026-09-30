@@ -10,6 +10,7 @@ import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 import { enterTenantFromSession } from "@/lib/tenant-context";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -58,7 +59,7 @@ export async function getAuthorizedOrder(id: number) {
   const { _count, ...sourceOrder } = source;
   const order = {
     ...sourceOrder,
-    productionPrice: source.partnerAgreedAt ? source.partnerPrice : null,
+    productionPrice: hasProductionPrice(source.partnerPrice, source.partnerAgreedAt) ? source.partnerPrice : null,
     deletionImpact: {
       hasFinancialHistory:
         _count.payments > 0 ||

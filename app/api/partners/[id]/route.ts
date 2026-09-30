@@ -1,5 +1,6 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { deletePartner, getPartner, updatePartner } from "@/lib/services/partner.service";
@@ -17,7 +18,7 @@ export async function GET(_: Request, { params }: Context) {
   const partner = await getPartner(id);
   if (!partner) return NextResponse.json({ error: "Партнёр не найден" }, { status: 404 });
   if (role === Role.MANAGER) return NextResponse.json({ id: partner.id, name: partner.name, phone: partner.phone, city: partner.city, email: partner.email, active: partner.active });
-  if (role === Role.PARTNER) return NextResponse.json({ id: partner.id, name: partner.name, phone: partner.phone, city: partner.city, email: partner.email, active: partner.active, orders: partner.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, status: order.status, partnerPrice: order.partnerAgreedAt ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: order.partnerAgreedAt ? order.partnerBalance : null })) });
+  if (role === Role.PARTNER) return NextResponse.json({ id: partner.id, name: partner.name, phone: partner.phone, city: partner.city, email: partner.email, active: partner.active, orders: partner.orders.filter((order) => order.lifecycle !== "CANCELLED").map((order) => ({ id: order.id, number: order.number, status: order.status, partnerPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null, partnerPaid: order.partnerPaid, partnerBalance: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null })) });
   return NextResponse.json(partner);
 }
 

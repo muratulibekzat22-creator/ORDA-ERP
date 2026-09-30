@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import PartnerPaymentForm from "@/components/partners/PartnerPaymentForm";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { getPartner } from "@/lib/services/partner.service";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 
 interface Props {
   params: Promise<{
@@ -158,9 +159,9 @@ export default async function PartnerPage({
 
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-400">
-                    <span>Цена партнёра: {order.partnerAgreedAt ? `${Number(order.partnerPrice).toLocaleString()} ₸` : "не указана"}</span>
+                    <span>Цена партнёра: {hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? `${Number(order.partnerPrice).toLocaleString()} ₸` : "не указана"}</span>
                     <span>Выплачено: {Number(order.partnerPaid).toLocaleString()} ₸</span>
-                    <span>Остаток: {order.partnerAgreedAt ? `${Math.max(Number(order.partnerBalance), 0).toLocaleString()} ₸` : "—"}</span>
+                    <span>Остаток: {hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? `${Math.max(Number(order.partnerBalance), 0).toLocaleString()} ₸` : "—"}</span>
                     <span>Производство: {order.productions[0]?.stage ?? order.status}</span>
                   </div>
 

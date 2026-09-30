@@ -157,7 +157,7 @@ export default function WorkshopSettlementPanel({
           order.partner && order.partner.id !== Number(partnerId),
         ),
       },
-      "Цех назначен",
+      "Цех и цена производства сохранены",
       "PATCH",
     );
   }
@@ -190,7 +190,7 @@ export default function WorkshopSettlementPanel({
           <p className="mt-1 text-sm text-slate-400">
             {director || role === "ACCOUNTANT"
               ? "Цена, поддержка, авансы и остаток по заказу — в одном расчёте."
-              : "Цена не блокирует передачу в цех. Пока она не указана, прибыль и маржа не рассчитываются."}
+              : "Сохраните цену производства. После этого заказ можно передать в цех отдельной кнопкой вверху карточки."}
           </p>
         </div>
         <span
@@ -225,9 +225,9 @@ export default function WorkshopSettlementPanel({
         <form onSubmit={savePrice} className="mt-4 grid gap-3 rounded-xl bg-slate-950/55 p-3 sm:grid-cols-[minmax(0,220px)_auto] sm:items-end sm:justify-start">
           <label className="text-sm text-slate-300">
             Цена производства, ₸
-            <input type="number" min="1" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} />
+            <input type="number" min="2" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} />
           </label>
-          <button type="submit" disabled={busy || !Number(productionPrice)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50">
+          <button type="submit" disabled={busy || Number(productionPrice) < 2} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50">
             Сохранить
           </button>
         </form>
@@ -242,11 +242,11 @@ export default function WorkshopSettlementPanel({
               {partners.map((partner) => <option key={partner.id} value={partner.id}>{partner.name}</option>)}
             </select>
           </label>
-          <label className="text-sm text-slate-300">Цена производства, ₸<input type="number" min="1" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} /></label>
-          <button type="submit" disabled={busy || !partnerId || !Number(productionPrice)} className="min-h-11 rounded-xl bg-cyan-700 px-4 font-semibold text-white disabled:opacity-50">
-            Передать заказ
+          <label className="text-sm text-slate-300">Цена производства, ₸<input type="number" min="2" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} /></label>
+          <button type="submit" disabled={busy || !partnerId || Number(productionPrice) < 2} className="min-h-11 rounded-xl bg-cyan-700 px-4 font-semibold text-white disabled:opacity-50">
+            Сохранить цех и цену
           </button>
-          <p className="text-xs text-slate-500 sm:col-span-3">Одно действие назначает цех и фиксирует цену производства.</p>
+          <p className="text-xs text-slate-500 sm:col-span-3">Это действие сохраняет расчёт. Этап «Передан в цех» включается отдельной кнопкой вверху карточки.</p>
         </form>
       ) : null}
 

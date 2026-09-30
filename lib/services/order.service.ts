@@ -2,6 +2,7 @@ import { Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { orderDataGaps } from "@/lib/orders/completeness";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { orderDeadline, projectOrderStatus } from "@/lib/orders/presentation";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
@@ -27,7 +28,6 @@ export async function getOrders(
       partnerPlannedReadyAt: true,
       manager: true,
       managerUserId: true,
-      completenessConfirmedAt: true,
       deletedAt: true,
       lifecycle: true,
       productionDeadline: true,
@@ -105,7 +105,6 @@ export async function getOrders(
       userStatus: projectOrderStatus(order.lifecycle),
       manager: order.manager,
       managerUserId: order.managerUserId,
-      managerConfirmationMissing: order.completenessConfirmedAt === null,
       deadline: orderDeadline(order),
       orderReceivedAt: order.orderReceivedAt,
       amount: Number(order.amount),
@@ -118,11 +117,10 @@ export async function getOrders(
       partnerPaid: Number(economy.partner.paid),
       partnerBalance: Number(economy.partner.remaining),
       partnerAgreedAt: order.partnerAgreedAt,
-      productionPrice: order.partnerAgreedAt === null
-        ? null
-        : Number(order.partnerPrice),
-      productionPriceMissing:
-        order.partnerAgreedAt === null || Number(order.partnerPrice) <= 0,
+      productionPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)
+        ? Number(order.partnerPrice)
+        : null,
+      productionPriceMissing: !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
       missingFields: orderDataGaps(order),
       deletedAt: order.deletedAt,
       createdAt: order.createdAt,

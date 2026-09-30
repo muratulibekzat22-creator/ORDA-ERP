@@ -1,3 +1,5 @@
+import { hasProductionPrice } from "@/lib/orders/production-price";
+
 export type SettlementStatus = "NOT_ASSIGNED" | "UNPAID" | "PARTIAL" | "PAID" | "OVERPAID";
 type Money = number | string | { toString(): string };
 type Payment = { id: number; amount: Money; type: string; partnerId?: number | null; method?: string | null; partnerPayoutPurpose?: string | null; comment?: string | null; author?: string | null; operationDate?: Date | string; partner?: { name: string } | null };
@@ -24,7 +26,7 @@ export function buildOrderSettlement(order: SettlementSource) {
   const payments = order.payments ?? [];
   const received = payments.reduce((sum, item) => clientTypes.has(item.type) ? sum + Number(item.amount) : item.type === "REFUND" ? sum - Number(item.amount) : sum, 0);
   const paid = payments.reduce((sum, item) => item.partnerId !== order.partnerId ? sum : item.type === "PARTNER_PAYOUT" ? sum + Number(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? sum - Number(item.amount) : sum, 0);
-  const total = Number(order.amount), priceSet = Boolean(order.partnerAgreedAt), agreed = priceSet ? Number(order.partnerPrice) : null;
+  const total = Number(order.amount), priceSet = hasProductionPrice(order.partnerPrice, order.partnerAgreedAt), agreed = priceSet ? Number(order.partnerPrice) : null;
   const status = (value: number, target: number, assigned = true): SettlementStatus => !assigned ? "NOT_ASSIGNED" : value > target ? "OVERPAID" : target > 0 && value >= target ? "PAID" : value > 0 ? "PARTIAL" : "UNPAID";
   const payroll = order.payrollAccruals ?? [];
   const worker = (assigned: Worker | null | undefined, types: Set<string>) => {

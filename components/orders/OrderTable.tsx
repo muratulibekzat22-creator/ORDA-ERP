@@ -2,10 +2,8 @@
 
 import Link from "next/link";
 
-import {
-  USER_ORDER_STATUS_LABELS,
-  type UserOrderStatus,
-} from "@/lib/orders/presentation";
+import { orderBoardLabel } from "@/lib/orders/board";
+import type { UserOrderStatus } from "@/lib/orders/presentation";
 
 export type OrderListItem = {
   id: number;
@@ -23,7 +21,6 @@ export type OrderListItem = {
   costDataComplete?: boolean;
   productionPrice?: number | null;
   productionPriceMissing?: boolean;
-  managerConfirmationMissing?: boolean;
   missingFields?: string[];
   client: { id: number; name: string; phone: string; city: string };
 };
@@ -53,7 +50,7 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
                 <p className="truncate text-xs text-slate-500">{order.client.phone}</p>
               </div>
               <span className="shrink-0 rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
-                {USER_ORDER_STATUS_LABELS[order.userStatus]}
+                {orderBoardLabel(order.lifecycle)}
               </span>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
@@ -82,9 +79,8 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
                 />
               )}
             </div>
-            {order.managerConfirmationMissing || order.missingFields?.length ? (
+            {order.missingFields?.length ? (
               <div className="mt-3 rounded-xl border border-amber-700/50 bg-amber-500/10 p-2 text-xs text-amber-100">
-                {order.managerConfirmationMissing ? "Менеджер ещё не подтвердил комплектность." : ""}
                 {order.missingFields?.length ? ` Нужно дополнить: ${order.missingFields.join(", ")}.` : ""}
               </div>
             ) : null}
@@ -115,9 +111,9 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
           <tbody>
             {orders.map((order) => (
               <tr key={order.id} className="border-t border-slate-800 text-slate-200 hover:bg-slate-900/60">
-                <td className="px-4 py-4"><Link href={`/orders/${order.id}`} className="font-semibold text-blue-300 hover:text-blue-200">{order.number}</Link>{order.managerConfirmationMissing || order.missingFields?.length ? <p className="mt-1 max-w-52 text-xs text-amber-300">{order.managerConfirmationMissing ? "Не подтверждено менеджером" : ""}{order.managerConfirmationMissing && order.missingFields?.length ? " · " : ""}{order.missingFields?.length ? `Нужно дополнить: ${order.missingFields.length}` : ""}</p> : null}</td>
+                <td className="px-4 py-4"><Link href={`/orders/${order.id}`} className="font-semibold text-blue-300 hover:text-blue-200">{order.number}</Link>{order.missingFields?.length ? <p className="mt-1 max-w-52 text-xs text-amber-300">Нужно дополнить: {order.missingFields.length}</p> : null}</td>
                 <td className="px-4 py-4"><p className="font-medium text-white">{order.client.name || "—"}</p><p className="text-xs text-slate-500">{order.client.phone}</p></td>
-                <td className="px-4 py-4"><span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">{USER_ORDER_STATUS_LABELS[order.userStatus]}</span></td>
+                <td className="px-4 py-4"><span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">{orderBoardLabel(order.lifecycle)}</span></td>
                 <td className="px-4 py-4">{order.manager || "—"}</td>
                 <td className="px-4 py-4">{date(order.orderReceivedAt ?? null)}</td>
                 <td className="px-4 py-4">{date(order.deadline)}</td>

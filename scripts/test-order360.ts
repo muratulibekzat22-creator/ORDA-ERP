@@ -70,7 +70,7 @@ async function main() {
     const measured = await completeControlMeasurement({ orderId: measurementOrder.id, expectedVersion: 1, completedAt: new Date("2026-08-19T12:00:00Z"), comment: "Размеры подтверждены", key: key("control-measurement"), requestHash: hash("control-measurement") }, actors.measurer);
     assert.equal(measured.created, true, "control measurement action created");
     const measuredOrder = await prisma.order.findUniqueOrThrow({ where: { id: measurementOrder.id } });
-    assert.equal(measuredOrder.lifecycle, OrderLifecycle.READY_FOR_PRODUCTION, "control measurement did not move order to preparation");
+    assert.equal(measuredOrder.lifecycle, OrderLifecycle.PREPARATION, "control measurement did not keep the order before workshop transfer");
     assert.equal((await prisma.calendarTask.findUniqueOrThrow({ where: { id: calendarTask.id } })).status, CalendarTaskStatus.COMPLETED, "measurement calendar task not completed");
     assert.equal((await prisma.production.findFirstOrThrow({ where: { orderId: measurementOrder.id } })).stage, "Подготовка", "production task not created");
     assert.equal(await prisma.orderBlocker.count({ where: { orderId: measurementOrder.id, status: "OPEN" } }), 2, "missing partner/cost tasks not created");
@@ -99,7 +99,9 @@ async function main() {
       const result = await confirmMilestone({ orderId: order.id, action, value, expectedVersion: version, key: key(action), requestHash: hash(action) }, actors.manager);
       version = Number(result.version);
     }
-    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "missing production price blocked transfer to workshop");
+    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, false, "missing production price did not block transfer to workshop");
+    await setProductionPrice({ orderId: order.id, amount: 600, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
+    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "valid workshop and production price did not unlock transfer");
     const preparation = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.PREPARATION, expectedVersion: version, key: key("preparation"), requestHash: hash("preparation") }, actors.manager);
     version = Number(preparation.version);
     const blockerResult = await openBlocker({ orderId: order.id, type: "MATERIAL", severity: OrderBlockerSeverity.CRITICAL, title: "Critical test", key: key("blocker"), requestHash: hash("blocker") }, actors.manager);
@@ -112,8 +114,7 @@ async function main() {
     const technicalStage = (await prisma.production.findFirstOrThrow({ where: { orderId: order.id } })).stage;
     assert.equal(technicalStage, "CUTTING", "Order lifecycle overwrote Production.stage");
     await prisma.production.updateMany({ where: { orderId: order.id }, data: { percent: 100, completedAt: new Date() } });
-    const completeness = await confirmMilestone({ orderId: order.id, action: "confirm-completeness", expectedVersion: version, key: key("complete-set"), requestHash: hash("complete-set") }, actors.manager);
-    version = Number(completeness.version);
+    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_INSTALLATION)).passed, true, "manager completeness flag still blocked production completion");
     const readyInstall = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.READY_FOR_INSTALLATION, expectedVersion: version, key: key("ready-install"), requestHash: hash("ready-install") }, actors.production);
     version = Number(readyInstall.version);
     const assignment = await assignInstallation({ orderId: order.id, scheduledAt: new Date("2026-09-05"), installerUserId: installer.id, packageConfirmed: true, expectedVersion: version, key: key("assign-install"), requestHash: hash("assign-install") }, actors.manager);
@@ -126,8 +127,6 @@ async function main() {
     version = Number(acceptance.version);
     const accepted = await confirmMilestone({ orderId: order.id, action: "record-acceptance", expectedVersion: version, key: key("accepted"), requestHash: hash("accepted") }, actors.manager);
     version = Number(accepted.version);
-    await code(() => transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completion-without-price"), requestHash: hash("completion-without-price") }, actors.manager), "GATE_FAILED");
-    await setProductionPrice({ orderId: order.id, amount: 600, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
     const completed = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completed"), requestHash: hash("completed") }, actors.manager);
     assert.equal(Number(completed.version), version + 1);
     const completedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });

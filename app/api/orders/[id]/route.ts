@@ -12,6 +12,7 @@ import {
   ORDER_STATUSES,
 } from "@/lib/orders/lifecycle";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
+import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import {
   assignPartnerToOrder,
@@ -103,7 +104,7 @@ function redactForRole<T extends Record<string, unknown>>(
 ) {
   const result: Record<string, unknown> = {
     ...order,
-    productionPrice: order.partnerAgreedAt ? order.partnerPrice : null,
+    productionPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
   };
   if (isDirector(role)) return result;
   if (role === Role.ACCOUNTANT) {
@@ -306,9 +307,9 @@ export async function PATCH(request: Request, { params }: Context) {
           { status: 403 },
         );
       const amount = Number(body.productionPrice);
-      if (!Number.isFinite(amount) || amount <= 0)
+      if (!isProductionPriceAmount(amount))
         return NextResponse.json(
-          { error: "Укажите цену производства" },
+          { error: "Укажите реальную цену производства (не 1 ₸)" },
           { status: 400 },
         );
       const idempotency = readIdempotencyKey(request);
@@ -385,7 +386,7 @@ export async function PATCH(request: Request, { params }: Context) {
         !Number.isInteger(partnerId) ||
         partnerId <= 0 ||
         (partnerPrice !== undefined &&
-          (!Number.isFinite(partnerPrice) || partnerPrice <= 0))
+          !isProductionPriceAmount(partnerPrice))
       )
         return NextResponse.json(
           { error: "Некорректные данные цеха" },

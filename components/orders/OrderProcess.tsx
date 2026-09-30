@@ -4,16 +4,17 @@ import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import {
-  USER_ORDER_STATUS_LABELS,
-  projectOrderStatus,
-} from "@/lib/orders/presentation";
-
 type Transition = {
   to: string;
   gate: { passed: boolean; checks: Array<{ passed: boolean; message: string }> };
 };
 type Payload = { version: number; transitions: Transition[] };
+
+const actionLabels: Record<string, string> = {
+  PREPARATION: "Подтвердить договор",
+  READY_FOR_PRODUCTION: "Передать в цех",
+  COMPLETED: "Завершить заказ",
+};
 
 export default function OrderProcess({
   orderId,
@@ -30,11 +31,10 @@ export default function OrderProcess({
   const [data, setData] = useState<Payload>({ version, transitions: [] });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [measurementOpen, setMeasurementOpen] = useState(false);
-  const [measurementDate, setMeasurementDate] = useState(new Date().toISOString().slice(0, 10));
-  const [measurementComment, setMeasurementComment] = useState("");
   const load = useCallback(async () => {
-    const response = await fetch(`/api/orders/${orderId}/available-transitions`, { cache: "no-store" });
+    const response = await fetch(`/api/orders/${orderId}/available-transitions`, {
+      cache: "no-store",
+    });
     if (response.ok) setData((await response.json()) as Payload);
   }, [orderId]);
   useEffect(() => {
@@ -42,54 +42,80 @@ export default function OrderProcess({
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const complete = data.transitions.find((item) => item.to === "COMPLETED");
-  const next = data.transitions.find(
-    (item) => item.to !== "CANCELLED" && item.to !== "COMPLETED",
-  );
-  const nextLabel = next
-    ? USER_ORDER_STATUS_LABELS[projectOrderStatus(next.to)]
-    : null;
-  async function run(transition: Transition | undefined) {
+  const target =
+    lifecycle === "CREATED"
+      ? "PREPARATION"
+      : lifecycle === "PREPARATION"
+        ? "READY_FOR_PRODUCTION"
+        : "COMPLETED";
+  const transition = data.transitions.find((item) => item.to === target);
+
+  async function run() {
     if (!transition) return;
-    setBusy(true); setError("");
+    setBusy(true);
+    setError("");
     try {
       const response = await fetch(`/api/orders/${orderId}/commands`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({ action: "transition", to: transition.to, expectedVersion: data.version }),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          action: "transition",
+          to: transition.to,
+          expectedVersion: data.version,
+        }),
       });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error === "GATE_FAILED" ? transition.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ") : body.error ?? "Переход недоступен");
-      await load(); router.refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Переход недоступен"); }
-    finally { setBusy(false); }
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok)
+        throw new Error(
+          body.error === "GATE_FAILED"
+            ? transition.gate.checks
+                .filter((item) => !item.passed)
+                .map((item) => item.message)
+                .join(" · ")
+            : body.error ?? "Переход недоступен",
+        );
+      await load();
+      router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Переход недоступен");
+    } finally {
+      setBusy(false);
+    }
   }
-  async function completeMeasurement() {
-    setBusy(true); setError("");
-    try {
-      const response = await fetch(`/api/orders/${orderId}/commands`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({ action: "complete-control-measurement", expectedVersion: data.version, completedAt: `${measurementDate}T12:00:00`, comment: measurementComment }),
-      });
-      const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Не удалось зафиксировать замер");
-      setMeasurementOpen(false); await load(); router.refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось зафиксировать замер"); }
-    finally { setBusy(false); }
-  }
-  if (readOnly || lifecycle === "COMPLETED" || lifecycle === "CANCELLED") return null;
-  return <div>
-    {lifecycle === "CREATED" ? <>
-      <div className="flex flex-col gap-2 sm:flex-row"><button type="button" onClick={() => setMeasurementOpen(true)} disabled={busy} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50 sm:w-auto">Следующий этап <ArrowRight size={17}/></button>{complete ? <button type="button" onClick={() => void run(complete)} disabled={busy || !complete.gate.passed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 size={17}/>{busy ? "Выполняется…" : "Завершить заказ"}</button> : null}</div>
-      {measurementOpen && <div className="mt-3 grid gap-3 rounded-xl border border-blue-500/30 bg-blue-500/5 p-4 sm:grid-cols-2">
-        <label className="text-sm text-slate-300">Дата контрольного замера<input type="date" required value={measurementDate} onChange={(event) => setMeasurementDate(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white"/></label>
-        <label className="text-sm text-slate-300">Комментарий<input value={measurementComment} onChange={(event) => setMeasurementComment(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-white"/></label>
-        <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => void completeMeasurement()} disabled={busy || !measurementDate} className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-50">{busy ? "Сохранение…" : "Подтвердить"}</button><button type="button" onClick={() => setMeasurementOpen(false)} className="min-h-11 rounded-xl bg-slate-800 px-4">Отмена</button></div>
-      </div>}
-    </> : <div className="flex flex-col items-stretch gap-2 sm:items-end"><div className="flex flex-col gap-2 sm:flex-row">{next ? <button type="button" onClick={() => void run(next)} disabled={busy || !next.gate.passed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Выполняется…" : "Следующий этап"}<ArrowRight size={17}/></button> : null}{complete ? <button type="button" onClick={() => void run(complete)} disabled={busy || !complete.gate.passed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 size={17}/>{busy ? "Выполняется…" : "Завершить заказ"}</button> : null}</div>{nextLabel && <span className="text-xs text-slate-400">Далее: {nextLabel}</span>}</div>}
-    {next && !next.gate.passed && <p className="mt-2 text-sm text-amber-200">Для следующего этапа: {next.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ")}</p>}
-    {complete && !complete.gate.passed && <p className="mt-2 text-sm text-amber-200">Для завершения нужны только: {complete.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ")}</p>}
-    {error && <p role="alert" className="mt-2 text-sm text-red-300">{error}</p>}
-  </div>;
+
+  if (readOnly || lifecycle === "COMPLETED" || lifecycle === "CANCELLED")
+    return null;
+
+  return (
+    <div className="flex flex-col items-stretch gap-2 sm:items-end">
+      {transition ? (
+        <button
+          type="button"
+          onClick={() => void run()}
+          disabled={busy || !transition.gate.passed}
+          className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${target === "COMPLETED" ? "bg-emerald-700" : "bg-blue-600"}`}
+        >
+          {target === "COMPLETED" ? <CheckCircle2 size={17} /> : null}
+          {busy ? "Выполняется…" : actionLabels[target]}
+          {target !== "COMPLETED" ? <ArrowRight size={17} /> : null}
+        </button>
+      ) : null}
+      {transition && !transition.gate.passed ? (
+        <p className="max-w-xl text-sm text-amber-200">
+          Нужно заполнить: {transition.gate.checks
+            .filter((item) => !item.passed)
+            .map((item) => item.message)
+            .join(" · ")}
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-sm text-red-300">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }
