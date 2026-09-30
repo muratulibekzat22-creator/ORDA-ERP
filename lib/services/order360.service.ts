@@ -113,12 +113,17 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
   });
   if (!order) throw new Order360Error("NOT_FOUND");
   const activeCriticalBlockers = order.blockers.filter(
-    (blocker) =>
-      !(blocker.type === "PARTNER_REQUIRED" && order.partnerId) &&
-      !(
-        blocker.type === "PARTNER_COST_REQUIRED" &&
-        hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)
-      ),
+    (blocker) => {
+      if (
+        target === OrderLifecycle.PREPARATION &&
+        ["PARTNER_REQUIRED", "PARTNER_COST_REQUIRED"].includes(blocker.type)
+      ) return false;
+      return !(
+        (blocker.type === "PARTNER_REQUIRED" && order.partnerId) ||
+        (blocker.type === "PARTNER_COST_REQUIRED" &&
+          hasProductionPrice(order.partnerPrice, order.partnerAgreedAt))
+      );
+    },
   );
   const noCritical: GateItem = {
     code: "NO_CRITICAL_BLOCKERS",

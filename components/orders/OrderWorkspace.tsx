@@ -274,7 +274,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             <Field title="Сумма продажи" value={money(order.amount)} />
             <Field title="Получено от клиента" value={money(order.prepayment)} />
             <Field title="Остаток клиента" value={money(order.balance)} />
-            {director ? <Field title="Цена производства" value={money(order.productionPrice)} /> : null}
+            {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role) ? <Field title="Цена производства" value={money(order.productionPrice)} /> : null}
             {director ? <Field title="Себестоимость" value={money(totalCost)} /> : null}
             {director ? <Field title="Чистая прибыль" value={money(order.economy?.profit.netProfit)} /> : null}
             {director ? <Field title="Маржа" value={order.economy?.profit.netMarginPercent == null ? "Недостаточно данных" : `${Number(order.economy.profit.netMarginPercent).toLocaleString("ru-RU")} %`} /> : null}

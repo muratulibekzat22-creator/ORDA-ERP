@@ -42,10 +42,10 @@ export default function WorkshopSettlementPanel({
   const router = useRouter();
   const { data: session } = useSession();
   const role = session?.user.role ?? "";
-  const canSetPrice = !readOnly && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
   const canManageSettlement =
     !readOnly && ["DIRECTOR", "OPERATIONS_DIRECTOR", "ACCOUNTANT"].includes(role);
   const director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR";
+  const canManageWorkshop = !readOnly && (director || role === "MANAGER");
   const partnerSettlement = order.settlement?.partner;
   const [productionPrice, setProductionPrice] = useState(
     order.productionPrice == null ? "" : String(order.productionPrice),
@@ -64,7 +64,7 @@ export default function WorkshopSettlementPanel({
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    if (!director) return;
+    if (!canManageWorkshop) return;
     void fetch("/api/partners", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : []))
       .then((rows: unknown) => {
@@ -81,7 +81,7 @@ export default function WorkshopSettlementPanel({
             : [],
         );
       });
-  }, [director]);
+  }, [canManageWorkshop]);
 
   const payouts = useMemo(
     () => partnerSettlement?.payouts ?? [],
@@ -130,19 +130,6 @@ export default function WorkshopSettlementPanel({
     } finally {
       setBusy(false);
     }
-  }
-
-  function savePrice(event: FormEvent) {
-    event.preventDefault();
-    return request(
-      `/api/orders/${order.id}`,
-      {
-        action: "setProductionPrice",
-        productionPrice: Number(productionPrice),
-      },
-      "Цена производства сохранена",
-      "PATCH",
-    );
   }
 
   function assignPartner(event: FormEvent) {
@@ -221,19 +208,7 @@ export default function WorkshopSettlementPanel({
         ) : null}
       </div>
 
-      {canSetPrice && !director ? (
-        <form onSubmit={savePrice} className="mt-4 grid gap-3 rounded-xl bg-slate-950/55 p-3 sm:grid-cols-[minmax(0,220px)_auto] sm:items-end sm:justify-start">
-          <label className="text-sm text-slate-300">
-            Цена производства, ₸
-            <input type="number" min="2" step="1" required value={productionPrice} onChange={(event) => setProductionPrice(event.target.value)} className={`${control} mt-1`} />
-          </label>
-          <button type="submit" disabled={busy || Number(productionPrice) < 2} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50">
-            Сохранить
-          </button>
-        </form>
-      ) : null}
-
-      {director ? (
+      {canManageWorkshop ? (
         <form onSubmit={assignPartner} className="mt-4 grid gap-3 rounded-xl border border-cyan-800/60 bg-cyan-950/10 p-3 sm:grid-cols-[minmax(0,280px)_minmax(0,220px)_auto] sm:items-end sm:justify-start">
           <label className="text-sm text-slate-300">
             Цех
@@ -246,7 +221,7 @@ export default function WorkshopSettlementPanel({
           <button type="submit" disabled={busy || !partnerId || Number(productionPrice) < 2} className="min-h-11 rounded-xl bg-cyan-700 px-4 font-semibold text-white disabled:opacity-50">
             Сохранить цех и цену
           </button>
-          <p className="text-xs text-slate-500 sm:col-span-3">Это действие сохраняет расчёт. Этап «Передан в цех» включается отдельной кнопкой вверху карточки.</p>
+          <p className="text-xs text-slate-500 sm:col-span-3">Менеджер может назначить цех и цену производства. После сохранения этап «Передан в цех» включается кнопкой вверху карточки или переносом карточки на Kanban.</p>
         </form>
       ) : null}
 

@@ -1,24 +1,47 @@
 "use client";
 
-import { AlertCircle, CalendarDays, CircleDollarSign, UserRound, WalletCards } from "lucide-react";
+import { AlertCircle, CalendarDays, CircleDollarSign, GripVertical, UserRound, WalletCards } from "lucide-react";
 import Link from "next/link";
 
 import type { OrderListItem } from "@/components/orders/OrderTable";
-import { ORDER_BOARD_COLUMNS, orderBoardColumn } from "@/lib/orders/board";
+import { ORDER_BOARD_COLUMNS, orderBoardColumn, type OrderBoardColumn } from "@/lib/orders/board";
 
 const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Срок не указан";
 const money = (value: number | null | undefined) =>
   `${Math.round(Number(value ?? 0)).toLocaleString("ru-RU")} ₸`;
 
-export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
+export default function OrderKanban({
+  orders,
+  movingIds = new Set<number>(),
+  onMove,
+}: {
+  orders: OrderListItem[];
+  movingIds?: Set<number>;
+  onMove?: (id: number, column: OrderBoardColumn) => void;
+}) {
   return (
     <section aria-label="Канбан заказов" className="-mx-4 overflow-x-auto px-4 pb-3 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
       <div className="grid min-w-[1180px] grid-cols-4 gap-4 lg:min-w-0">
         {ORDER_BOARD_COLUMNS.map((column) => {
           const columnOrders = orders.filter((order) => orderBoardColumn(order.lifecycle) === column.key);
           return (
-            <div key={column.key} className="min-w-0 rounded-2xl border border-slate-800 bg-[#101827] p-3">
+            <div
+              key={column.key}
+              data-order-column={column.key}
+              onDragOver={(event) => {
+                if (!onMove) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                if (!onMove) return;
+                event.preventDefault();
+                const id = Number(event.dataTransfer.getData("text/order-id"));
+                if (Number.isInteger(id) && id > 0) onMove(id, column.key);
+              }}
+              className="min-w-0 rounded-2xl border border-slate-800 bg-[#101827] p-3 transition-colors hover:border-blue-500/40"
+            >
               <header className="mb-3 border-b border-slate-800 pb-3">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="font-bold text-white">{column.label}</h2>
@@ -27,13 +50,24 @@ export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
                 <p className="mt-1 text-xs leading-5 text-slate-500">{column.description}</p>
               </header>
               <div className="space-y-3">
-                {columnOrders.map((order) => (
-                  <Link key={order.id} href={`/orders/${order.id}`} className="block min-w-0 rounded-xl border border-slate-800 bg-slate-950/80 p-3 transition hover:border-blue-500/60 hover:bg-slate-950">
+                {columnOrders.map((order) => {
+                  const moving = movingIds.has(order.id);
+                  return (
+                  <article
+                    key={order.id}
+                    draggable={Boolean(onMove) && !moving}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/order-id", String(order.id));
+                    }}
+                    className={`min-w-0 rounded-xl border border-slate-800 bg-slate-950/80 p-3 transition hover:border-blue-500/60 hover:bg-slate-950 ${onMove && !moving ? "cursor-grab active:cursor-grabbing" : ""} ${moving ? "cursor-wait opacity-60" : ""}`}
+                  >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm text-blue-200">{order.number}</strong>
+                        <Link href={`/orders/${order.id}`} className="block truncate text-sm font-bold text-blue-200 hover:text-blue-100">{order.number}</Link>
                         <p className="mt-1 truncate font-medium text-white">{order.client.name || "Клиент не указан"}</p>
                       </div>
+                      {onMove ? <GripVertical aria-hidden="true" className="shrink-0 text-slate-600" size={18} /> : null}
                     </div>
                     <div className="mt-3 space-y-1.5 text-xs text-slate-400">
                       <p className="flex items-center gap-2"><UserRound size={13}/><span className="truncate">{order.manager || "Ответственный не назначен"}</span></p>
@@ -47,15 +81,29 @@ export default function OrderKanban({ orders }: { orders: OrderListItem[] }) {
                         <p className="mt-1 leading-5">{order.missingFields.slice(0, 2).join(" · ")}{order.missingFields.length > 2 ? " · ещё…" : ""}</p>
                       </div>
                     ) : null}
-                  </Link>
-                ))}
+                    {onMove ? (
+                      <label className="mt-3 block text-xs font-medium text-slate-400 md:hidden">
+                        Переместить на этап
+                        <select
+                          aria-label={`Переместить заказ ${order.number} на этап`}
+                          disabled={moving}
+                          value={column.key}
+                          onChange={(event) => onMove(order.id, event.target.value as OrderBoardColumn)}
+                          className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-white disabled:opacity-50"
+                        >
+                          {ORDER_BOARD_COLUMNS.map((target) => <option key={target.key} value={target.key}>{target.label}</option>)}
+                        </select>
+                      </label>
+                    ) : null}
+                  </article>
+                );})}
                 {!columnOrders.length ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-500">Нет заказов</p> : null}
               </div>
             </div>
           );
         })}
       </div>
-      <p className="mt-3 text-xs text-slate-500">Откройте карточку заказа, чтобы заполнить данные или уточнить этап внутри цеха.</p>
+      <p className="mt-3 text-xs text-slate-500">Перетащите карточку мышью в следующий этап. На телефоне используйте список внутри карточки. Внутренние этапы цеха доступны в разделе «Производство».</p>
     </section>
   );
 }

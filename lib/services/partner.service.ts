@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 import { compareRequestHash } from "@/lib/idempotency";
 import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
+import { INITIAL_PRODUCTION_STAGE } from "@/lib/production/stage-policy";
 import { createFinanceOperation } from "@/lib/services/payment.service";
 
 type PartnerOrderStatsSource = {
@@ -531,14 +532,9 @@ export async function assignPartnerToOrder(data: {
       where: { orderId: order.id },
       orderBy: { createdAt: "desc" },
     });
-    if (production)
-      await tx.production.update({
-        where: { id: production.id },
-        data: { stage: "Дерево" },
-      });
-    else
+    if (!production)
       await tx.production.create({
-        data: { orderId: order.id, stage: "Дерево", percent: 0, master: "" },
+        data: { orderId: order.id, stage: INITIAL_PRODUCTION_STAGE, percent: 0, master: "" },
       });
     await tx.orderEvent.create({
       data: {

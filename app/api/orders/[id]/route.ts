@@ -2,6 +2,7 @@ import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import {
+  compareRequestHash,
   createRequestHash,
   idempotencyConflict,
   readIdempotencyKey,
@@ -276,7 +277,7 @@ export async function PATCH(request: Request, { params }: Context) {
         { status: 400 },
       );
     if (body.action === "commercialAdjustment") {
-      if (!isDirector(role))
+      if (!isDirector(role) && role !== Role.MANAGER)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -372,7 +373,7 @@ export async function PATCH(request: Request, { params }: Context) {
         );
     }
     if (body.action === "assignPartner") {
-      if (!isDirector(role))
+      if (!isDirector(role) && role !== Role.MANAGER)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -448,7 +449,15 @@ export async function PATCH(request: Request, { params }: Context) {
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
         where: { id },
-        select: { status: true, clientId: true },
+        select: {
+          status: true,
+          clientId: true,
+          amount: true,
+          prepayment: true,
+          balance: true,
+          partnerPrice: true,
+          companyProfit: true,
+        },
       });
       if (!current) return null;
       if (commentKey) {
@@ -510,12 +519,66 @@ export async function PATCH(request: Request, { params }: Context) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)
           throw new Error("INVALID_AMOUNT");
-        const hasFinancialHistory = await tx.payment.count({
-          where: { orderId: id },
-        });
-        if (hasFinancialHistory)
-          throw new Error("COMMERCIAL_ADJUSTMENT_REQUIRED");
-        data.amount = amount;
+        const nextAmount = new Prisma.Decimal(amount);
+        if (!nextAmount.equals(current.amount)) {
+          const reason = text(body.adjustmentReason, 1000) ||
+            "Изменение суммы продажи при редактировании заказа";
+          const adjustmentKey = `order-edit-amount:${id}:${idempotency.key}`;
+          const adjustmentHash = createRequestHash({ orderId: id, newAmount: amount });
+          const existing = await tx.commercialAdjustment.findUnique({
+            where: { idempotencyKey: adjustmentKey },
+            select: { requestHash: true },
+          });
+          if (existing && !compareRequestHash(existing.requestHash, adjustmentHash))
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          const nextBalance = nextAmount.sub(current.prepayment);
+          const nextProfit = nextAmount.sub(current.partnerPrice);
+          if (!existing) {
+            await tx.commercialAdjustment.create({
+              data: {
+                orderId: id,
+                previousAmount: current.amount,
+                newAmount: nextAmount,
+                balanceImpact: nextAmount.sub(current.amount),
+                reason,
+                authorId: Number(auth.session!.user.id),
+                idempotencyKey: adjustmentKey,
+                requestHash: adjustmentHash,
+              },
+            });
+            await tx.financeAuditEvent.create({
+              data: {
+                orderId: id,
+                action: "COMMERCIAL_ADJUSTMENT",
+                entityType: "Order",
+                entityId: id,
+                before: {
+                  amount: current.amount.toString(),
+                  balance: current.balance.toString(),
+                  companyProfit: current.companyProfit.toString(),
+                },
+                after: {
+                  amount: nextAmount.toString(),
+                  balance: nextBalance.toString(),
+                  companyProfit: nextProfit.toString(),
+                },
+                reason,
+                authorId: Number(auth.session!.user.id),
+              },
+            });
+            await tx.orderEvent.create({
+              data: {
+                orderId: id,
+                title: "Коммерческая корректировка",
+                description: `${current.amount.toString()} → ${nextAmount.toString()} · ${reason}`,
+                user: auth.session!.user.name ?? "Сотрудник",
+              },
+            });
+          }
+          data.amount = nextAmount;
+          data.balance = nextBalance;
+          data.companyProfit = nextProfit;
+        }
       }
       if ("partnerPlannedReadyAt" in body)
         data.partnerPlannedReadyAt = body.partnerPlannedReadyAt

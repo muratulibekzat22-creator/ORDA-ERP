@@ -118,6 +118,7 @@ const routeShell = read("components/layout/RouteShell.tsx");
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
 assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar"\]/);
+assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
 const orderList = read("app/api/orders/route.ts");

@@ -5,7 +5,7 @@ import { OrderLifecycle } from "@prisma/client";
 import { calculateStair } from "../lib/calculator/stair-calculation";
 import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentation";
 import { orderDataGaps } from "../lib/orders/completeness";
-import { orderBoardColumn } from "../lib/orders/board";
+import { ORDER_BOARD_TARGET_LIFECYCLE, orderBoardColumn } from "../lib/orders/board";
 
 assert.equal(USER_ORDER_STATUSES.length, 7);
 assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
@@ -16,6 +16,8 @@ assert.equal(orderBoardColumn(OrderLifecycle.PREPARATION), "CONTRACT");
 assert.equal(orderBoardColumn(OrderLifecycle.IN_PRODUCTION), "WORKSHOP");
 assert.equal(orderBoardColumn(OrderLifecycle.COMPLETED), "COMPLETED");
 assert.equal(orderBoardColumn(OrderLifecycle.CANCELLED), null);
+assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.CONTRACT, OrderLifecycle.PREPARATION);
+assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.WORKSHOP, OrderLifecycle.READY_FOR_PRODUCTION);
 assert.deepEqual(
   orderDataGaps({
     managerUserId: null,
@@ -81,6 +83,7 @@ assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
 assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /"\/marketing", "Маркетинг"/);
+assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));
 for (const label of ["Исполнение", "Добавить оплату", "Редактировать", "Подробнее"])
@@ -106,16 +109,26 @@ for (const column of ["Заказ оформлен", "Договор", "Пере
   assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(column));
 for (const label of ["Продажа:", "Остаток клиента:", "Срок не указан"])
   assert.match(orderKanban, new RegExp(label));
+assert.match(orderKanban, /draggable=/);
+assert.match(orderKanban, /text\/order-id/);
+assert.match(ordersPage, /available-transitions/);
+assert.match(ordersPage, /action: "transition"/);
 assert.match(workspace, /\["clientName", "Имя клиента"\]/);
 assert.match(orderDetailApi, /tx\.client\.update\([\s\S]*name: clientName/);
+assert.match(orderDetailApi, /!isDirector\(role\) && role !== Role\.MANAGER/);
+assert.match(orderDetailApi, /action: "COMMERCIAL_ADJUSTMENT"/);
+assert.match(orderDetailApi, /Изменение суммы продажи при редактировании заказа/);
 assert.match(ordersApi, /"active", "board", "completed", "all"/);
 for (const label of ["Цена производства", "Расчёт с цехом", "Поддержка цеху", "Аванс цеху", "Финальный расчёт"])
   assert.match(workshopSettlement, new RegExp(label));
+assert.match(workshopSettlement, /canManageWorkshop/);
+assert.match(workshopSettlement, /role === "MANAGER"/);
 for (const removed of ["Основание / комментарий", "Дата фиксации", "Поле обязательно до передачи заказа"])
   assert.doesNotMatch(workshopSettlement, new RegExp(removed));
 const order360 = readFileSync("lib/services/order360.service.ts", "utf8");
 assert.match(order360, /code: "SALE_AMOUNT"[\s\S]*code: "PRODUCTION_PRICE"/);
 assert.match(order360, /code: "PRODUCTION_PRICE"[\s\S]*Не указана сумма производства/);
+assert.match(order360, /target === OrderLifecycle\.PREPARATION[\s\S]*PARTNER_REQUIRED[\s\S]*PARTNER_COST_REQUIRED/);
 assert.match(ordersPage, /missing-production-price/);
 assert.match(ordersApi, /!isDirector\(role\) && role !== Role\.MANAGER/);
 for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])

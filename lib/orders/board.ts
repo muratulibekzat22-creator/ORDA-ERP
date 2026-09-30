@@ -25,6 +25,16 @@ export const ORDER_BOARD_COLUMNS = [
 
 export type OrderBoardColumn = (typeof ORDER_BOARD_COLUMNS)[number]["key"];
 
+export const ORDER_BOARD_TARGET_LIFECYCLE: Record<
+  OrderBoardColumn,
+  OrderLifecycle
+> = {
+  ORDERED: OrderLifecycle.CREATED,
+  CONTRACT: OrderLifecycle.PREPARATION,
+  WORKSHOP: OrderLifecycle.READY_FOR_PRODUCTION,
+  COMPLETED: OrderLifecycle.COMPLETED,
+};
+
 export const ORDER_BOARD_LABELS = Object.fromEntries(
   ORDER_BOARD_COLUMNS.map((column) => [column.key, column.label]),
 ) as Record<OrderBoardColumn, string>;

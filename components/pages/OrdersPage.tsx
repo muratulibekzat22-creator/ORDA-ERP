@@ -12,6 +12,11 @@ import {
 import OrderTable, { type OrderListItem } from "@/components/orders/OrderTable";
 import OrderKanban from "@/components/orders/OrderKanban";
 import {
+  ORDER_BOARD_TARGET_LIFECYCLE,
+  orderBoardColumn,
+  type OrderBoardColumn,
+} from "@/lib/orders/board";
+import {
   USER_ORDER_STATUSES,
   USER_ORDER_STATUS_LABELS,
   type UserOrderStatus,
@@ -67,6 +72,7 @@ export default function OrdersPage({
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [movingIds, setMovingIds] = useState<Set<number>>(new Set());
 
   const updateUrl = useCallback((nextTab: Tab, nextStatus: string, nextAttention = "") => {
     const params = new URLSearchParams();
@@ -139,6 +145,47 @@ export default function OrdersPage({
   };
   const pages = pagination.totalPages ?? pagination.pages ?? 1;
 
+  async function moveOrder(id: number, column: OrderBoardColumn) {
+    const current = orders.find((order) => order.id === id);
+    if (!current || movingIds.has(id) || orderBoardColumn(current.lifecycle) === column) return;
+    setError("");
+    setMovingIds((ids) => new Set(ids).add(id));
+    try {
+      const transitionResponse = await fetch(`/api/orders/${id}/available-transitions`, { cache: "no-store" });
+      const transitionPayload = await transitionResponse.json() as {
+        version?: number;
+        transitions?: Array<{ to: string; gate: { passed: boolean; checks: Array<{ passed: boolean; message: string }> } }>;
+        error?: string;
+      };
+      if (!transitionResponse.ok) throw new Error(transitionPayload.error ?? "Не удалось проверить переход");
+      const target = ORDER_BOARD_TARGET_LIFECYCLE[column];
+      const transition = transitionPayload.transitions?.find((item) => item.to === target);
+      if (!transition) throw new Error("Перемещайте заказ последовательно в доступный этап");
+      if (!transition.gate.passed) {
+        const missing = transition.gate.checks.filter((item) => !item.passed).map((item) => item.message).join(" · ");
+        throw new Error(missing || "Сначала заполните обязательные данные этапа");
+      }
+
+      const snapshot = orders;
+      setOrders((items) => items.map((order) => order.id === id ? { ...order, lifecycle: target } : order));
+      const response = await fetch(`/api/orders/${id}/commands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ action: "transition", to: target, expectedVersion: transitionPayload.version }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) {
+        setOrders(snapshot);
+        throw new Error(body.error ?? "Не удалось переместить заказ");
+      }
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось переместить заказ");
+    } finally {
+      setMovingIds((ids) => { const next = new Set(ids); next.delete(id); return next; });
+    }
+  }
+
   return (
     <main className="mx-auto w-full max-w-[1600px] space-y-5 overflow-x-hidden p-4 pb-24 text-white sm:p-6 lg:p-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -188,7 +235,7 @@ export default function OrdersPage({
       </section>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</p>}
-      {loading ? <div className="h-56 animate-pulse rounded-2xl bg-slate-900" /> : tab === "applications" ? <ApplicationsList applications={applications} /> : orders.length ? tab === "board" ? <OrderKanban orders={orders} /> : <OrderTable orders={orders} /> : <Empty tab={tab} />}
+      {loading ? <div className="h-56 animate-pulse rounded-2xl bg-slate-900" /> : tab === "applications" ? <ApplicationsList applications={applications} /> : orders.length ? tab === "board" ? <OrderKanban orders={orders} movingIds={movingIds} onMove={moveOrder} /> : <OrderTable orders={orders} /> : <Empty tab={tab} />}
 
       {!loading && pagination.total > 0 && (
         <footer className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
