@@ -308,7 +308,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   const collectionRate = data.finance.revenue > 0 ? data.finance.received / data.finance.revenue * 100 : null;
   const totalExpenses = data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued;
   const outstanding = Math.max(0, data.finance.revenue - data.finance.received);
-  const profitLabel = data.finance.dataComplete ? "Чистая прибыль" : "Расчётная прибыль";
+  const profitLabel = "Чистая прибыль";
   const activeEmployees = data.team.filter((employee) => employee.activeDays > 0).length;
   const completedTasks = data.team.reduce((sum, employee) => sum + employee.completedTasks, 0);
   const overdueTasks = data.team.reduce((sum, employee) => sum + employee.overdueTasks, 0);
@@ -334,7 +334,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
           <FounderKpi label="Оборот компании" value={money(data.finance.revenue)} hint={`${totalOrders} заказов · средний чек ${averageOrder === null ? "—" : money(averageOrder)}`} tone="blue" />
           <FounderKpi label="Получено денег" value={money(data.finance.received)} hint={`${percent(collectionRate)} от оборота`} tone="cyan" />
           <FounderKpi label="Все учтённые расходы" value={money(totalExpenses)} hint="Производство + операционные + зарплата" tone="amber" />
-          <FounderKpi label={profitLabel} value={money(data.finance.netProfit)} hint={`Маржа ${percent(data.finance.netMargin)} · рентабельность ${percent(data.finance.businessProfitability)}`} tone="emerald" />
+          <FounderKpi label={profitLabel} value={data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных"} hint={data.finance.dataComplete ? `Маржа ${percent(data.finance.netMargin)} · рентабельность ${percent(data.finance.businessProfitability)}` : "Заполните подтверждённую цену производства по всем заказам периода"} tone={data.finance.dataComplete ? "emerald" : "amber"} />
         </div>
         {attention.length ? <div className="mt-4 flex flex-wrap gap-2">{attention.map((item) => <span key={item} className="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">{item}</span>)}</div> : null}
       </section>
@@ -354,10 +354,10 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
               <FounderFinanceRow label="Операционные расходы" value={data.finance.operatingExpenses} expense />
               <FounderFinanceRow label="Начисленная зарплата" value={data.finance.payrollAccrued} expense />
               <FounderFinanceRow label="Итого учтённых расходов" value={totalExpenses} expense strong />
-              <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit />
+              {data.finance.dataComplete ? <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit /> : <tr className="border-t-2 border-slate-700"><td className="px-4 py-3">{profitLabel}</td><td className="px-4 py-3 text-right text-amber-200">Недостаточно данных</td></tr>}
             </tbody></table>
           </div>
-          {!data.finance.dataComplete ? <p className="mt-3 text-xs leading-5 text-amber-200">Прибыль предварительная: цена производства заполнена по {data.finance.ordersWithMargin} из {totalOrders} заказов.</p> : null}
+          {!data.finance.dataComplete ? <p className="mt-3 text-xs leading-5 text-amber-200">Прибыль не рассчитана: цена производства заполнена по {data.finance.ordersWithMargin} из {totalOrders} заказов. Учтённые расходы показаны отдельно и не означают полноту данных.</p> : null}
         </article>
 
         <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
@@ -490,12 +490,12 @@ function ManagementDashboard({
     ["Выплаченная зарплата", money(data.finance.payrollPaid), "Фактические выплаты"],
     [
       "Чистая прибыль",
-      money(data.finance.netProfit),
+      data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных",
       "Маржа заказов + доходы − расходы − зарплата",
     ],
     [
       "Чистая маржа",
-      data.finance.netMargin === null
+      !data.finance.dataComplete || data.finance.netMargin === null
         ? "Недостаточно данных"
         : `${data.finance.netMargin.toLocaleString("ru-RU")} %`,
       "Чистая прибыль / продажи с обеими суммами",
