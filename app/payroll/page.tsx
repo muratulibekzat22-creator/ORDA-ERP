@@ -37,10 +37,51 @@ type Payment = {
   paymentDate: string;
   comment?: string | null;
   method?: string | null;
+  externalReference?: string | null;
   paidBy?: { id: number; name: string } | null;
   reversalOfId?: number | null;
   reversedAt?: string | null;
   reversal?: { id: number } | null;
+  confirmationNumber?: string;
+  paymentPurpose?: string;
+};
+type PayrollAuditOrder = {
+  accrualId: number;
+  orderId: number;
+  orderNumber: string;
+  clientName: string;
+  orderAmount: number;
+  orderStatus: string;
+  earnedAt: string;
+  earnedEvent: string;
+  eligible: boolean;
+  submitted: number;
+  expected: number;
+  appliedAdjustment: number;
+  recorded: number;
+  managerDifference: number;
+  ledgerDifference: number;
+  status: "MATCH" | "OVER" | "UNDER" | "NOT_ELIGIBLE";
+  reconciled: boolean;
+};
+type PayrollAudit = {
+  policy: { threshold: number; belowOrEqual: number; above: number; earnedEvent: string };
+  linkedOrders: number;
+  submittedOrderBonus: number;
+  requiredOrderBonus: number;
+  managerDifference: number;
+  salaryRequired: number;
+  salaryPosted: number;
+  salaryDifference: number;
+  premiums: number;
+  deductions: number;
+  advances: number;
+  alreadyPaid: number;
+  ledgerDifference: number;
+  auditedAccrued: number;
+  auditedPayable: number;
+  readyToPay: boolean;
+  mismatches: PayrollAuditOrder[];
 };
 type PayrollRow = {
   id: number;
@@ -65,6 +106,7 @@ type PayrollRow = {
   totals: { accrued: number; paid: number; pending: number; payable: number };
   breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
   bonusAccruals: Array<{ id: number; orderId?: number | null; order?: OrderOption | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
+  payrollAudit?: PayrollAudit | null;
 };
 type Payload = {
   period: { id: number; year: number; month: number; status: string } | null;
@@ -79,6 +121,7 @@ type Operation =
 type OrderOption = {
   id: number;
   number: string;
+  amount?: number | string;
   client: { id?: number; name: string; phone?: string | null };
 };
 type Form = {
@@ -89,6 +132,7 @@ type Form = {
   type: string;
   accrualId: string;
   method: string;
+  externalReference: string;
 };
 
 const months = [
@@ -164,6 +208,12 @@ const errorLabels: Record<string, string> = {
   ORDER_NOT_FOUND: "Заказ не найден",
   ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
+  FOUNDER_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает только основатель",
+  PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
+  PAYMENT_EXCEEDS_PAYABLE: "Сумма выплаты превышает подтверждённый остаток к выплате",
+  KASPI_METHOD_REQUIRED: "Финальная зарплата выплачивается через Kaspi",
+  KASPI_REFERENCE_REQUIRED: "Укажите реальный номер или референс перевода Kaspi",
+  KASPI_REFERENCE_ALREADY_USED: "Этот референс Kaspi уже использован в другой выплате",
   INVALID_ACTION: "Операция не поддерживается",
 };
 const methodLabels: Record<string, string> = {
@@ -179,7 +229,8 @@ const emptyForm = (): Form => ({
   orderId: "",
   type: "SALARY_PAYMENT",
   accrualId: "",
-  method: "bank_transfer",
+  method: "kaspi",
+  externalReference: "",
 });
 
 export default function PayrollPage() {
@@ -204,6 +255,7 @@ export default function PayrollPage() {
     [target, setTarget] = useState<PayrollRow | null>(null);
   const [form, setForm] = useState<Form>(emptyForm);
   const role = session?.user.role ?? "",
+    founder = role === "DIRECTOR",
     director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
     accountant = role === "ACCOUNTANT",
     adminView = director || accountant,
@@ -257,9 +309,13 @@ export default function PayrollPage() {
       setError(errorLabels[result.error] ?? "Не удалось выполнить операцию");
       return false;
     }
-    setNotice(success);
+    setNotice(
+      result.confirmationNumber
+        ? `${success}. Подтверждение ${result.confirmationNumber}`
+        : success,
+    );
     await load();
-    return true;
+    return result || true;
   };
   const runSelf = async (
     body: Record<string, unknown>,
@@ -286,11 +342,23 @@ export default function PayrollPage() {
   };
   const openOperation = (next: Operation, row?: PayrollRow) => {
     const employee = row ?? details ?? data.rows[0] ?? null;
+    if (next === "payment" && employee?.payrollAudit && !employee.payrollAudit.readyToPay) {
+      setDetails(employee);
+      setError("Сначала примените автоматическую проверку: оклад и бонусы ещё не приведены к правилам компании");
+      return;
+    }
     setOperation(next);
     setTarget(employee);
     setForm(next === "salaryAccrual" && employee
       ? { ...emptyForm(), amount: String(employee.currentSalary), reason: "Оклад за расчётный период" }
-      : emptyForm());
+      : next === "payment" && employee
+        ? {
+            ...emptyForm(),
+            amount: String(Math.max(employee.payrollAudit?.auditedPayable ?? employee.totals.payable, 0)),
+            method: "kaspi",
+            reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+          }
+        : emptyForm());
   };
   const submitOperation = async () => {
     if (!target || !operation || !data.period) return;
@@ -320,6 +388,7 @@ export default function PayrollPage() {
         type: form.type,
         paymentDate: form.date,
         method: form.method,
+        externalReference: form.externalReference,
         comment: form.reason,
         relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
       };
@@ -382,6 +451,26 @@ export default function PayrollPage() {
     if (!reason) return;
     await run({ action: "reverse-payment", id: item.id, reason }, "Выплата сторнирована");
   };
+  const reconcilePayroll = async (row: PayrollRow) => {
+    if (!data.period || !row.payrollAudit) return;
+    const audit = row.payrollAudit;
+    const approved = window.confirm(
+      `Применить расчёт системы для ${row.user.name}?\n\n` +
+        `Оклад: ${currency(audit.salaryRequired)}\n` +
+        `Бонусы по ${audit.linkedOrders} заказам: ${currency(audit.requiredOrderBonus)}\n` +
+        `Корректировка учёта: ${audit.ledgerDifference >= 0 ? "+" : "−"}${currency(Math.abs(audit.ledgerDifference))}\n` +
+        `После проверки к выплате: ${currency(audit.auditedPayable)}`,
+    );
+    if (!approved) return;
+    await run(
+      {
+        action: "reconcile-manager-payroll",
+        employeeId: row.id,
+        periodId: data.period.id,
+      },
+      "Расчёт системы применён, исходные записи сохранены в истории",
+    );
+  };
   const configureEmployee = async (user: { id: number; name: string }) => {
     const value = window.prompt(`Укажите оклад для ${user.name}`, "0");
     if (value === null) return;
@@ -398,10 +487,14 @@ export default function PayrollPage() {
       "Зарплатный профиль настроен",
     );
   };
+  const auditedPayableTotal = data.rows.reduce(
+    (sum, row) => sum + (row.payrollAudit?.auditedPayable ?? row.totals.payable),
+    0,
+  );
   const stats: Array<[string, number, LucideIcon, string]> = [
     ["Начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
     ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
-    ["К выплате", data.breakdown.payable, Banknote, "text-amber-300"],
+    ["К выплате по проверке", auditedPayableTotal, Banknote, "text-amber-300"],
   ];
 
   if (sessionStatus === "loading")
@@ -459,7 +552,7 @@ export default function PayrollPage() {
                 <Plus size={18} /> Начислить
               </button>
             )}
-            {adminView && data.period && !locked && (
+            {founder && data.period && !locked && (
               <button
                 onClick={() => openOperation("payment")}
                 disabled={!data.rows.length}
@@ -567,6 +660,7 @@ export default function PayrollPage() {
                       {[
                         "Сотрудник",
                         "Начислено",
+                        "Расчёт системы",
                         "Выплачено",
                         "К выплате",
                         "Статус",
@@ -603,16 +697,16 @@ export default function PayrollPage() {
                         </p>
                       </div>
                       <Status
-                        payable={row.totals.payable}
+                        payable={row.payrollAudit?.auditedPayable ?? row.totals.payable}
                         paid={row.totals.paid}
                       />
                     </div>
                     <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                       <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Выплачено" value={row.totals.paid} />
+                      <Metric label="Расчёт системы" value={row.payrollAudit?.auditedAccrued ?? row.totals.accrued} />
                       <Metric
-                        label="К выплате"
-                        value={row.totals.payable}
+                        label="Точно к выплате"
+                        value={row.payrollAudit?.auditedPayable ?? row.totals.payable}
                         accent
                       />
                     </div>
@@ -633,11 +727,12 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
-          accountant={accountant}
+          canPay={founder}
           closed={locked}
           onClose={() => setDetails(null)}
           onOperation={openOperation}
           onReversePayment={reversePayrollPayment}
+          onReconcile={reconcilePayroll}
         />
       )}{" "}
       {operation && target && data.period && (
@@ -649,6 +744,13 @@ export default function PayrollPage() {
             setTarget(row);
             setForm(operation === "salaryAccrual"
               ? { ...emptyForm(), amount: String(row.currentSalary), reason: "Оклад за расчётный период" }
+              : operation === "payment"
+                ? {
+                    ...emptyForm(),
+                    amount: String(Math.max(row.payrollAudit?.auditedPayable ?? row.totals.payable, 0)),
+                    method: "kaspi",
+                    reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+                  }
               : emptyForm());
           }}
           form={form}
@@ -683,14 +785,22 @@ function PayrollTableRow({
         </span>
       </td>
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
+      <td className="px-4 py-4">
+        <b>{currency(row.payrollAudit?.auditedAccrued ?? row.totals.accrued)}</b>
+        {row.payrollAudit && row.payrollAudit.ledgerDifference !== 0 && (
+          <span className="mt-0.5 block text-xs text-amber-300">
+            учесть {row.payrollAudit.ledgerDifference > 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}
+          </span>
+        )}
+      </td>
       <td className="px-4 py-4 text-emerald-300">
         {currency(row.totals.paid)}
       </td>
       <td className="px-4 py-4 font-bold text-amber-300">
-        {currency(row.totals.payable)}
+        {currency(row.payrollAudit?.auditedPayable ?? row.totals.payable)}
       </td>
       <td className="px-4 py-4">
-        <Status payable={row.totals.payable} paid={row.totals.paid} />
+        <Status payable={row.payrollAudit?.auditedPayable ?? row.totals.payable} paid={row.totals.paid} />
       </td>
       <td className="px-4 py-4">
         <button
@@ -757,19 +867,21 @@ function Action({ label, onClick }: { label: string; onClick: () => void }) {
 function EmployeeDrawer({
   row,
   director,
-  accountant,
+  canPay,
   closed,
   onClose,
   onOperation,
   onReversePayment,
+  onReconcile,
 }: {
   row: PayrollRow;
   director: boolean;
-  accountant: boolean;
+  canPay: boolean;
   closed: boolean;
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
   onReversePayment: (item: Payment) => Promise<unknown>;
+  onReconcile: (row: PayrollRow) => Promise<unknown>;
 }) {
   const accrualTotal = (types: string[]) =>
     row.accruals
@@ -817,7 +929,11 @@ function EmployeeDrawer({
                 {employeePosition(row)} · Оклад{" "}
                  {currency(row.currentSalary)} · действует с {dateLabel(row.salaryEffectiveFrom)}
               </p>
-              <p className="text-sm text-slate-400">Гарантированный бонус: {currency(row.defaultGuaranteedBonus)}</p>
+              <p className="text-sm text-slate-400">
+                {row.payrollAudit
+                  ? "Гарантированный бонус рассчитывается по сумме каждого заказа"
+                  : `Гарантированный бонус: ${currency(row.defaultGuaranteedBonus)}`}
+              </p>
             </div>
           </div>
           <button
@@ -831,8 +947,79 @@ function EmployeeDrawer({
         <div className="mt-5 grid grid-cols-3 gap-2">
           <Metric label="Начислено" value={row.totals.accrued} />
           <Metric label="Выплачено" value={row.totals.paid} />
-          <Metric label="К выплате" value={row.totals.payable} accent />
+          <Metric label="Точно к выплате" value={row.payrollAudit?.auditedPayable ?? row.totals.payable} accent />
         </div>
+        {row.payrollAudit && (
+          <section className="mt-5 rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Автоматическая проверка зарплаты</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Момент начисления: заказ принят в выбранном месяце.
+                </p>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
+                {row.payrollAudit.readyToPay ? "Проверено" : "Нужна корректировка"}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-xl bg-slate-950 p-2"><p className="text-[11px] text-slate-500">Заказов проверено</p><p className="mt-1 font-semibold">{row.payrollAudit.linkedOrders}</p></div>
+              <Metric label="Внесено менеджером" value={row.payrollAudit.submittedOrderBonus} />
+              <Metric label="Требует система" value={row.payrollAudit.requiredOrderBonus} />
+              <Metric label="Расхождение" value={row.payrollAudit.managerDifference} accent={row.payrollAudit.managerDifference !== 0} />
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {[
+                ["Оклад по профилю", row.payrollAudit.salaryRequired],
+                ["Гарантированные бонусы", row.payrollAudit.requiredOrderBonus],
+                ["Дополнительная премия", row.payrollAudit.premiums],
+                ["Штрафы / удержания", -row.payrollAudit.deductions],
+                ["Авансы", -row.payrollAudit.advances],
+                ["Другие выплаты", -(row.payrollAudit.alreadyPaid - row.payrollAudit.advances)],
+                ["Точно к выплате", row.payrollAudit.auditedPayable],
+              ].map(([label, amount], index) => (
+                <div key={String(label)} className={`flex justify-between rounded-xl px-3 py-2 text-sm ${index === 6 ? "bg-emerald-500/10 text-emerald-200" : "bg-slate-950"}`}>
+                  <span>{String(label)}</span>
+                  <b>{currency(amount as number)}</b>
+                </div>
+              ))}
+            </div>
+            {!row.payrollAudit.readyToPay && (
+              <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                В учёте не хватает корректировки {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}. До её применения финальная выплата заблокирована.
+              </div>
+            )}
+            <div className="mt-3 space-y-2">
+              {row.payrollAudit.mismatches.map((item) => {
+                const difference = item.managerDifference;
+                const mismatch = difference > 0
+                  ? `лишнее ${currency(difference)}`
+                  : difference < 0
+                    ? `не хватает ${currency(Math.abs(difference))}`
+                    : "верно";
+                return (
+                  <div key={item.accrualId} className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span><b>{item.orderNumber}</b> · {item.clientName}</span>
+                      <b>{currency(item.orderAmount)}</b>
+                    </div>
+                    <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
+                      <span>Внесено {currency(item.submitted)} · система {currency(item.expected)}</span>
+                      <span className={difference === 0 ? "text-emerald-300" : "text-amber-300"}>
+                        {item.eligible ? mismatch : "не участвует: заказ отменён/возвращён"}{item.appliedAdjustment ? ` · исправлено ${currency(item.appliedAdjustment)}` : ""}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {director && !closed && !row.payrollAudit.readyToPay && (
+              <button onClick={() => void onReconcile(row)} className="mt-4 min-h-11 w-full rounded-xl bg-blue-600 px-4 font-semibold">
+                Применить расчёт системы
+              </button>
+            )}
+          </section>
+        )}
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
           <h3 className="font-semibold">Структура зарплаты</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -871,14 +1058,14 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {(director || accountant) && !closed && (
+        {director && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2">
               {director && (
                 <Action label="Начислить" onClick={() => onOperation("salaryAccrual", row)} />
               )}
-              <Action label="Выплатить" onClick={() => onOperation("payment", row)} />
+              {canPay && <Action label="Выплатить" onClick={() => onOperation("payment", row)} />}
             </div>
             {director && (
               <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
@@ -931,9 +1118,21 @@ function EmployeeDrawer({
                 return (
                   <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div><p>{labels[item.type] ?? item.type}</p><p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.method ? ` · ${methodLabels[item.method] ?? item.method}` : ""}{item.paidBy?.name ? ` · выдал(а): ${item.paidBy.name}` : ""}{item.comment ? ` · ${item.comment}` : ""}</p></div>
+                      <div>
+                        <p>{labels[item.type] ?? item.type}{item.confirmationNumber ? ` · ${item.confirmationNumber}` : ""}</p>
+                        <p className="text-xs text-slate-500">{dateLabel(item.paymentDate)}{item.method ? ` · ${methodLabels[item.method] ?? item.method}` : ""}{item.externalReference ? ` · Kaspi: ${item.externalReference}` : ""}{item.paidBy?.name ? ` · выдал(а): ${item.paidBy.name}` : ""}{item.comment ? ` · ${item.comment}` : ""}</p>
+                      </div>
                       <b className={reversal ? "text-red-300" : "text-emerald-300"}>{reversal ? "−" : ""}{currency(item.amount)}</b>
                     </div>
+                    {item.paymentPurpose && (
+                      <button
+                        type="button"
+                        onClick={() => void navigator.clipboard.writeText(item.paymentPurpose!)}
+                        className="mt-2 min-h-10 rounded-lg border border-slate-700 px-3 text-sm text-slate-200"
+                      >
+                        Копировать подтверждение ЗП
+                      </button>
+                    )}
                     {director && !closed && !reversal && !reversed && (
                       <button onClick={() => void onReversePayment(item)} className="mt-2 min-h-10 rounded-lg border border-red-500/40 px-3 text-sm text-red-200">Сторнировать выплату</button>
                     )}
@@ -1147,7 +1346,17 @@ function OperationModal({
             <Field label="Тип выплаты">
               <select
                 value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value })}
+                onChange={(e) => {
+                  const type = e.target.value;
+                  setForm({
+                    ...form,
+                    type,
+                    method:
+                      type === "SALARY_PAYMENT" || type === "FINAL_SETTLEMENT"
+                        ? "kaspi"
+                        : form.method,
+                  });
+                }}
                 className="control"
               >
                 <option value="SALARY_PAYMENT">Зарплата</option>
@@ -1162,13 +1371,32 @@ function OperationModal({
           )}
           {operation === "payment" && (
             <Field label="Способ выплаты">
-              <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control">
-                <option value="cash">Наличные</option>
+              <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control" disabled={form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT"}>
                 <option value="kaspi">Kaspi</option>
-                <option value="bank_transfer">Банковский перевод</option>
-                <option value="other">Другое</option>
+                {form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT" && <option value="cash">Наличные</option>}
+                {form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT" && <option value="bank_transfer">Банковский перевод</option>}
+                {form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT" && <option value="other">Другое</option>}
               </select>
             </Field>
+          )}
+          {operation === "payment" && (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") && (
+            <Field label="Референс / номер перевода Kaspi">
+              <input
+                value={form.externalReference}
+                onChange={(e) => setForm({ ...form, externalReference: e.target.value })}
+                placeholder="Например: KASPI-02102026-123456"
+                maxLength={120}
+                className="control"
+              />
+            </Field>
+          )}
+          {operation === "payment" && (
+            <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 p-3 text-sm text-blue-100">
+              <p className="font-semibold">Подтверждение выплаты</p>
+              <p className="mt-1 text-xs text-blue-200/80">
+                Назначение: {form.reason || `Заработная плата за ${months[period.month - 1].toLowerCase()} ${period.year}`}. После сохранения система присвоит неизменяемый номер документа ЗП-{period.year}{String(period.month).padStart(2, "0")}-XXXXXX.
+              </p>
+            </div>
           )}
           {operation === "payment" && row.bonusAccruals.some((item) => item.payable > 0) && (
             <Field label="Начисление бонуса (необязательно)">
@@ -1263,6 +1491,9 @@ function OperationModal({
                 : operation === "allowance"
                   ? form.amount === "" || Number(form.amount) < 0
                   : Number(form.amount) <= 0 ||
+                    (operation === "payment" &&
+                      (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") &&
+                      (form.method !== "kaspi" || form.externalReference.trim().length < 3)) ||
                     (operation === "bonus" && !form.orderId) ||
                     (operation === "deduction" && !form.reason.trim())
             }

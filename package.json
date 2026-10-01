@@ -55,6 +55,7 @@
     "test:finance-go-live": "tsx scripts/test-finance-go-live.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
+    "test:payroll-policy": "tsx scripts/test-payroll-policy.ts",
     "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",
     "test:order360": "tsx scripts/test-order360.ts",
     "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts",

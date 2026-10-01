@@ -11,6 +11,21 @@ import {
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
 import { companyMonthRange } from "@/lib/company-calendar";
+import {
+  auditManagerOrderBonus,
+  managerOrderBonus,
+  isManagerOrderBonusEligible,
+  isOrderAssignedToManager,
+  isValidKaspiReference,
+  MANAGER_ORDER_BONUS_EARNED_EVENT,
+  MANAGER_ORDER_BONUS_HIGH,
+  MANAGER_ORDER_BONUS_STANDARD,
+  MANAGER_ORDER_BONUS_THRESHOLD,
+  PAYROLL_POLICY_ADJUSTMENT_PREFIX,
+  PAYROLL_SALARY_ADJUSTMENT_PREFIX,
+  payrollPaymentPurpose,
+  payrollPaymentReference,
+} from "@/lib/payroll-policy";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -367,11 +382,19 @@ async function createAccrualInternal(
         if (!order) throw new PayrollError("ORDER_OUTSIDE_PERIOD");
         cancelledOrderWarning = /отмен|cancel/i.test(order.status);
       }
-      if (input.type === PayrollAccrualType.ORDER_BONUS) {
+      if (
+        input.type === PayrollAccrualType.ORDER_BONUS ||
+        input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS
+      ) {
         const duplicate = await tx.payrollAccrual.findFirst({
           where: {
             orderId: input.orderId,
-            type: PayrollAccrualType.ORDER_BONUS,
+            type: {
+              in: [
+                PayrollAccrualType.ORDER_BONUS,
+                PayrollAccrualType.GUARANTEED_ORDER_BONUS,
+              ],
+            },
             direction: PayrollDirection.INCREASE,
             reversalOfId: null,
           },
@@ -456,7 +479,8 @@ async function createAccrualInternal(
     );
   } catch (error) {
     if (
-      input.type === PayrollAccrualType.ORDER_BONUS &&
+      (input.type === PayrollAccrualType.ORDER_BONUS ||
+        input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS) &&
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     )
@@ -472,6 +496,7 @@ type PaymentInput = {
   type: PayrollPaymentType;
   paymentDate: Date;
   method?: string;
+  externalReference?: string;
   comment?: string;
   relatedAccrualId?: number;
   reversalOfId?: number;
@@ -485,6 +510,18 @@ async function createPaymentTx(
   actor: PayrollActor,
 ) {
   if (Number.isNaN(input.paymentDate.getTime())) throw new PayrollError("INVALID_DATE");
+  const finalSalaryPayment =
+    input.type === PayrollPaymentType.SALARY_PAYMENT ||
+    input.type === PayrollPaymentType.FINAL_SETTLEMENT;
+  if (finalSalaryPayment && actor.role !== Role.DIRECTOR)
+    throw new PayrollError("FOUNDER_CONFIRMATION_REQUIRED");
+  if (finalSalaryPayment && input.method !== "kaspi")
+    throw new PayrollError("KASPI_METHOD_REQUIRED");
+  if (
+    finalSalaryPayment &&
+    !isValidKaspiReference(input.externalReference)
+  )
+    throw new PayrollError("KASPI_REFERENCE_REQUIRED");
   const existing = await tx.payrollPayment.findUnique({
     where: { idempotencyKey: input.key },
   });
@@ -497,6 +534,37 @@ async function createPaymentTx(
   const employee = await tx.employeePayrollProfile.findUnique({ where: { id: input.employeeId } });
   if (!employee?.payrollEnabled || !employee.active)
     throw new PayrollError("EMPLOYEE_NOT_FOUND");
+  if (
+    input.type === PayrollPaymentType.SALARY_PAYMENT ||
+    input.type === PayrollPaymentType.FINAL_SETTLEMENT
+  ) {
+    const [accruals, previousPayments] = await Promise.all([
+      tx.payrollAccrual.findMany({
+        where: { employeeId: input.employeeId, periodId: input.periodId },
+        select: { amount: true, direction: true },
+      }),
+      tx.payrollPayment.findMany({
+        where: { employeeId: input.employeeId, periodId: input.periodId },
+        select: { amount: true, type: true },
+      }),
+    ]);
+    const accrued = accruals.reduce(
+      (sum, row) =>
+        sum +
+        Number(row.amount) *
+          (row.direction === PayrollDirection.INCREASE ? 1 : -1),
+      0,
+    );
+    const paid = previousPayments.reduce(
+      (sum, row) =>
+        sum +
+        Number(row.amount) *
+          (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1),
+      0,
+    );
+    if (Number(input.amount) > accrued - paid + 0.01)
+      throw new PayrollError("PAYMENT_EXCEEDS_PAYABLE");
+  }
   if (input.relatedAccrualId) {
     const accrual = await tx.payrollAccrual.findFirst({
       where: {
@@ -523,6 +591,7 @@ async function createPaymentTx(
       paymentDate: input.paymentDate,
       type: input.type,
       method: input.method,
+      externalReference: input.externalReference,
       comment: input.comment,
       relatedAccrualId: input.relatedAccrualId,
       reversalOfId: input.reversalOfId,
@@ -559,7 +628,26 @@ export async function createPayment(input: PaymentInput, actor: PayrollActor) {
   payrollOperator(actor);
   if (input.type === PayrollPaymentType.EMPLOYEE_REFUND)
     throw new PayrollError("FORBIDDEN");
-  return prisma.$transaction(async (tx) => {
+  if (
+    (input.type === PayrollPaymentType.SALARY_PAYMENT ||
+      input.type === PayrollPaymentType.FINAL_SETTLEMENT) &&
+    actor.role !== Role.DIRECTOR
+  )
+    throw new PayrollError("FOUNDER_CONFIRMATION_REQUIRED");
+  const finalSalaryPayment =
+    input.type === PayrollPaymentType.SALARY_PAYMENT ||
+    input.type === PayrollPaymentType.FINAL_SETTLEMENT;
+  const externalReference = input.externalReference?.trim();
+  if (finalSalaryPayment && input.method !== "kaspi")
+    throw new PayrollError("KASPI_METHOD_REQUIRED");
+  if (
+    finalSalaryPayment &&
+    !isValidKaspiReference(externalReference)
+  )
+    throw new PayrollError("KASPI_REFERENCE_REQUIRED");
+  try {
+    return await prisma.$transaction(async (tx) => {
+    input.externalReference = externalReference;
     const payment = await createPaymentTx(tx, input, actor);
     await tx.payrollAuditEvent.upsert({
       where: { idempotencyKey: `${input.key}:audit` },
@@ -574,8 +662,253 @@ export async function createPayment(input: PaymentInput, actor: PayrollActor) {
         idempotencyKey: `${input.key}:audit`,
       },
     });
-    return payment;
-  }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    const [period, employee] = await Promise.all([
+      tx.payrollPeriod.findUniqueOrThrow({
+        where: { id: input.periodId },
+        select: { year: true, month: true },
+      }),
+      tx.employeePayrollProfile.findUniqueOrThrow({
+        where: { id: input.employeeId },
+        select: { name: true },
+      }),
+    ]);
+    return {
+      ...payment,
+      confirmationNumber: payrollPaymentReference(
+        period.year,
+        period.month,
+        payment.id,
+      ),
+      paymentPurpose: payrollPaymentPurpose(
+        employee.name,
+        period.year,
+        period.month,
+        payment.id,
+      ) + (payment.externalReference ? ` · Kaspi ${payment.externalReference}` : ""),
+    };
+    }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )
+      throw new PayrollError("KASPI_REFERENCE_ALREADY_USED");
+    throw error;
+  }
+}
+
+export async function reconcileManagerPayroll(
+  input: {
+    employeeId: number;
+    periodId: number;
+    key: string;
+    requestHash: string;
+  },
+  actor: PayrollActor,
+) {
+  director(actor);
+  try {
+    return await prisma.$transaction(async (tx) => {
+    const existing = await tx.payrollAuditEvent.findUnique({
+      where: { idempotencyKey: input.key },
+    });
+    if (existing) return { created: false, adjustmentCount: 0 };
+
+    const period = await openPeriod(tx, input.periodId);
+    const employee = await tx.employeePayrollProfile.findUnique({
+      where: { id: input.employeeId },
+      include: {
+        user: { select: { role: true } },
+        salaryRates: { orderBy: { effectiveFrom: "desc" } },
+        accruals: {
+          where: { periodId: input.periodId },
+          include: {
+            reversedBy: { select: { id: true } },
+            order: {
+              select: {
+                number: true,
+                amount: true,
+                status: true,
+                deletedAt: true,
+                orderReceivedAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!employee?.active || !employee.payrollEnabled)
+      throw new PayrollError("EMPLOYEE_NOT_FOUND");
+    if (employee.user?.role !== Role.MANAGER && employee.position !== Role.MANAGER)
+      throw new PayrollError("PAYROLL_POLICY_NOT_APPLICABLE");
+
+    const range = companyMonthRange(period.year, period.month);
+    const periodOrders = await tx.order.findMany({
+      where: {
+        companyId: requireTenantIdentity().companyId,
+        orderReceivedAt: { gte: range.start, lt: range.end },
+        OR: [
+          ...(employee.userId ? [{ managerUserId: employee.userId }] : []),
+          {
+            managerUserId: null,
+            manager: { equals: employee.name, mode: "insensitive" as const },
+          },
+          ...(employee.userId
+            ? [{ leadConversion: { managerId: employee.userId } }]
+            : []),
+        ],
+      },
+      select: {
+        id: true,
+        number: true,
+        amount: true,
+        status: true,
+        deletedAt: true,
+        orderReceivedAt: true,
+      },
+      orderBy: [{ orderReceivedAt: "asc" }, { id: "asc" }],
+    });
+    const activeRate = employee.salaryRates.find(
+      (rate) =>
+        rate.effectiveFrom < range.end &&
+        (!rate.effectiveTo || rate.effectiveTo >= range.start),
+    ) ?? employee.salaryRates[0];
+    const requiredSalary = Number(activeRate?.amount ?? employee.baseSalary);
+    const activeAccruals = employee.accruals.filter(
+      (row) => !row.reversalOfId && !row.reversedBy,
+    );
+    const signed = (row: (typeof activeAccruals)[number]) =>
+      Number(row.amount) *
+      (row.direction === PayrollDirection.INCREASE ? 1 : -1);
+    const salaryPosted = activeAccruals
+      .filter(
+        (row) =>
+          row.type === PayrollAccrualType.BASE_SALARY ||
+          row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
+      )
+      .reduce((sum, row) => sum + signed(row), 0);
+
+    const createdIds: number[] = [];
+    const postAdjustment = async (args: {
+      amount: number;
+      label: string;
+      reason: string;
+      orderId?: number;
+      preferBaseSalary?: boolean;
+      type?: PayrollAccrualType;
+    }) => {
+      if (Math.abs(args.amount) < 0.01) return;
+      const decrease = args.amount < 0;
+      const type = args.type ?? (args.preferBaseSalary && !decrease
+        ? PayrollAccrualType.BASE_SALARY
+        : decrease
+          ? PayrollAccrualType.ADJUSTMENT_DECREASE
+          : PayrollAccrualType.ADJUSTMENT_INCREASE);
+      const accrual = await tx.payrollAccrual.create({
+        data: {
+          employeeId: employee.id,
+          periodId: period.id,
+          type,
+          direction: decrease
+            ? PayrollDirection.DECREASE
+            : PayrollDirection.INCREASE,
+          amount: new Prisma.Decimal(Math.abs(args.amount).toFixed(2)),
+          orderId: args.orderId,
+          reason: args.reason,
+          approvedById: actor.userId,
+          createdById: actor.userId,
+          idempotencyKey: `payroll-policy:v1:${period.id}:${employee.id}:${args.label}:${Math.round(args.amount * 100)}`,
+          requestHash: input.requestHash,
+        },
+      });
+      createdIds.push(accrual.id);
+      await tx.companyLedgerEntry.create({
+        data: {
+          type: "PAYROLL_ACCRUAL",
+          category: "SALARY",
+          source: "OTHER_SYSTEM",
+          direction: decrease ? "INCOME" : "EXPENSE",
+          amount: accrual.amount,
+          operationDate: accrual.createdAt,
+          comment: args.reason,
+          orderId: args.orderId,
+          authorId: actor.userId,
+          idempotencyKey: `payroll-accrual:${accrual.id}`,
+          requestHash: input.requestHash,
+          affectsProfit: true,
+          payrollAccrualId: accrual.id,
+        },
+      });
+    };
+
+    const salaryDelta = requiredSalary - salaryPosted;
+    await postAdjustment({
+      amount: salaryDelta,
+      label: "salary",
+      reason: `${PAYROLL_SALARY_ADJUSTMENT_PREFIX}: по профилю ${requiredSalary.toFixed(2)} ₸, учтено ${salaryPosted.toFixed(2)} ₸`,
+      preferBaseSalary: salaryPosted === 0 && salaryDelta > 0,
+    });
+
+    for (const order of periodOrders) {
+      const primaryBonuses = activeAccruals.filter(
+        (row) =>
+          row.orderId === order.id &&
+          row.direction === PayrollDirection.INCREASE &&
+          (row.type === PayrollAccrualType.ORDER_BONUS ||
+            row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS),
+      );
+      const manualBonus = primaryBonuses.find(
+        (row) => row.type === PayrollAccrualType.ORDER_BONUS,
+      );
+      const policyAdjustments = activeAccruals.filter(
+        (row) =>
+          row.orderId === order.id &&
+          (row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+            row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX),
+      );
+      const currentlyPosted =
+        primaryBonuses.reduce((sum, row) => sum + signed(row), 0) +
+        policyAdjustments.reduce((sum, row) => sum + signed(row), 0);
+      const required = isManagerOrderBonusEligible(order)
+        ? managerOrderBonus(Number(order.amount))
+        : 0;
+      await postAdjustment({
+        amount: required - currentlyPosted,
+        label: `order-${order.id}`,
+        orderId: order.id,
+        type:
+          primaryBonuses.length === 0 && required > 0
+            ? PayrollAccrualType.GUARANTEED_ORDER_BONUS
+            : undefined,
+        reason: `${PAYROLL_POLICY_ADJUSTMENT_PREFIX} ${order.number}: событие ${MANAGER_ORDER_BONUS_EARNED_EVENT}, требуется ${required.toFixed(2)} ₸, менеджер указал ${Number(manualBonus?.amount ?? 0).toFixed(2)} ₸`,
+      });
+    }
+
+    await audit(tx, {
+      action: "MANAGER_PAYROLL_POLICY_RECONCILED",
+      actor,
+      periodId: period.id,
+      employeeId: employee.id,
+      after: {
+        salaryRequired: requiredSalary,
+        salaryPreviouslyPosted: salaryPosted,
+        adjustmentCount: createdIds.length,
+        accrualIds: createdIds,
+      },
+      reason: "Применена автоматическая проверка оклада и бонусов по суммам заказов",
+      idempotencyKey: input.key,
+    });
+    return { created: true, adjustmentCount: createdIds.length, accrualIds: createdIds };
+    }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === "P2002" || error.code === "P2034")
+    )
+      return { created: false, adjustmentCount: 0, concurrent: true };
+    throw error;
+  }
 }
 
 export async function requestPaymentConfirmation(
@@ -986,7 +1319,12 @@ export async function payrollSummary(
     : null;
   if (selfOnly && !self) throw new PayrollError("EMPLOYEE_NOT_FOUND");
   const employeeId = selfOnly ? self!.id : requestedEmployeeId;
-  const [employees, settings] = await Promise.all([prisma.employeePayrollProfile.findMany({
+  const period = await prisma.payrollPeriod.findUniqueOrThrow({
+    where: { id: periodId },
+    select: { year: true, month: true },
+  });
+  const periodRange = companyMonthRange(period.year, period.month);
+  const [employees, settings, periodOrders] = await Promise.all([prisma.employeePayrollProfile.findMany({
     where: {
       ...(employeeId ? { id: employeeId } : {}),
       payrollEnabled: true,
@@ -1004,6 +1342,10 @@ export async function payrollSummary(
             select: {
               id: true,
               number: true,
+              amount: true,
+              status: true,
+              deletedAt: true,
+              orderReceivedAt: true,
               client: { select: { name: true, phone: true } },
             },
           },
@@ -1012,14 +1354,35 @@ export async function payrollSummary(
       },
       payments: {
         where: { periodId },
-        include: { paidBy: { select: { id: true, name: true } } },
+        include: {
+          paidBy: { select: { id: true, name: true } },
+          reversal: { select: { id: true } },
+        },
         orderBy: { paymentDate: "desc" },
       },
       paymentConfirmations: { where: { periodId }, orderBy: { createdAt: "desc" } },
       advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { name: "asc" },
-  }), prisma.systemSettings.upsert({ where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true } })]);
+  }), prisma.systemSettings.upsert({ where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true } }), prisma.order.findMany({
+    where: {
+      companyId: requireTenantIdentity().companyId,
+      orderReceivedAt: { gte: periodRange.start, lt: periodRange.end },
+    },
+    select: {
+      id: true,
+      number: true,
+      amount: true,
+      status: true,
+      deletedAt: true,
+      orderReceivedAt: true,
+      manager: true,
+      managerUserId: true,
+      leadConversion: { select: { managerId: true } },
+      client: { select: { name: true, phone: true } },
+    },
+    orderBy: [{ orderReceivedAt: "asc" }, { id: "asc" }],
+  })]);
   const rows = employees.map((employee) => {
     const accrued = employee.accruals.reduce(
       (sum, row) => sum + signedAccrual(row),
@@ -1039,7 +1402,8 @@ export async function payrollSummary(
       .filter((row) => row.type === PayrollPaymentType.ADVANCE)
       .reduce((sum, row) => sum + signedPayment(row), 0);
     const activeRate = employee.salaryRates.find((rate) =>
-      rate.effectiveFrom <= new Date() && (!rate.effectiveTo || rate.effectiveTo > new Date()),
+      rate.effectiveFrom < periodRange.end &&
+      (!rate.effectiveTo || rate.effectiveTo >= periodRange.start),
     ) ?? employee.salaryRates[0];
     const bonusTypes = new Set<PayrollAccrualType>([
       PayrollAccrualType.GUARANTEED_ORDER_BONUS,
@@ -1073,11 +1437,118 @@ export async function payrollSummary(
     const identity = employee.user
       ? employee.user
       : { id: 0, name: employee.name || "Сотрудник", role: employee.position || "EMPLOYEE", active: false };
+    const activeAccruals = employee.accruals.filter(
+      (row) => !row.reversalOfId && !row.reversedBy,
+    );
+    const policySigned = (row: (typeof activeAccruals)[number]) =>
+      Number(row.amount) *
+      (row.direction === PayrollDirection.INCREASE ? 1 : -1);
+    const currentSalary = Number(activeRate?.amount ?? employee.baseSalary);
+    const salaryPosted = activeAccruals
+      .filter(
+        (row) =>
+          row.type === PayrollAccrualType.BASE_SALARY ||
+          row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
+      )
+      .reduce((sum, row) => sum + policySigned(row), 0);
+    const managerPolicyApplies = identity.role === Role.MANAGER;
+    const assignedOrders = managerPolicyApplies
+      ? periodOrders.filter(
+          (order) => isOrderAssignedToManager(
+            {
+              managerUserId: order.managerUserId,
+              leadManagerId: order.leadConversion?.managerId,
+              managerName: order.manager,
+            },
+            identity,
+          ),
+        )
+      : [];
+    const orderBonusAudit = managerPolicyApplies
+      ? assignedOrders.map((order) => {
+            const primaryBonuses = activeAccruals.filter(
+              (row) =>
+                row.orderId === order.id &&
+                row.direction === PayrollDirection.INCREASE &&
+                (row.type === PayrollAccrualType.ORDER_BONUS ||
+                  row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS),
+            );
+            const manualBonus = primaryBonuses.find(
+              (row) => row.type === PayrollAccrualType.ORDER_BONUS,
+            );
+            const policyAdjustments = activeAccruals.filter(
+              (row) =>
+                row.orderId === order.id &&
+                (row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+                  row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+                row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX),
+            );
+            const appliedAdjustment = policyAdjustments.reduce(
+              (sum, row) => sum + policySigned(row),
+              0,
+            );
+            const submitted = Number(manualBonus?.amount ?? 0);
+            const recorded =
+              primaryBonuses.reduce(
+                (sum, row) => sum + policySigned(row),
+                0,
+              ) + appliedAdjustment;
+            const policyAudit = auditManagerOrderBonus({
+              orderAmount: Number(order.amount),
+              status: order.status,
+              deletedAt: order.deletedAt,
+              submitted,
+              recorded,
+            });
+            return {
+              accrualId: manualBonus?.id ?? primaryBonuses[0]?.id ?? -order.id,
+              orderId: order.id,
+              orderNumber: order.number,
+              clientName: order.client.name,
+              orderAmount: Number(order.amount),
+              orderStatus: order.status,
+              earnedAt: order.orderReceivedAt,
+              earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
+              eligible: policyAudit.eligible,
+              submitted,
+              expected: policyAudit.expected,
+              appliedAdjustment,
+              recorded,
+              managerDifference: policyAudit.managerDifference,
+              ledgerDifference: policyAudit.ledgerDifference,
+              status: policyAudit.status,
+              reconciled: policyAudit.reconciled,
+            };
+          })
+      : [];
+    const salaryDifference = managerPolicyApplies
+      ? currentSalary - salaryPosted
+      : 0;
+    const bonusLedgerDifference = orderBonusAudit.reduce(
+      (sum, row) => sum + row.ledgerDifference,
+      0,
+    );
+    const auditedAccrued = accrued + salaryDifference + bonusLedgerDifference;
+    const payments = employee.payments.map((payment) => ({
+      ...payment,
+      confirmationNumber: payrollPaymentReference(
+        period.year,
+        period.month,
+        payment.id,
+      ),
+      paymentPurpose: payrollPaymentPurpose(
+        identity.name,
+        period.year,
+        period.month,
+        payment.id,
+      ) + (payment.externalReference ? ` · Kaspi ${payment.externalReference}` : ""),
+    }));
     return {
       ...employee,
       user: identity,
+      payments,
       hasOrdaAccess: Boolean(employee.userId),
-      currentSalary: Number(activeRate?.amount ?? employee.baseSalary),
+      currentSalary,
       salaryEffectiveFrom: activeRate?.effectiveFrom ?? employee.hiredAt,
       breakdown: {
         salaryAccrued: increase([PayrollAccrualType.BASE_SALARY]),
@@ -1094,6 +1565,47 @@ export async function payrollSummary(
         payable: accrued - paid,
       },
       bonusAccruals,
+      payrollAudit: managerPolicyApplies
+        ? {
+            policy: {
+              threshold: MANAGER_ORDER_BONUS_THRESHOLD,
+              belowOrEqual: MANAGER_ORDER_BONUS_STANDARD,
+              above: MANAGER_ORDER_BONUS_HIGH,
+              earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
+            },
+            linkedOrders: orderBonusAudit.filter((row) => row.eligible).length,
+            submittedOrderBonus: orderBonusAudit.reduce(
+              (sum, row) => sum + row.submitted,
+              0,
+            ),
+            requiredOrderBonus: orderBonusAudit.reduce(
+              (sum, row) => sum + row.expected,
+              0,
+            ),
+            managerDifference: orderBonusAudit.reduce(
+              (sum, row) => sum + row.managerDifference,
+              0,
+            ),
+            salaryRequired: currentSalary,
+            salaryPosted,
+            salaryDifference,
+            premiums: increase([
+              PayrollAccrualType.PREMIUM,
+              PayrollAccrualType.EXTRA_BONUS,
+            ]),
+            deductions: activeAccruals
+              .filter((row) => row.type === PayrollAccrualType.DEDUCTION)
+              .reduce((sum, row) => sum + Number(row.amount), 0),
+            advances: advancesPaid,
+            alreadyPaid: paid,
+            ledgerDifference: salaryDifference + bonusLedgerDifference,
+            auditedAccrued,
+            auditedPayable: auditedAccrued - paid,
+            readyToPay:
+              Math.abs(salaryDifference + bonusLedgerDifference) < 0.01,
+            mismatches: orderBonusAudit,
+          }
+        : null,
       totals: { accrued, paid, pending, payable: accrued - paid },
     };
   });

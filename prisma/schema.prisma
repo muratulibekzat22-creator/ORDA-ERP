@@ -1648,31 +1648,32 @@ model PayrollAccrual {
 }
 
 model PayrollPayment {
-  id               Int                         @id @default(autoincrement())
-  employeeId       Int
-  employee         EmployeePayrollProfile      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  periodId         Int
-  period           PayrollPeriod               @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  amount           Decimal                     @db.Decimal(14, 2)
-  paymentDate      DateTime
-  type             PayrollPaymentType
-  method           String?
-  comment          String?
-  paidById         Int
-  paidBy           User                        @relation("PayrollPaymentAuthor", fields: [paidById], references: [id], onDelete: Restrict)
-  relatedAccrualId Int?
-  relatedAccrual   PayrollAccrual?             @relation(fields: [relatedAccrualId], references: [id], onDelete: Restrict)
-  advanceRequest   PayrollAdvanceRequest?
-  idempotencyKey   String                      @unique
-  requestHash      String
-  reversedAt       DateTime?
-  reversalOfId     Int?                        @unique
-  reversalOf       PayrollPayment?             @relation("PayrollPaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversal         PayrollPayment?             @relation("PayrollPaymentReversal")
-  reversalReason   String?
-  confirmation     PayrollPaymentConfirmation?
-  ledgerEntry      CompanyLedgerEntry?
-  createdAt        DateTime                    @default(now())
+  id                Int                         @id @default(autoincrement())
+  employeeId        Int
+  employee          EmployeePayrollProfile      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId          Int
+  period            PayrollPeriod               @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  amount            Decimal                     @db.Decimal(14, 2)
+  paymentDate       DateTime
+  type              PayrollPaymentType
+  method            String?
+  externalReference String?                     @unique
+  comment           String?
+  paidById          Int
+  paidBy            User                        @relation("PayrollPaymentAuthor", fields: [paidById], references: [id], onDelete: Restrict)
+  relatedAccrualId  Int?
+  relatedAccrual    PayrollAccrual?             @relation(fields: [relatedAccrualId], references: [id], onDelete: Restrict)
+  advanceRequest    PayrollAdvanceRequest?
+  idempotencyKey    String                      @unique
+  requestHash       String
+  reversedAt        DateTime?
+  reversalOfId      Int?                        @unique
+  reversalOf        PayrollPayment?             @relation("PayrollPaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal          PayrollPayment?             @relation("PayrollPaymentReversal")
+  reversalReason    String?
+  confirmation      PayrollPaymentConfirmation?
+  ledgerEntry       CompanyLedgerEntry?
+  createdAt         DateTime                    @default(now())
 
   @@index([employeeId, periodId])
 }
