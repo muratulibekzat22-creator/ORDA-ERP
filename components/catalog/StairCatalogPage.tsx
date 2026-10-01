@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   Download,
@@ -62,6 +61,34 @@ export default function StairCatalogPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<CatalogItem | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+
+  async function downloadCatalog() {
+    setDownloadBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/design-catalog/download", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Не удалось скачать каталог");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `ALTYN-SAPA-stair-catalog-${new Intl.DateTimeFormat("en-CA").format(new Date())}.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось скачать каталог");
+    } finally {
+      setDownloadBusy(false);
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -114,14 +141,14 @@ export default function StairCatalogPage() {
               Откройте фотографию на весь экран или скачайте комплект заранее — он будет доступен даже при слабом интернете.
             </p>
           </div>
-          <Link
-            href="/api/design-catalog/download"
-            prefetch={false}
-            download="ALTYN-SAPA-stair-catalog.zip"
+          <button
+            type="button"
+            onClick={() => void downloadCatalog()}
+            disabled={downloadBusy}
             className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white hover:bg-blue-500"
           >
-            <Download size={19} /> Скачать весь каталог ZIP
-          </Link>
+            <Download size={19} /> {downloadBusy ? "Готовлю ZIP…" : "Скачать весь каталог ZIP"}
+          </button>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <a
