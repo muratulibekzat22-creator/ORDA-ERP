@@ -76,6 +76,7 @@
     "test:order-form-regression": "tsx scripts/test-order-form-regression.ts",
     "test:order-soft-delete": "tsx scripts/test-order-soft-delete.ts",
     "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",
+    "test:payment-follow-up": "tsx scripts/test-payment-follow-up.ts",
     "test:dashboard-director": "tsx scripts/test-dashboard-director.ts",
     "test:company-contacts": "tsx scripts/test-company-contacts.tsx",
     "test:documents": "tsx scripts/test-documents-module.ts",

@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { CalendarTaskWorkflow, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { detectControlIssues } from "@/lib/control/rules";
@@ -16,16 +16,35 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
       client: { select: { phone: true, city: true } },
     } }),
     db.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
-    db.calendarTask.findMany({ where: { controlKey: { not: null } }, select: {
-      id: true, controlKey: true, assigneeId: true, status: true, dueAt: true, acknowledgedAt: true,
+    db.calendarTask.findMany({ where: { OR: [{ controlKey: { not: null } }, { workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION }] }, select: {
+      id: true, controlKey: true, workflow: true, expectedAmount: true, assigneeId: true, status: true, dueAt: true, acknowledgedAt: true,
       resultSubmittedAt: true, controlVerifiedAt: true, controlRemindedAt: true, createdAt: true,
+      orderId: true, clientId: true, order: { select: { number: true, client: { select: { name: true } } } },
     } }),
   ]);
   const directors = users.filter(u => u.role === Role.OPERATIONS_DIRECTOR);
   const activeIds = new Set(users.map(u => u.id));
-  const issues = detectControlIssues(leads, orders, now).map(issue => ({ ...issue,
+  const detectedIssues = detectControlIssues(leads, orders, now).map(issue => ({ ...issue,
     assigneeId: issue.assigneeId && activeIds.has(issue.assigneeId) ? issue.assigneeId : directors.length === 1 ? directors[0].id : null,
   }));
+  const paymentIssues = tasks.filter(task =>
+    task.workflow === CalendarTaskWorkflow.PAYMENT_COLLECTION &&
+    task.dueAt < now &&
+    !["COMPLETED", "CANCELLED"].includes(task.status) &&
+    task.order && task.orderId && task.clientId,
+  ).map(task => ({
+    key: `payment-follow-up:${task.id}`,
+    taskId: task.id,
+    title: `${task.order!.number}: просрочена доплата`,
+    reason: `Клиент ${task.order!.client.name} обещал оплатить ${Number(task.expectedAmount ?? 0).toLocaleString("ru-RU")} ₸ до ${task.dueAt.toISOString()}. Результат не зафиксирован.`,
+    action: "Менеджеру необходимо ознакомиться, связаться с клиентом, запросить оплату и записать фактический результат. Поступившие деньги нужно зарегистрировать в заказе.",
+    href: `/orders/${task.orderId}`,
+    assigneeId: activeIds.has(task.assigneeId) ? task.assigneeId : directors.length === 1 ? directors[0].id : null,
+    clientId: task.clientId!,
+    orderId: task.orderId!,
+    priority: "URGENT" as const,
+  }));
+  const issues = [...paymentIssues, ...detectedIssues];
   return { issues, users, tasks, coverage: { leads: leads.length, orders: orders.length }, checkedAt: now.toISOString() };
 }
 
@@ -33,12 +52,12 @@ export async function getFounderControl() {
   const snapshot = await inspect();
   return { ...snapshot, issues: snapshot.issues.map(issue => ({ ...issue,
     assignee: snapshot.users.find(u => u.id === issue.assigneeId)?.name ?? "Требуется назначить ответственного",
-    task: snapshot.tasks.find(t => t.controlKey === issue.key) ?? null,
+    task: snapshot.tasks.find(t => ("taskId" in issue && issue.taskId ? t.id === issue.taskId : t.controlKey === issue.key)) ?? null,
   })), summary: {
     urgent: snapshot.issues.filter(i => i.priority === "URGENT").length,
     needsOwner: snapshot.issues.filter(i => !i.assigneeId).length,
-    unacknowledged: snapshot.tasks.filter(t => !t.acknowledgedAt && !["COMPLETED", "CANCELLED"].includes(t.status)).length,
-    overdue: snapshot.tasks.filter(t => t.dueAt < new Date() && !t.controlVerifiedAt && t.status !== "CANCELLED").length,
+    unacknowledged: snapshot.tasks.filter(t => !t.acknowledgedAt && !["COMPLETED", "CANCELLED"].includes(t.status) && (t.workflow !== CalendarTaskWorkflow.PAYMENT_COLLECTION || t.dueAt <= new Date())).length,
+    overdue: snapshot.tasks.filter(t => t.dueAt < new Date() && !t.controlVerifiedAt && t.status !== "CANCELLED" && t.status !== "COMPLETED").length,
     verified: snapshot.tasks.filter(t => t.controlVerifiedAt).length,
   } };
 }
@@ -54,6 +73,7 @@ export async function runFounderControl(actorId: number, keys?: string[], now = 
     const currentKeys = new Set(snapshot.issues.map(i => i.key));
     const result = { created: 0, reminded: 0, verified: 0, needsOwner: 0 };
     for (const task of snapshot.tasks) {
+      if (!task.controlKey) continue;
       if (!currentKeys.has(task.controlKey!) && !task.controlVerifiedAt && task.status !== "CANCELLED") {
         await tx.calendarTask.update({ where: { id: task.id }, data: { controlVerifiedAt: now, status: "COMPLETED", completedAt: now } });
         await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CONTROL_VERIFIED", actorId,
@@ -62,6 +82,7 @@ export async function runFounderControl(actorId: number, keys?: string[], now = 
       }
     }
     for (const issue of snapshot.issues.filter(i => !keys || keys.includes(i.key))) {
+      if ("taskId" in issue && issue.taskId) continue;
       if (!issue.assigneeId) { result.needsOwner++; continue; }
       const existing = snapshot.tasks.find(t => t.controlKey === issue.key);
       const description = `Автоконтроль ORDA по поручению основателя.\n\n${issue.reason}\n\n${issue.action}\n\nКарточка: ${issue.href}\nРезультат проверяется по данным ORDA. Если причина не устранена, задача остаётся на контроле.`;

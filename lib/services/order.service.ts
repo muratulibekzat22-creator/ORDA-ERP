@@ -328,6 +328,8 @@ type CreateOrderInput = {
   paymentMethod?: string;
   initialPaymentDate?: Date;
   initialPaymentComment?: string;
+  paymentPromiseAmount?: number | null;
+  paymentPromiseAt?: Date | null;
   amount: number;
   prepayment: number;
   partnerPrice: number;
@@ -335,6 +337,7 @@ type CreateOrderInput = {
   partnerPaid: number;
   manager: string;
   managerUserId?: number;
+  actorUserId?: number;
   actorRole?: Role;
   enforceClientOwnership?: boolean;
   idempotencyKey?: string;
@@ -369,6 +372,10 @@ export async function createOrder(data: CreateOrderInput) {
   if (!data.clientId && !data.client) throw new Error("CLIENT_REQUIRED");
   if (data.actorRole === Role.MANAGER && !data.managerUserId)
     throw new Error("MANAGER_REQUIRED");
+  if ((data.paymentPromiseAmount == null) !== (data.paymentPromiseAt == null))
+    throw new Error("INVALID_PAYMENT_FOLLOW_UP");
+  if (data.paymentPromiseAmount != null && (data.paymentPromiseAmount <= 0 || data.paymentPromiseAmount > data.amount - data.prepayment))
+    throw new Error("INVALID_PAYMENT_FOLLOW_UP");
   const eventKey = data.idempotencyKey
     ? `order:${data.idempotencyKey}`
     : undefined;
@@ -600,6 +607,45 @@ export async function createOrder(data: CreateOrderInput) {
               requestHash: data.requestHash,
             },
           });
+          if (data.paymentPromiseAmount != null && data.paymentPromiseAt) {
+            const creatorId = data.actorUserId ?? data.managerUserId;
+            if (!creatorId || !data.managerUserId) throw new Error("MANAGER_REQUIRED");
+            const amountLabel = Math.round(data.paymentPromiseAmount).toLocaleString("ru-RU");
+            const task = await tx.calendarTask.create({
+              data: {
+                title: `Получить доплату ${amountLabel} ₸ · ${order.number}`,
+                description: `Клиент ${ownedClient.name} обещал внести ${amountLabel} ₸. В указанный срок свяжитесь с клиентом, напомните об оплате и зафиксируйте фактический результат в ORDA. Если деньги поступили, зарегистрируйте оплату в заказе.`,
+                type: "REMINDER",
+                dueAt: data.paymentPromiseAt,
+                status: "PLANNED",
+                priority: "URGENT",
+                assigneeId: data.managerUserId,
+                creatorId,
+                clientId,
+                orderId: order.id,
+                acknowledgementRequired: true,
+                workflow: "PAYMENT_COLLECTION",
+                workflowKey: `order-payment-collection:${order.id}:1`,
+                expectedAmount: money(data.paymentPromiseAmount),
+              },
+            });
+            await tx.calendarTaskAudit.create({
+              data: {
+                taskId: task.id,
+                action: "PAYMENT_FOLLOW_UP_SCHEDULED",
+                actorId: creatorId,
+                after: { amount: data.paymentPromiseAmount, dueAt: data.paymentPromiseAt.toISOString(), requestHash: data.requestHash ?? null },
+              },
+            });
+            await tx.orderEvent.create({
+              data: {
+                orderId: order.id,
+                title: "Запланирована доплата клиента",
+                description: `${amountLabel} ₸ · ${data.paymentPromiseAt.toISOString()}`,
+                user: data.manager,
+              },
+            });
+          }
           return { order, created: true, initialPaymentId };
         },
         {

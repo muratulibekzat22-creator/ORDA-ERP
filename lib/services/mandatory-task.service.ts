@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { CalendarTaskStatus, Role } from "@prisma/client";
+import { CalendarTaskStatus, CalendarTaskWorkflow, Role } from "@prisma/client";
 
 import { get, put, del } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
@@ -15,11 +15,12 @@ const allowedTypes = new Set([
 
 const select = {
   id: true, title: true, description: true, dueAt: true, priority: true, status: true,
+  workflow: true, expectedAmount: true,
   acknowledgedAt: true, acknowledgementComment: true, plannedCompletionAt: true,
   resultText: true, resultSubmittedAt: true,
   creator: { select: { id: true, name: true } },
-  client: { select: { id: true, name: true } },
-  order: { select: { id: true, number: true, client: { select: { name: true } } } },
+  client: { select: { id: true, name: true, phone: true } },
+  order: { select: { id: true, number: true, client: { select: { name: true, phone: true } } } },
   resultAttachments: { select: { id: true, fileName: true, contentType: true, size: true, createdAt: true }, orderBy: { createdAt: "asc" as const } },
 } as const;
 
@@ -34,9 +35,20 @@ export async function getMandatoryTask(actor: CalendarActor) {
       assigneeId: actor.userId,
       acknowledgementRequired: true,
       status: { notIn: [CalendarTaskStatus.CANCELLED, CalendarTaskStatus.COMPLETED] },
-      OR: [
-        { acknowledgedAt: null },
-        { controlKey: null, acknowledgedAt: { not: null }, plannedCompletionAt: { lte: now }, resultSubmittedAt: null },
+      AND: [
+        {
+          OR: [
+            { workflow: null },
+            { workflow: { not: CalendarTaskWorkflow.PAYMENT_COLLECTION } },
+            { dueAt: { lte: now } },
+          ],
+        },
+        {
+          OR: [
+            { acknowledgedAt: null },
+            { controlKey: null, acknowledgedAt: { not: null }, plannedCompletionAt: { lte: now }, resultSubmittedAt: null },
+          ],
+        },
       ],
     },
     select,

@@ -419,6 +419,10 @@ enum CalendarTaskPriority {
   URGENT
 }
 
+enum CalendarTaskWorkflow {
+  PAYMENT_COLLECTION
+}
+
 enum MeasurementStatus {
   ASSIGNED
   IN_PROGRESS
@@ -1125,6 +1129,9 @@ model CalendarTask {
   completedBy             User?                          @relation("CalendarTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
   cancelledAt             DateTime?
   acknowledgementRequired Boolean                        @default(false)
+  workflow               CalendarTaskWorkflow?
+  workflowKey            String?
+  expectedAmount         Decimal?                       @db.Decimal(14, 2)
   acknowledgedAt          DateTime?
   acknowledgementComment  String?
   plannedCompletionAt     DateTime?
@@ -1140,6 +1147,7 @@ model CalendarTask {
   measurement             Measurement?
 
   @@unique([companyId, controlKey])
+  @@unique([companyId, workflowKey])
   @@index([assigneeId, dueAt])
   @@index([status, dueAt])
   @@index([clientId, dueAt])
@@ -1147,6 +1155,7 @@ model CalendarTask {
   @@index([companyId, dueAt, status])
   @@index([assigneeId, acknowledgementRequired, acknowledgedAt])
   @@index([assigneeId, plannedCompletionAt, resultSubmittedAt])
+  @@index([assigneeId, workflow, dueAt, status])
 }
 
 model CalendarTaskResultAttachment {

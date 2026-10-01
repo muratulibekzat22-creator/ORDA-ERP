@@ -32,6 +32,9 @@ async function main() {
   assert.match(formSource, /Дата заказа/);
   assert.match(formSource, /orderReceivedAt/);
   assert.match(formSource, /paymentDate: Number\(form\.initialPayment\) > 0 \? form\.orderReceivedAt/);
+  assert.match(formSource, /paymentPromiseAmount/);
+  assert.match(formSource, /paymentPromiseAt/);
+  assert.match(formSource, /Клиент доплатит позже/);
 
   assert.equal(
     followUpGateMode({ sessionLoading: false, manager: true, checked: false, itemCount: 0 }),
@@ -66,7 +69,7 @@ async function main() {
   const draft = {
     version: 1 as const,
     userId: 17,
-    form: { ...EMPTY_NEW_ORDER_FORM, clientName: "Synthetic Client", phone: "+77000000000", amount: "125000", orderReceivedAt: "2026-08-15" },
+    form: { ...EMPTY_NEW_ORDER_FORM, clientName: "Synthetic Client", phone: "+77000000000", amount: "125000", orderReceivedAt: "2026-08-15", paymentPromiseAmount: "25000", paymentPromiseAt: "2026-08-18T12:00" },
     existingClient: null,
     submission: null,
     updatedAt: new Date(0).toISOString(),

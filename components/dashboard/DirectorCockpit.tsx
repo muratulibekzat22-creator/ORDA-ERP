@@ -118,6 +118,14 @@ type ManagerPayload = {
     missingFields: string[];
     productionPriceMissing: boolean;
   }>;
+  paymentFollowUps: Array<{
+    id: number;
+    dueAt: string;
+    expectedAmount: string | number | null;
+    acknowledgedAt: string | null;
+    overdue: boolean;
+    order: { id: number; number: string; client: { name: string; phone: string } } | null;
+  }>;
 };
 type OperationsPayload = Pick<ManagementPayload, "month" | "orders" | "marketing" | "team" | "salesTools"> & {
   role: "OPERATIONS_DIRECTOR";
@@ -667,12 +675,23 @@ function ManagementDashboard({
 }
 
 function ManagerDashboard({ data }: { data: ManagerPayload }) {
+  const duePayments = data.paymentFollowUps ?? [];
   return (
     <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <SimpleCard icon={<ClipboardList />} label="Мои активные заказы" value={String(data.orders.active)} href="/orders" />
       <SimpleCard icon={<AlertTriangle />} label="Просрочено" value={String(data.orders.overdue)} href="/orders?attention=overdue" />
       <SimpleCard icon={<Factory />} label="Без цены производства" value={String(data.orders.missingProductionPrice)} href="/orders?attention=missing-production-price" />
       <SimpleCard icon={<ClipboardList />} label="Нужно дополнить" value={String(data.orders.incompleteData)} href="/orders" />
+      <div className="sm:col-span-2 xl:col-span-4 rounded-2xl border border-blue-500/25 bg-[#101827] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-white">Обещанные доплаты клиентов</h2><p className="mt-1 text-sm text-slate-400">ORDA напомнит в срок и потребует зафиксировать результат.</p></div><span className="rounded-full bg-blue-500/15 px-3 py-1 text-sm text-blue-200">Активно: {duePayments.length}</span></div>
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {duePayments.map((item) => item.order ? <Link key={item.id} href={`/orders/${item.order.id}`} className={`rounded-xl border p-3 ${item.overdue ? "border-red-500/40 bg-red-500/5" : "border-slate-800 bg-slate-950"}`}>
+            <div className="flex items-start justify-between gap-3"><div><b>{item.order.number}</b><p className="text-sm text-slate-400">{item.order.client.name}</p></div><span className={`text-sm font-semibold ${item.overdue ? "text-red-300" : "text-blue-300"}`}>{Number(item.expectedAmount ?? 0).toLocaleString("ru-RU")} ₸</span></div>
+            <p className="mt-2 text-xs text-slate-500">{new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium", timeStyle: "short" }).format(new Date(item.dueAt))} · {item.overdue ? "просрочено" : item.acknowledgedAt ? "ознакомлен" : "ожидает срока"}</p>
+          </Link> : null)}
+          {!duePayments.length ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500 lg:col-span-2">Нет активных обещаний по доплате.</p> : null}
+        </div>
+      </div>
       <div className="sm:col-span-2 xl:col-span-4 rounded-2xl border border-slate-800 bg-[#101827] p-5">
         <h2 className="font-bold">Что нужно дополнить по заказам</h2>
         <div className="mt-3 space-y-2">

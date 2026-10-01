@@ -5,6 +5,8 @@ export type NewOrderFormValues = {
   managerUserId: string;
   amount: string;
   initialPayment: string;
+  paymentPromiseAmount: string;
+  paymentPromiseAt: string;
   paymentMethod: string;
   orderReceivedAt: string;
   readinessDate: string;
@@ -51,6 +53,8 @@ export const EMPTY_NEW_ORDER_FORM: NewOrderFormValues = {
   managerUserId: "",
   amount: "",
   initialPayment: "0",
+  paymentPromiseAmount: "",
+  paymentPromiseAt: "",
   paymentMethod: "KASPI_TRANSFER",
   orderReceivedAt: "",
   readinessDate: "",
@@ -83,6 +87,8 @@ function parseForm(value: unknown): NewOrderFormValues | null {
     managerUserId: stringValue(candidate.managerUserId),
     amount: stringValue(candidate.amount),
     initialPayment: stringValue(candidate.initialPayment, "0"),
+    paymentPromiseAmount: stringValue(candidate.paymentPromiseAmount),
+    paymentPromiseAt: stringValue(candidate.paymentPromiseAt),
     paymentMethod: stringValue(candidate.paymentMethod, "KASPI_TRANSFER"),
     orderReceivedAt: stringValue(candidate.orderReceivedAt),
     readinessDate: stringValue(candidate.readinessDate),

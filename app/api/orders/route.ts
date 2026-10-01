@@ -230,6 +230,15 @@ export async function POST(request: Request) {
     const promisedAt = dateValue(body.readinessDate ?? body.promisedAt);
     const paymentMethod = text(body.paymentMethod) ?? "BANK_TRANSFER";
     const initialPaymentDate = dateValue(body.paymentDate) ?? new Date();
+    const hasPaymentPromiseInput = (value: unknown) => value !== undefined && value !== null && value !== "";
+    const paymentPromiseProvided = hasPaymentPromiseInput(body.paymentPromiseAmount) ||
+      hasPaymentPromiseInput(body.paymentPromiseAt);
+    const paymentPromiseAmount = body.paymentPromiseAmount === undefined || body.paymentPromiseAmount === ""
+      ? null
+      : money(body.paymentPromiseAmount);
+    const paymentPromiseAt = body.paymentPromiseAt === undefined || body.paymentPromiseAt === ""
+      ? null
+      : dateValue(body.paymentPromiseAt);
 
     if (
       (body.orderReceivedAt !== undefined && (dateValue(body.orderReceivedAt) === null || orderReceivedAt.getTime() > Date.now())) ||
@@ -239,6 +248,9 @@ export async function POST(request: Request) {
       amount <= 0 ||
       prepayment === null ||
       prepayment > amount ||
+      (paymentPromiseProvided && (paymentPromiseAmount === null || paymentPromiseAt === null)) ||
+      ((paymentPromiseAmount === null) !== (paymentPromiseAt === null)) ||
+      (paymentPromiseAmount !== null && (paymentPromiseAmount <= 0 || paymentPromiseAmount > amount - prepayment)) ||
       partnerPrice === null ||
       partnerPaid === null ||
       (partnerId !== null && !isProductionPriceAmount(partnerPrice)) ||
@@ -289,6 +301,8 @@ export async function POST(request: Request) {
       paymentMethod,
       initialPaymentDate,
       initialPaymentComment: text(body.paymentComment) ?? "",
+      paymentPromiseAmount,
+      paymentPromiseAt,
       amount,
       prepayment,
       partnerPrice,
@@ -296,6 +310,7 @@ export async function POST(request: Request) {
       partnerPaid,
       manager: manager.name,
       managerUserId: manager.id,
+      actorUserId: Number(auth.session!.user.id),
     };
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;

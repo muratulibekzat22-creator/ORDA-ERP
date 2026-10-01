@@ -118,6 +118,11 @@ export default function NewOrderForm() {
     setError("");
     if (Number(form.initialPayment) > Number(form.amount))
       return setError("Полученная сумма не может превышать цену заказа");
+    const hasPaymentPromise = Boolean(form.paymentPromiseAmount || form.paymentPromiseAt);
+    if (hasPaymentPromise && (!form.paymentPromiseAmount || !form.paymentPromiseAt))
+      return setError("Для доплаты укажите и сумму, и дату обещания клиента");
+    if (hasPaymentPromise && Number(form.paymentPromiseAmount) > Number(form.amount) - Number(form.initialPayment))
+      return setError("Обещанная доплата не может превышать остаток клиента");
     submitting.current = true;
     setSaving(true);
     try {
@@ -127,6 +132,8 @@ export default function NewOrderForm() {
         managerUserId: Number(form.managerUserId),
         amount: Number(form.amount),
         initialPayment: Number(form.initialPayment),
+        paymentPromiseAmount: form.paymentPromiseAmount ? Number(form.paymentPromiseAmount) : undefined,
+        paymentPromiseAt: form.paymentPromiseAt ? new Date(form.paymentPromiseAt).toISOString() : undefined,
         paymentDate: Number(form.initialPayment) > 0 ? form.orderReceivedAt : undefined,
       };
       const payloadText = JSON.stringify(payload);
@@ -188,6 +195,14 @@ export default function NewOrderForm() {
           <Field label="Комментарий"><textarea rows={3} value={form.comment} onChange={(event) => set("comment", event.target.value)} className={`${control} py-3`} /></Field>
         </div>
         {existingClient && <p className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-300"><CheckCircle2 size={17} /> Используется существующий клиент. Дубль не создаётся.</p>}
+        <div className="mt-4 rounded-xl border border-blue-500/25 bg-blue-500/5 p-4">
+          <p className="font-semibold text-white">Клиент доплатит позже <span className="font-normal text-slate-500">(необязательно)</span></p>
+          <p className="mt-1 text-sm text-slate-400">Если клиент обещал довнести часть оплаты, ORDA напомнит ответственному менеджеру точно в указанное время.</p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <Field label="Сумма следующей доплаты"><input type="number" min="0.01" step="0.01" inputMode="decimal" value={form.paymentPromiseAmount} onChange={(event) => set("paymentPromiseAmount", event.target.value)} placeholder="Например, 1 000 000" className={control} /></Field>
+            <Field label="Когда клиент обещал оплатить"><input type="datetime-local" value={form.paymentPromiseAt} onChange={(event) => set("paymentPromiseAt", event.target.value)} className={control} /></Field>
+          </div>
+        </div>
       </section>
 
       <details className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">

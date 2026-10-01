@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { hasProductionPrice } from "@/lib/orders/production-price";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
+import { completeCoveredPaymentFollowUps } from "@/lib/services/payment-follow-up.service";
 
 export const financeOperationTypes = [
   "CLIENT_PAYMENT",
@@ -150,6 +151,14 @@ export async function createFinanceOperation(input: CreateOperationInput) {
         },
       });
       if (type === "CLIENT_PAYMENT") await createPaymentReceiptRecord(tx, payment.id, input.authorId);
+      if (type === "CLIENT_PAYMENT" && order)
+        await completeCoveredPaymentFollowUps(tx, {
+          orderId: order.id,
+          paymentId: payment.id,
+          paymentAmount: input.amount,
+          actorId: input.authorId,
+          actorName: input.author,
+        });
       if (affectsPartner && input.authorId) {
         await tx.financeAuditEvent.create({ data: {
           orderId: order!.id,

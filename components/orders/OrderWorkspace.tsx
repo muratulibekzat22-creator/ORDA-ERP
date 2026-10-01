@@ -19,6 +19,7 @@ import { useSession } from "next-auth/react";
 import { type ReactNode, useState } from "react";
 
 import ProjectPayments from "@/components/project/ProjectPayments";
+import PaymentFollowUpPanel from "@/components/orders/PaymentFollowUpPanel";
 import { orderBoardLabel } from "@/lib/orders/board";
 import { orderDeadline } from "@/lib/orders/presentation";
 import { PAYMENT_METHODS, paymentMethodLabel } from "@/lib/orders/registration";
@@ -284,6 +285,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           </div>
         </section>
       ) : null}
+
+      {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role) ? <PaymentFollowUpPanel orderId={order.id} balance={Number(order.balance)} clientName={order.client.name} clientPhone={order.client.phone} readOnly={archived} /> : null}
 
       {director ? <OrderEconomy order={order} /> : null}
 

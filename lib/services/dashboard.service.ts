@@ -529,25 +529,45 @@ async function managerProjection(scope: DashboardScope) {
       { leadConversion: { managerId: scope.userId } },
     ],
   };
-  const orders = await prisma.order.findMany({
-    where,
-    select: {
-      id: true,
-      number: true,
-      lifecycle: true,
-      promisedAt: true,
-      productionDeadline: true,
-      balance: true,
-      partnerPrice: true,
-      partnerAgreedAt: true,
-      managerUserId: true,
-      partnerId: true,
-      client: { select: { name: true, phone: true, city: true } },
-      installation: { select: { scheduledAt: true } },
-    },
-    orderBy: { promisedAt: "asc" },
-    take: 50,
-  });
+  const [orders, paymentFollowUps] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      select: {
+        id: true,
+        number: true,
+        lifecycle: true,
+        promisedAt: true,
+        productionDeadline: true,
+        balance: true,
+        partnerPrice: true,
+        partnerAgreedAt: true,
+        managerUserId: true,
+        partnerId: true,
+        client: { select: { name: true, phone: true, city: true } },
+        installation: { select: { scheduledAt: true } },
+      },
+      orderBy: { promisedAt: "asc" },
+      take: 50,
+    }),
+    prisma.calendarTask.findMany({
+      where: {
+        assigneeId: scope.userId,
+        workflow: "PAYMENT_COLLECTION",
+        status: { in: ["PLANNED", "IN_PROGRESS"] },
+        order: { deletedAt: null, lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } },
+      },
+      select: {
+        id: true,
+        dueAt: true,
+        expectedAmount: true,
+        acknowledgedAt: true,
+        status: true,
+        order: { select: { id: true, number: true, client: { select: { name: true, phone: true } } } },
+      },
+      orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+      take: 20,
+    }),
+  ]);
   return {
     role: scope.role,
     orders: {
@@ -578,6 +598,10 @@ async function managerProjection(scope: DashboardScope) {
         productionPriceMissing:
           !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
       })),
+    paymentFollowUps: paymentFollowUps.map((task) => ({
+      ...task,
+      overdue: task.dueAt < now,
+    })),
   };
 }
 
