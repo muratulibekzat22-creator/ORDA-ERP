@@ -36,6 +36,8 @@ function previousMonths(year: number, month: number, count = 3) {
 const roundTarget = (value: number, step = 500_000) =>
   Math.max(step, Math.ceil(value / step) * step);
 
+const roundPercent = (value: number) => Math.round(value * 100) / 100;
+
 async function orderMetrics(start: Date, end: Date, managerId?: number) {
   const companyId = requireTenantIdentity().companyId;
   const orders = await prisma.order.findMany({
@@ -74,15 +76,20 @@ async function orderMetrics(start: Date, end: Date, managerId?: number) {
     (sum, order) => sum + Number(order.partnerPrice),
     0,
   );
+  const grossMargin = pricedRevenue - productionCost;
   return {
     orders: orders.length,
     revenue,
     averageOrder: orders.length ? revenue / orders.length : 0,
     pricedOrders: priced.length,
+    pricedRevenue,
     marginCoveragePercent: orders.length
-      ? Math.round((priced.length / orders.length) * 10_000) / 100
+      ? roundPercent((priced.length / orders.length) * 100)
       : 100,
-    grossMargin: pricedRevenue - productionCost,
+    grossMargin,
+    grossMarginPercent: pricedRevenue > 0
+      ? roundPercent((grossMargin / pricedRevenue) * 100)
+      : 0,
     managerRevenue: orders.reduce((map, order) => {
       const id = order.managerUserId ?? order.leadConversion?.managerId;
       if (id) map.set(id, (map.get(id) ?? 0) + Number(order.amount));
@@ -105,8 +112,8 @@ async function recommendation(year: number, month: number) {
     history.reduce((sum, row, index) => sum + row.revenue * weights[index], 0) /
     weights.reduce((sum, value) => sum + value, 0);
   const bestRevenue = Math.max(0, ...history.map((row) => row.revenue));
-  const baseRevenue = Math.max(weightedRevenue, bestRevenue * 0.9);
-  const revenueTarget = roundTarget(baseRevenue > 0 ? baseRevenue * 1.15 : 5_000_000);
+  const baseRevenue = Math.max(weightedRevenue, bestRevenue);
+  const revenueTarget = roundTarget(baseRevenue > 0 ? baseRevenue * 1.25 : 5_000_000);
   const totalOrders = nonEmpty.reduce((sum, row) => sum + row.orders, 0);
   const totalRevenue = nonEmpty.reduce((sum, row) => sum + row.revenue, 0);
   const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 1_000_000;
@@ -124,13 +131,15 @@ async function recommendation(year: number, month: number) {
       revenue: row.revenue,
       averageOrder: row.averageOrder,
       pricedOrders: row.pricedOrders,
+      pricedRevenue: row.pricedRevenue,
       marginCoveragePercent: row.marginCoveragePercent,
       grossMargin: row.grossMargin,
+      grossMarginPercent: row.grossMarginPercent,
     })),
     managerRevenue,
     basis: {
-      method: "WEIGHTED_3_MONTHS_PLUS_15_PERCENT",
-      note: "Взвешенная выручка трёх полных месяцев, сверенная с лучшим месяцем, плюс рост 15%.",
+      method: "BEST_OR_WEIGHTED_3_MONTHS_PLUS_25_PERCENT",
+      note: "База — лучший результат или взвешенная выручка трёх полных месяцев. Цель ставится на 25% выше базы.",
       months: history.map((row) => ({
         month: row.month,
         revenue: row.revenue,
@@ -259,6 +268,10 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     ? Math.round((actual.revenue / elapsedDays) * daysInMonth)
     : 0;
   const canEdit = ([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] as Role[]).includes(actor.role);
+  const minimumMarginPercent = Number(plan?.minimumMarginPercent ?? 25);
+  const requiredCostCoveragePercent = Number(
+    plan?.requiredCostCoveragePercent ?? 100,
+  );
   const targets = plan?.managerTargets ?? [];
   const visibleTargets = actor.role === Role.MANAGER
     ? targets.filter((target) => target.managerId === actor.userId)
@@ -274,6 +287,19 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
         .filter((tier) => progressPercent >= tier.thresholdPercent)
         .at(-1);
       const nextTier = plan?.tiers.find((tier) => progressPercent < tier.thresholdPercent);
+      const bonusBlockers = [
+        ...(progressPercent < 100 ? ["Личный план продаж не выполнен"] : []),
+        ...(metrics.marginCoveragePercent < requiredCostCoveragePercent
+          ? [
+              `Цена производства заполнена на ${metrics.marginCoveragePercent}% из ${requiredCostCoveragePercent}%`,
+            ]
+          : []),
+        ...(metrics.grossMarginPercent < minimumMarginPercent
+          ? [
+              `Валовая маржа ${metrics.grossMarginPercent}% ниже ${minimumMarginPercent}%`,
+            ]
+          : []),
+      ];
       return {
         id: target.id,
         managerId: target.managerId,
@@ -283,6 +309,10 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
         actualRevenue: metrics.revenue,
         actualOrders: metrics.orders,
         progressPercent,
+        marginCoveragePercent: metrics.marginCoveragePercent,
+        grossMarginPercent: metrics.grossMarginPercent,
+        bonusEligible: bonusBlockers.length === 0,
+        bonusBlockers,
         achievedTier: achievedTier
           ? {
               thresholdPercent: achievedTier.thresholdPercent,
@@ -318,6 +348,8 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       ),
       recommendationOrders: plan?.recommendationOrders ?? suggested.orderTarget,
       recommendationBasis: plan?.recommendationBasis ?? suggested.basis,
+      minimumMarginPercent,
+      requiredCostCoveragePercent,
       tiers: (plan?.tiers ?? []).map((tier) => ({
         id: tier.id,
         thresholdPercent: tier.thresholdPercent,
@@ -336,7 +368,14 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       projectedRevenue,
       marginCoveragePercent: actual.marginCoveragePercent,
       pricedOrders: actual.pricedOrders,
+      pricedRevenue: actual.pricedRevenue,
       grossMargin: actual.grossMargin,
+      grossMarginPercent: actual.grossMarginPercent,
+      bonusEligible:
+        revenueTarget > 0 &&
+        actual.revenue >= revenueTarget &&
+        actual.marginCoveragePercent >= requiredCostCoveragePercent &&
+        actual.grossMarginPercent >= minimumMarginPercent,
     },
     history: suggested.history,
     managers: managerProgress,
@@ -348,6 +387,8 @@ export async function updateSalesPlan(
   input: {
     revenueTarget: number;
     orderTarget: number;
+    minimumMarginPercent: number;
+    requiredCostCoveragePercent: number;
     tiers: Array<{ thresholdPercent: number; label: string; rewardAmount: number }>;
     managerTargets: Array<{ managerId: number; revenueTarget: number; orderTarget: number }>;
   },
@@ -366,6 +407,12 @@ export async function updateSalesPlan(
   if (
     input.revenueTarget <= 0 ||
     input.orderTarget <= 0 ||
+    !Number.isFinite(input.minimumMarginPercent) ||
+    input.minimumMarginPercent < 0 ||
+    input.minimumMarginPercent > 100 ||
+    !Number.isFinite(input.requiredCostCoveragePercent) ||
+    input.requiredCostCoveragePercent < 0 ||
+    input.requiredCostCoveragePercent > 100 ||
     managerCount !== managerIds.length ||
     input.tiers.some(
       (tier) =>
@@ -383,6 +430,8 @@ export async function updateSalesPlan(
       data: {
         revenueTarget: input.revenueTarget,
         orderTarget: input.orderTarget,
+        minimumMarginPercent: input.minimumMarginPercent,
+        requiredCostCoveragePercent: input.requiredCostCoveragePercent,
       },
     });
     await tx.salesPlanTier.deleteMany({ where: { planId: existing.id } });

@@ -61,8 +61,10 @@ async function main() {
             netProfit: dashboard.finance.netProfit,
             netMargin: dashboard.finance.netMargin,
             businessProfitability: dashboard.finance.businessProfitability,
+            pricedRevenue: dashboard.finance.pricedRevenue,
             ordersWithMargin: dashboard.finance.ordersWithMargin,
             ordersWithoutMargin: dashboard.finance.ordersWithoutMargin,
+            profitDataComplete: dashboard.finance.ordersWithoutMargin === 0,
           });
         }
         return {

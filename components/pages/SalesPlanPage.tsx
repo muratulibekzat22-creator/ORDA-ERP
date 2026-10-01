@@ -13,6 +13,10 @@ type Manager = {
   actualRevenue: number;
   actualOrders: number;
   progressPercent: number;
+  marginCoveragePercent: number;
+  grossMarginPercent: number;
+  bonusEligible: boolean;
+  bonusBlockers: string[];
   achievedTier: Tier | null;
   nextTier: (Tier & { remainingRevenue: number }) | null;
 };
@@ -25,6 +29,8 @@ type Payload = {
     recommendationRevenue: number;
     recommendationOrders: number;
     recommendationBasis: { note?: string } | null;
+    minimumMarginPercent: number;
+    requiredCostCoveragePercent: number;
     tiers: Tier[];
   };
   actual: {
@@ -36,9 +42,19 @@ type Payload = {
     projectedRevenue: number;
     marginCoveragePercent: number;
     pricedOrders: number;
+    pricedRevenue: number;
     grossMargin: number;
+    grossMarginPercent: number;
+    bonusEligible: boolean;
   };
-  history: Array<{ month: string; revenue: number; orders: number; averageOrder: number }>;
+  history: Array<{
+    month: string;
+    revenue: number;
+    orders: number;
+    averageOrder: number;
+    marginCoveragePercent: number;
+    grossMarginPercent: number;
+  }>;
   managers: Manager[];
 };
 
@@ -75,6 +91,8 @@ export default function SalesPlanPage() {
           month,
           revenueTarget: data.plan.revenueTarget,
           orderTarget: data.plan.orderTarget,
+          minimumMarginPercent: data.plan.minimumMarginPercent,
+          requiredCostCoveragePercent: data.plan.requiredCostCoveragePercent,
           tiers: data.plan.tiers,
           managerTargets: data.managers.map((manager) => ({ managerId: manager.managerId, revenueTarget: manager.revenueTarget, orderTarget: manager.orderTarget })),
         }),
@@ -90,29 +108,30 @@ export default function SalesPlanPage() {
   return (
     <main className="mx-auto w-full max-w-[1400px] space-y-5 p-4 pb-24 text-slate-100 sm:p-6 lg:p-8">
       <header className="flex flex-col gap-4 rounded-3xl border border-slate-800 bg-[#101827] p-5 sm:flex-row sm:items-end sm:justify-between sm:p-6">
-        <div><p className="text-xs font-bold uppercase tracking-[.2em] text-blue-300">Продажи</p><h1 className="mt-2 flex items-center gap-2 text-3xl font-bold text-white"><Target/>План месяца</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">План строится по реальным заказам. Бонус — мотивационная рекомендация; в зарплату он попадёт только после отдельного оформления по заказу.</p></div>
+        <div><p className="text-xs font-bold uppercase tracking-[.2em] text-blue-300">Продажи</p><h1 className="mt-2 flex items-center gap-2 text-3xl font-bold text-white"><Target/>План месяца</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">Бонус доступен только при выполнении личного плана, заполненной цене производства по всем заказам и достаточной валовой марже. В зарплату он попадёт после отдельного оформления.</p></div>
         <div className="flex gap-2"><input aria-label="Месяц плана" type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3"/>{data?.canEdit ? <button type="button" disabled={saving} onClick={() => void save()} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50"><Save size={17}/>{saving ? "Сохраняем…" : "Сохранить"}</button> : null}</div>
       </header>
       {message ? <p className={`rounded-xl border p-3 text-sm ${message === "План сохранён" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-amber-500/30 bg-amber-500/10 text-amber-200"}`}>{message}</p> : null}
       {loading || !data ? <div className="h-64 animate-pulse rounded-2xl bg-slate-900"/> : <>
         <section className="rounded-2xl border border-blue-500/25 bg-blue-500/5 p-5">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
             <Metric label="Продажи" value={money(data.actual.revenue)} hint={`${data.actual.orders} заказов`}/>
             <Metric label="План" value={money(data.plan.revenueTarget)} hint={`${data.plan.orderTarget} заказов`}/>
             <Metric label="Выполнение" value={`${data.actual.progressPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`} hint={`Осталось ${money(data.actual.gap)}`}/>
             <Metric label="Прогноз месяца" value={money(data.actual.projectedRevenue)} hint="По текущему темпу"/>
             <Metric label="Средний чек" value={money(data.actual.averageOrder)} hint={`Цена цеха заполнена на ${data.actual.marginCoveragePercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`}/>
+            <Metric label="Валовая маржа" value={`${data.actual.grossMarginPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`} hint={`${money(data.actual.grossMargin)} по заказам с ценой производства`}/>
           </div>
           <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(Math.max(data.actual.progressPercent, 0), 100)}%` }}/></div>
         </section>
-        {data.canEdit ? <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold">Настройка плана</h2><p className="mt-1 text-sm text-slate-400">Рекомендация системы: {money(data.plan.recommendationRevenue)} и {data.plan.recommendationOrders} заказов.</p></div><button type="button" onClick={() => patchPlan({ revenueTarget: data.plan.recommendationRevenue, orderTarget: data.plan.recommendationOrders })} className="rounded-xl border border-blue-500/30 px-3 py-2 text-sm font-semibold text-blue-200">Вернуть рекомендацию</button></div><p className="mt-3 rounded-xl bg-slate-950/60 p-3 text-sm text-slate-400">{data.plan.recommendationBasis?.note || "По фактической истории продаж."}</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><NumberField label="План продаж, ₸" value={data.plan.revenueTarget} onChange={(value) => patchPlan({ revenueTarget: value })}/><NumberField label="План заказов" value={data.plan.orderTarget} onChange={(value) => patchPlan({ orderTarget: value })}/></div></section> : null}
-        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><div className="flex items-center gap-2"><TrendingUp className="text-emerald-300"/><div><h2 className="text-xl font-bold">Мотивация</h2><p className="text-sm text-slate-400">Уровень определяется по личному плану менеджера</p></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.plan.tiers.map((tier, index) => <article key={tier.id ?? tier.thresholdPercent} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><p className="text-2xl font-bold text-white">{tier.thresholdPercent}%</p>{data.canEdit ? <><input value={tier.label} onChange={(event) => patchPlan({ tiers: data.plan.tiers.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-900 p-2"/><NumberField label="Предлагаемый бонус, ₸" value={tier.rewardAmount} onChange={(value) => patchPlan({ tiers: data.plan.tiers.map((item, itemIndex) => itemIndex === index ? { ...item, rewardAmount: value } : item) })}/></> : <><p className="mt-2 font-semibold">{tier.label}</p><p className="mt-1 text-sm text-emerald-300">{tier.rewardAmount ? money(tier.rewardAmount) : "Без денежного бонуса"}</p></>}</article>)}</div></section>
-        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><h2 className="text-xl font-bold">План менеджеров</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер", "Факт", "Заказы", "Личный план", "Выполнение", "Следующая цель"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.managers.map((manager) => <tr key={manager.managerId} className="border-t border-slate-800"><td className="px-3 py-4 font-semibold text-white">{manager.managerName}</td><td className="px-3">{money(manager.actualRevenue)}</td><td className="px-3">{manager.actualOrders}{data.canEdit ? <NumberField compact label="план" value={manager.orderTarget} onChange={(value) => patchManager(manager.managerId, { orderTarget: value })}/> : ` / ${manager.orderTarget}`}</td><td className="px-3">{data.canEdit ? <NumberField compact label="тенге" value={manager.revenueTarget} onChange={(value) => patchManager(manager.managerId, { revenueTarget: value })}/> : money(manager.revenueTarget)}</td><td className="px-3 font-bold text-blue-200">{manager.progressPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</td><td className="px-3 text-slate-400">{manager.nextTier ? `${manager.nextTier.label}: ещё ${money(manager.nextTier.remainingRevenue)}` : "Максимальный уровень"}</td></tr>)}</tbody></table>{!data.managers.length ? <p className="py-8 text-center text-slate-400">Активных менеджеров пока нет.</p> : null}</div></section>
-        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><h2 className="text-xl font-bold">Основание плана</h2><div className="mt-4 grid gap-3 sm:grid-cols-3">{data.history.map((row) => <Metric key={row.month} label={row.month} value={money(row.revenue)} hint={`${row.orders} заказов · средний чек ${money(row.averageOrder)}`}/>)}</div></section>
+        {data.canEdit ? <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold">Настройка плана</h2><p className="mt-1 text-sm text-slate-400">Рекомендация системы: {money(data.plan.recommendationRevenue)} и {data.plan.recommendationOrders} заказов.</p></div><button type="button" onClick={() => patchPlan({ revenueTarget: data.plan.recommendationRevenue, orderTarget: data.plan.recommendationOrders })} className="rounded-xl border border-blue-500/30 px-3 py-2 text-sm font-semibold text-blue-200">Вернуть рекомендацию</button></div><p className="mt-3 rounded-xl bg-slate-950/60 p-3 text-sm text-slate-400">{data.plan.recommendationBasis?.note || "По фактической истории продаж."}</p><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><NumberField label="План продаж, ₸" value={data.plan.revenueTarget} onChange={(value) => patchPlan({ revenueTarget: value })}/><NumberField label="План заказов" value={data.plan.orderTarget} step={1} onChange={(value) => patchPlan({ orderTarget: value })}/><NumberField label="Минимальная валовая маржа, %" value={data.plan.minimumMarginPercent} step={0.1} max={100} onChange={(value) => patchPlan({ minimumMarginPercent: value })}/><NumberField label="Цена производства заполнена, %" value={data.plan.requiredCostCoveragePercent} step={0.1} max={100} onChange={(value) => patchPlan({ requiredCostCoveragePercent: value })}/></div></section> : null}
+        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><div className="flex items-center gap-2"><TrendingUp className="text-emerald-300"/><div><h2 className="text-xl font-bold">Мотивация</h2><p className="text-sm text-slate-400">Уровень определяется по личному плану менеджера</p></div></div><p className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-100">Бонус начисляется, только если цена производства заполнена минимум на {data.plan.requiredCostCoveragePercent}% и валовая маржа не ниже {data.plan.minimumMarginPercent}%.</p><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{data.plan.tiers.map((tier, index) => <article key={tier.id ?? tier.thresholdPercent} className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"><p className="text-2xl font-bold text-white">{tier.thresholdPercent}%</p>{data.canEdit ? <><input value={tier.label} onChange={(event) => patchPlan({ tiers: data.plan.tiers.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} className="mt-3 w-full rounded-lg border border-slate-700 bg-slate-900 p-2"/><NumberField label="Предлагаемый бонус, ₸" value={tier.rewardAmount} onChange={(value) => patchPlan({ tiers: data.plan.tiers.map((item, itemIndex) => itemIndex === index ? { ...item, rewardAmount: value } : item) })}/></> : <><p className="mt-2 font-semibold">{tier.label}</p><p className="mt-1 text-sm text-emerald-300">{tier.rewardAmount ? money(tier.rewardAmount) : "Без денежного бонуса"}</p></>}</article>)}</div></section>
+        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><h2 className="text-xl font-bold">План менеджеров</h2><div className="mt-4 overflow-x-auto"><table className="w-full min-w-[1050px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер", "Факт", "Заказы", "Личный план", "Выполнение", "Следующая цель", "Условия бонуса"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.managers.map((manager) => <tr key={manager.managerId} className="border-t border-slate-800"><td className="px-3 py-4 font-semibold text-white">{manager.managerName}</td><td className="px-3">{money(manager.actualRevenue)}</td><td className="px-3">{manager.actualOrders}{data.canEdit ? <NumberField compact label="план" value={manager.orderTarget} onChange={(value) => patchManager(manager.managerId, { orderTarget: value })}/> : ` / ${manager.orderTarget}`}</td><td className="px-3">{data.canEdit ? <NumberField compact label="тенге" value={manager.revenueTarget} onChange={(value) => patchManager(manager.managerId, { revenueTarget: value })}/> : money(manager.revenueTarget)}</td><td className="px-3 font-bold text-blue-200">{manager.progressPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</td><td className="px-3 text-slate-400">{manager.nextTier ? `${manager.nextTier.label}: ещё ${money(manager.nextTier.remainingRevenue)}` : "Максимальный уровень"}</td><td className={`px-3 ${manager.bonusEligible ? "text-emerald-300" : "text-amber-200"}`}>{manager.bonusEligible ? "Можно начислить" : manager.bonusBlockers.join(" · ")}</td></tr>)}</tbody></table>{!data.managers.length ? <p className="py-8 text-center text-slate-400">Активных менеджеров пока нет.</p> : null}</div></section>
+        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><h2 className="text-xl font-bold">Основание плана</h2><div className="mt-4 grid gap-3 sm:grid-cols-3">{data.history.map((row) => <Metric key={row.month} label={row.month} value={money(row.revenue)} hint={`${row.orders} заказов · средний чек ${money(row.averageOrder)} · цена производства ${row.marginCoveragePercent}% · маржа ${row.grossMarginPercent}%`}/>)}</div></section>
       </>}
     </main>
   );
 }
 
 function Metric({ label, value, hint }: { label: string; value: string; hint: string }) { return <article className="rounded-xl bg-slate-950/60 p-4"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 break-words text-xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p></article>; }
-function NumberField({ label, value, onChange, compact = false }: { label: string; value: number; onChange: (value: number) => void; compact?: boolean }) { return <label className={compact ? "mt-1 block" : "block"}><span className={`${compact ? "text-[10px]" : "text-sm"} text-slate-500`}>{label}</span><input type="number" min="0" step={compact ? "1" : "1000"} value={value} onChange={(event) => onChange(Number(event.target.value))} className={`${compact ? "w-32 p-1.5 text-xs" : "mt-1 w-full p-3"} rounded-lg border border-slate-700 bg-slate-900 text-white`}/></label>; }
+function NumberField({ label, value, onChange, compact = false, step, max }: { label: string; value: number; onChange: (value: number) => void; compact?: boolean; step?: number; max?: number }) { return <label className={compact ? "mt-1 block" : "block"}><span className={`${compact ? "text-[10px]" : "text-sm"} text-slate-500`}>{label}</span><input type="number" min="0" max={max} step={step ?? (compact ? 1 : 1000)} value={value} onChange={(event) => onChange(Number(event.target.value))} className={`${compact ? "w-32 p-1.5 text-xs" : "mt-1 w-full p-3"} rounded-lg border border-slate-700 bg-slate-900 text-white`}/></label>; }

@@ -12,12 +12,22 @@ type PlanCardPayload = {
     gap: number;
     projectedRevenue: number;
     marginCoveragePercent: number;
+    grossMarginPercent: number;
+    bonusEligible: boolean;
   };
-  plan: { revenueTarget: number; orderTarget: number };
+  plan: {
+    revenueTarget: number;
+    orderTarget: number;
+    minimumMarginPercent: number;
+    requiredCostCoveragePercent: number;
+  };
   managers: Array<{
     managerId: number;
     managerName: string;
     progressPercent: number;
+    marginCoveragePercent: number;
+    grossMarginPercent: number;
+    bonusEligible: boolean;
     nextTier: { label: string; remainingRevenue: number; rewardAmount: number } | null;
   }>;
 };
@@ -50,6 +60,9 @@ export default function SalesPlanCard({ month }: { month: string }) {
     return <div className="h-40 animate-pulse rounded-2xl border border-slate-800 bg-[#101827]" />;
   const width = Math.min(Math.max(data.actual.progressPercent, 0), 100);
   const own = data.managers.length === 1 ? data.managers[0] : null;
+  const bonusEligible = own?.bonusEligible ?? data.actual.bonusEligible;
+  const bonusMargin = own?.grossMarginPercent ?? data.actual.grossMarginPercent;
+  const bonusCoverage = own?.marginCoveragePercent ?? data.actual.marginCoveragePercent;
   return (
     <section className="overflow-hidden rounded-2xl border border-blue-500/25 bg-gradient-to-br from-blue-500/10 via-[#101827] to-[#101827] p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -65,6 +78,10 @@ export default function SalesPlanCard({ month }: { month: string }) {
           <p className="mt-3 text-sm text-slate-400">
             До плана {money(data.actual.gap)} · цены производства заполнены на {data.actual.marginCoveragePercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}% заказов.
             {own?.nextTier ? ` До уровня «${own.nextTier.label}» осталось ${money(own.nextTier.remainingRevenue)}.` : ""}
+          </p>
+          <p className={`mt-2 text-sm ${bonusEligible ? "text-emerald-300" : "text-amber-200"}`}>
+            Бонус: план + цена производства {data.plan.requiredCostCoveragePercent}% + валовая маржа не ниже {data.plan.minimumMarginPercent}%.
+            Сейчас цена заполнена на {bonusCoverage.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%, маржа {bonusMargin.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%.
           </p>
         </div>
         <Link href={`/sales-plan?month=${encodeURIComponent(month)}`} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white hover:bg-blue-500"><TrendingUp size={18}/>Открыть план</Link>

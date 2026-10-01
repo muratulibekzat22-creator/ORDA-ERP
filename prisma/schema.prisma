@@ -1040,22 +1040,24 @@ model Order {
 }
 
 model SalesPlan {
-  id                    Int                      @id @default(autoincrement())
-  companyId             Int                      @default(dbgenerated())
-  company               Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  year                  Int
-  month                 Int
-  revenueTarget         Decimal                  @db.Decimal(14, 2)
-  orderTarget           Int
-  recommendationRevenue Decimal                  @default(0) @db.Decimal(14, 2)
-  recommendationOrders  Int                      @default(0)
-  recommendationBasis   Json?
-  createdById           Int
-  createdBy             User                     @relation("SalesPlanCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  tiers                 SalesPlanTier[]
-  managerTargets        SalesPlanManagerTarget[]
-  createdAt             DateTime                 @default(now())
-  updatedAt             DateTime                 @updatedAt
+  id                          Int                      @id @default(autoincrement())
+  companyId                   Int                      @default(dbgenerated())
+  company                     Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  year                        Int
+  month                       Int
+  revenueTarget               Decimal                  @db.Decimal(14, 2)
+  orderTarget                 Int
+  recommendationRevenue       Decimal                  @default(0) @db.Decimal(14, 2)
+  recommendationOrders        Int                      @default(0)
+  recommendationBasis         Json?
+  minimumMarginPercent        Decimal                  @default(25) @db.Decimal(5, 2)
+  requiredCostCoveragePercent Decimal                  @default(100) @db.Decimal(5, 2)
+  createdById                 Int
+  createdBy                   User                     @relation("SalesPlanCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  tiers                       SalesPlanTier[]
+  managerTargets              SalesPlanManagerTarget[]
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
 
   @@unique([companyId, year, month])
   @@index([companyId, year, month])

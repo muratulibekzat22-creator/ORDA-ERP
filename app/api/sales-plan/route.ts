@@ -60,6 +60,8 @@ export async function PATCH(request: Request) {
       {
         revenueTarget: Number(body.revenueTarget),
         orderTarget: Number(body.orderTarget),
+        minimumMarginPercent: Number(body.minimumMarginPercent),
+        requiredCostCoveragePercent: Number(body.requiredCostCoveragePercent),
         tiers,
         managerTargets,
       },
