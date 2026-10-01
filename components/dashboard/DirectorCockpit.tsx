@@ -2,18 +2,14 @@
 
 import {
   AlertTriangle,
-  BarChart3,
   Banknote,
   CalendarDays,
   ClipboardList,
   Factory,
-  GraduationCap,
-  Handshake,
   Megaphone,
   Plus,
   RefreshCw,
   ReceiptText,
-  Wallet,
   Users,
   X,
 } from "lucide-react";
@@ -221,15 +217,15 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
 
   return (
     <main className="mx-auto w-full max-w-[1500px] space-y-5 overflow-x-hidden p-4 pb-24 text-slate-100 sm:p-6 lg:p-8">
-      <header className="flex flex-col gap-4 rounded-3xl border border-slate-800 bg-[#101827] p-5 sm:p-6 lg:flex-row lg:items-end lg:justify-between">
+      <header className={`flex flex-col gap-4 border border-slate-800 bg-[#101827] lg:flex-row lg:items-end lg:justify-between ${founder ? "rounded-2xl p-4 sm:p-5" : "rounded-3xl p-5 sm:p-6"}`}>
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-300">
             ORDA · ALTYN SAPA
           </p>
-          <h1 className="mt-2 text-3xl font-bold text-white">{founder ? "Кабинет основателя" : "Главная"}</h1>
+          <h1 className={`mt-2 font-bold text-white ${founder ? "text-2xl" : "text-3xl"}`}>{founder ? "Картина бизнеса" : "Главная"}</h1>
           <p className="mt-1 text-sm text-slate-400">
             {founder
-              ? "Чистая прибыль, эффективность и итоговые управленческие отчёты."
+              ? "Оборот, расходы, прибыль, заказы и команда — на одном экране."
               : operationsDirector
                 ? "Заявки, замеры, заказы и задачи, которые требуют контроля."
                 : "Деньги компании и состояние заказов — без лишних модулей."}
@@ -268,7 +264,7 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
         </p>
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
-      {data && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} /> : null}
+      {data && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} compact={founder} /> : null}
       {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
         founder ? <FounderDashboard data={data} /> : (
           <ManagementDashboard
@@ -308,139 +304,100 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   const totalOrders = data.finance.ordersWithMargin + data.finance.ordersWithoutMargin;
   const averageOrder = totalOrders > 0 ? data.finance.revenue / totalOrders : null;
   const collectionRate = data.finance.revenue > 0 ? data.finance.received / data.finance.revenue * 100 : null;
-  const collectedWidth = collectionRate === null ? 0 : Math.min(Math.max(collectionRate, 0), 100);
+  const totalExpenses = data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued;
+  const outstanding = Math.max(0, data.finance.revenue - data.finance.received);
   const profitLabel = data.finance.dataComplete ? "Чистая прибыль" : "Расчётная прибыль";
-  const reports = [
-    { href: "/reports", title: "Управленческие отчёты", hint: "Продажи, KPI, маркетинг и зарплаты", icon: BarChart3 },
-    { href: "/finance", title: "Финансы", hint: "Доходы, расходы и движение денег", icon: Wallet },
-    { href: "/partner-management", title: "Цехи и расчёты", hint: "Заказы, выплаты и остаток по каждому цеху", icon: Handshake },
-    { href: "/training", title: "Обучение сотрудников", hint: "Результаты и прохождение обучения", icon: GraduationCap },
-  ] as const;
+  const activeEmployees = data.team.filter((employee) => employee.activeDays > 0).length;
+  const completedTasks = data.team.reduce((sum, employee) => sum + employee.completedTasks, 0);
+  const overdueTasks = data.team.reduce((sum, employee) => sum + employee.overdueTasks, 0);
+  const attention = [
+    data.orders.overdue > 0 ? `${data.orders.overdue} просроченных заказов` : null,
+    data.orders.missingProductionPrice > 0 ? `${data.orders.missingProductionPrice} заказов без цены производства` : null,
+    data.orders.incompleteData > 0 ? `${data.orders.incompleteData} заказов нужно дополнить` : null,
+    data.marketing.leads === 0 ? "не заполнены показатели Meta" : null,
+  ].filter((item): item is string => Boolean(item));
+  const roleLabel: Record<string, string> = {
+    OPERATIONS_DIRECTOR: "Директор",
+    MARKETER: "Маркетолог",
+    MANAGER: "Менеджер",
+  };
   return (
     <>
-      <section>
-        <div className="mb-3">
-          <h2 className="text-xl font-bold text-white">Итог компании</h2>
-          <p className="text-sm text-slate-400">Только показатели для принятия решений за выбранный месяц</p>
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 className="text-xl font-bold text-white">Главная картина бизнеса</h2><p className="text-sm text-slate-400">Деньги и результат за выбранный месяц</p></div>
+          <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${attention.length ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>{attention.length ? `Требуют внимания: ${attention.length}` : "Всё под контролем"}</span>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <article className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
-            <p className="text-sm text-emerald-200">{profitLabel}</p>
-            <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.netProfit)}</p>
-            <p className="mt-2 text-xs leading-5 text-emerald-100/70">
-              Продажи в расчёте {money(data.finance.pricedRevenue)} − производство {money(data.finance.directExpenses)} − расходы {money(data.finance.operatingExpenses)} − зарплата {money(data.finance.payrollAccrued)}
-            </p>
-          </article>
-          <article className="rounded-2xl border border-blue-500/25 bg-blue-500/5 p-5">
-            <p className="text-sm text-slate-300">Чистая маржа</p>
-            <p className="mt-2 text-3xl font-bold text-white">{percent(data.finance.netMargin)}</p>
-            <p className="mt-2 text-xs text-slate-500">Прибыль относительно продаж с заполненной ценой производства</p>
-          </article>
-          <article className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-5">
-            <p className="text-sm text-slate-300">Рентабельность бизнеса</p>
-            <p className="mt-2 text-3xl font-bold text-white">{percent(data.finance.businessProfitability)}</p>
-            <p className="mt-2 text-xs text-slate-500">Прибыль относительно всех учтённых затрат</p>
-          </article>
+        <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <FounderKpi label="Оборот компании" value={money(data.finance.revenue)} hint={`${totalOrders} заказов · средний чек ${averageOrder === null ? "—" : money(averageOrder)}`} tone="blue" />
+          <FounderKpi label="Получено денег" value={money(data.finance.received)} hint={`${percent(collectionRate)} от оборота`} tone="cyan" />
+          <FounderKpi label="Все учтённые расходы" value={money(totalExpenses)} hint="Производство + операционные + зарплата" tone="amber" />
+          <FounderKpi label={profitLabel} value={money(data.finance.netProfit)} hint={`Маржа ${percent(data.finance.netMargin)} · рентабельность ${percent(data.finance.businessProfitability)}`} tone="emerald" />
         </div>
+        {attention.length ? <div className="mt-4 flex flex-wrap gap-2">{attention.map((item) => <span key={item} className="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">{item}</span>)}</div> : null}
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
+        <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Доходы и расходы</h2><p className="text-sm text-slate-400">Понятный финансовый итог без лишних графиков</p></div><Link href="/finance" className="text-sm font-semibold text-blue-300">Открыть финансы</Link></div>
+          <div className="mt-4 overflow-hidden rounded-xl border border-slate-800">
+            <table className="w-full text-sm"><tbody>
+              <FounderFinanceRow label="Оборот по заказам" value={data.finance.revenue} />
+              <FounderFinanceRow label="Поступило от клиентов" value={data.finance.received} />
+              <FounderFinanceRow label="Осталось получить" value={outstanding} warning={outstanding > 0} />
+              <FounderFinanceRow label="Цена производства" value={data.finance.directExpenses} expense />
+              <FounderFinanceRow label="Операционные расходы" value={data.finance.operatingExpenses} expense />
+              <FounderFinanceRow label="Начисленная зарплата" value={data.finance.payrollAccrued} expense />
+              <FounderFinanceRow label="Итого учтённых расходов" value={totalExpenses} expense strong />
+              <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit />
+            </tbody></table>
+          </div>
+          {!data.finance.dataComplete ? <p className="mt-3 text-xs leading-5 text-amber-200">Прибыль предварительная: цена производства заполнена по {data.finance.ordersWithMargin} из {totalOrders} заказов.</p> : null}
+        </article>
+
+        <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Процессы заказов</h2><p className="text-sm text-slate-400">Где сейчас находится работа</p></div><Link href="/orders" className="text-sm font-semibold text-blue-300">Все заказы</Link></div>
+          <div className="mt-4 divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-950/40">
+            <FounderProcessRow label="Активные заказы" value={data.orders.active} href="/orders?tab=active" />
+            <FounderProcessRow label="До передачи в цех" value={data.orders.beforeWorkshop} href="/orders?tab=active&status=BEFORE_WORKSHOP" />
+            <FounderProcessRow label="Передано и в работе" value={data.orders.transferredToWorkshop + data.orders.inWork} href="/orders?tab=active&status=IN_WORK" />
+            <FounderProcessRow label="Готово и на монтаже" value={data.orders.readyForInstallation + data.orders.installation} href="/orders?tab=active&status=INSTALLATION" />
+            <FounderProcessRow label="Просрочено" value={data.orders.overdue} href="/orders?tab=active&attention=overdue" warning={data.orders.overdue > 0} />
+            <FounderProcessRow label="Нужно дополнить" value={data.orders.incompleteData} href="/orders?tab=active" warning={data.orders.incompleteData > 0} />
+          </div>
+        </article>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
-        <div className="flex items-center gap-2">
-          <BarChart3 size={20} className="text-blue-300" />
-          <div><h2 className="text-xl font-bold text-white">Продажи за месяц</h2><p className="text-sm text-slate-400">Сумма, оплаты и средний чек</p></div>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <FounderEfficiency label="Продажи" value={money(data.finance.revenue)} hint={`${totalOrders} заказов`} />
-          <FounderEfficiency label="Получено" value={money(data.finance.received)} hint={`${percent(collectionRate)} от продаж`} />
-          <FounderEfficiency label="Средний чек" value={averageOrder === null ? "—" : money(averageOrder)} hint="На один заказ" />
-          <FounderEfficiency label="В расчёте прибыли" value={money(data.finance.pricedRevenue)} hint={`${data.finance.ordersWithMargin} из ${totalOrders} заказов`} />
-        </div>
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800" aria-label={`Сбор оплаты ${percent(collectionRate)}`}>
-          <div className="h-full rounded-full bg-blue-500" style={{ width: `${collectedWidth}%` }} />
-        </div>
-        {data.finance.ordersWithoutMargin > 0 ? (
-          <p className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-            Прибыль пока рассчитана по {data.finance.ordersWithMargin} из {totalOrders} заказов. В {data.finance.ordersWithoutMargin} заказах нужно заполнить настоящую цену производства.
-          </p>
-        ) : null}
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Users size={20} className="text-blue-300"/><div><h2 className="text-lg font-bold text-white">Команда и рабочая активность</h2><p className="text-sm text-slate-400">Входы и реальные действия сотрудников в ORDA</p></div></div><Link href="/employees" className="text-sm font-semibold text-blue-300">Сотрудники</Link></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><FounderEfficiency label="Сотрудников" value={String(data.team.length)} hint="В контролируемой команде"/><FounderEfficiency label="Активны в месяце" value={`${activeEmployees} / ${data.team.length}`} hint="Есть входы в ORDA"/><FounderEfficiency label="Задач выполнено" value={String(completedTasks)} hint="Фактический результат"/><FounderEfficiency label="Просрочено задач" value={String(overdueTasks)} hint={overdueTasks ? "Нужно вмешательство" : "Просрочек нет"}/></div>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="text-left text-slate-500"><tr>{["Сотрудник", "Активных дней", "Заявки", "Заказы", "Выполнено", "Просрочено", "Последний вход"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((employee) => <tr key={employee.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{employee.name}</b><span className="block text-xs text-slate-500">{roleLabel[employee.role] ?? employee.role}</span></td><td className="px-3">{employee.activeDays}</td><td className="px-3">{employee.leads}</td><td className="px-3">{employee.orders}</td><td className="px-3 text-emerald-300">{employee.completedTasks}</td><td className={employee.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{employee.overdueTasks}</td><td className="px-3 text-slate-400">{employee.lastLogin ? date(employee.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
       </section>
 
-      <details className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
-        <summary className="cursor-pointer font-semibold text-white">Подробная аналитика и настройки</summary>
-        <div className="mt-5 space-y-5">
-          <FounderDirectorAccess />
-          <MarketingAndTeam data={data} founder />
-      <section>
-        <div className="mb-3"><h2 className="text-xl font-bold text-white">Итоговые отчёты</h2><p className="text-sm text-slate-400">Операционные разделы ведёт директор; здесь остаётся контроль результата.</p></div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {reports.map(({ href, title, hint, icon: Icon }) => (
-            <Link key={href} href={href} className="rounded-2xl border border-slate-800 bg-[#101827] p-5 transition hover:border-blue-500/50">
-              <Icon size={22} className="text-blue-300" />
-              <p className="mt-4 font-semibold text-white">{title}</p>
-              <p className="mt-1 text-sm leading-5 text-slate-400">{hint}</p>
-            </Link>
-          ))}
-        </div>
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-lg font-bold text-white">Маркетинг и продажи</h2><p className="text-sm text-slate-400">Расход, результат и стоимость привлечения</p></div></div><Link href="/marketing" className="text-sm font-semibold text-fuchsia-300">Открыть маркетинг</Link></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"><FounderEfficiency label="Расход Meta" value={money(data.marketing.spend)} hint="Учитывается в расходах"/><FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Из рекламы"/><FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="Из рекламных лидов"/><FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / обращения"/><FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы"/><FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход"/></div>
+        {data.marketing.leads === 0 ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">За выбранный месяц маркетинговые показатели ещё не внесены.</p> : null}
       </section>
-        </div>
-      </details>
+
+      <nav aria-label="Основные разделы собственника" className="flex flex-wrap gap-2">
+        {[['/sales-plan', 'План продаж'], ['/reports', 'Все отчёты'], ['/finance', 'Финансы'], ['/employees', 'Сотрудники'], ['/settings', 'Настройки']].map(([href, label]) => <Link key={href} href={href} className="rounded-xl border border-slate-700 bg-[#101827] px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-blue-500/50 hover:text-white">{label}</Link>)}
+      </nav>
     </>
   );
 }
 
-const directorModules = [
-  ["clients", "Заявки"], ["orders", "Заказы"], ["measurements", "Замеры"],
-  ["calendar", "Календарь и задачи"], ["documents", "Документы"], ["employees", "Сотрудники"],
-  ["production", "Производство"], ["warehouse", "Склад"], ["marketing", "Маркетинг и вакансии"],
-  ["reports", "Отчёты"], ["finance", "Финансы"], ["partners", "Цехи и расчёты"], ["payroll", "Зарплаты"],
-] as const;
+function FounderKpi({ label, value, hint, tone }: { label: string; value: string; hint: string; tone: "blue" | "cyan" | "amber" | "emerald" }) {
+  const tones = { blue: "border-blue-500/25 bg-blue-500/5 text-blue-200", cyan: "border-cyan-500/25 bg-cyan-500/5 text-cyan-200", amber: "border-amber-500/25 bg-amber-500/5 text-amber-200", emerald: "border-emerald-500/25 bg-emerald-500/5 text-emerald-200" };
+  return <article className={`rounded-xl border p-4 ${tones[tone]}`}><p className="text-sm">{label}</p><p className="mt-2 break-words text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p></article>;
+}
 
-function FounderDirectorAccess() {
-  const [permissions, setPermissions] = useState<string[] | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/founder/director-access", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => response.ok ? response.json() as Promise<{ permissions: string[] }> : null)
-      .then((payload) => payload && setPermissions(payload.permissions))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, []);
-  const save = async () => {
-    if (!permissions) return;
-    setSaving(true); setMessage("");
-    const response = await fetch("/api/founder/director-access", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ permissions }),
-    });
-    setMessage(response.ok ? "Доступ Алихана обновлён" : "Не удалось сохранить доступ");
-    setSaving(false);
-  };
-  return (
-    <section className="rounded-3xl border border-blue-500/25 bg-blue-500/5 p-5 sm:p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-white">Доступ директора</h2>
-          <p className="mt-1 text-sm text-slate-400">Включайте Алихану только нужные рабочие разделы. Финансовые операции и цена производства разрешены; чистая прибыль остаётся только в кабинете основателя. Зарплаты и расчёты с цехами пока выключены.</p>
-        </div>
-        <button type="button" disabled={!permissions || saving} onClick={() => void save()} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">
-          {saving ? "Сохраняем…" : "Сохранить доступ"}
-        </button>
-      </div>
-      {permissions ? <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {directorModules.map(([key, label]) => {
-          const enabled = permissions.includes(key);
-          return <label key={key} className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-3 text-sm text-slate-200">
-            <span>{label}</span>
-            <input type="checkbox" checked={enabled} onChange={() => setPermissions((current) => current ? enabled ? current.filter((item) => item !== key) : [...current, key] : current)} className="size-5 accent-blue-600" />
-          </label>;
-        })}
-      </div> : <p className="mt-4 text-sm text-slate-500">Загружаем права…</p>}
-      {message && <p className="mt-3 text-sm text-blue-200">{message}</p>}
-    </section>
-  );
+function FounderFinanceRow({ label, value, expense = false, warning = false, strong = false, profit = false }: { label: string; value: number; expense?: boolean; warning?: boolean; strong?: boolean; profit?: boolean }) {
+  return <tr className={strong ? "border-t-2 border-slate-700 bg-slate-900/70" : "border-t border-slate-800 first:border-0"}><td className={`px-4 py-3 ${strong ? "font-semibold text-white" : "text-slate-300"}`}>{label}</td><td className={`px-4 py-3 text-right tabular-nums ${profit ? value >= 0 ? "font-bold text-emerald-300" : "font-bold text-red-300" : warning ? "font-semibold text-amber-300" : expense ? "text-slate-200" : "font-semibold text-white"}`}>{expense && value > 0 ? "− " : ""}{money(value)}</td></tr>;
+}
+
+function FounderProcessRow({ label, value, href, warning = false }: { label: string; value: number; href: string; warning?: boolean }) {
+  return <Link href={href} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-900"><span className="text-sm text-slate-300">{label}</span><span className={`text-lg font-bold tabular-nums ${warning ? "text-amber-300" : "text-white"}`}>{value}</span></Link>;
 }
 
 function FounderEfficiency({ label, value, hint }: { label: string; value: string; hint: string }) {

@@ -31,9 +31,10 @@ type PlanCardPayload = {
 
 const money = (value: number) => `${Math.round(value).toLocaleString("ru-RU")} ₸`;
 
-export default function SalesPlanCard({ month }: { month: string }) {
+export default function SalesPlanCard({ month, compact = false }: { month: string; compact?: boolean }) {
   const [data, setData] = useState<PlanCardPayload | null>(null);
   const [error, setError] = useState("");
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(`/api/sales-plan?month=${encodeURIComponent(month)}`, {
@@ -44,15 +45,15 @@ export default function SalesPlanCard({ month }: { month: string }) {
         if (!response.ok) throw new Error("План временно недоступен");
         return response.json() as Promise<PlanCardPayload>;
       })
-      .then(setData)
+      .then((payload) => { setError(""); setData(payload); })
       .catch((cause) => {
         if (cause instanceof DOMException && cause.name === "AbortError") return;
         setError("План временно недоступен");
       });
     return () => controller.abort();
-  }, [month]);
+  }, [month, reload]);
   if (error)
-    return <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">{error}</p>;
+    return <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200"><span>План не загрузился</span><button type="button" onClick={() => { setError(""); setReload((value) => value + 1); }} className="rounded-lg border border-amber-500/30 px-3 py-1.5 font-semibold">Повторить</button></div>;
   if (!data)
     return <div className="h-40 animate-pulse rounded-2xl border border-slate-800 bg-[#101827]" />;
   const width = Math.min(Math.max(data.actual.progressPercent, 0), 100);
@@ -65,6 +66,14 @@ export default function SalesPlanCard({ month }: { month: string }) {
         : data.dailyFunnel.overallStatus === "data_missing"
           ? "нет данных Meta"
           : "месяц не начался";
+  if (compact) return (
+    <section className="rounded-2xl border border-blue-500/25 bg-[#101827] p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><Target size={20} className="text-blue-300"/><div><h2 className="text-lg font-bold text-white">Командный план</h2><p className="text-sm text-slate-400">Факт и темп на сегодня</p></div></div><Link href={`/sales-plan?month=${encodeURIComponent(month)}`} className="text-sm font-semibold text-blue-300">Открыть план</Link></div>
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><div><p className="text-xs text-slate-500">Факт</p><p className="mt-1 text-xl font-bold text-white">{money(data.actual.revenue)}</p></div><div><p className="text-xs text-slate-500">План</p><p className="mt-1 text-xl font-bold text-white">{money(data.plan.revenueTarget)}</p></div><div><p className="text-xs text-slate-500">Выполнение</p><p className="mt-1 text-xl font-bold text-blue-200">{data.actual.progressPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</p></div><div><p className="text-xs text-slate-500">Статус</p><p className={`mt-1 font-bold ${data.dailyFunnel.overallStatus === "ahead" ? "text-emerald-300" : data.dailyFunnel.overallStatus === "behind" || data.dailyFunnel.overallStatus === "data_missing" ? "text-amber-300" : "text-blue-200"}`}>{paceLabel}</p></div></div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-blue-500" style={{ width: `${width}%` }}/></div>
+      <p className="mt-3 text-xs leading-5 text-slate-400">Норма дня: {money(data.dailyFunnel.targets.spendDay)} на рекламу · {Math.ceil(data.dailyFunnel.targets.inquiriesDay)} обращений · {Math.ceil(data.dailyFunnel.targets.applicationsDay)} заявок · {money(data.actual.gap)} осталось до плана.</p>
+    </section>
+  );
   return (
     <section className="overflow-hidden rounded-2xl border border-blue-500/25 bg-gradient-to-br from-blue-500/10 via-[#101827] to-[#101827] p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

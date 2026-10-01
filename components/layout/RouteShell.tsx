@@ -38,6 +38,23 @@ const sections = [
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
+const founderSections = [
+  { title: "Главное", items: [["/", "Картина бизнеса", LayoutDashboard]] },
+  { title: "Контроль", items: [["/sales-plan", "План продаж", TrendingUp], ["/orders", "Заказы", ClipboardList], ["/clients", "Заявки", Users]] },
+  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/employees", "Сотрудники", UserCog], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Система", items: [["/settings", "Настройки", Settings]] },
+] as const;
+
+const founderSecondary = [
+  ["/measurements", "Замеры", Ruler],
+  ["/calendar", "Календарь", CalendarDays],
+  ["/production", "Производство", Factory],
+  ["/warehouse", "Склад", Warehouse],
+  ["/training", "Обучение", GraduationCap],
+  ["/payroll", "Зарплаты", Banknote],
+  ["/partner-management", "Цехи и расчёты", Handshake],
+] as const;
+
 export default function RouteShell({
   children,
 }: {
@@ -94,6 +111,9 @@ export default function RouteShell({
     );
   };
   const [open, setOpen] = useState(false);
+  const [secondaryOpen, setSecondaryOpen] = useState(() =>
+    founderSecondary.some(([href]) => pathname.startsWith(href)),
+  );
   const standalone = pathname === "/login" || pathname === "/partner";
   useEffect(() => {
     if (!session?.user) return;
@@ -166,7 +186,7 @@ export default function RouteShell({
             </button>
           </div>
           <nav className="flex-1 space-y-1 overflow-y-auto p-4">
-            {sections.map((section) => {
+            {(founder ? founderSections : sections).map((section) => {
               const items = section.items.filter(([href]) => visible(href));
               if (!items.length) return null;
               return <div key={section.title} className="mb-6">
@@ -189,6 +209,10 @@ export default function RouteShell({
                 ))}</div>
               </div>;
             })}
+            {founder ? <details className="mb-5 rounded-xl border border-slate-800 bg-slate-950/30" open={secondaryOpen} onToggle={(event) => setSecondaryOpen(event.currentTarget.open)}>
+              <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-400">Другие разделы</summary>
+              <div className="space-y-1 border-t border-slate-800 p-2">{founderSecondary.map(([href, title, Icon]) => <Link key={href} href={href} onClick={() => setOpen(false)} aria-current={active(href) ? "page" : undefined} className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm ${active(href) ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}><Icon size={18}/>{title}</Link>)}</div>
+            </details> : null}
           </nav>
         </aside>
         <div className="min-w-0 flex-1 overflow-auto"><MandatoryTaskGate><ManagerFollowUpGate>{children}</ManagerFollowUpGate></MandatoryTaskGate></div>
