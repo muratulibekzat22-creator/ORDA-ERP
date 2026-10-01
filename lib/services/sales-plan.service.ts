@@ -90,11 +90,6 @@ async function orderMetrics(start: Date, end: Date, managerId?: number) {
     grossMarginPercent: pricedRevenue > 0
       ? roundPercent((grossMargin / pricedRevenue) * 100)
       : 0,
-    managerRevenue: orders.reduce((map, order) => {
-      const id = order.managerUserId ?? order.leadConversion?.managerId;
-      if (id) map.set(id, (map.get(id) ?? 0) + Number(order.amount));
-      return map;
-    }, new Map<number, number>()),
   };
 }
 
@@ -118,10 +113,6 @@ async function recommendation(year: number, month: number) {
   const totalRevenue = nonEmpty.reduce((sum, row) => sum + row.revenue, 0);
   const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 1_000_000;
   const orderTarget = Math.max(1, Math.ceil(revenueTarget / Math.max(averageOrder, 1)));
-  const managerRevenue = new Map<number, number>();
-  for (const row of history)
-    for (const [managerId, amount] of row.managerRevenue)
-      managerRevenue.set(managerId, (managerRevenue.get(managerId) ?? 0) + amount);
   return {
     revenueTarget,
     orderTarget,
@@ -136,7 +127,6 @@ async function recommendation(year: number, month: number) {
       grossMargin: row.grossMargin,
       grossMarginPercent: row.grossMarginPercent,
     })),
-    managerRevenue,
     basis: {
       method: "BEST_OR_WEIGHTED_3_MONTHS_PLUS_25_PERCENT",
       note: "База — лучший результат или взвешенная выручка трёх полных месяцев. Цель ставится на 25% выше базы.",
@@ -150,50 +140,8 @@ async function recommendation(year: number, month: number) {
   };
 }
 
-function splitTargets(
-  managers: Array<{ id: number }>,
-  recentRevenue: Map<number, number>,
-  revenueTarget: number,
-  orderTarget: number,
-) {
-  if (!managers.length) return [];
-  const totalRecent = managers.reduce(
-    (sum, manager) => sum + (recentRevenue.get(manager.id) ?? 0),
-    0,
-  );
-  const equalShare = 1 / managers.length;
-  const weights = managers.map((manager) => {
-    const historicShare = totalRecent > 0
-      ? (recentRevenue.get(manager.id) ?? 0) / totalRecent
-      : equalShare;
-    return 0.7 * historicShare + 0.3 * equalShare;
-  });
-  let revenueAssigned = 0;
-  let ordersAssigned = 0;
-  return managers.map((manager, index) => {
-    const last = index === managers.length - 1;
-    const managerRevenue = last
-      ? Math.max(0, revenueTarget - revenueAssigned)
-      : Math.round((revenueTarget * weights[index]) / 100_000) * 100_000;
-    const managerOrders = last
-      ? Math.max(0, orderTarget - ordersAssigned)
-      : Math.max(1, Math.round(orderTarget * weights[index]));
-    revenueAssigned += managerRevenue;
-    ordersAssigned += managerOrders;
-    return {
-      managerId: manager.id,
-      revenueTarget: managerRevenue,
-      orderTarget: managerOrders,
-    };
-  });
-}
-
 const planInclude = {
   tiers: { orderBy: { position: "asc" as const } },
-  managerTargets: {
-    include: { manager: { select: { id: true, name: true, active: true } } },
-    orderBy: { manager: { name: "asc" as const } },
-  },
 } satisfies Prisma.SalesPlanInclude;
 
 async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
@@ -205,17 +153,6 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
   if (found || !([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] as Role[]).includes(actor.role))
     return found;
   const suggested = await recommendation(year, month);
-  const managers = await prisma.user.findMany({
-    where: { companyId, active: true, role: Role.MANAGER },
-    select: { id: true },
-    orderBy: { name: "asc" },
-  });
-  const targets = splitTargets(
-    managers,
-    suggested.managerRevenue,
-    suggested.revenueTarget,
-    suggested.orderTarget,
-  );
   try {
     return await prisma.salesPlan.create({
       data: {
@@ -236,7 +173,6 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
             { thresholdPercent: 120, label: "Рекорд месяца", rewardAmount: 150_000, position: 4 },
           ],
         },
-        managerTargets: { create: targets },
       },
       include: planInclude,
     });
@@ -252,10 +188,16 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
 
 export async function getSalesPlan(month: string | undefined, actor: SalesPlanActor) {
   const period = monthRange(month);
-  const [plan, actual, suggested] = await Promise.all([
+  const companyId = requireTenantIdentity().companyId;
+  const [plan, actual, suggested, managers] = await Promise.all([
     ensurePlan(actor, period.year, period.month),
     orderMetrics(period.start, period.end),
     recommendation(period.year, period.month),
+    prisma.user.findMany({
+      where: { companyId, active: true, role: Role.MANAGER },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
   const now = new Date();
   const localNow = new Date(now.getTime() + ALMATY_OFFSET_MS);
@@ -272,69 +214,46 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
   const requiredCostCoveragePercent = Number(
     plan?.requiredCostCoveragePercent ?? 100,
   );
-  const targets = plan?.managerTargets ?? [];
-  const visibleTargets = actor.role === Role.MANAGER
-    ? targets.filter((target) => target.managerId === actor.userId)
-    : targets;
+  const revenueTarget = Number(plan?.revenueTarget ?? suggested.revenueTarget);
+  const progressPercent = revenueTarget > 0
+    ? roundPercent((actual.revenue / revenueTarget) * 100)
+    : 0;
+  const achievedTier = plan?.tiers
+    .filter((tier) => progressPercent >= tier.thresholdPercent)
+    .at(-1);
+  const nextTier = plan?.tiers.find((tier) => progressPercent < tier.thresholdPercent);
+  const bonusBlockers = [
+    ...(progressPercent < 100 ? ["Командный план продаж не выполнен"] : []),
+    ...(actual.marginCoveragePercent < requiredCostCoveragePercent
+      ? [
+          `Цена производства заполнена на ${actual.marginCoveragePercent}% из ${requiredCostCoveragePercent}%`,
+        ]
+      : []),
+    ...(actual.grossMarginPercent < minimumMarginPercent
+      ? [
+          `Валовая маржа ${actual.grossMarginPercent}% ниже ${minimumMarginPercent}%`,
+        ]
+      : []),
+  ];
+  const visibleManagers = actor.role === Role.MANAGER
+    ? managers.filter((manager) => manager.id === actor.userId)
+    : managers;
   const managerProgress = await Promise.all(
-    visibleTargets.map(async (target) => {
-      const metrics = await orderMetrics(period.start, period.end, target.managerId);
-      const targetRevenue = Number(target.revenueTarget);
-      const progressPercent = targetRevenue > 0
-        ? Math.round((metrics.revenue / targetRevenue) * 10_000) / 100
-        : 0;
-      const achievedTier = plan?.tiers
-        .filter((tier) => progressPercent >= tier.thresholdPercent)
-        .at(-1);
-      const nextTier = plan?.tiers.find((tier) => progressPercent < tier.thresholdPercent);
-      const bonusBlockers = [
-        ...(progressPercent < 100 ? ["Личный план продаж не выполнен"] : []),
-        ...(metrics.marginCoveragePercent < requiredCostCoveragePercent
-          ? [
-              `Цена производства заполнена на ${metrics.marginCoveragePercent}% из ${requiredCostCoveragePercent}%`,
-            ]
-          : []),
-        ...(metrics.grossMarginPercent < minimumMarginPercent
-          ? [
-              `Валовая маржа ${metrics.grossMarginPercent}% ниже ${minimumMarginPercent}%`,
-            ]
-          : []),
-      ];
+    visibleManagers.map(async (manager) => {
+      const metrics = await orderMetrics(period.start, period.end, manager.id);
       return {
-        id: target.id,
-        managerId: target.managerId,
-        managerName: target.manager.name,
-        revenueTarget: targetRevenue,
-        orderTarget: target.orderTarget,
+        managerId: manager.id,
+        managerName: manager.name,
         actualRevenue: metrics.revenue,
         actualOrders: metrics.orders,
-        progressPercent,
+        contributionPercent: actual.revenue > 0
+          ? roundPercent((metrics.revenue / actual.revenue) * 100)
+          : 0,
         marginCoveragePercent: metrics.marginCoveragePercent,
         grossMarginPercent: metrics.grossMarginPercent,
-        bonusEligible: bonusBlockers.length === 0,
-        bonusBlockers,
-        achievedTier: achievedTier
-          ? {
-              thresholdPercent: achievedTier.thresholdPercent,
-              label: achievedTier.label,
-              rewardAmount: Number(achievedTier.rewardAmount),
-            }
-          : null,
-        nextTier: nextTier
-          ? {
-              thresholdPercent: nextTier.thresholdPercent,
-              label: nextTier.label,
-              rewardAmount: Number(nextTier.rewardAmount),
-              remainingRevenue: Math.max(
-                0,
-                (targetRevenue * nextTier.thresholdPercent) / 100 - metrics.revenue,
-              ),
-            }
-          : null,
       };
     }),
   );
-  const revenueTarget = Number(plan?.revenueTarget ?? suggested.revenueTarget);
   return {
     month: period.key,
     role: actor.role,
@@ -361,9 +280,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       revenue: actual.revenue,
       orders: actual.orders,
       averageOrder: actual.averageOrder,
-      progressPercent: revenueTarget > 0
-        ? Math.round((actual.revenue / revenueTarget) * 10_000) / 100
-        : 0,
+      progressPercent,
       gap: Math.max(0, revenueTarget - actual.revenue),
       projectedRevenue,
       marginCoveragePercent: actual.marginCoveragePercent,
@@ -371,11 +288,26 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       pricedRevenue: actual.pricedRevenue,
       grossMargin: actual.grossMargin,
       grossMarginPercent: actual.grossMarginPercent,
-      bonusEligible:
-        revenueTarget > 0 &&
-        actual.revenue >= revenueTarget &&
-        actual.marginCoveragePercent >= requiredCostCoveragePercent &&
-        actual.grossMarginPercent >= minimumMarginPercent,
+      bonusEligible: bonusBlockers.length === 0,
+      bonusBlockers,
+      achievedTier: achievedTier
+        ? {
+            thresholdPercent: achievedTier.thresholdPercent,
+            label: achievedTier.label,
+            rewardAmount: Number(achievedTier.rewardAmount),
+          }
+        : null,
+      nextTier: nextTier
+        ? {
+            thresholdPercent: nextTier.thresholdPercent,
+            label: nextTier.label,
+            rewardAmount: Number(nextTier.rewardAmount),
+            remainingRevenue: Math.max(
+              0,
+              (revenueTarget * nextTier.thresholdPercent) / 100 - actual.revenue,
+            ),
+          }
+        : null,
     },
     history: suggested.history,
     managers: managerProgress,
@@ -390,20 +322,14 @@ export async function updateSalesPlan(
     minimumMarginPercent: number;
     requiredCostCoveragePercent: number;
     tiers: Array<{ thresholdPercent: number; label: string; rewardAmount: number }>;
-    managerTargets: Array<{ managerId: number; revenueTarget: number; orderTarget: number }>;
   },
   actor: SalesPlanActor,
 ) {
   if (!([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] as Role[]).includes(actor.role))
     throw new Error("FORBIDDEN");
-  const companyId = requireTenantIdentity().companyId;
   const period = monthRange(month);
   const existing = await ensurePlan(actor, period.year, period.month);
   if (!existing) throw new Error("NOT_FOUND");
-  const managerIds = [...new Set(input.managerTargets.map((target) => target.managerId))];
-  const managerCount = await prisma.user.count({
-    where: { companyId, id: { in: managerIds }, active: true, role: Role.MANAGER },
-  });
   if (
     input.revenueTarget <= 0 ||
     input.orderTarget <= 0 ||
@@ -413,15 +339,11 @@ export async function updateSalesPlan(
     !Number.isFinite(input.requiredCostCoveragePercent) ||
     input.requiredCostCoveragePercent < 0 ||
     input.requiredCostCoveragePercent > 100 ||
-    managerCount !== managerIds.length ||
     input.tiers.some(
       (tier) =>
         tier.thresholdPercent <= 0 ||
         !tier.label.trim() ||
         tier.rewardAmount < 0,
-    ) ||
-    input.managerTargets.some(
-      (target) => target.revenueTarget < 0 || target.orderTarget < 0,
     )
   ) throw new Error("INVALID");
   await prisma.$transaction(async (tx) => {
@@ -444,15 +366,6 @@ export async function updateSalesPlan(
           label: tier.label.trim(),
           rewardAmount: tier.rewardAmount,
           position: index + 1,
-        })),
-      });
-    if (input.managerTargets.length)
-      await tx.salesPlanManagerTarget.createMany({
-        data: input.managerTargets.map((target) => ({
-          planId: existing.id,
-          managerId: target.managerId,
-          revenueTarget: target.revenueTarget,
-          orderTarget: Math.round(target.orderTarget),
         })),
       });
   });

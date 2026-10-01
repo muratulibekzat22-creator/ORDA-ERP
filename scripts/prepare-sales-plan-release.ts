@@ -75,10 +75,9 @@ async function main() {
           history: plan.history,
           managers: plan.managers.map((manager) => ({
             name: manager.managerName,
-            revenueTarget: manager.revenueTarget,
-            orderTarget: manager.orderTarget,
             actualRevenue: manager.actualRevenue,
             actualOrders: manager.actualOrders,
+            contributionPercent: manager.contributionPercent,
           })),
           months,
         };

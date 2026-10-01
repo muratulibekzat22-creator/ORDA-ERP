@@ -48,13 +48,6 @@ export async function PATCH(request: Request) {
           rewardAmount: Number(tier.rewardAmount ?? 0),
         }))
       : [];
-    const managerTargets = Array.isArray(body.managerTargets)
-      ? (body.managerTargets as Array<Record<string, unknown>>).map((target) => ({
-          managerId: Number(target.managerId),
-          revenueTarget: Number(target.revenueTarget),
-          orderTarget: Number(target.orderTarget),
-        }))
-      : [];
     const result = await updateSalesPlan(
       month,
       {
@@ -63,7 +56,6 @@ export async function PATCH(request: Request) {
         minimumMarginPercent: Number(body.minimumMarginPercent),
         requiredCostCoveragePercent: Number(body.requiredCostCoveragePercent),
         tiers,
-        managerTargets,
       },
       actor,
     );
