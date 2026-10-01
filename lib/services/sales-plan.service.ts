@@ -38,6 +38,35 @@ const roundTarget = (value: number, step = 500_000) =>
 
 const roundPercent = (value: number) => Math.round(value * 100) / 100;
 
+const roundUp = (value: number, step: number) =>
+  Math.ceil(value / step) * step;
+
+function recommendedMarketingTargets(revenueTarget: number, orderTarget: number) {
+  const applicationTarget = Math.max(1, Math.ceil(orderTarget / 0.1));
+  const inquiryTarget = Math.max(applicationTarget, Math.ceil(applicationTarget / 0.5));
+  const marketingBudgetTarget = roundUp(inquiryTarget * 2_350, 5_000);
+  return {
+    marketingBudgetTarget,
+    inquiryTarget,
+    applicationTarget,
+    assumptions: {
+      inquiryToApplicationPercent: 50,
+      applicationToOrderPercent: 10,
+      targetCostPerInquiry: 2_350,
+      marketingSharePercent: revenueTarget > 0
+        ? roundPercent((marketingBudgetTarget / revenueTarget) * 100)
+        : 0,
+    },
+  };
+}
+
+function paceStatus(actual: number, expected: number) {
+  if (expected <= 0) return "not_started" as const;
+  if (actual >= expected) return "ahead" as const;
+  if (actual >= expected * 0.9) return "on_track" as const;
+  return "behind" as const;
+}
+
 async function orderMetrics(start: Date, end: Date, managerId?: number) {
   const companyId = requireTenantIdentity().companyId;
   const orders = await prisma.order.findMany({
@@ -113,9 +142,11 @@ async function recommendation(year: number, month: number) {
   const totalRevenue = nonEmpty.reduce((sum, row) => sum + row.revenue, 0);
   const averageOrder = totalOrders > 0 ? totalRevenue / totalOrders : 1_000_000;
   const orderTarget = Math.max(1, Math.ceil(revenueTarget / Math.max(averageOrder, 1)));
+  const marketing = recommendedMarketingTargets(revenueTarget, orderTarget);
   return {
     revenueTarget,
     orderTarget,
+    ...marketing,
     history: history.map((row) => ({
       month: row.month,
       orders: row.orders,
@@ -164,6 +195,9 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
         recommendationRevenue: suggested.revenueTarget,
         recommendationOrders: suggested.orderTarget,
         recommendationBasis: suggested.basis,
+        marketingBudgetTarget: suggested.marketingBudgetTarget,
+        inquiryTarget: suggested.inquiryTarget,
+        applicationTarget: suggested.applicationTarget,
         createdById: actor.userId,
         tiers: {
           create: [
@@ -189,7 +223,7 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
 export async function getSalesPlan(month: string | undefined, actor: SalesPlanActor) {
   const period = monthRange(month);
   const companyId = requireTenantIdentity().companyId;
-  const [plan, actual, suggested, managers] = await Promise.all([
+  const [plan, actual, suggested, managers, applications, marketingMetrics] = await Promise.all([
     ensurePlan(actor, period.year, period.month),
     orderMetrics(period.start, period.end),
     recommendation(period.year, period.month),
@@ -197,6 +231,21 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       where: { companyId, active: true, role: Role.MANAGER },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
+    }),
+    prisma.client.count({
+      where: {
+        companyId,
+        active: true,
+        deletedAt: null,
+        createdAt: { gte: period.start, lt: period.end },
+      },
+    }),
+    prisma.managementMarketingMetric.findMany({
+      where: {
+        companyId,
+        metricMonth: { gte: period.start, lt: period.end },
+      },
+      select: { spend: true, leads: true },
     }),
   ]);
   const now = new Date();
@@ -215,6 +264,19 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     plan?.requiredCostCoveragePercent ?? 100,
   );
   const revenueTarget = Number(plan?.revenueTarget ?? suggested.revenueTarget);
+  const fallbackMarketing = recommendedMarketingTargets(
+    revenueTarget,
+    plan?.orderTarget ?? suggested.orderTarget,
+  );
+  const marketingBudgetTarget = Number(plan?.marketingBudgetTarget ?? 0) > 0
+    ? Number(plan?.marketingBudgetTarget)
+    : fallbackMarketing.marketingBudgetTarget;
+  const inquiryTarget = (plan?.inquiryTarget ?? 0) > 0
+    ? Number(plan?.inquiryTarget)
+    : fallbackMarketing.inquiryTarget;
+  const applicationTarget = (plan?.applicationTarget ?? 0) > 0
+    ? Number(plan?.applicationTarget)
+    : fallbackMarketing.applicationTarget;
   const progressPercent = revenueTarget > 0
     ? roundPercent((actual.revenue / revenueTarget) * 100)
     : 0;
@@ -254,6 +316,100 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       };
     }),
   );
+  const marketingActual = marketingMetrics.reduce(
+    (total, metric) => ({
+      spend: total.spend + Number(metric.spend),
+      inquiries: total.inquiries + metric.leads,
+    }),
+    { spend: 0, inquiries: 0 },
+  );
+  const progressFactor = daysInMonth > 0 ? elapsedDays / daysInMonth : 0;
+  const expectedToDate = {
+    revenue: revenueTarget * progressFactor,
+    spend: marketingBudgetTarget * progressFactor,
+    inquiries: inquiryTarget * progressFactor,
+    applications: applicationTarget * progressFactor,
+    orders: (plan?.orderTarget ?? suggested.orderTarget) * progressFactor,
+  };
+  const pace = {
+    revenue: paceStatus(actual.revenue, expectedToDate.revenue),
+    inquiries: paceStatus(marketingActual.inquiries, expectedToDate.inquiries),
+    applications: paceStatus(applications, expectedToDate.applications),
+    orders: paceStatus(actual.orders, expectedToDate.orders),
+  };
+  const marketingTrackingReady =
+    marketingActual.spend > 0 || marketingActual.inquiries > 0;
+  const paceValues = Object.values(pace);
+  const overallStatus = !marketingTrackingReady && elapsedDays > 0
+    ? "data_missing"
+    : paceValues.includes("behind")
+      ? "behind"
+      : paceValues.includes("on_track")
+        ? "on_track"
+        : paceValues.every((status) => status === "not_started")
+          ? "not_started"
+          : "ahead";
+  const remainingDays = isCurrent
+    ? Math.max(1, daysInMonth - localNow.getUTCDate() + 1)
+    : now < period.start
+      ? daysInMonth
+      : 1;
+  const orderTarget = plan?.orderTarget ?? suggested.orderTarget;
+  const dailyFunnel = {
+    daysInMonth,
+    elapsedDays,
+    remainingDays,
+    trackingReady: marketingTrackingReady,
+    overallStatus,
+    targets: {
+      revenueMonth: revenueTarget,
+      revenueDay: revenueTarget / daysInMonth,
+      spendMonth: marketingBudgetTarget,
+      spendDay: marketingBudgetTarget / daysInMonth,
+      inquiriesMonth: inquiryTarget,
+      inquiriesDay: inquiryTarget / daysInMonth,
+      applicationsMonth: applicationTarget,
+      applicationsDay: applicationTarget / daysInMonth,
+      ordersMonth: orderTarget,
+      ordersDay: orderTarget / daysInMonth,
+    },
+    actual: {
+      revenue: actual.revenue,
+      spend: marketingActual.spend,
+      inquiries: marketingActual.inquiries,
+      applications,
+      orders: actual.orders,
+    },
+    expectedToDate,
+    neededPerRemainingDay: {
+      revenue: Math.max(0, revenueTarget - actual.revenue) / remainingDays,
+      spend: Math.max(0, marketingBudgetTarget - marketingActual.spend) / remainingDays,
+      inquiries: Math.max(0, inquiryTarget - marketingActual.inquiries) / remainingDays,
+      applications: Math.max(0, applicationTarget - applications) / remainingDays,
+      orders: Math.max(0, orderTarget - actual.orders) / remainingDays,
+    },
+    pace,
+    economics: {
+      targetCostPerInquiry: inquiryTarget > 0
+        ? marketingBudgetTarget / inquiryTarget
+        : 0,
+      targetCostPerApplication: applicationTarget > 0
+        ? marketingBudgetTarget / applicationTarget
+        : 0,
+      targetCustomerAcquisitionCost: orderTarget > 0
+        ? marketingBudgetTarget / orderTarget
+        : 0,
+      marketingSharePercent: revenueTarget > 0
+        ? roundPercent((marketingBudgetTarget / revenueTarget) * 100)
+        : 0,
+      inquiryToApplicationPercent: inquiryTarget > 0
+        ? roundPercent((applicationTarget / inquiryTarget) * 100)
+        : 0,
+      applicationToOrderPercent: applicationTarget > 0
+        ? roundPercent((orderTarget / applicationTarget) * 100)
+        : 0,
+    },
+  };
   return {
     month: period.key,
     role: actor.role,
@@ -269,6 +425,9 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       recommendationBasis: plan?.recommendationBasis ?? suggested.basis,
       minimumMarginPercent,
       requiredCostCoveragePercent,
+      marketingBudgetTarget,
+      inquiryTarget,
+      applicationTarget,
       tiers: (plan?.tiers ?? []).map((tier) => ({
         id: tier.id,
         thresholdPercent: tier.thresholdPercent,
@@ -311,6 +470,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     },
     history: suggested.history,
     managers: managerProgress,
+    dailyFunnel,
   };
 }
 
@@ -321,6 +481,9 @@ export async function updateSalesPlan(
     orderTarget: number;
     minimumMarginPercent: number;
     requiredCostCoveragePercent: number;
+    marketingBudgetTarget: number;
+    inquiryTarget: number;
+    applicationTarget: number;
     tiers: Array<{ thresholdPercent: number; label: string; rewardAmount: number }>;
   },
   actor: SalesPlanActor,
@@ -339,6 +502,12 @@ export async function updateSalesPlan(
     !Number.isFinite(input.requiredCostCoveragePercent) ||
     input.requiredCostCoveragePercent < 0 ||
     input.requiredCostCoveragePercent > 100 ||
+    !Number.isFinite(input.marketingBudgetTarget) ||
+    input.marketingBudgetTarget < 0 ||
+    !Number.isInteger(input.inquiryTarget) ||
+    input.inquiryTarget <= 0 ||
+    !Number.isInteger(input.applicationTarget) ||
+    input.applicationTarget <= 0 ||
     input.tiers.some(
       (tier) =>
         tier.thresholdPercent <= 0 ||
@@ -354,6 +523,9 @@ export async function updateSalesPlan(
         orderTarget: input.orderTarget,
         minimumMarginPercent: input.minimumMarginPercent,
         requiredCostCoveragePercent: input.requiredCostCoveragePercent,
+        marketingBudgetTarget: input.marketingBudgetTarget,
+        inquiryTarget: input.inquiryTarget,
+        applicationTarget: input.applicationTarget,
       },
     });
     await tx.salesPlanTier.deleteMany({ where: { planId: existing.id } });

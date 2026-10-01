@@ -1052,6 +1052,9 @@ model SalesPlan {
   recommendationBasis         Json?
   minimumMarginPercent        Decimal                  @default(25) @db.Decimal(5, 2)
   requiredCostCoveragePercent Decimal                  @default(100) @db.Decimal(5, 2)
+  marketingBudgetTarget       Decimal                  @default(0) @db.Decimal(14, 2)
+  inquiryTarget               Int                      @default(0)
+  applicationTarget           Int                      @default(0)
   createdById                 Int
   createdBy                   User                     @relation("SalesPlanCreator", fields: [createdById], references: [id], onDelete: Restrict)
   tiers                       SalesPlanTier[]

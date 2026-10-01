@@ -72,6 +72,7 @@ async function main() {
           targetRevenue: plan.plan.revenueTarget,
           targetOrders: plan.plan.orderTarget,
           actual: plan.actual,
+          dailyFunnel: plan.dailyFunnel,
           history: plan.history,
           managers: plan.managers.map((manager) => ({
             name: manager.managerName,

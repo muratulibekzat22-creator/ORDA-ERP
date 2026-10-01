@@ -23,6 +23,10 @@ type PlanCardPayload = {
     minimumMarginPercent: number;
     requiredCostCoveragePercent: number;
   };
+  dailyFunnel: {
+    overallStatus: "ahead" | "on_track" | "behind" | "not_started" | "data_missing";
+    targets: { spendDay: number; inquiriesDay: number; applicationsDay: number; ordersDay: number };
+  };
 };
 
 const money = (value: number) => `${Math.round(value).toLocaleString("ru-RU")} ₸`;
@@ -52,6 +56,15 @@ export default function SalesPlanCard({ month }: { month: string }) {
   if (!data)
     return <div className="h-40 animate-pulse rounded-2xl border border-slate-800 bg-[#101827]" />;
   const width = Math.min(Math.max(data.actual.progressPercent, 0), 100);
+  const paceLabel = data.dailyFunnel.overallStatus === "ahead"
+    ? "идём с опережением"
+    : data.dailyFunnel.overallStatus === "on_track"
+      ? "почти по плану"
+      : data.dailyFunnel.overallStatus === "behind"
+        ? "отстаём"
+        : data.dailyFunnel.overallStatus === "data_missing"
+          ? "нет данных Meta"
+          : "месяц не начался";
   return (
     <section className="overflow-hidden rounded-2xl border border-blue-500/25 bg-gradient-to-br from-blue-500/10 via-[#101827] to-[#101827] p-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -71,6 +84,9 @@ export default function SalesPlanCard({ month }: { month: string }) {
           <p className={`mt-2 text-sm ${data.actual.bonusEligible ? "text-emerald-300" : "text-amber-200"}`}>
             Командный бонус: общий план + цена производства {data.plan.requiredCostCoveragePercent}% + валовая маржа не ниже {data.plan.minimumMarginPercent}%.
             Сейчас цена заполнена на {data.actual.marginCoveragePercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%, маржа {data.actual.grossMarginPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%.
+          </p>
+          <p className="mt-3 rounded-xl bg-slate-950/60 p-3 text-sm text-cyan-100">
+            Каждый день: реклама {money(data.dailyFunnel.targets.spendDay)}, {Math.ceil(data.dailyFunnel.targets.inquiriesDay)} обращений, {Math.ceil(data.dailyFunnel.targets.applicationsDay)} заявок в ORDA и {data.dailyFunnel.targets.ordersDay.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} заказа. Текущий статус: <strong>{paceLabel}</strong>.
           </p>
         </div>
         <Link href={`/sales-plan?month=${encodeURIComponent(month)}`} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white hover:bg-blue-500"><TrendingUp size={18}/>Открыть план</Link>
