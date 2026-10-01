@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, CircleAlert, PlayCircle } from "lucide-react";
 
+import ChatGptOfficeAccessCard from "@/components/training/ChatGptOfficeAccessCard";
+
 type AttemptHistory = { id: number; score: number | null; percent: number | null; status: string; startedAt: string; completedAt: string | null };
 type Lesson = { key: string; title: string; description: string; youtubeVideoId: string; progressPercent: number };
 type KnowledgeSection = { title: string; items: readonly string[] };
@@ -261,6 +263,8 @@ export default function TrainingWorkspace() {
         <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-800" aria-label={`Прогресс просмотра ${progress}%`}><div className="h-full rounded-full bg-blue-500 transition-[width]" style={{ width: `${progress}%` }} /></div>
         <p className="mt-3 text-xs text-slate-500">Для теста необходимо посмотреть минимум {assignment.course.requiredCoverage}% каждого урока.</p>
       </section>
+
+      <ChatGptOfficeAccessCard />
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-6">
         <h2 className="text-xl font-semibold text-white">Краткая база знаний</h2>

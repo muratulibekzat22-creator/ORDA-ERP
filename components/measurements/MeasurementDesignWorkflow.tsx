@@ -14,6 +14,7 @@ import {
   Upload,
 } from "lucide-react";
 
+import ChatGptOfficeAccessCard from "@/components/training/ChatGptOfficeAccessCard";
 import { buildMeasurementDesignPrompt } from "@/lib/orders/design-brief";
 
 type Photo = {
@@ -234,6 +235,7 @@ export default function MeasurementDesignWorkflow({
 
         <Step number={3} title="Готовый промпт для ChatGPT" done={promptReady}>
           <p className="text-sm text-slate-400">Промпт сохраняет реальную геометрию объекта, переносит только стиль референса и добавляет фирменный водяной знак ALTYN SAPA.</p>
+          <div className="mt-3"><ChatGptOfficeAccessCard compact /></div>
           <div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={busy || !anglesReady || !referenceReady} onClick={() => void copyPrompt()} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-700 px-4 font-semibold disabled:opacity-40"><ClipboardCopy size={17} />Скопировать готовый промпт</button><a href="https://chatgpt.com/" target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-600 px-4 font-semibold text-slate-200">Открыть ChatGPT <ExternalLink size={16} /></a></div>
           <div className="mt-3 flex flex-wrap gap-2">{measurement.attachments.filter((photo) => ["OBJECT_FRONT", "OBJECT_SIDE", "OBJECT_REAR", "OBJECT", "DESIGN_REFERENCE"].includes(photo.type)).map((photo) => <a key={photo.id} href={`/api/measurement-attachments/${photo.id}?download=1`} className="inline-flex min-h-9 items-center gap-1 rounded-lg bg-slate-800 px-3 text-xs text-blue-200"><Download size={14} />{photo.fileName}</a>)}</div>
         </Step>

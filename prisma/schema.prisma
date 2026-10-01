@@ -464,6 +464,7 @@ enum TrainingAuditAction {
   ACKNOWLEDGED
   OVERRIDE_GRANTED
   QUIZ_SUBMITTED
+  CHATGPT_ACCESS_REVEALED
 }
 
 model User {

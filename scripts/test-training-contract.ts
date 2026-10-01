@@ -32,20 +32,21 @@ assert.equal(
   null,
 );
 
-assert.equal(MEASURER_COURSE.version, 2);
+assert.equal(MEASURER_COURSE.version, 3);
 assert.equal(MEASURER_COURSE.youtubeVideoId, "jBk1-0ku2PY");
 assert.equal(MEASURER_COURSE.requiredCoverage, 90);
 assert.equal(MEASURER_COURSE.passScorePercent, 85);
-assert.equal(MEASURER_LESSONS.length, 9);
-assert.equal(new Set(MEASURER_LESSONS.map((lesson) => lesson.key)).size, 9);
-assert.equal(new Set(MEASURER_LESSONS.map((lesson) => lesson.youtubeVideoId)).size, 9);
-assert.equal(MEASURER_QUESTIONS.length, 20);
+assert.equal(MEASURER_LESSONS.length, 10);
+assert.equal(new Set(MEASURER_LESSONS.map((lesson) => lesson.key)).size, 10);
+assert.equal(new Set(MEASURER_LESSONS.map((lesson) => lesson.youtubeVideoId)).size, 10);
+assert(MEASURER_LESSONS.some((lesson) => lesson.youtubeVideoId === "Vy9FQd3a1Og"));
+assert.equal(MEASURER_QUESTIONS.length, 24);
 for (const question of MEASURER_QUESTIONS) {
   assert.equal(question.options.length, 4);
   assert(question.correctOption >= 0 && question.correctOption < 4);
 }
-assert.equal((17 / 20) * 100 >= 85, true);
-assert.equal((16 / 20) * 100 >= 85, false);
+assert.equal((21 / 24) * 100 >= 85, true);
+assert.equal((20 / 24) * 100 >= 85, false);
 
 const service = readFileSync("lib/services/training.service.ts", "utf8");
 const trainingApi = readFileSync("lib/training-api.ts", "utf8");
@@ -56,6 +57,9 @@ const proxy = readFileSync("proxy.ts", "utf8");
 const employeeUpdate = readFileSync("app/api/employees/[id]/route.ts", "utf8");
 const employeeService = readFileSync("lib/services/employee.service.ts", "utf8");
 const nextConfig = readFileSync("next.config.ts", "utf8");
+const chatGptAccessApi = readFileSync("app/api/training/chatgpt-access/route.ts", "utf8");
+const chatGptAccessCard = readFileSync("components/training/ChatGptOfficeAccessCard.tsx", "utf8");
+const designPrompt = readFileSync("lib/orders/design-brief.ts", "utf8");
 
 assert(service.includes("select: { id: true, position: true, question: true, options: true }"), "quiz read projection can expose answers");
 assert(!readFileSync("app/api/training/attempts/route.ts", "utf8").includes("correctOption"), "quiz route exposes answers");
@@ -75,5 +79,9 @@ assert(workspace.includes("overflow-x-hidden") && workspace.includes("aspect-vid
 assert(shell.includes('"/training"') && shell.includes('role === "MEASURER"'));
 assert(proxy.includes('firstSegment === "training"'));
 assert(employeeService.includes("ensureCurrentMeasurerTraining") && employeeUpdate.includes("ensureCurrentMeasurerTraining"));
+assert(chatGptAccessApi.includes("Role.MEASURER") && chatGptAccessApi.includes('"Cache-Control": "private, no-store, max-age=0"'));
+assert(chatGptAccessApi.includes("ownerNotified") && service.includes("CHATGPT_ACCESS_REVEALED"));
+assert(chatGptAccessCard.includes("Получить рабочий логин и пароль") && chatGptAccessCard.includes("Не фотографируйте пароль"));
+assert(designPrompt.includes("Не упоминай имя, телефон или точный адрес клиента"));
 
 console.log("training security, progress and mobile contracts passed");

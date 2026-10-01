@@ -404,6 +404,22 @@ export async function acknowledgeTraining(userId: number) {
   });
 }
 
+export async function recordChatGptAccessReveal(userId: number) {
+  return prisma.$transaction(async (tx) => {
+    const assignment = await ensureCurrentMeasurerTraining(tx, userId);
+    if (!assignment) throw new Error("TRAINING_NOT_FOUND");
+    await tx.trainingAudit.create({
+      data: {
+        assignmentId: assignment.id,
+        actorId: userId,
+        action: TrainingAuditAction.CHATGPT_ACCESS_REVEALED,
+        metadata: { purpose: "MEASUREMENT_3D", revealedAt: new Date() },
+      },
+    });
+    return { assignmentId: assignment.id };
+  });
+}
+
 const quizPayload = async (db: Db, courseId: number) =>
   db.trainingQuestion.findMany({
     where: { courseId },
