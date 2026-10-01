@@ -1130,6 +1130,9 @@ model CalendarTask {
   plannedCompletionAt     DateTime?
   resultText              String?
   resultSubmittedAt       DateTime?
+  controlKey              String?
+  controlRemindedAt       DateTime?
+  controlVerifiedAt       DateTime?
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
   auditEvents             CalendarTaskAudit[]
@@ -1143,6 +1146,7 @@ model CalendarTask {
   @@index([companyId, dueAt, status])
   @@index([assigneeId, acknowledgementRequired, acknowledgedAt])
   @@index([assigneeId, plannedCompletionAt, resultSubmittedAt])
+  @@unique([companyId, controlKey])
 }
 
 model CalendarTaskResultAttachment {

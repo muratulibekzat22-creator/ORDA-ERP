@@ -33,10 +33,10 @@ export async function getMandatoryTask(actor: CalendarActor) {
     where: {
       assigneeId: actor.userId,
       acknowledgementRequired: true,
-      status: { not: CalendarTaskStatus.CANCELLED },
+      status: { notIn: [CalendarTaskStatus.CANCELLED, CalendarTaskStatus.COMPLETED] },
       OR: [
         { acknowledgedAt: null },
-        { acknowledgedAt: { not: null }, plannedCompletionAt: { lte: now }, resultSubmittedAt: null },
+        { controlKey: null, acknowledgedAt: { not: null }, plannedCompletionAt: { lte: now }, resultSubmittedAt: null },
       ],
     },
     select,

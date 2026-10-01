@@ -23,6 +23,7 @@ import {
 } from "@/lib/orders/presentation";
 import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
 import SalesPlanCard from "@/components/sales-plan/SalesPlanCard";
+import FounderControlPanel from "@/components/dashboard/FounderControlPanel";
 
 type ManagementPayload = {
   role: "DIRECTOR" | "ACCOUNTANT";
@@ -264,6 +265,7 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
         </p>
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
+      {founder && <FounderControlPanel />}
       {data && !founder && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} /> : null}
       {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
         founder ? <FounderDashboard data={data} /> : (
