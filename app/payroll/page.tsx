@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { payrollRoleAccess } from "@/lib/payroll-policy";
 
 type Accrual = {
   id: number;
@@ -80,6 +81,7 @@ type PayrollAudit = {
   ledgerDifference: number;
   auditedAccrued: number;
   auditedPayable: number;
+  unreconciledOrders: number;
   readyToPay: boolean;
   mismatches: PayrollAuditOrder[];
 };
@@ -255,10 +257,11 @@ export default function PayrollPage() {
     [operation, setOperation] = useState<Operation | null>(null),
     [target, setTarget] = useState<PayrollRow | null>(null);
   const [form, setForm] = useState<Form>(emptyForm);
-  const role = session?.user.role ?? "",
-    founder = role === "DIRECTOR",
-    director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
-    accountant = role === "ACCOUNTANT",
+  const role = session?.user.accountRole || session?.user.role || "",
+    roleAccess = payrollRoleAccess(role),
+    founder = roleAccess.founder,
+    director = roleAccess.administrator,
+    accountant = roleAccess.accountant,
     adminView = director || accountant,
     managerSelfService = role === "MANAGER" && !adminView,
     closed = data.period?.status === "CLOSED",
@@ -987,7 +990,7 @@ function EmployeeDrawer({
             </div>
             {!row.payrollAudit.readyToPay && (
               <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-                В учёте не хватает корректировки {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}. До её применения финальная выплата заблокирована.
+                Нужно сверить заказов: {row.payrollAudit.unreconciledOrders}. Общая корректировка {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}. Даже если ошибки взаимно компенсируются по сумме, финальная выплата остаётся заблокированной до сверки каждого заказа.
               </div>
             )}
             <div className="mt-3 space-y-2">
@@ -1007,7 +1010,7 @@ function EmployeeDrawer({
                     <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
                       <span>Внесено {currency(item.submitted)} · система {currency(item.expected)}</span>
                       <span className={difference === 0 ? "text-emerald-300" : "text-amber-300"}>
-                        {item.eligible ? mismatch : "не участвует: заказ отменён/возвращён"}{item.appliedAdjustment ? ` · исправлено ${currency(item.appliedAdjustment)}` : ""}
+                        {item.eligible ? mismatch : "не участвует в этом расчётном периоде"}{item.appliedAdjustment ? ` · исправлено ${currency(item.appliedAdjustment)}` : ""}
                       </span>
                     </div>
                   </div>

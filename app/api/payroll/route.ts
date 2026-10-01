@@ -32,10 +32,10 @@ import {
 } from "@/lib/services/payroll.service";
 
 const actor = (session: {
-  user: { id: string; role: string; name?: string | null };
+  user: { id: string; role: string; accountRole?: string | null; name?: string | null };
 }) => ({
   userId: Number(session.user.id),
-  role: session.user.role as Role,
+  role: (session.user.accountRole || session.user.role) as Role,
   name: session.user.name ?? "",
 });
 const fail = (error: unknown) =>

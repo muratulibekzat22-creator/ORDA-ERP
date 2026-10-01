@@ -70,6 +70,20 @@ export const isValidKaspiReference = (value: string | undefined) => {
 export const isPayrollReconciled = (delta: number) =>
   Number.isFinite(delta) && Math.abs(delta) < 0.01;
 
+export const isPayrollPolicyReady = (
+  salaryDelta: number,
+  orderDeltas: number[],
+) =>
+  isPayrollReconciled(salaryDelta) &&
+  orderDeltas.every(isPayrollReconciled);
+
+export const payrollRoleAccess = (accountRole: string) => ({
+  founder: accountRole === "DIRECTOR",
+  administrator:
+    accountRole === "DIRECTOR" || accountRole === "OPERATIONS_DIRECTOR",
+  accountant: accountRole === "ACCOUNTANT",
+});
+
 export const payrollPaymentReference = (
   year: number,
   month: number,

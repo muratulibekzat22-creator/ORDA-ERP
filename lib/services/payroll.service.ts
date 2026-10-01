@@ -17,6 +17,7 @@ import {
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
   isPayrollReconciled,
+  isPayrollPolicyReady,
   isValidKaspiReference,
   MANAGER_ORDER_BONUS_EARNED_EVENT,
   MANAGER_ORDER_BONUS_HIGH,
@@ -532,7 +533,14 @@ async function managerPayrollPolicyState(
   const applies =
     employee.user?.role === Role.MANAGER || employee.position === Role.MANAGER;
   if (!applies)
-    return { applies: false, delta: 0, salaryDelta: 0, orderBonusDelta: 0 };
+    return {
+      applies: false,
+      delta: 0,
+      salaryDelta: 0,
+      orderBonusDelta: 0,
+      orderDeltas: [],
+      reconciled: true,
+    };
 
   const range = companyMonthRange(period.year, period.month);
   const activeRate = employee.salaryRates.find(
@@ -569,33 +577,54 @@ async function managerPayrollPolicyState(
           : []),
       ],
     },
-    select: { amount: true, status: true, deletedAt: true },
+    select: { id: true, amount: true, status: true, deletedAt: true },
   });
-  const requiredOrderBonuses = orders.reduce(
-    (sum, order) =>
-      sum +
-      (isManagerOrderBonusEligible(order)
+  const requiredByOrder = new Map(
+    orders.map((order) => [
+      order.id,
+      isManagerOrderBonusEligible(order)
         ? managerOrderBonus(Number(order.amount))
-        : 0),
-    0,
+        : 0,
+    ]),
   );
-  const postedOrderBonuses = activeAccruals
+  const postedOrderRows = activeAccruals
     .filter(
       (row) =>
-        row.type === PayrollAccrualType.ORDER_BONUS ||
-        row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
-        ((row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
-          row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
-          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX)),
-    )
-    .reduce((sum, row) => sum + signed(row), 0);
+        Boolean(row.orderId) &&
+        (row.type === PayrollAccrualType.ORDER_BONUS ||
+          row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
+          ((row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+            row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+            row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX))),
+    );
+  const orderIds = new Set([
+    ...requiredByOrder.keys(),
+    ...postedOrderRows
+      .map((row) => row.orderId)
+      .filter((value): value is number => Boolean(value)),
+  ]);
+  const orderDeltas = [...orderIds].map((orderId) => {
+    const required = requiredByOrder.get(orderId) ?? 0;
+    const posted = postedOrderRows
+      .filter((row) => row.orderId === orderId)
+      .reduce((sum, row) => sum + signed(row), 0);
+    return { orderId, required, posted, delta: required - posted };
+  });
   const salaryDelta = requiredSalary - salaryPosted;
-  const orderBonusDelta = requiredOrderBonuses - postedOrderBonuses;
+  const orderBonusDelta = orderDeltas.reduce(
+    (sum, row) => sum + row.delta,
+    0,
+  );
   return {
     applies: true,
     delta: salaryDelta + orderBonusDelta,
     salaryDelta,
     orderBonusDelta,
+    orderDeltas,
+    reconciled: isPayrollPolicyReady(
+      salaryDelta,
+      orderDeltas.map((row) => row.delta),
+    ),
   };
 }
 
@@ -635,7 +664,7 @@ async function createPaymentTx(
       input.employeeId,
       period,
     );
-    if (reconciliation.applies && !isPayrollReconciled(reconciliation.delta))
+    if (reconciliation.applies && !reconciliation.reconciled)
       throw new PayrollError("PAYROLL_RECONCILIATION_REQUIRED");
   }
   if (
@@ -881,6 +910,10 @@ export async function reconcileManagerPayroll(
     const activeAccruals = employee.accruals.filter(
       (row) => !row.reversalOfId && !row.reversedBy,
     );
+    const accrualStateVersion = employee.accruals.reduce(
+      (latest, row) => Math.max(latest, row.id),
+      0,
+    );
     const signed = (row: (typeof activeAccruals)[number]) =>
       Number(row.amount) *
       (row.direction === PayrollDirection.INCREASE ? 1 : -1);
@@ -921,7 +954,7 @@ export async function reconcileManagerPayroll(
           reason: args.reason,
           approvedById: actor.userId,
           createdById: actor.userId,
-          idempotencyKey: `payroll-policy:v1:${period.id}:${employee.id}:${args.label}:${Math.round(args.amount * 100)}`,
+          idempotencyKey: `payroll-policy:v1:${period.id}:${employee.id}:${args.label}:${accrualStateVersion}:${Math.round(args.amount * 100)}`,
           orderBonusUniquenessKey:
             args.orderId &&
             (type === PayrollAccrualType.ORDER_BONUS ||
@@ -1666,10 +1699,75 @@ export async function payrollSummary(
             };
           })
       : [];
+    const assignedOrderIds = new Set(assignedOrders.map((order) => order.id));
+    const orphanOrderIds = managerPolicyApplies
+      ? [
+          ...new Set(
+            activeAccruals
+              .filter(
+                (row) =>
+                  row.orderId &&
+                  !assignedOrderIds.has(row.orderId) &&
+                  (row.type === PayrollAccrualType.ORDER_BONUS ||
+                    row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
+                    ((row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+                      row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+                      row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX))),
+              )
+              .map((row) => row.orderId!),
+          ),
+        ]
+      : [];
+    const orphanOrderAudit = orphanOrderIds.map((orderId) => {
+      const rows = activeAccruals.filter((row) => row.orderId === orderId);
+      const primaryBonuses = rows.filter(
+        (row) =>
+          row.direction === PayrollDirection.INCREASE &&
+          (row.type === PayrollAccrualType.ORDER_BONUS ||
+            row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS),
+      );
+      const manualBonus = primaryBonuses.find(
+        (row) => row.type === PayrollAccrualType.ORDER_BONUS,
+      );
+      const policyAdjustments = rows.filter(
+        (row) =>
+          (row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+            row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX),
+      );
+      const recorded = [...primaryBonuses, ...policyAdjustments].reduce(
+        (sum, row) => sum + policySigned(row),
+        0,
+      );
+      const order = primaryBonuses[0]?.order ?? policyAdjustments[0]?.order;
+      return {
+        accrualId: manualBonus?.id ?? primaryBonuses[0]?.id ?? -orderId,
+        orderId,
+        orderNumber: order?.number ?? `Заказ ${orderId}`,
+        clientName: order?.client.name ?? "Не закреплён за менеджером",
+        orderAmount: Number(order?.amount ?? 0),
+        orderStatus: order?.status ?? "Вне расчётного периода",
+        earnedAt: order?.orderReceivedAt ?? new Date(0),
+        earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
+        eligible: false,
+        submitted: Number(manualBonus?.amount ?? 0),
+        expected: 0,
+        appliedAdjustment: policyAdjustments.reduce(
+          (sum, row) => sum + policySigned(row),
+          0,
+        ),
+        recorded,
+        managerDifference: Number(manualBonus?.amount ?? 0),
+        ledgerDifference: -recorded,
+        status: "NOT_ELIGIBLE" as const,
+        reconciled: isPayrollReconciled(-recorded),
+      };
+    });
+    const allOrderBonusAudit = [...orderBonusAudit, ...orphanOrderAudit];
     const salaryDifference = managerPolicyApplies
       ? currentSalary - salaryPosted
       : 0;
-    const bonusLedgerDifference = orderBonusAudit.reduce(
+    const bonusLedgerDifference = allOrderBonusAudit.reduce(
       (sum, row) => sum + row.ledgerDifference,
       0,
     );
@@ -1718,16 +1816,16 @@ export async function payrollSummary(
               above: MANAGER_ORDER_BONUS_HIGH,
               earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
             },
-            linkedOrders: orderBonusAudit.filter((row) => row.eligible).length,
-            submittedOrderBonus: orderBonusAudit.reduce(
+            linkedOrders: allOrderBonusAudit.filter((row) => row.eligible).length,
+            submittedOrderBonus: allOrderBonusAudit.reduce(
               (sum, row) => sum + row.submitted,
               0,
             ),
-            requiredOrderBonus: orderBonusAudit.reduce(
+            requiredOrderBonus: allOrderBonusAudit.reduce(
               (sum, row) => sum + row.expected,
               0,
             ),
-            managerDifference: orderBonusAudit.reduce(
+            managerDifference: allOrderBonusAudit.reduce(
               (sum, row) => sum + row.managerDifference,
               0,
             ),
@@ -1746,9 +1844,14 @@ export async function payrollSummary(
             ledgerDifference: salaryDifference + bonusLedgerDifference,
             auditedAccrued,
             auditedPayable: auditedAccrued - paid,
-            readyToPay:
-              Math.abs(salaryDifference + bonusLedgerDifference) < 0.01,
-            mismatches: orderBonusAudit,
+            unreconciledOrders: allOrderBonusAudit.filter(
+              (row) => !row.reconciled,
+            ).length,
+            readyToPay: isPayrollPolicyReady(
+              salaryDifference,
+              allOrderBonusAudit.map((row) => row.ledgerDifference),
+            ),
+            mismatches: allOrderBonusAudit,
           }
         : null,
       totals: { accrued, paid, pending, payable: accrued - paid },

@@ -6,10 +6,12 @@ import {
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
   isPayrollReconciled,
+  isPayrollPolicyReady,
   isValidKaspiReference,
   managerOrderBonus,
   payrollPaymentPurpose,
   payrollPaymentReference,
+  payrollRoleAccess,
 } from "../lib/payroll-policy";
 
 assert.equal(managerOrderBonus(616_000), 30_000);
@@ -71,6 +73,20 @@ assert.equal(isPayrollReconciled(0), true);
 assert.equal(isPayrollReconciled(0.009), true);
 assert.equal(isPayrollReconciled(30_000), false);
 assert.equal(isPayrollReconciled(Number.NaN), false);
+assert.equal(isPayrollPolicyReady(0, [0, 0]), true);
+assert.equal(isPayrollPolicyReady(0, [30_000, -30_000]), false);
+assert.equal(isPayrollPolicyReady(0, [30_000, -30_000, 0]), false);
+assert.equal(isPayrollPolicyReady(200_000, [0]), false);
+assert.deepEqual(payrollRoleAccess("DIRECTOR"), {
+  founder: true,
+  administrator: true,
+  accountant: false,
+});
+assert.deepEqual(payrollRoleAccess("OPERATIONS_DIRECTOR"), {
+  founder: false,
+  administrator: true,
+  accountant: false,
+});
 
 const gulsimOrders = [
   6_000_000,
@@ -95,9 +111,20 @@ const serviceSource = readFileSync(
   new URL("../lib/services/payroll.service.ts", import.meta.url),
   "utf8",
 );
+const payrollRouteSource = readFileSync(
+  new URL("../app/api/payroll/route.ts", import.meta.url),
+  "utf8",
+);
 const migrationSource = readFileSync(
   new URL(
     "../prisma/migrations/20261002120000_manager_order_bonus_uniqueness/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const uniquenessMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261002130000_order_bonus_uniqueness_key/migration.sql",
     import.meta.url,
   ),
   "utf8",
@@ -106,8 +133,17 @@ assert.match(serviceSource, /FOUNDER_CONFIRMATION_REQUIRED/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
 assert.match(serviceSource, /managerPayrollPolicyState/);
+assert.match(
+  payrollRouteSource,
+  /session\.user\.accountRole\s*\|\|\s*session\.user\.role/,
+);
 assert.match(serviceSource, /payroll-policy:v1:/);
-assert.match(migrationSource, /PayrollAccrual_orderBonusUniquenessKey_key/);
 assert.match(migrationSource, /PayrollPayment_externalReference_key/);
+assert.match(migrationSource, /PayrollAccrual_one_order_bonus/);
+assert.match(uniquenessMigrationSource, /orderBonusUniquenessKey/);
+assert.match(
+  uniquenessMigrationSource,
+  /DROP INDEX IF EXISTS "PayrollAccrual_one_order_bonus"/,
+);
 
 console.log("Payroll policy tests passed");
