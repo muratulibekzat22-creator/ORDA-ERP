@@ -45,6 +45,12 @@ assert.match(service, /completionTasks/, "report must include exact completion t
 assert.match(service, /recordedExpenses/, "report must include recorded expenses");
 assert.match(service, /const pricedOrders = orders\.filter/, "margin must use only orders with complete sale and production prices");
 assert.match(service, /const grossMargin = pricedSales - productionCost/, "gross margin must remain available for complete orders");
+assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| pricedOrders.length !== orders.length \? null : netProfit/, "incomplete totals must not be exposed as company net profit");
+assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows business order date, not data-entry date");
+assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
+assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
+const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", import.meta.url), "utf8");
+assert.match(reportPage, /Заказы \/ заявки периода/);
 assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: 2 \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");
 assert.match(route, /report\.sales\.grossMargin === undefined/, "export must redact gross margin");
