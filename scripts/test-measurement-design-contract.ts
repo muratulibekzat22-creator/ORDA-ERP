@@ -36,6 +36,8 @@ const workspace = readFileSync(
 const catalog = readFileSync("lib/services/design-catalog.service.ts", "utf8");
 const attachmentService = readFileSync("lib/services/attachment.service.ts", "utf8");
 const clientUploadRoute = readFileSync("app/api/attachments/client-upload/route.ts", "utf8");
+const catalogDownloadRoute = readFileSync("app/api/design-catalog/download/route.ts", "utf8");
+const catalogPage = readFileSync("components/catalog/StairCatalogPage.tsx", "utf8");
 
 for (const gate of [
   "OBJECT_PHOTOS_REQUIRED",
@@ -58,6 +60,10 @@ assert(workspace.includes("Скопировать готовый промпт"))
 assert(workspace.includes("Подтвердить: показал клиенту"));
 assert(catalog.includes("CATALOG_REFERENCE_SELECTED"));
 assert(catalog.includes('purpose: { in: CATALOG_PURPOSES }'));
+assert(catalogDownloadRoute.includes('requirePermission("measurements")'));
+assert(catalogDownloadRoute.includes("application/zip"));
+assert(catalogPage.includes("Скачать весь каталог ZIP"));
+assert(catalogPage.includes("Открыть крупно"));
 assert(attachmentService.includes('"video/mp4"'));
 assert(attachmentService.includes('"video/quicktime"'));
 assert(attachmentService.includes('bytes.subarray(4, 8).toString("ascii") === "ftyp"'));

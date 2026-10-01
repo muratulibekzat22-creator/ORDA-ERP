@@ -8,6 +8,7 @@ import {
   CalendarDays,
   MapPin,
   MessageCircle,
+  Images,
   Phone,
 } from "lucide-react";
 import TrainingSummaryCard from "@/components/training/TrainingSummaryCard";
@@ -226,13 +227,20 @@ export default function MeasurerHome() {
           </p>
         )}
       </section>
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Link
           href="/measurements"
           className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-blue-700 font-semibold"
         >
           <CalendarDays size={18} />
           Все замеры
+        </Link>
+        <Link
+          href="/catalog"
+          className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-violet-700 font-semibold"
+        >
+          <Images size={18} />
+          Каталог лестниц
         </Link>
         <Link
           href="/calendar"

@@ -86,6 +86,7 @@ export async function proxy(request: NextRequest) {
     "clients",
     "orders",
     "measurements",
+    "catalog",
     "calendar",
     "documents",
     "production",
@@ -121,7 +122,9 @@ export async function proxy(request: NextRequest) {
   )
     return redirect(new URL("/", request.url));
   const required =
-    firstSegment === "calculator"
+    firstSegment === "catalog"
+      ? "measurements"
+      : firstSegment === "calculator"
       ? "orders"
       : firstSegment === "calculator-config"
         ? "*"
