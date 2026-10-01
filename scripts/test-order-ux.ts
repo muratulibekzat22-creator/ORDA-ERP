@@ -121,7 +121,7 @@ for (const label of ["Клиент", "Телефон", "Город / адрес"
   assert.match(newOrderForm, new RegExp(label));
 assert.match(newOrderForm, /router\.push\(`\/orders\/\$\{body\.id\}`\)/);
 assert.match(newOrderForm, /existingClient\?\.id/);
-for (const tab of ["Заявки", "Канбан", "Завершённые"])
+for (const tab of ["Активные заказы", "Все заказы", "Закрытые заказы", "Заявки"])
   assert.match(ordersPage, new RegExp(tab));
 for (const column of ["Заказ оформлен", "Договор", "Передан в цех", "Заказ завершён"])
   assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(column));
