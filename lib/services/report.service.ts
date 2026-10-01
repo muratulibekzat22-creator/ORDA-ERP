@@ -5,6 +5,7 @@ import { orderDataGaps } from "@/lib/orders/completeness";
 import { hasProductionPrice } from "@/lib/orders/production-price";
 import { projectOrderStatus, USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
 
 type Actor = { id: number; role: Role };
 type Scope = { managerUserId?: number };
@@ -70,9 +71,9 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
             operationDate: range(period.start, period.end),
             affectsProfit: true,
             voidedAt: null,
-            source: { in: ["MANUAL", "RECURRING_EXPENSE"] },
+            orderId: null,
           },
-          select: { amount: true, direction: true, category: true },
+          select: { amount: true, direction: true, category: true, source: true, type: true, orderId: true, affectsProfit: true },
         })
       : Promise.resolve([]),
   ]);
@@ -129,14 +130,14 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const payrollAccrued = Number(payrollAccruedRow?.period_total ?? 0);
   const payrollPaid = Number(payrollPaidRow?.period_total ?? 0);
   const operatingExpenses = expenseEntries
-    .filter((entry) => entry.direction === "EXPENSE")
+    .filter(isOperatingProfitExpense)
     .reduce((sum, entry) => sum + Number(entry.amount), 0);
   const additionalIncome = expenseEntries
-    .filter((entry) => entry.direction === "INCOME")
+    .filter(isAdditionalProfitIncome)
     .reduce((sum, entry) => sum + Number(entry.amount), 0);
   const expenseCategoryMap = new Map<string, number>();
   expenseEntries
-    .filter((entry) => entry.direction === "EXPENSE")
+    .filter(isOperatingProfitExpense)
     .forEach((entry) =>
       expenseCategoryMap.set(
         entry.category,

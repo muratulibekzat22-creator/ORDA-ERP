@@ -17,6 +17,7 @@ import {
 } from "@/lib/orders/presentation";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
 
 type DashboardScope = {
   role: Role;
@@ -337,27 +338,13 @@ async function managementProjection(scope: DashboardScope) {
     (sum, row) => sum + signedPayment(row),
     0,
   );
-  const operatingEntries = ledgerEntries.filter(
-    (entry) =>
-      entry.direction === "EXPENSE" &&
-      entry.orderId === null &&
-      entry.affectsProfit &&
-      !["PAYROLL_ACCRUAL", "PAYROLL_PAYMENT", "OTHER_SYSTEM"].includes(entry.source) &&
-      entry.category !== "SALARY" &&
-      entry.type !== "PARTNER_PAYOUT",
-  );
+  const operatingEntries = ledgerEntries.filter(isOperatingProfitExpense);
   const operatingExpenses = operatingEntries.reduce(
     (sum, entry) => sum + Number(entry.amount),
     0,
   );
   const additionalIncome = ledgerEntries
-    .filter(
-      (entry) =>
-        entry.direction === "INCOME" &&
-        entry.orderId === null &&
-        entry.affectsProfit &&
-        entry.source === "MANUAL",
-    )
+    .filter(isAdditionalProfitIncome)
     .reduce((sum, entry) => sum + Number(entry.amount), 0);
   const ordersWithoutMargin = periodEconomies.length - pricedEconomies.length;
   const dataComplete = ordersWithoutMargin === 0;
