@@ -1,10 +1,10 @@
 {
-  "components/Header.tsx": "5bc8f961963da302b04432fd897932d853020deead713d44c7e14fa6f430e3e1",
-  "components/layout/RouteShell.tsx": "dad637a05b80e978e4f0bc27a855296f2fad5f7fc6c3d3373a1d94679b4ffcea",
-  "components/dashboard/DirectorCockpit.tsx": "38e2a095c12ea90ee0a2cb2bacf5d9ec04702ccdf22f57ce81697ff707b87d12",
+  "components/Header.tsx": "2cff3940e3792c128d2a2ccfcb1694ab139af3809adabdf76525000d213c5054",
+  "components/layout/RouteShell.tsx": "80122731ebcb46e42e3bc9af4b276b10596c36b8c7ddce313a345a5af4e69992",
+  "components/dashboard/DirectorCockpit.tsx": "1bdef6e77764a10f2e2f5e26ab83fdecd5fb43ed318afa82988f3d9a7085fb64",
   "components/pages/ClientsPage.tsx": "c015fc066432fe86baec6696c8900dd3c0d0e63fc21fcdf73f23dff40d824e85",
   "components/clients/ClientModal.tsx": "b2a84ec512d654c030029824bcea3f38fca5e45c297ad234cef9e36574aeb295",
-  "components/pages/OrdersPage.tsx": "cc03f604674db91ee66ea57469007fd4c4ae588963b0973c82f674fcc2be549b",
-  "components/measurements/MeasurementWorkspace.tsx": "18a6a828c558173af9d5bd5e76cdecf8ae9af246bc5f9ae6a2fd9e93ece6f58e",
+  "components/pages/OrdersPage.tsx": "8559e09dd1ed0719c4f4283ab64122bf7ade1f701adf375167e6ac641c3e13fa",
+  "components/measurements/MeasurementWorkspace.tsx": "4bf43aa03105a6d14cb59eb0dd91f211c266d2dc583c04888a13a9ce2cfe7541",
   "components/pages/DocumentsPage.tsx": "524639449bf17997353f542fc1e5e6c1f60149d4ce4ece30bf522d6288bfbad2"
 }

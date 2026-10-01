@@ -41,6 +41,7 @@ if (settings.includes("Цены калькулятора"))
   );
 if (
   !header.includes('accountRole === "OPERATIONS_DIRECTOR"') ||
+  !header.includes('grantedPermissions?.includes("settings")') ||
   !header.includes('/calculator-config') ||
   !header.includes("Настройки калькулятора")
 )

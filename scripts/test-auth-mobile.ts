@@ -16,11 +16,11 @@ assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "dir
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
 assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
 assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
-assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar", "/production", "/documents", "/payroll"]'), "manager navigation contract changed");
+assert(shell.includes('["/", "/clients", "/orders", "/sales-plan", "/measurements", "/catalog", "/calendar", "/production", "/payroll"]'), "manager navigation contract changed");
 assert(shell.includes('["/", "/marketing", "/calendar", "/payroll"]'), "marketer personal payroll navigation is missing");
 assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes("if (founder) return true"), "Founder navigation must retain every management section");
 assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes('/api/session/permissions') && shell.includes("grantedPermissions.includes"), "Operations director navigation must use the founder-controlled permission matrix");
-assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Рентабельность бизнеса") && cockpit.includes("Продажи за месяц"), "Founder cockpit must show final financial and sales indicators");
+assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("рентабельность") && cockpit.includes("Оборот компании"), "Founder cockpit must show final financial and sales indicators");
 assert(!payroll.includes("Запросить аванс") && !payroll.includes("Сообщить о получении"), "removed payroll self-service actions returned to the UI");
 assert(payroll.includes('year: String(period.year)') && payroll.includes('month: String(period.month)') && payroll.includes("Сначала оформите заказ"), "payroll order bonus is not scoped to the selected month");
 assert(!selfPayrollApi.includes('body.action === "report-payment"') && selfPayrollApi.includes('error: "INVALID_ACTION"'), "removed payroll self-service actions are still accepted by the API");

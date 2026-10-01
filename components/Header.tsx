@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { roleNames, type Role } from "@/lib/roles";
+import type { Permission } from "@/lib/permissions";
 
 export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
   const { data: session } = useSession();
@@ -14,6 +15,7 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
   const router = useRouter();
   const [time, setTime] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [grantedPermissions, setGrantedPermissions] = useState<Permission[] | null>(null);
 
   useEffect(() => {
     const update = () => setTime(new Date().toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }));
@@ -24,6 +26,19 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
 
   const role = session?.user?.role as Role | undefined;
   const accountRole = (session?.user?.accountRole || role) as Role | undefined;
+  const canManageSettings = accountRole === "DIRECTOR" || (
+    accountRole === "OPERATIONS_DIRECTOR" && grantedPermissions?.includes("settings") === true
+  );
+
+  useEffect(() => {
+    if (accountRole !== "OPERATIONS_DIRECTOR") return;
+    const controller = new AbortController();
+    void fetch("/api/session/permissions", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ permissions: Permission[] }> : null)
+      .then((payload) => setGrantedPermissions(payload?.permissions ?? []))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [accountRole]);
 
   return (
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-[#0f172a]/95 px-3 py-2 backdrop-blur md:px-6">
@@ -45,8 +60,8 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
           </button>
           {profileOpen && <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-56 rounded-xl border border-slate-700 bg-slate-900 p-2 shadow-2xl">
             <Link href="/change-password" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><KeyRound size={17}/>Настройки аккаунта</Link>
-            {accountRole === "DIRECTOR" && <Link href="/settings" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><Settings size={17}/>Настройки компании</Link>}
-            {accountRole === "DIRECTOR" && <Link href="/calculator-config" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><SlidersHorizontal size={17}/>Настройки калькулятора</Link>}
+            {canManageSettings && <Link href="/settings" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><Settings size={17}/>Настройки компании</Link>}
+            {canManageSettings && <Link href="/calculator-config" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><SlidersHorizontal size={17}/>Настройки калькулятора</Link>}
           </div>}
         </div>
         {session && <button type="button" aria-label="Выйти из системы" title="Выйти" onClick={() => signOut({ callbackUrl: "/login" })} className="grid size-11 shrink-0 place-items-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><LogOut size={20}/></button>}

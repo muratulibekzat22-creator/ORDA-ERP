@@ -7,7 +7,7 @@ import {
   getSalesPlan,
   updateSalesPlan,
 } from "@/lib/services/sales-plan.service";
-import { enterTenantFromSession } from "@/lib/tenant-context";
+import { enterTenantFromSession, runWithTenant } from "@/lib/tenant-context";
 
 async function authenticatedActor() {
   const session = await getServerSession(authOptions);
@@ -15,7 +15,16 @@ async function authenticatedActor() {
   const role = (session.user.accountRole || session.user.role) as Role;
   if (!([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER] as Role[]).includes(role))
     return null;
-  return { userId: Number(session.user.id), role };
+  return {
+    userId: Number(session.user.id),
+    role,
+    tenant: {
+      companyId: Number(session.user.companyId),
+      companySlug: String(session.user.companySlug),
+      companyName: String(session.user.companyName),
+      isDemo: session.user.isDemo === true,
+    },
+  };
 }
 
 export async function GET(request: Request) {
@@ -24,8 +33,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const month = new URL(request.url).searchParams.get("month") ?? undefined;
-    return NextResponse.json(await getSalesPlan(month, actor));
+    return NextResponse.json(await runWithTenant(actor.tenant, () => getSalesPlan(month, actor)));
   } catch (error) {
+    console.error("Sales plan GET failed", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      code: typeof error === "object" && error !== null && "code" in error
+        ? String(error.code)
+        : undefined,
+      message: error instanceof Error ? error.message : "Unknown failure",
+    });
     const invalid = error instanceof Error && error.message === "INVALID_MONTH";
     return NextResponse.json(
       { error: invalid ? "Некорректный месяц" : "Не удалось загрузить план" },
@@ -48,19 +64,22 @@ export async function PATCH(request: Request) {
           rewardAmount: Number(tier.rewardAmount ?? 0),
         }))
       : [];
-    const result = await updateSalesPlan(
-      month,
-      {
-        revenueTarget: Number(body.revenueTarget),
-        orderTarget: Number(body.orderTarget),
-        minimumMarginPercent: Number(body.minimumMarginPercent),
-        requiredCostCoveragePercent: Number(body.requiredCostCoveragePercent),
-        marketingBudgetTarget: Number(body.marketingBudgetTarget),
-        inquiryTarget: Number(body.inquiryTarget),
-        applicationTarget: Number(body.applicationTarget),
-        tiers,
-      },
-      actor,
+    const result = await runWithTenant(
+      actor.tenant,
+      () => updateSalesPlan(
+        month,
+        {
+          revenueTarget: Number(body.revenueTarget),
+          orderTarget: Number(body.orderTarget),
+          minimumMarginPercent: Number(body.minimumMarginPercent),
+          requiredCostCoveragePercent: Number(body.requiredCostCoveragePercent),
+          marketingBudgetTarget: Number(body.marketingBudgetTarget),
+          inquiryTarget: Number(body.inquiryTarget),
+          applicationTarget: Number(body.applicationTarget),
+          tiers,
+        },
+        actor,
+      ),
     );
     return NextResponse.json(result);
   } catch (error) {

@@ -118,6 +118,10 @@ assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/ca
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
+const salesPlanRoute = read("app/api/sales-plan/route.ts");
+assert.match(salesPlanRoute, /runWithTenant\(actor\.tenant,[\s\S]*getSalesPlan/);
+assert.match(salesPlanRoute, /runWithTenant\([\s\S]*updateSalesPlan/);
+
 const orderList = read("app/api/orders/route.ts");
 includesAll(
   orderList,
