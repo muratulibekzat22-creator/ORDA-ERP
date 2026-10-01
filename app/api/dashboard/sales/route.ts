@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user || !enterTenantFromSession(session))
     return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
-  const role = session.user.role as Role;
+  const role = (session.user.accountRole || session.user.role) as Role;
   const allowed: Role[] = [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT, Role.PRODUCTION, Role.INSTALLER];
   if (!allowed.includes(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
@@ -20,7 +20,21 @@ export async function GET(request: Request) {
   if (month && !/^\d{4}-\d{2}$/.test(month))
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   try {
-    return NextResponse.json(await getDashboardSummary({ role, userId: Number(session.user.id), period, month }));
+    const payload = await getDashboardSummary({ role, userId: Number(session.user.id), period, month });
+    if (role === Role.OPERATIONS_DIRECTOR && "finance" in payload) {
+      const operational = { ...payload, finance: undefined, expenses: undefined };
+      return NextResponse.json({
+        ...operational,
+        attention: operational.attention.map((order) => ({
+          ...order,
+          balance: undefined,
+          netProfit: undefined,
+          netMargin: undefined,
+          reasons: order.reasons.filter((reason) => !/цен.*производ|марж|неоплачен/i.test(reason)),
+        })),
+      });
+    }
+    return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof Error && error.message === "INVALID_MONTH")
       return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });

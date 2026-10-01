@@ -38,17 +38,12 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "calendar",
     "documents",
     "finance",
-    "partners",
     "reports",
-    "settings",
-    "design",
     "production",
-    "installation",
     "warehouse",
-    "payroll",
     "marketing",
   ],
-  [Role.MARKETER]: ["marketing", "calendar"],
+  [Role.MARKETER]: ["marketing", "calendar", "payroll"],
   [Role.MANAGER]: [
     "clients",
     "orders",
@@ -58,6 +53,7 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "production",
     "warehouse",
     "partners",
+    "payroll",
   ],
   [Role.ACCOUNTANT]: [
     "documents",
@@ -116,8 +112,9 @@ includesAll(
 
 const routeShell = read("components/layout/RouteShell.tsx");
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
-assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
-assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar"\]/);
+assert.match(routeShell, /accountRole === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /\/api\/session\/permissions/);
+assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar", "\/payroll"\]/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
@@ -195,7 +192,7 @@ assert.match(
 
 const finance = read("app/api/finance/route.ts");
 const partnerFinanceGuard = finance.indexOf(
-  "auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT",
+  "role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT",
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(

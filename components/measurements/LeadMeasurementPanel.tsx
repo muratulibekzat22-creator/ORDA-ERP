@@ -126,9 +126,7 @@ export default function LeadMeasurementPanel({
       setMeasurersLoaded(true);
       setForm((current) => ({
         ...current,
-        measurerUserId: active.length === 1
-          ? String(active[0].id)
-          : active.some((row) => String(row.id) === current.measurerUserId) ? current.measurerUserId : "",
+        measurerUserId: active.some((row) => String(row.id) === current.measurerUserId) ? current.measurerUserId : "",
       }));
     } else {
       setMeasurersLoaded(true);
@@ -159,13 +157,13 @@ export default function LeadMeasurementPanel({
       body: JSON.stringify({
         ...form,
         clientId,
-        measurerUserId: Number(form.measurerUserId),
+        measurerUserId: form.measurerUserId ? Number(form.measurerUserId) : undefined,
       }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
     else {
-      setNotice("Замер назначен и добавлен в календарь замерщика");
+      setNotice(form.measurerUserId ? "Замер назначен и добавлен в календарь замерщика" : "Замер сохранён. Замерщика можно назначить позже");
       setWhatsappText(body.whatsappText ?? "");
       setForm((value) => ({ ...value, visitDate: "", comment: "" }));
       setScheduleOpen(false);
@@ -233,9 +231,9 @@ export default function LeadMeasurementPanel({
         <span><b className="block text-white">{form.city || "Город не указан"}</b>Город</span>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {!measurersLoaded ? <p className="rounded-xl bg-slate-900 p-3 text-slate-400">Загрузка замерщиков…</p> : measurers.length === 0 ? <p role="alert" className="rounded-xl bg-red-950/50 p-3 text-red-300">Нет активного замерщика</p> : measurers.length === 1 ? <div className="text-sm text-slate-300">Замерщик<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{measurers[0].name} · выбран автоматически</b></div> :
+        {!measurersLoaded ? <p className="rounded-xl bg-slate-900 p-3 text-slate-400">Загрузка замерщиков…</p> :
         <label className="text-sm text-slate-300">
-          Замерщик
+          Замерщик (необязательно)
           <select
             className={`${input} mt-1`}
             value={form.measurerUserId}
@@ -243,7 +241,7 @@ export default function LeadMeasurementPanel({
               setForm({ ...form, measurerUserId: event.target.value })
             }
           >
-            <option value="">Выберите</option>
+            <option value="">Замерщик не выбран</option>
             {measurers.map((row) => (
               <option key={row.id} value={row.id}>
                 {row.name}
@@ -308,7 +306,6 @@ export default function LeadMeasurementPanel({
         type="button"
         disabled={
           busy ||
-          !form.measurerUserId ||
           !form.visitDate ||
           (!form.address.trim() && !form.mapLink.trim())
         }

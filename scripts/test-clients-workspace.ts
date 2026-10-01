@@ -120,7 +120,7 @@ for (const protectedKey of [
 ])
   if (!read("lib/lead-calculation-view.ts").includes(protectedKey))
     throw new Error(`Manager redaction misses ${protectedKey}`);
-for (const marker of ["+ Назначить замер", "выбран автоматически", "Нет активного замерщика", "Дата замера", "Время"])
+for (const marker of ["+ Назначить замер", "Замерщик не выбран", "Замерщика можно назначить позже", "Дата замера", "Время"])
   if (!measurementPanel.includes(marker) && !measurementWorkspace.includes(marker)) throw new Error(`Manager measurement UI misses ${marker}`);
 if (!measurementsApi.includes("role: Role.MEASURER, active: true")) throw new Error("Measurement selector must only use active MEASURER users");
 if (!card.includes("#measurement-scheduling")) throw new Error("Client card must expose measurement scheduling action");

@@ -24,13 +24,16 @@ const count = (value: unknown) => {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requirePermission("marketing");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!canUseMarketing(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-  const month = marketingMonthRange();
+  const requestedMonth = new URL(request.url).searchParams.get("month") ?? undefined;
+  if (requestedMonth && !/^\d{4}-\d{2}$/.test(requestedMonth))
+    return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
+  const month = marketingMonthRange(requestedMonth);
   const [tasks, metrics, vacancies, assignees] = await Promise.all([
     prisma.managementMarketingTask.findMany({
       include: { assignee: { select: { id: true, name: true } } },
@@ -61,6 +64,7 @@ export async function GET() {
   );
   return NextResponse.json({
     role,
+    month: month.key,
     tasks,
     metrics,
     vacancies,
@@ -78,7 +82,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const auth = await requirePermission("marketing");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!canUseMarketing(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
@@ -114,14 +118,39 @@ export async function POST(request: Request) {
       const leads = count(body.leads), orders = count(body.orders);
       if (!channel || [spend, revenue, leads, orders].some((value) => value === null) || Number.isNaN(metricMonth.getTime()))
         return NextResponse.json({ error: "Проверьте показатели" }, { status: 400 });
-      return NextResponse.json(
-        await prisma.managementMarketingMetric.upsert({
+      const result = await prisma.$transaction(async (tx) => {
+        const metric = await tx.managementMarketingMetric.upsert({
           where: { companyId_metricMonth_channel: { companyId: Number(auth.session!.user.companyId), metricMonth, channel } },
           create: { metricMonth, channel, spend: spend!, leads: leads!, orders: orders!, revenue: revenue!, note: text(body.note, 1000) || null, createdById: Number(auth.session!.user.id) },
           update: { spend: spend!, leads: leads!, orders: orders!, revenue: revenue!, note: text(body.note, 1000) || null },
-        }),
-        { status: 201 },
-      );
+        });
+        await tx.companyLedgerEntry.upsert({
+          where: { idempotencyKey: `marketing-metric:${metric.id}` },
+          create: {
+            type: "MARKETING_SPEND",
+            category: "ADVERTISING",
+            direction: "EXPENSE",
+            source: "MANUAL",
+            amount: spend!,
+            operationDate: metricMonth,
+            comment: `Реклама · ${channel}`,
+            authorId: Number(auth.session!.user.id),
+            affectsProfit: true,
+            idempotencyKey: `marketing-metric:${metric.id}`,
+          },
+          update: {
+            amount: spend!,
+            operationDate: metricMonth,
+            comment: `Реклама · ${channel}`,
+            authorId: Number(auth.session!.user.id),
+            affectsProfit: true,
+            voidedAt: null,
+            voidReason: null,
+          },
+        });
+        return metric;
+      });
+      return NextResponse.json(result, { status: 201 });
     }
     if (action === "vacancy") {
       const title = text(body.title, 200);
@@ -142,7 +171,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth = await requirePermission("marketing");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!canUseMarketing(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
@@ -165,7 +194,7 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   const auth = await requirePermission("marketing");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!canUseMarketing(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
@@ -177,7 +206,10 @@ export async function DELETE(request: Request) {
     if (action === "task")
       await prisma.managementMarketingTask.delete({ where: { id } });
     else if (action === "metric")
-      await prisma.managementMarketingMetric.delete({ where: { id } });
+      await prisma.$transaction([
+        prisma.companyLedgerEntry.deleteMany({ where: { idempotencyKey: `marketing-metric:${id}` } }),
+        prisma.managementMarketingMetric.delete({ where: { id } }),
+      ]);
     else if (action === "vacancy")
       await prisma.recruitmentVacancy.delete({ where: { id } });
     else

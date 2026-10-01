@@ -1,6 +1,6 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import Header from "@/components/Header";
 import ManagerFollowUpGate from "@/components/clients/ManagerFollowUpGate";
+import MandatoryTaskGate from "@/components/tasks/MandatoryTaskGate";
 import { hasDefaultPermission, type Permission } from "@/lib/permissions";
 import { type Role } from "@/lib/roles";
 
@@ -42,11 +43,12 @@ export default function RouteShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
   const role = session?.user.role as Role | undefined;
   const accountRole = (session?.user.accountRole || role) as Role | undefined;
   const founder = accountRole === "DIRECTOR";
-  const operationsDirector = accountRole === "OPERATIONS_DIRECTOR";
+  const [grantedPermissions, setGrantedPermissions] = useState<Permission[] | null>(null);
   const permissionByHref: Partial<Record<string, Permission>> = {
     "/clients": "clients",
     "/orders": "orders",
@@ -64,15 +66,18 @@ export default function RouteShell({
     "/marketing": "marketing",
   };
   const visible = (href: string) => {
-    if (founder)
-      return ["/", "/training", "/payroll", "/finance", "/partner-management", "/reports"].includes(href);
-    if (operationsDirector) return true;
-    if (href === "/partner-management") return false;
+    if (founder) return true;
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
     if (role === "MANAGER")
       return ["/", "/clients", "/orders", "/measurements", "/calendar", "/production", "/documents", "/payroll"].includes(href);
     if (role === "MARKETER") return ["/", "/marketing", "/calendar", "/payroll"].includes(href);
+    if (accountRole === "OPERATIONS_DIRECTOR")
+      return href === "/" || Boolean(permissionByHref[href] && (
+        grantedPermissions
+          ? grantedPermissions.includes(permissionByHref[href]!)
+          : hasDefaultPermission(accountRole, permissionByHref[href]!)
+      ));
     if (href === "/training" || href === "/measurements" || href === "/marketing") return false;
     return href === "/" ||
     (href === "/payroll" && Boolean(role && role !== "PARTNER")) ||
@@ -80,11 +85,36 @@ export default function RouteShell({
       role &&
       !(role === "PARTNER" && href === "/finance") &&
       permissionByHref[href] &&
-      hasDefaultPermission(role, permissionByHref[href]!),
+      (grantedPermissions
+        ? grantedPermissions.includes(permissionByHref[href]!)
+        : hasDefaultPermission(accountRole ?? role, permissionByHref[href]!)),
     );
   };
   const [open, setOpen] = useState(false);
   const standalone = pathname === "/login" || pathname === "/partner";
+  useEffect(() => {
+    if (!session?.user) return;
+    const controller = new AbortController();
+    void fetch("/api/session/permissions", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ permissions: Permission[] }> : null)
+      .then((payload) => payload && setGrantedPermissions(payload.permissions))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [session?.user]);
+  useEffect(() => {
+    if (founder || !accountRole || grantedPermissions === null) return;
+    const first = pathname.split("/").filter(Boolean)[0] ?? "";
+    const required: Partial<Record<string, Permission>> = {
+      clients: "clients", orders: "orders", calculator: "orders", measurements: "measurements",
+      calendar: "calendar", documents: "documents", production: "production", warehouse: "warehouse",
+      finance: "finance", "company-finance": "finance", "personal-finance": "finance",
+      partners: "partners", "partner-management": "partners", reports: "reports", analytics: "reports",
+      employees: "employees", payroll: "payroll", settings: "settings", "calculator-config": "settings",
+      marketing: "marketing",
+    };
+    const permission = required[first];
+    if (permission && !grantedPermissions.includes(permission)) router.replace("/");
+  }, [accountRole, founder, grantedPermissions, pathname, router]);
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) =>
@@ -158,7 +188,7 @@ export default function RouteShell({
             })}
           </nav>
         </aside>
-        <div className="min-w-0 flex-1 overflow-auto"><ManagerFollowUpGate>{children}</ManagerFollowUpGate></div>
+        <div className="min-w-0 flex-1 overflow-auto"><MandatoryTaskGate><ManagerFollowUpGate>{children}</ManagerFollowUpGate></MandatoryTaskGate></div>
       </div>
     </main>
   );

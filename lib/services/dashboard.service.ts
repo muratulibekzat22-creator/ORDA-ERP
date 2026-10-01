@@ -152,7 +152,7 @@ async function managementProjection(scope: DashboardScope) {
     select: typeof orderEconomySelect;
   }>;
 
-  const [orders, payments, ledgerEntries, payrollPeriod] = await Promise.all([
+  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads] = await Promise.all([
     prisma.order.findMany({
       where: {
         companyId,
@@ -217,6 +217,62 @@ async function managementProjection(scope: DashboardScope) {
         },
       },
       select: { id: true },
+    }),
+    prisma.managementMarketingMetric.findMany({
+      where: { companyId, metricMonth: { gte: period.start, lt: period.end } },
+      select: { spend: true, leads: true, orders: true, revenue: true },
+    }),
+    prisma.user.findMany({
+      where: { companyId, active: true, role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER, Role.MANAGER] } },
+      select: { id: true, name: true, role: true, lastLogin: true },
+      orderBy: [{ role: "asc" }, { name: "asc" }],
+    }),
+    prisma.authAuditEvent.findMany({
+      where: {
+        success: true,
+        reason: "LOGIN_SUCCESS",
+        createdAt: { gte: period.start, lt: period.end },
+        user: { companyId, active: true, role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER, Role.MANAGER] } },
+      },
+      select: { userId: true, createdAt: true },
+    }),
+    prisma.client.groupBy({
+      by: ["managerUserId"],
+      where: { companyId, active: true, deletedAt: null, createdAt: { gte: period.start, lt: period.end }, managerUserId: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.order.groupBy({
+      by: ["managerUserId"],
+      where: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, orderReceivedAt: { gte: period.start, lt: period.end }, managerUserId: { not: null } },
+      _count: { _all: true },
+    }),
+    prisma.calendarTask.groupBy({
+      by: ["assigneeId"],
+      where: { companyId, completedAt: { gte: period.start, lt: period.end } },
+      _count: { _all: true },
+    }),
+    prisma.calendarTask.groupBy({
+      by: ["assigneeId"],
+      where: { companyId, dueAt: { lt: now }, status: { in: ["PLANNED", "IN_PROGRESS"] } },
+      _count: { _all: true },
+    }),
+    prisma.client.findMany({
+      where: {
+        companyId,
+        active: true,
+        deletedAt: null,
+        createdAt: { gte: period.start, lt: period.end },
+        leadActivities: { some: { type: { in: ["DESIGN_3D_DONE", "DESIGN_3D_SKIPPED"] } } },
+      },
+      select: {
+        leadConversion: { select: { id: true } },
+        leadActivities: {
+          where: { type: { in: ["DESIGN_3D_DONE", "DESIGN_3D_SKIPPED"] } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { type: true },
+        },
+      },
     }),
   ]);
 
@@ -314,6 +370,37 @@ async function managementProjection(scope: DashboardScope) {
   const businessProfitability = totalCosts > 0
     ? Math.round((netProfit / totalCosts) * 10_000) / 100
     : null;
+  const marketing = marketingMetrics.reduce(
+    (summary, item) => ({
+      spend: summary.spend + Number(item.spend),
+      leads: summary.leads + item.leads,
+      orders: summary.orders + item.orders,
+      revenue: summary.revenue + Number(item.revenue),
+    }),
+    { spend: 0, leads: 0, orders: 0, revenue: 0 },
+  );
+  const loginDays = new Map<number, Set<string>>();
+  for (const event of loginEvents) {
+    if (!event.userId) continue;
+    const days = loginDays.get(event.userId) ?? new Set<string>();
+    days.add(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty" }).format(event.createdAt));
+    loginDays.set(event.userId, days);
+  }
+  const countByUser = (rows: Array<{ managerUserId?: number | null; assigneeId?: number | null; _count: { _all: number } }>, userId: number) =>
+    rows.find((row) => (row.managerUserId ?? row.assigneeId) === userId)?._count._all ?? 0;
+  const team = teamUsers.map((user) => ({
+    id: user.id,
+    name: user.name,
+    role: user.role,
+    lastLogin: user.lastLogin,
+    activeDays: loginDays.get(user.id)?.size ?? 0,
+    leads: countByUser(teamLeads, user.id),
+    orders: countByUser(teamOrders, user.id),
+    completedTasks: countByUser(completedTasks, user.id),
+    overdueTasks: countByUser(overdueTasks, user.id),
+  }));
+  const designDone = designLeads.filter((lead) => lead.leadActivities[0]?.type === "DESIGN_3D_DONE");
+  const designConverted = designDone.filter((lead) => Boolean(lead.leadConversion)).length;
 
   const counts = Object.fromEntries(
     [
@@ -408,6 +495,21 @@ async function managementProjection(scope: DashboardScope) {
       overdue,
       missingProductionPrice,
       incompleteData,
+    },
+    marketing: {
+      ...marketing,
+      qualifiedShare: marketing.leads > 0 ? Math.round((marketing.orders / marketing.leads) * 10_000) / 100 : null,
+      cpl: marketing.leads > 0 ? marketing.spend / marketing.leads : null,
+      cac: marketing.orders > 0 ? marketing.spend / marketing.orders : null,
+      roas: marketing.spend > 0 ? marketing.revenue / marketing.spend : null,
+    },
+    team,
+    salesTools: {
+      designRecorded: designLeads.length,
+      designDone: designDone.length,
+      designSkipped: designLeads.length - designDone.length,
+      designConverted,
+      designConversion: designDone.length > 0 ? Math.round((designConverted / designDone.length) * 10_000) / 100 : null,
     },
     attention,
     expenses: ledgerEntries

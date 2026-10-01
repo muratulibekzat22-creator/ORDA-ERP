@@ -17,7 +17,7 @@ export async function requirePermission(permission: Permission) {
     };
   }
 
-  const role = session.user.role as Role;
+  const role = (session.user.accountRole || session.user.role) as Role;
   if (
     !Object.values(Role).includes(role) ||
     !(await hasPermission(role, permission))

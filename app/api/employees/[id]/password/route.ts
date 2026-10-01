@@ -10,7 +10,8 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, { params }: Context) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
+  const actorRole = auth.session!.user.accountRole as Role;
+  if (actorRole !== Role.DIRECTOR && actorRole !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0)
@@ -21,8 +22,10 @@ export async function POST(request: Request, { params }: Context) {
     const confirmPassword = typeof body.confirmPassword === "string" ? body.confirmPassword : "";
     if (newPassword.length < 10 || newPassword.length > 128 || newPassword !== confirmPassword)
       return NextResponse.json({ error: "Пароли должны совпадать и содержать от 10 до 128 символов" }, { status: 400 });
-    const existing = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+    const existing = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true } });
     if (!existing) return NextResponse.json({ error: "Сотрудник не найден" }, { status: 404 });
+    if (existing.role === Role.DIRECTOR && actorRole !== Role.DIRECTOR)
+      return NextResponse.json({ error: "Пароль основателя может изменить только сам основатель" }, { status: 403 });
     await prisma.user.update({
       where: { id },
       data: {

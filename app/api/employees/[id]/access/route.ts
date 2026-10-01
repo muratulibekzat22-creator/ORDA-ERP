@@ -7,17 +7,21 @@ import { createEmployeeAccess } from "@/lib/services/employee.service";
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
+  const actorRole = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (actorRole !== Role.DIRECTOR && actorRole !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
     const body = await request.json() as Record<string, unknown>;
+    const requestedRole = body.role as Role;
+    if (actorRole === Role.OPERATIONS_DIRECTOR && !(new Set<Role>([Role.MARKETER, Role.MANAGER, Role.MEASURER, Role.DESIGNER, Role.PRODUCTION, Role.INSTALLER])).has(requestedRole))
+      return NextResponse.json({ error: "Эту должность может создать только основатель" }, { status: 403 });
     return NextResponse.json(await createEmployeeAccess(id, {
       email: typeof body.email === "string" ? body.email : "",
       password: typeof body.password === "string" ? body.password : "",
-      role: body.role as Role,
+      role: requestedRole,
     }, Number(auth.session!.user.id)), { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";

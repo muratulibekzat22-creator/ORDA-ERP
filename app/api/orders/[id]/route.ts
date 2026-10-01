@@ -107,7 +107,24 @@ function redactForRole<T extends Record<string, unknown>>(
     ...order,
     productionPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
   };
-  if (isDirector(role)) return result;
+  if (role === Role.DIRECTOR) return result;
+  if (role === Role.OPERATIONS_DIRECTOR) {
+    delete result.companyProfit;
+    delete result.payrollAccruals;
+    if (result.settlement && typeof result.settlement === "object") {
+      const settlement = result.settlement as Record<string, unknown>;
+      delete settlement.manager;
+      delete settlement.measurer;
+    }
+    if (Array.isArray(result.calculations))
+      result.calculations = result.calculations.map((value) => {
+        const calculation = { ...(value as Record<string, unknown>) };
+        delete calculation.grossDifference;
+        delete calculation.grossProfit;
+        return calculation;
+      });
+    return result;
+  }
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
     if (Array.isArray(result.calculations))
@@ -217,7 +234,7 @@ export async function GET(_: Request, { params }: Context) {
   const id = idOf((await params).id);
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (
     !(await canAccess(id, role, auth.session!.user.id, isDirector(role)))
   )
@@ -250,7 +267,7 @@ export async function PATCH(request: Request, { params }: Context) {
   const id = idOf((await params).id);
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!(await canAccess(id, role, auth.session!.user.id)))
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   try {
@@ -719,7 +736,7 @@ export async function PATCH(request: Request, { params }: Context) {
 export async function DELETE(request: Request, { params }: Context) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!isDirector(role) && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = idOf((await params).id);

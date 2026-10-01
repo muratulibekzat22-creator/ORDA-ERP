@@ -23,6 +23,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }, Number(auth.session!.user.id)));
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
-    return NextResponse.json({ error: code === "EMPLOYEE_NOT_FOUND" ? "Сотрудник не найден" : "Не удалось обновить сотрудника" }, { status: error instanceof EmployeeError && code === "EMPLOYEE_NOT_FOUND" ? 404 : 400 });
+    return NextResponse.json({ error: code === "EMPLOYEE_NOT_FOUND" ? "Сотрудник не найден" : code === "FOUNDER_PROTECTED" ? "Аккаунт основателя защищён. Здесь можно изменить только его пароль" : "Не удалось обновить сотрудника" }, { status: error instanceof EmployeeError && code === "EMPLOYEE_NOT_FOUND" ? 404 : code === "FOUNDER_PROTECTED" ? 409 : 400 });
   }
 }

@@ -98,6 +98,7 @@ export function employeeDto(employee: EmployeeWithAccount) {
     mustChangePassword: account?.mustChangePassword ?? false,
     lockedUntil: account?.lockedUntil ?? null,
     partnerProfile: account?.partnerProfile ?? null,
+    protectedAccount: account?.role === Role.DIRECTOR,
   };
 }
 
@@ -199,8 +200,12 @@ export async function updateEmployee(
   actorId: number,
 ) {
   return prisma.$transaction(async (tx) => {
-    const previous = await tx.employeePayrollProfile.findUnique({ where: { id: employeeId } });
+    const previous = await tx.employeePayrollProfile.findUnique({
+      where: { id: employeeId },
+      include: { user: { select: { role: true } } },
+    });
     if (!previous) throw new EmployeeError("EMPLOYEE_NOT_FOUND");
+    if (previous.user?.role === Role.DIRECTOR) throw new EmployeeError("FOUNDER_PROTECTED");
     const name = typeof input.name === "string" ? input.name.trim() : undefined;
     const position = typeof input.position === "string" ? input.position.trim() : undefined;
     if (name === "" || position === "") throw new EmployeeError("EMPLOYEE_FIELDS_REQUIRED");

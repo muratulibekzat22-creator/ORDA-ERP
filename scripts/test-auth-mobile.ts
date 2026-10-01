@@ -18,13 +18,13 @@ assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("st
 assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
 assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar", "/production", "/documents", "/payroll"]'), "manager navigation contract changed");
 assert(shell.includes('["/", "/marketing", "/calendar", "/payroll"]'), "marketer personal payroll navigation is missing");
-assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/payroll", "/finance", "/partner-management", "/reports"]'), "Founder navigation must keep payroll with final controls and reports");
-assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes("if (operationsDirector) return true"), "Operations director must retain the full working navigation");
+assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes("if (founder) return true"), "Founder navigation must retain every management section");
+assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes('/api/session/permissions') && shell.includes("grantedPermissions.includes"), "Operations director navigation must use the founder-controlled permission matrix");
 assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Рентабельность бизнеса") && cockpit.includes("Продажи за месяц"), "Founder cockpit must show final financial and sales indicators");
 assert(!payroll.includes("Запросить аванс") && !payroll.includes("Сообщить о получении"), "removed payroll self-service actions returned to the UI");
 assert(payroll.includes('year: String(period.year)') && payroll.includes('month: String(period.month)') && payroll.includes("Сначала оформите заказ"), "payroll order bonus is not scoped to the selected month");
 assert(!selfPayrollApi.includes('body.action === "report-payment"') && selfPayrollApi.includes('error: "INVALID_ACTION"'), "removed payroll self-service actions are still accepted by the API");
-assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
+assert(passwordReset.includes("actorRole !== Role.DIRECTOR") && passwordReset.includes("existing.role === Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "protected founder password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");
 assert(auth.includes('useSecureCookies: process.env.VERCEL === "1"') && auth.includes('NEXTAUTH_URL?.startsWith("https://")'), "production Secure cookie configuration is missing");

@@ -41,7 +41,7 @@ export default function WorkshopSettlementPanel({
 }) {
   const router = useRouter();
   const { data: session } = useSession();
-  const role = session?.user.role ?? "";
+  const role = session?.user.accountRole || session?.user.role || "";
   const canManageSettlement =
     !readOnly && ["DIRECTOR", "OPERATIONS_DIRECTOR", "ACCOUNTANT"].includes(role);
   const director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR";

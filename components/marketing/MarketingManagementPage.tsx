@@ -9,6 +9,7 @@ type Metric = { id: number; metricMonth: string; channel: string; spend: string;
 type Vacancy = { id: number; title: string; status: "OPEN" | "INTERVIEW" | "OFFER" | "HIRED" | "PAUSED"; candidates: number; note: string | null };
 type Data = {
   role: string;
+  month: string;
   tasks: Task[];
   metrics: Metric[];
   vacancies: Vacancy[];
@@ -28,13 +29,14 @@ export default function MarketingManagementPage() {
   const [task, setTask] = useState({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" });
   const [metric, setMetric] = useState({ metricMonth: new Date().toISOString().slice(0, 7), channel: "Instagram / Meta", spend: "", leads: "", orders: "", revenue: "", note: "" });
   const [vacancy, setVacancy] = useState({ title: "", note: "" });
+  const selectedMonth = metric.metricMonth;
   const load = useCallback(async () => {
     setLoading(true); setError("");
-    const response = await fetch("/api/marketing", { cache: "no-store" });
+    const response = await fetch(`/api/marketing?month=${encodeURIComponent(selectedMonth)}`, { cache: "no-store" });
     if (response.ok) setData(await response.json() as Data);
     else setError("Не удалось загрузить маркетинг");
     setLoading(false);
-  }, []);
+  }, [selectedMonth]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
@@ -52,7 +54,7 @@ export default function MarketingManagementPage() {
   async function addVacancy(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "vacancy", ...vacancy })) setVacancy({ title: "", note: "" }); }
 
   return <main className="min-w-0 space-y-5 p-4 sm:p-6 xl:p-8">
-    <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-semibold uppercase tracking-[.18em] text-fuchsia-300">Director workspace</p><h1 className="mt-1 text-3xl font-bold">Маркетинг и вакансии</h1><p className="mt-1 max-w-3xl text-sm text-slate-400">Директор заполняет расходы, лиды, заказы и задачи. Основатель видит конечные показатели для решений.</p></div><div className="flex gap-2"><a href="/reports" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold"><BarChart3 size={17}/>KPI менеджеров</a><a href="/finance" className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-semibold">Внести расход / доход</a></div></header>
+    <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-semibold uppercase tracking-[.18em] text-fuchsia-300">Director workspace</p><h1 className="mt-1 text-3xl font-bold">Маркетинг и вакансии</h1><p className="mt-1 max-w-3xl text-sm text-slate-400">Директор заполняет фактический расход Meta/таргета, лиды, заказы и выручку. Расход автоматически вычитается из прибыли основателя и отчётов.</p></div><div className="flex flex-wrap gap-2"><input aria-label="Месяц маркетинга" type="month" value={selectedMonth} onChange={(event)=>setMetric((value)=>({...value,metricMonth:event.target.value}))} className={field}/><a href="/reports" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold"><BarChart3 size={17}/>KPI менеджеров</a><a href="/finance" className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-semibold">Финансовые операции</a></div></header>
     {error && <p role="alert" className="rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-200">{error}</p>}
     {loading && !data ? <div className="grid place-items-center rounded-2xl border border-slate-800 p-16 text-slate-400"><RefreshCw className="animate-spin"/></div> : null}
     {data ? <>

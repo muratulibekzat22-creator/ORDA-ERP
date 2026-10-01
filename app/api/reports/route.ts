@@ -27,10 +27,10 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
       ["Выплачено партнёрам", report.finance.partnerPaid],
       ["К выплате партнёрам", report.finance.partnerRemaining],
       ["Записанные расходы", report.finance.recordedExpenses],
-      ["Чистая прибыль", report.finance.netProfit],
-      ["Payroll начислено", report.finance.payrollAccrued],
-      ["Payroll выплачено", report.finance.payrollPaid],
-      ["Payroll к выплате", report.finance.payrollPayable],
+      ...(report.finance.netProfit === null ? [] : [["Чистая прибыль", report.finance.netProfit]]),
+      ...(report.finance.payrollAccrued === null ? [] : [["Payroll начислено", report.finance.payrollAccrued]]),
+      ...(report.finance.payrollPaid === null ? [] : [["Payroll выплачено", report.finance.payrollPaid]]),
+      ...(report.finance.payrollPayable === null ? [] : [["Payroll к выплате", report.finance.payrollPayable]]),
     ] : []),
     [], ["Менеджер", "Заявки", "Замеры", "Заказы", "Завершено", "Просрочено", "Продажи", "Получено", "Конверсия, %"],
     ...report.managers.map((item) => [item.name, item.leads, item.measurements, item.orders, item.completed, item.overdue, item.salesAmount, item.received, item.conversion ?? "—"]),
@@ -47,7 +47,7 @@ export async function GET(request: Request) {
   if (auth.response) return auth.response;
   try {
     const url = new URL(request.url);
-    const report = await getReportsReadModel(url.searchParams, { id: Number(auth.session!.user.id), role: auth.session!.user.role as Role });
+    const report = await getReportsReadModel(url.searchParams, { id: Number(auth.session!.user.id), role: (auth.session!.user.accountRole || auth.session!.user.role) as Role });
     if (url.searchParams.get("export") === "csv") {
       const suffix = report.period.preset === "month" ? report.period.dateFrom.slice(0, 7) : `${report.period.dateFrom}_${report.period.dateTo}`;
       return new Response(toCsv(report), { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="ORDA_Report_${suffix}.csv"`, "cache-control": "no-store" } });

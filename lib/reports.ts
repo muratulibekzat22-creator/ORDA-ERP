@@ -71,10 +71,10 @@ export type ReportsReadModel = {
     operatingExpenses: number;
     expensesByCategory: Array<{ category: string; amount: number }>;
     recordedExpenses: number;
-    netProfit: number;
-    payrollAccrued: number;
-    payrollPaid: number;
-    payrollPayable: number;
+    netProfit: number | null;
+    payrollAccrued: number | null;
+    payrollPaid: number | null;
+    payrollPayable: number | null;
   };
   funnel: Array<{ key: string; label: string; value: number; conversionFromPrevious: number | null }>;
   managers: ManagerReportRow[];

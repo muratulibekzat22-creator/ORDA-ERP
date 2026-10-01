@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Role, roleNames } from "@/lib/roles";
@@ -19,6 +20,7 @@ type Employee = {
   accountActive: boolean;
   createdAt: string;
   lastLogin: string | null;
+  protectedAccount: boolean;
 };
 type Form = {
   name: string;
@@ -32,9 +34,13 @@ type Form = {
 };
 type EmployeeFilter = "active" | "inactive" | "all";
 
-const employeeRoles = Object.values(Role).filter(
-  (role) => role !== Role.PARTNER && role !== Role.MARKETER,
-);
+const founderRoles = Object.values(Role).filter((role) => role !== Role.PARTNER);
+const directorRoles = [Role.MARKETER, Role.MANAGER, Role.MEASURER, Role.DESIGNER, Role.PRODUCTION, Role.INSTALLER];
+const generatedPassword = () => {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  const bytes = crypto.getRandomValues(new Uint32Array(16));
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join("");
+};
 const blank: Form = {
   name: "",
   position: "",
@@ -47,6 +53,9 @@ const blank: Form = {
 };
 
 export default function EmployeesPage() {
+  const { data: session } = useSession();
+  const founder = session?.user.accountRole === Role.DIRECTOR;
+  const employeeRoles = founder ? founderRoles : directorRoles;
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeeFilter, setEmployeeFilter] = useState<EmployeeFilter>("active");
   const [form, setForm] = useState<Form>(blank);
@@ -57,6 +66,7 @@ export default function EmployeesPage() {
   const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
 
   const load = async (filter: EmployeeFilter) => {
     const response = await fetch(`/api/employees?status=${filter}`, { cache: "no-store" });
@@ -90,7 +100,8 @@ export default function EmployeesPage() {
       const payload = await response.json() as { error?: string };
       return setError(payload.error ?? "Не удалось сохранить сотрудника");
     }
-    setNotice(edit ? "Данные сотрудника сохранены" : "Сотрудник добавлен");
+    setNotice(edit ? "Данные сотрудника сохранены" : "Сотрудник добавлен и виден основателю");
+    if (!edit && form.hasOrdaAccess) setCreatedCredentials({ email: form.email, password: form.password });
     setForm(blank);
     setEdit(null);
     await load(employeeFilter);
@@ -126,6 +137,7 @@ export default function EmployeesPage() {
       body: JSON.stringify(accessForm),
     });
     if (!response.ok) return setError(((await response.json()) as { error?: string }).error ?? "Не удалось создать доступ");
+    setCreatedCredentials({ email: accessForm.email, password: accessForm.password });
     setAccessEmployee(null);
     setAccessForm({ email: "", password: "", role: Role.MANAGER });
     setNotice("Доступ в ORDA создан без изменения Payroll-истории");
@@ -184,13 +196,15 @@ export default function EmployeesPage() {
         <input type="email" required={!edit && form.hasOrdaAccess} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="Email — необязательно" aria-label="Email" />
         {!edit && <label className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-slate-200"><input type="checkbox" checked={form.hasOrdaAccess} onChange={(event) => setForm({ ...form, hasOrdaAccess: event.target.checked })} />Доступ в ORDA</label>}
         {!edit && form.hasOrdaAccess && <>
-          <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as Role })} aria-label="Роль ORDA">{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select>
-          <input required minLength={12} type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Пароль — минимум 12 символов" aria-label="Пароль" />
+          <select value={form.role} onChange={(event) => { const role = event.target.value as Role; setForm({ ...form, role, position: roleNames[role] }); }} aria-label="Роль ORDA">{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select>
+          <div className="flex min-w-0 gap-2"><input required minLength={12} type="text" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Временный пароль — минимум 12 символов" aria-label="Пароль" /><button type="button" onClick={() => setForm({ ...form, password: generatedPassword() })} className="shrink-0 rounded-xl bg-slate-700 px-3 text-sm text-white">Создать пароль</button></div>
         </>}
         <label className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-slate-200"><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />Активный сотрудник</label>
         <button className="min-h-12 rounded-xl bg-blue-600 p-3 font-semibold text-white hover:bg-blue-700">{edit ? "Сохранить изменения" : "Добавить сотрудника"}</button>
         {edit && <button type="button" onClick={() => { setEdit(null); setForm(blank); }} className="min-h-12 rounded-xl bg-slate-700 p-3 text-white">Отмена</button>}
       </form>
+
+      {createdCredentials && <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100"><b className="block text-white">Доступ создан — передайте сотруднику</b><p className="mt-2 break-all">Логин: {createdCredentials.email}</p><p className="break-all">Временный пароль: {createdCredentials.password}</p><button type="button" onClick={() => void navigator.clipboard.writeText(`Логин ORDA: ${createdCredentials.email}\nПароль: ${createdCredentials.password}`)} className="mt-3 min-h-10 rounded-xl bg-emerald-700 px-4 font-semibold text-white">Скопировать логин и пароль</button></div>}
 
       <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Фильтр сотрудников">
         {([["active", "Активные"], ["inactive", "Неактивные"], ["all", "Все"]] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setEmployeeFilter(value)} className={`min-h-11 rounded-xl px-4 font-medium ${employeeFilter === value ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`}>{label}</button>)}
@@ -205,11 +219,11 @@ export default function EmployeesPage() {
           </div>
           <div className="mt-3 rounded-xl bg-slate-900 p-3 text-sm"><p className={employee.hasOrdaAccess && employee.accountActive ? "text-emerald-300" : "text-slate-400"}>{!employee.hasOrdaAccess ? "Без доступа в ORDA" : employee.accountActive ? `Доступ активен · ${employee.role ? roleNames[employee.role] : ""}` : "Доступ в ORDA отключён"}</p>{employee.hasOrdaAccess && <p className="mt-1 text-xs text-slate-500">Последний вход: {employee.lastLogin ? new Date(employee.lastLogin).toLocaleString("ru-RU") : "ещё не входил"}</p>}</div>
           <div className="mt-4 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => startEdit(employee)} className="min-h-11 rounded-lg bg-slate-700 px-3 text-white">Изменить</button>
-            <button type="button" onClick={() => void updateProfile(employee, { active: !employee.active })} className="min-h-11 rounded-lg bg-amber-800 px-3 text-white">{employee.active ? "Деактивировать" : "Активировать"}</button>
+            {!employee.protectedAccount && <button type="button" onClick={() => startEdit(employee)} className="min-h-11 rounded-lg bg-slate-700 px-3 text-white">Изменить</button>}
+            {!employee.protectedAccount && <button type="button" onClick={() => void updateProfile(employee, { active: !employee.active })} className="min-h-11 rounded-lg bg-amber-800 px-3 text-white">{employee.active ? "Деактивировать" : "Активировать"}</button>}
             {!employee.hasOrdaAccess ? <button type="button" onClick={() => { setAccessEmployee(employee); setAccessForm({ email: employee.email ?? "", password: "", role: Role.MANAGER }); }} className="col-span-2 min-h-11 rounded-lg bg-blue-700 px-3 text-white">Создать доступ в ORDA</button> : <>
-              <button type="button" onClick={() => setPasswordEmployee(employee)} className="min-h-11 rounded-lg bg-blue-700 px-3 text-white">Изменить пароль</button>
-              <button type="button" onClick={() => void updateAccess(employee)} className="min-h-11 rounded-lg border border-slate-600 px-3 text-white">{employee.accountActive ? "Отключить доступ" : "Включить доступ"}</button>
+              {(!employee.protectedAccount || founder) && <button type="button" onClick={() => setPasswordEmployee(employee)} className={`${employee.protectedAccount ? "col-span-2" : ""} min-h-11 rounded-lg bg-blue-700 px-3 text-white`}>Изменить пароль</button>}
+              {!employee.protectedAccount && <button type="button" onClick={() => void updateAccess(employee)} className="min-h-11 rounded-lg border border-slate-600 px-3 text-white">{employee.accountActive ? "Отключить доступ" : "Включить доступ"}</button>}
             </>}
           </div>
         </article>)}
@@ -219,7 +233,7 @@ export default function EmployeesPage() {
         <form onSubmit={createAccess} className="space-y-4">
           <label className="block text-sm text-slate-300">Email<input autoFocus required type="email" className="control mt-1" value={accessForm.email} onChange={(event) => setAccessForm({ ...accessForm, email: event.target.value })} /></label>
           <label className="block text-sm text-slate-300">Роль<select className="control mt-1" value={accessForm.role} onChange={(event) => setAccessForm({ ...accessForm, role: event.target.value as Role })}>{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select></label>
-          <label className="block text-sm text-slate-300">Пароль<input required minLength={12} type="password" className="control mt-1" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /></label>
+          <label className="block text-sm text-slate-300">Временный пароль<div className="mt-1 flex gap-2"><input required minLength={12} type="text" className="control" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><button type="button" onClick={() => setAccessForm({ ...accessForm, password: generatedPassword() })} className="shrink-0 rounded-xl bg-slate-700 px-3">Создать</button></div></label>
           <button className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white">Создать доступ</button>
         </form>
       </Modal>}

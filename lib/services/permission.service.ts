@@ -35,6 +35,33 @@ export async function getPermissionMatrix() {
   }, {} as Record<Role, Permission[]>);
 }
 
+export async function getRolePermissions(role: Role) {
+  await ensureRolePermissions();
+  const rows = await prisma.rolePermission.findMany({
+    where: { role: role as PrismaRole },
+    select: { permission: true },
+  });
+  return rows
+    .map((row) => row.permission as Permission)
+    .filter((permission) => permissionKeys.includes(permission))
+    .sort((left, right) => permissionKeys.indexOf(left) - permissionKeys.indexOf(right));
+}
+
+export async function replaceRolePermissions(role: Role, permissions: Permission[]) {
+  const companyId = requireTenantIdentity().companyId;
+  const next = [...new Set(permissions)].filter((permission) => permissionKeys.includes(permission));
+  if (role === Role.DIRECTOR && criticalDirectorPermissions.some((permission) => !next.includes(permission)))
+    throw new Error("DIRECTOR_CRITICAL_PERMISSION");
+  await prisma.$transaction(async (tx) => {
+    await tx.rolePermission.deleteMany({ where: { companyId, role: role as PrismaRole } });
+    if (next.length)
+      await tx.rolePermission.createMany({
+        data: next.map((permission) => ({ companyId, role: role as PrismaRole, permission: permission as PrismaPermission })),
+      });
+  });
+  return next;
+}
+
 export async function replacePermissionMatrix(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("INVALID_PERMISSIONS");
   const entries = Object.entries(value as Record<string, unknown>);

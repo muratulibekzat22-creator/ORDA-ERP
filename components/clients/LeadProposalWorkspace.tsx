@@ -54,17 +54,20 @@ export default function LeadProposalWorkspace({
     [optionIds, setOptionIds] = useState<number[]>([]),
     [message, setMessage] = useState(""),
     [saving, setSaving] = useState(false),
-    [currentTime, setCurrentTime] = useState(0);
+    [currentTime, setCurrentTime] = useState(0),
+    [designStatus, setDesignStatus] = useState<"PENDING" | "DONE" | "SKIPPED">("PENDING");
   const load = useCallback(async () => {
-    const [a, b] = await Promise.all([
+    const [a, b, c] = await Promise.all([
       fetch(`/api/clients/${clientId}/calculations`, { cache: "no-store" }),
       fetch(`/api/clients/${clientId}/proposals`, { cache: "no-store" }),
+      fetch(`/api/clients/${clientId}/design-project`, { cache: "no-store" }),
     ]);
     if (a.ok) setCalculations(await a.json());
     if (b.ok) {
       setProposals(await b.json());
       setCurrentTime(Date.now());
     }
+    if (c.ok) setDesignStatus(((await c.json()) as { status: "PENDING" | "DONE" | "SKIPPED" }).status);
   }, [clientId]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -161,6 +164,18 @@ export default function LeadProposalWorkspace({
     if (response.ok) router.push(`/orders/${body.id}`);
     else setMessage(body.error);
   }
+  async function markDesign(status: "DONE" | "SKIPPED") {
+    setSaving(true);
+    const response = await fetch(`/api/clients/${clientId}/design-project`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const body = await response.json() as { error?: string };
+    setMessage(response.ok ? status === "DONE" ? "3D-проект отмечен как показанный клиенту" : "Отмечено: 3D-проект не использован" : body.error ?? "Не удалось сохранить");
+    if (response.ok) setDesignStatus(status);
+    setSaving(false);
+  }
   return (
     <main className="space-y-6 p-4 md:p-8">
       <header>
@@ -207,7 +222,7 @@ export default function LeadProposalWorkspace({
         </button>
       </section>
       {latest && (
-        <section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
+        <><section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold text-white">
@@ -311,6 +326,15 @@ export default function LeadProposalWorkspace({
             </div>
           )}
         </section>
+        <section className="rounded-2xl border border-fuchsia-500/30 bg-fuchsia-500/5 p-5">
+          <p className="text-xs font-bold uppercase tracking-[.18em] text-fuchsia-300">Следующий шаг после КП</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Покажите клиенту 3D-проект</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-300">Это необязательно, но помогает клиенту увидеть лестницу в своём интерьере и принять решение увереннее. ORDA будет считать фактическую конверсию, поэтому процент не придумывается заранее.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button disabled={saving} onClick={() => void markDesign("DONE")} className={`min-h-11 rounded-xl px-4 font-semibold ${designStatus === "DONE" ? "bg-emerald-600 text-white" : "border border-emerald-700 text-emerald-200"}`}>3D-проект сделан</button>
+            <button disabled={saving} onClick={() => void markDesign("SKIPPED")} className={`min-h-11 rounded-xl px-4 ${designStatus === "SKIPPED" ? "bg-slate-600 text-white" : "border border-slate-700 text-slate-300"}`}>Не сделан</button>
+          </div>
+        </section></>
       )}
       <PriceObjectionPanel
         clientId={clientId}

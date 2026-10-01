@@ -132,9 +132,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     paymentMethod: order.paymentMethod || "KASPI_TRANSFER",
   });
 
-  const role = session?.user.role ?? "";
+  const role = session?.user.accountRole || session?.user.role || "";
   const archived = Boolean(order.deletedAt);
-  const director = ["DIRECTOR", "OPERATIONS_DIRECTOR"].includes(role);
+  const director = role === "DIRECTOR";
+  const operationalManagement = ["DIRECTOR", "OPERATIONS_DIRECTOR"].includes(role);
   const canEdit = !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
   const canAddPayment =
     !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
@@ -249,8 +250,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               </a>
               <OrderActionsMenu
                 order={{ id: order.id, number: order.number, deletedAt: order.deletedAt, hasFinancialHistory: order.deletionImpact?.hasFinancialHistory }}
-                canDelete={director && !archived}
-                canRestore={director && archived}
+                canDelete={operationalManagement && !archived}
+                canRestore={operationalManagement && archived}
                 onChanged={() => { router.push("/orders"); router.refresh(); }}
               />
             </div>

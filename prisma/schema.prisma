@@ -96,6 +96,7 @@ model Company {
   partnerAuditEvents         PartnerAuditEvent[]
   orders                     Order[]
   calendarTasks              CalendarTask[]
+  calendarTaskResultAttachments CalendarTaskResultAttachment[]
   companyLedgerEntries       CompanyLedgerEntry[]
   financeCategories          FinanceCategory[]
   recurringExpensePlans      RecurringExpensePlan[]
@@ -531,6 +532,7 @@ model User {
   createdCalendarTasks              CalendarTask[]                @relation("CalendarTaskCreator")
   completedCalendarTasks            CalendarTask[]                @relation("CalendarTaskCompleter")
   calendarTaskAuditEvents           CalendarTaskAudit[]           @relation("CalendarTaskAuditActor")
+  calendarTaskResultAttachments     CalendarTaskResultAttachment[] @relation("CalendarTaskResultUploader")
   uploadedMeasurementPhotos         MeasurementAttachment[]       @relation("MeasurementAttachmentUploader")
   measurementAuditEvents            MeasurementAudit[]            @relation("MeasurementAuditActor")
   authoredDocuments                 Document[]                    @relation("DocumentAuthor")
@@ -1056,9 +1058,16 @@ model CalendarTask {
   completedById Int?
   completedBy   User?                @relation("CalendarTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
   cancelledAt   DateTime?
+  acknowledgementRequired Boolean              @default(false)
+  acknowledgedAt             DateTime?
+  acknowledgementComment    String?
+  plannedCompletionAt        DateTime?
+  resultText                 String?
+  resultSubmittedAt          DateTime?
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   auditEvents   CalendarTaskAudit[]
+  resultAttachments CalendarTaskResultAttachment[]
   measurement   Measurement?
 
   @@index([assigneeId, dueAt])
@@ -1066,6 +1075,26 @@ model CalendarTask {
   @@index([clientId, dueAt])
   @@index([orderId, dueAt])
   @@index([companyId, dueAt, status])
+  @@index([assigneeId, acknowledgementRequired, acknowledgedAt])
+  @@index([assigneeId, plannedCompletionAt, resultSubmittedAt])
+}
+
+model CalendarTaskResultAttachment {
+  id           Int          @id @default(autoincrement())
+  companyId    Int          @default(dbgenerated())
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  taskId       Int
+  task         CalendarTask @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  uploadedById Int
+  uploadedBy   User         @relation("CalendarTaskResultUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  fileName     String
+  pathname     String       @unique
+  contentType  String
+  size         Int
+  createdAt    DateTime     @default(now())
+
+  @@index([companyId, taskId, createdAt])
+  @@index([uploadedById, createdAt])
 }
 
 model CalendarTaskAudit {

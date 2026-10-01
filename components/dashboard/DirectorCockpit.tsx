@@ -9,10 +9,12 @@ import {
   Factory,
   GraduationCap,
   Handshake,
+  Megaphone,
   Plus,
   RefreshCw,
   ReceiptText,
   Wallet,
+  Users,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,9 +25,10 @@ import {
   USER_ORDER_STATUS_LABELS,
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
+import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
 
 type ManagementPayload = {
-  role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "ACCOUNTANT";
+  role: "DIRECTOR" | "ACCOUNTANT";
   month: string;
   finance: {
     revenue: number;
@@ -75,6 +78,34 @@ type ManagementPayload = {
     orderId: number | null;
     orderNumber: string | null;
   }>;
+  marketing: {
+    spend: number;
+    leads: number;
+    orders: number;
+    revenue: number;
+    qualifiedShare: number | null;
+    cpl: number | null;
+    cac: number | null;
+    roas: number | null;
+  };
+  team: Array<{
+    id: number;
+    name: string;
+    role: string;
+    lastLogin: string | null;
+    activeDays: number;
+    leads: number;
+    orders: number;
+    completedTasks: number;
+    overdueTasks: number;
+  }>;
+  salesTools: {
+    designRecorded: number;
+    designDone: number;
+    designSkipped: number;
+    designConverted: number;
+    designConversion: number | null;
+  };
 };
 
 type ManagerPayload = {
@@ -89,6 +120,10 @@ type ManagerPayload = {
     missingFields: string[];
     productionPriceMissing: boolean;
   }>;
+};
+type OperationsPayload = Pick<ManagementPayload, "month" | "orders" | "marketing" | "team" | "salesTools"> & {
+  role: "OPERATIONS_DIRECTOR";
+  attention: Array<Pick<ManagementPayload["attention"][number], "id" | "number" | "client" | "responsible" | "status" | "deadline" | "reasons">>;
 };
 type ProductionPayload = {
   role: "PRODUCTION";
@@ -112,6 +147,7 @@ type InstallerPayload = {
 };
 type Payload =
   | ManagementPayload
+  | OperationsPayload
   | ManagerPayload
   | ProductionPayload
   | InstallerPayload;
@@ -146,6 +182,7 @@ const date = (value: string | null) =>
 
 export default function DirectorCockpit({ founder = false }: { founder?: boolean }) {
   const { data: session } = useSession();
+  const operationsDirector = session?.user.accountRole === "OPERATIONS_DIRECTOR";
   const [month, setMonth] = useState(currentMonth);
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -192,7 +229,9 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
           <p className="mt-1 text-sm text-slate-400">
             {founder
               ? "Чистая прибыль, эффективность и итоговые управленческие отчёты."
-              : "Деньги компании и состояние заказов — без лишних модулей."}
+              : operationsDirector
+                ? "Заявки, замеры, заказы и задачи, которые требуют контроля."
+                : "Деньги компании и состояние заказов — без лишних модулей."}
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -228,7 +267,7 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
         </p>
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
-      {data?.role === "DIRECTOR" || data?.role === "OPERATIONS_DIRECTOR" || data?.role === "ACCOUNTANT" ? (
+      {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
         founder ? <FounderDashboard data={data} /> : (
           <ManagementDashboard
             data={data}
@@ -238,6 +277,7 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
           />
         )
       ) : null}
+      {data?.role === "OPERATIONS_DIRECTOR" ? <OperationsDashboard data={data} /> : null}
       {data?.role === "MANAGER" ? <ManagerDashboard data={data} /> : null}
       {data?.role === "PRODUCTION" ? <ProductionDashboard data={data} /> : null}
       {data?.role === "INSTALLER" ? <InstallerDashboard data={data} /> : null}
@@ -276,6 +316,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   ] as const;
   return (
     <>
+      <FounderDirectorAccess />
       <section>
         <div className="mb-3">
           <h2 className="text-xl font-bold text-white">Итог компании</h2>
@@ -323,6 +364,8 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         ) : null}
       </section>
 
+      <MarketingAndTeam data={data} founder />
+
       <section>
         <div className="mb-3"><h2 className="text-xl font-bold text-white">Итоговые отчёты</h2><p className="text-sm text-slate-400">Операционные разделы ведёт директор; здесь остаётся контроль результата.</p></div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -339,8 +382,123 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   );
 }
 
+const directorModules = [
+  ["clients", "Заявки"], ["orders", "Заказы"], ["measurements", "Замеры"],
+  ["calendar", "Календарь и задачи"], ["documents", "Документы"], ["employees", "Сотрудники"],
+  ["production", "Производство"], ["warehouse", "Склад"], ["marketing", "Маркетинг и вакансии"],
+  ["reports", "Отчёты"], ["finance", "Финансы"], ["partners", "Цехи и расчёты"], ["payroll", "Зарплаты"],
+] as const;
+
+function FounderDirectorAccess() {
+  const [permissions, setPermissions] = useState<string[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/founder/director-access", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ permissions: string[] }> : null)
+      .then((payload) => payload && setPermissions(payload.permissions))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+  const save = async () => {
+    if (!permissions) return;
+    setSaving(true); setMessage("");
+    const response = await fetch("/api/founder/director-access", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ permissions }),
+    });
+    setMessage(response.ok ? "Доступ Алихана обновлён" : "Не удалось сохранить доступ");
+    setSaving(false);
+  };
+  return (
+    <section className="rounded-3xl border border-blue-500/25 bg-blue-500/5 p-5 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Доступ директора</h2>
+          <p className="mt-1 text-sm text-slate-400">Включайте Алихану только нужные рабочие разделы. Финансовые операции и цена производства разрешены; чистая прибыль остаётся только в кабинете основателя. Зарплаты и расчёты с цехами пока выключены.</p>
+        </div>
+        <button type="button" disabled={!permissions || saving} onClick={() => void save()} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">
+          {saving ? "Сохраняем…" : "Сохранить доступ"}
+        </button>
+      </div>
+      {permissions ? <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {directorModules.map(([key, label]) => {
+          const enabled = permissions.includes(key);
+          return <label key={key} className="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950/70 px-3 text-sm text-slate-200">
+            <span>{label}</span>
+            <input type="checkbox" checked={enabled} onChange={() => setPermissions((current) => current ? enabled ? current.filter((item) => item !== key) : [...current, key] : current)} className="size-5 accent-blue-600" />
+          </label>;
+        })}
+      </div> : <p className="mt-4 text-sm text-slate-500">Загружаем права…</p>}
+      {message && <p className="mt-3 text-sm text-blue-200">{message}</p>}
+    </section>
+  );
+}
+
 function FounderEfficiency({ label, value, hint }: { label: string; value: string; hint: string }) {
   return <article className="rounded-xl bg-slate-950/60 p-4"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p></article>;
+}
+
+function OperationsDashboard({ data }: { data: OperationsPayload }) {
+  const cards = [
+    ["Активные заказы", data.orders.active, "/orders?tab=active"],
+    ["Просроченные", data.orders.overdue, "/orders?tab=active&attention=overdue"],
+    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active"],
+    ["Передано в цех", data.orders.transferredToWorkshop + data.orders.inWork, "/orders?tab=active&status=IN_WORK"],
+  ] as const;
+  return <>
+    <section>
+      <div className="mb-3"><h2 className="text-xl font-bold text-white">Операционный контроль</h2><p className="text-sm text-slate-400">Система автоматически выделяет просрочки и незаполненные данные</p></div>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {cards.map(([label, value, href]) => <Link key={label} href={href} className={`rounded-2xl border p-4 ${label === "Просроченные" && value > 0 ? "border-red-500/35 bg-red-500/10" : "border-slate-800 bg-[#101827]"}`}><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-3xl font-bold text-white">{value}</p></Link>)}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <Link href="/clients" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Контролировать заявки</Link>
+        <Link href="/measurements" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Контролировать замеры</Link>
+        <Link href="/marketing" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Маркетинг и вакансии</Link>
+      </div>
+    </section>
+    <MarketingAndTeam data={data} />
+    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+      <div className="flex items-center gap-2"><AlertTriangle size={20} className="text-amber-300"/><div><h2 className="text-xl font-bold">Требуют внимания</h2><p className="text-sm text-slate-400">Без финансовых показателей и прибыли</p></div></div>
+      <div className="mt-4 space-y-3">
+        {data.attention.length ? data.attention.map((order) => <Link key={order.id} href={`/orders/${order.id}`} className="block rounded-xl border border-slate-800 bg-slate-950/60 p-4 hover:border-blue-500/50"><div className="flex flex-wrap items-center gap-2"><strong>{order.number}</strong><span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">{USER_ORDER_STATUS_LABELS[order.status]}</span></div><p className="mt-1 text-sm text-slate-300">{order.client} · {order.responsible || "Ответственный не указан"} · срок {date(order.deadline)}</p><div className="mt-2 flex flex-wrap gap-2">{order.reasons.filter((reason) => !/цен.*производ|марж/i.test(reason)).map((reason) => <span key={reason} className="rounded-full bg-amber-500/10 px-2 py-1 text-xs text-amber-200">{reason}</span>)}</div></Link>) : <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Заказов, требующих внимания, нет.</p>}
+      </div>
+    </section>
+    <CalendarAgenda />
+  </>;
+}
+
+function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload | OperationsPayload; founder?: boolean }) {
+  const roleLabel: Record<string, string> = {
+    OPERATIONS_DIRECTOR: "Директор",
+    MARKETER: "Маркетолог",
+    MANAGER: "Менеджер",
+  };
+  return <>
+    <section className="rounded-2xl border border-fuchsia-500/20 bg-[#101827] p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-xl font-bold">Meta / таргет</h2><p className="text-sm text-slate-400">Фактические показатели выбранного месяца</p></div></div><Link href="/marketing" className="rounded-xl border border-fuchsia-500/30 px-3 py-2 text-sm font-semibold text-fuchsia-200">Открыть маркетинг</Link></div>
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
+        <FounderEfficiency label="Расход" value={money(data.marketing.spend)} hint="Вычитается из прибыли" />
+        <FounderEfficiency label="Лиды" value={String(data.marketing.leads)} hint="Внесено маркетингом" />
+        <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="Из рекламных лидов" />
+        <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="По рекламному каналу" />
+        <FounderEfficiency label="Цена лида" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / лиды" />
+        <FounderEfficiency label="Цена клиента" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы" />
+        <FounderEfficiency label="Конверсия" value={percent(data.marketing.qualifiedShare)} hint="Лид → заказ" />
+        <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход" />
+      </div>
+      {data.marketing.leads === 0 && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Показатели Meta за этот месяц не заполнены. Директору нужно внести расход, лиды, заказы и выручку.</p>}
+      <div className="mt-4 rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300"><b className="text-white">3D после КП:</b> сделано {data.salesTools.designDone}, не использовано {data.salesTools.designSkipped}, заказов после 3D {data.salesTools.designConverted}. Фактическая конверсия: {percent(data.salesTools.designConversion)}.</div>
+    </section>
+    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+      <div className="flex items-center gap-2"><Users size={20} className="text-blue-300"/><div><h2 className="text-xl font-bold">Рабочая активность команды</h2><p className="text-sm text-slate-400">Только проверяемые действия в ORDA — без придуманной оценки</p></div></div>
+      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="text-left text-slate-500"><tr>{["Сотрудник", "Дней входа", "Заявки", "Заказы", "Задач выполнено", "Просрочено", "Последний вход"].map((label)=><th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((item)=><tr key={item.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{item.name}</b><span className="block text-xs text-slate-500">{roleLabel[item.role] ?? item.role}</span></td><td className="px-3">{item.activeDays}</td><td className="px-3">{item.leads}</td><td className="px-3">{item.orders}</td><td className="px-3 text-emerald-300">{item.completedTasks}</td><td className={item.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{item.overdueTasks}</td><td className="px-3 text-slate-400">{item.lastLogin ? date(item.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
+      {founder && <p className="mt-3 text-xs text-slate-500">Входы показывают интерес к работе только как факт активности. Штрафы не начисляются автоматически: решение всегда принимает основатель.</p>}
+    </section>
+  </>;
 }
 
 function ManagementDashboard({

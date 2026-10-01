@@ -98,7 +98,8 @@ const reportService = readFileSync("lib/services/report.service.ts", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
-assert.match(routeShell, /const operationsDirector = accountRole === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /accountRole === "OPERATIONS_DIRECTOR"/);
+assert.match(routeShell, /grantedPermissions\.includes/);
 assert.match(routeShell, /"\/marketing", "Маркетинг"/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 for (const section of ["technical", "documents", "history", "files"])

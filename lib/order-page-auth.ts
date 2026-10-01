@@ -16,7 +16,7 @@ export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
   const session = await getServerSession(authOptions);
   if (!session?.user || !enterTenantFromSession(session)) return null;
-  const role = session.user.role as Role;
+  const role = (session.user.accountRole || session.user.role) as Role;
   if (
     !Object.values(Role).includes(role) ||
     !(await hasPermission(role, "orders"))
@@ -84,6 +84,20 @@ export async function getAuthorizedOrder(id: number) {
     }),
   };
   if (role === Role.DIRECTOR) return order;
+  if (role === Role.OPERATIONS_DIRECTOR)
+    return {
+      ...order,
+      companyProfit: undefined,
+      payrollAccruals: [],
+      companyLedgerEntries: [],
+      economy: undefined,
+      calculations: order.calculations.map((calculation) => {
+        const result = { ...calculation } as Partial<typeof calculation>;
+        delete result.grossDifference;
+        delete result.grossProfit;
+        return result;
+      }),
+    } as unknown as typeof order;
   if (role === Role.ACCOUNTANT)
     return {
       ...order,

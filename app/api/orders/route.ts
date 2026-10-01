@@ -54,7 +54,7 @@ export async function GET(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
   try {
-    const role = auth.session!.user.role as Role;
+    const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
     const userId = Number(auth.session!.user.id);
     const params = new URL(request.url).searchParams;
     const page = Number(params.get("page") ?? 1);
@@ -153,11 +153,12 @@ export async function GET(request: Request) {
     ]);
 
     const data = orders.map((order) => {
-      if (isDirector(role) || role === Role.ACCOUNTANT) return order;
+      if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
       const safe = { ...order } as Partial<typeof order>;
       delete safe.netProfit;
       delete safe.netMargin;
       delete safe.costDataComplete;
+      if (role === Role.OPERATIONS_DIRECTOR) return safe;
       if (role !== Role.PARTNER) {
         delete safe.partnerPrice;
         delete safe.partnerPaid;
@@ -197,7 +198,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!isDirector(role) && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
