@@ -11,6 +11,31 @@ export type MeasurerTerritoryProfile = {
 };
 
 const cityAliases: Record<string, string> = {
+  "алма ата": "алматы",
+  "алма-ата": "алматы",
+  "нур султан": "астана",
+  "нур-султан": "астана",
+  "ақмола": "астана",
+  "акмола": "астана",
+  "қосшы": "косшы",
+  "көкшетау": "кокшетау",
+  "кокчетав": "кокшетау",
+  "петропавл": "петропавловск",
+  "теміртау": "темиртау",
+  "қарағанды": "караганда",
+  "арқалық": "аркалык",
+  "түркістан": "туркестан",
+  "чимкент": "шымкент",
+  "тараз": "тараз",
+  "джамбул": "тараз",
+  "қызылорда": "кызылорда",
+  "кзыл орда": "кызылорда",
+  "кзыл-орда": "кызылорда",
+  "чу": "шу",
+  "қонаев": "конаев",
+  "капчагай": "конаев",
+  "капшагай": "конаев",
+  "талдықорған": "талдыкорган",
   "семипалатинск": "семей",
   "oskemen": "усть-каменогорск",
   "өскемен": "усть-каменогорск",
@@ -56,6 +81,77 @@ export const SEMEY_MEASURER_TERRITORY: MeasurerServiceArea[] = [
   { city: "Аягоз", estimatedMinutes: 291, approvalRequired: true },
   { city: "Экибастуз", estimatedMinutes: 321, approvalRequired: true },
   { city: "Зайсан", estimatedMinutes: 439, approvalRequired: true },
+];
+
+export const ASTANA_MEASURER_TERRITORY: MeasurerServiceArea[] = [
+  { city: "Астана", estimatedMinutes: 0, approvalRequired: false },
+  { city: "Косшы", estimatedMinutes: 40, approvalRequired: false },
+  { city: "Темиртау", estimatedMinutes: 138, approvalRequired: false },
+  { city: "Караганда", estimatedMinutes: 156, approvalRequired: false },
+  { city: "Кокшетау", estimatedMinutes: 213, approvalRequired: false },
+  { city: "Петропавловск", estimatedMinutes: 325, approvalRequired: true },
+  { city: "Аркалык", estimatedMinutes: 423, approvalRequired: true },
+];
+
+export const SHYMKENT_MEASURER_TERRITORY: MeasurerServiceArea[] = [
+  { city: "Шымкент", estimatedMinutes: 0, approvalRequired: false },
+  { city: "Туркестан", estimatedMinutes: 143, approvalRequired: false },
+  { city: "Тараз", estimatedMinutes: 155, approvalRequired: false },
+  { city: "Кызылорда", estimatedMinutes: 426, approvalRequired: true },
+];
+
+export const ALMATY_MEASURER_TERRITORY: MeasurerServiceArea[] = [
+  { city: "Алматы", estimatedMinutes: 0, approvalRequired: false },
+  { city: "Каскелен", estimatedMinutes: 50, approvalRequired: false },
+  { city: "Талгар", estimatedMinutes: 50, approvalRequired: false },
+  { city: "Есик", estimatedMinutes: 75, approvalRequired: false },
+  { city: "Конаев", estimatedMinutes: 85, approvalRequired: false },
+  { city: "Талдыкорган", estimatedMinutes: 214, approvalRequired: false },
+  { city: "Шу", estimatedMinutes: 280, approvalRequired: true },
+];
+
+export type MeasurerTerritoryTemplate = {
+  id: "SEMEY" | "ASTANA" | "SHYMKENT" | "ALMATY";
+  label: string;
+  description: string;
+  homeCity: string;
+  maxTravelMinutes: number;
+  serviceAreas: MeasurerServiceArea[];
+};
+
+export const MEASURER_TERRITORY_TEMPLATES: MeasurerTerritoryTemplate[] = [
+  {
+    id: "SEMEY",
+    label: "Семей · восток",
+    description: "Семей, Усть-Каменогорск и дальние выезды восточного направления.",
+    homeCity: "Семей",
+    maxTravelMinutes: 240,
+    serviceAreas: SEMEY_MEASURER_TERRITORY,
+  },
+  {
+    id: "ASTANA",
+    label: "Астана · центр и север",
+    description: "Астана, Караганда, Темиртау, Кокшетау; Петропавловск и Аркалык — по согласованию.",
+    homeCity: "Астана",
+    maxTravelMinutes: 240,
+    serviceAreas: ASTANA_MEASURER_TERRITORY,
+  },
+  {
+    id: "SHYMKENT",
+    label: "Шымкент · юг",
+    description: "Шымкент, Туркестан и Тараз; Кызылорда — отдельный дальний выезд.",
+    homeCity: "Шымкент",
+    maxTravelMinutes: 240,
+    serviceAreas: SHYMKENT_MEASURER_TERRITORY,
+  },
+  {
+    id: "ALMATY",
+    label: "Алматы · юго-восток",
+    description: "Алматы и область, Талдыкорган; Шу закреплён за Алматы по согласованию.",
+    homeCity: "Алматы",
+    maxTravelMinutes: 240,
+    serviceAreas: ALMATY_MEASURER_TERRITORY,
+  },
 ];
 
 export type TerritoryMatch =

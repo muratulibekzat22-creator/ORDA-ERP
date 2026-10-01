@@ -5,7 +5,12 @@ import { useSession } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Role, roleNames } from "@/lib/roles";
-import { SEMEY_MEASURER_TERRITORY, travelTimeLabel, type MeasurerServiceArea } from "@/lib/measurements/measurer-territory";
+import {
+  MEASURER_TERRITORY_TEMPLATES,
+  travelTimeLabel,
+  type MeasurerServiceArea,
+  type MeasurerTerritoryTemplate,
+} from "@/lib/measurements/measurer-territory";
 
 type Employee = {
   id: number;
@@ -192,11 +197,11 @@ export default function EmployeesPage() {
   };
 
   const measurerForm = form.role === Role.MEASURER || form.position.toLocaleLowerCase("ru").includes("замер");
-  const setSemeyTerritory = () => setForm({
+  const applyTerritoryTemplate = (template: MeasurerTerritoryTemplate) => setForm({
     ...form,
-    homeCity: "Семей",
-    maxTravelMinutes: 240,
-    serviceAreas: SEMEY_MEASURER_TERRITORY.map((area) => ({ ...area })),
+    homeCity: template.homeCity,
+    maxTravelMinutes: template.maxTravelMinutes,
+    serviceAreas: template.serviceAreas.map((area) => ({ ...area })),
   });
   const updateArea = (index: number, patch: Partial<MeasurerServiceArea>) => setForm({
     ...form,
@@ -229,7 +234,9 @@ export default function EmployeesPage() {
         </>}
         <label className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-slate-200"><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />Активный сотрудник</label>
         {measurerForm && <div className="space-y-3 rounded-xl border border-amber-700/50 bg-amber-950/10 p-4 md:col-span-2 lg:col-span-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-white">Территория замерщика</h3><p className="text-xs text-slate-400">Менеджер увидит обычные выезды отдельно от дальних маршрутов по согласованию.</p></div><button type="button" onClick={setSemeyTerritory} className="min-h-10 rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white">Шаблон для Семея</button></div>
+          <div><h3 className="font-semibold text-white">Территория замерщика</h3><p className="text-xs text-slate-400">Выберите опорный регион. Менеджер увидит обычные выезды отдельно от дальних маршрутов по согласованию.</p></div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{MEASURER_TERRITORY_TEMPLATES.map((template) => <button key={template.id} type="button" onClick={() => applyTerritoryTemplate(template)} className={`min-h-20 rounded-xl border p-3 text-left ${form.homeCity === template.homeCity ? "border-amber-400 bg-amber-800/40" : "border-slate-700 bg-slate-900"}`}><b className="block text-sm text-white">{template.label}</b><span className="mt-1 block text-xs text-slate-400">{template.description}</span></button>)}</div>
+          <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-100">Правило ORDA: до 4 часов в одну сторону — обычный выезд. Более 4 часов или сложный маршрут — только после отдельного согласования директора.</p>
           <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm text-slate-300">Базовый город<input value={form.homeCity} onChange={(event) => setForm({ ...form, homeCity: event.target.value })} placeholder="Например, Семей" className="mt-1 w-full" /></label><label className="text-sm text-slate-300">Максимум дороги в одну сторону<select value={form.maxTravelMinutes} onChange={(event) => setForm({ ...form, maxTravelMinutes: Number(event.target.value) })} className="mt-1 w-full"><option value={180}>3 часа</option><option value={240}>4 часа</option><option value={300}>5 часов</option><option value={360}>6 часов</option></select></label></div>
           <div className="space-y-2">{form.serviceAreas.map((area, index) => <div key={`${index}-${area.city}`} className="grid gap-2 rounded-lg bg-slate-950/60 p-2 sm:grid-cols-[1fr_150px_190px_auto]"><input value={area.city} onChange={(event) => updateArea(index, { city: event.target.value })} placeholder="Город" aria-label={`Город зоны ${index + 1}`} /><input type="number" min={0} max={900} value={area.estimatedMinutes} onChange={(event) => updateArea(index, { estimatedMinutes: Number(event.target.value) })} aria-label={`Минуты в пути ${index + 1}`} /><select value={area.approvalRequired ? "approval" : "regular"} onChange={(event) => updateArea(index, { approvalRequired: event.target.value === "approval" })} aria-label={`Режим выезда ${index + 1}`}><option value="regular">Обычный выезд</option><option value="approval">По согласованию</option></select><button type="button" onClick={() => setForm({ ...form, serviceAreas: form.serviceAreas.filter((_, areaIndex) => areaIndex !== index) })} className="min-h-11 rounded-lg bg-red-950 px-3 text-red-200">Убрать</button></div>)}</div>
           <button type="button" onClick={() => setForm({ ...form, serviceAreas: [...form.serviceAreas, { city: "", estimatedMinutes: 0, approvalRequired: false }] })} className="min-h-10 rounded-lg bg-slate-700 px-3 text-sm text-white">+ Добавить город</button>
