@@ -63,6 +63,7 @@
     "test:proposal-go-live": "tsx scripts/test-proposal-go-live.ts",
     "test:calendar": "tsx scripts/test-calendar.ts",
     "test:measurements": "tsx scripts/test-measurements.ts",
+    "test:measurement-design:contract": "tsx scripts/test-measurement-design-contract.ts",
     "test:application-lifecycle": "tsx scripts/test-application-measurement-lifecycle.ts",
     "test:application-go-live": "tsx scripts/test-application-lifecycle-go-live.ts",
     "test:reports": "tsx scripts/test-reports.ts",

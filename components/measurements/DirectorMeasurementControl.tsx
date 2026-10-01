@@ -49,6 +49,10 @@ type Measurement = {
   railingLength?: number | null;
   railingComment?: string | null;
   objectNotes?: string | null;
+  designStyle: string;
+  designNotes: string;
+  designPromptCopiedAt?: string | null;
+  designShownAt?: string | null;
   comment?: string | null;
   clientOutcome?: "READY_TO_CONTINUE" | "RETURN_TO_MANAGER" | "REFUSED" | null;
   refusalReason?: string | null;
@@ -120,6 +124,10 @@ const auditLabels: Record<string, string> = {
   REASSIGNED: "Замер перенесён и переназначен",
   STARTED: "Замер начат",
   DRAFT_SAVED: "Черновик сохранён",
+  DESIGN_BRIEF_SAVED: "Пожелания для 3D сохранены",
+  DESIGN_PROMPT_COPIED: "Промпт для 3D скопирован",
+  DESIGN_SHOWN_TO_CLIENT: "3D-эскиз показан клиенту",
+  CATALOG_REFERENCE_SELECTED: "Референс выбран из каталога",
   COMPLETED: "Замер выполнен",
   CLIENT_OUTCOME_RECORDED: "Результат клиента сохранён",
   HANDED_TO_MANAGER: "Результат передан менеджеру",
@@ -131,6 +139,17 @@ const date = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "As
 const time = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 const when = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 const businessDate = (value: string | Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+const photoLabels: Record<string, string> = {
+  SHEET: "Замерный лист",
+  OPENING: "Лестничный проём",
+  OBJECT: "Объект",
+  OBJECT_FRONT: "Объект — спереди",
+  OBJECT_SIDE: "Объект — сбоку",
+  OBJECT_REAR: "Объект — обратный ракурс",
+  DESIGN_REFERENCE: "Референс клиента",
+  DESIGN_RESULT: "Готовый 3D-эскиз",
+  EXTRA: "Дополнительное фото",
+};
 
 function overdue(value: number) {
   const minutes = Math.max(1, Math.floor(value / 60_000));
@@ -343,9 +362,10 @@ function TechnicalResult({ row }: { row: Measurement }) {
     {row.individualSteps?.length ? <List title="Размеры ступеней" items={row.individualSteps.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} × ${item.height ?? "—"} мм`)}/> : null}
     {row.winders?.length ? <List title="Забежные ступени" items={row.winders.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} мм${item.comment ? ` · ${item.comment}` : ""}`)}/> : null}
     {row.platforms?.length ? <List title="Площадки" items={row.platforms.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} мм`)}/> : null}
+    {(row.designStyle || row.designNotes || row.designShownAt) && <div className="rounded-xl border border-violet-700/50 bg-violet-950/20 p-4"><strong className="text-violet-100">3D-проект клиенту</strong><div className="mt-3 grid gap-2 sm:grid-cols-2"><Detail label="Стиль" value={row.designStyle || "По референсу"}/><Detail label="Показан клиенту" value={row.designShownAt ? when(row.designShownAt) : "Нет"}/></div>{row.designNotes && <p className="mt-3 whitespace-pre-wrap text-sm text-slate-300">{row.designNotes}</p>}</div>}
     {row.railingComment && <Info title="Ограждение">{row.railingComment}</Info>}{row.objectNotes && <Info title="Особенности объекта">{row.objectNotes}</Info>}{row.comment && <Info title="Комментарий замерщика">{row.comment}</Info>}
     {row.clientOutcome && <div className={`rounded-xl p-4 ${row.clientOutcome === "REFUSED" ? "bg-red-950/50 text-red-100" : row.clientOutcome === "RETURN_TO_MANAGER" ? "bg-amber-950/40 text-amber-100" : "bg-emerald-950/40 text-emerald-100"}`}><strong>{outcomeLabels[row.clientOutcome]}</strong>{row.refusalReason && <p className="mt-1">Причина: {refusalLabels[row.refusalReason] ?? row.refusalReason}</p>}{row.outcomeComment && <p className="mt-1 whitespace-pre-wrap text-sm">{row.outcomeComment}</p>}{row.outcomeAt && <p className="mt-2 text-xs opacity-70">Зафиксировано {when(row.outcomeAt)}</p>}</div>}
-    <div><h4 className="font-semibold text-white">Фотографии</h4>{row.attachments.length ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{row.attachments.map((photo) => <a key={photo.id} href={`/api/measurement-attachments/${photo.id}`} target="_blank" rel="noreferrer" className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900"><Image src={`/api/measurement-attachments/${photo.id}`} alt={photo.fileName} width={320} height={128} unoptimized className="h-32 w-full object-cover"/><span className="block truncate p-2 text-xs text-blue-200">{photo.type === "SHEET" ? "Замерный лист" : photo.type === "OBJECT" ? "Объект" : photo.fileName}</span></a>)}</div> : <p className="mt-2 text-sm text-slate-500">Фотографии не добавлены.</p>}</div>
+    <div><h4 className="font-semibold text-white">Фотографии</h4>{row.attachments.length ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{row.attachments.map((photo) => <a key={photo.id} href={`/api/measurement-attachments/${photo.id}`} target="_blank" rel="noreferrer" className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900"><Image src={`/api/measurement-attachments/${photo.id}`} alt={photo.fileName} width={320} height={128} unoptimized className="h-32 w-full object-cover"/><span className="block truncate p-2 text-xs text-blue-200">{photoLabels[photo.type] ?? photo.fileName}</span></a>)}</div> : <p className="mt-2 text-sm text-slate-500">Фотографии не добавлены.</p>}</div>
   </section>;
 }
 

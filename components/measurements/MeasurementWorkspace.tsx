@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import DirectorMeasurementControl from "@/components/measurements/DirectorMeasurementControl";
+import MeasurementDesignWorkflow from "@/components/measurements/MeasurementDesignWorkflow";
 import {
   Banknote,
   CheckCircle2,
@@ -55,6 +56,10 @@ type Measurement = {
   railingLength?: number | null;
   railingComment?: string | null;
   objectNotes?: string | null;
+  designStyle: string;
+  designNotes: string;
+  designPromptCopiedAt?: string | null;
+  designShownAt?: string | null;
   comment?: string | null;
   client: {
     id: number;
@@ -483,7 +488,7 @@ function OperationalMeasurementWorkspace() {
     if (photoRef.current) photoRef.current.value = "";
     setBusy(false);
   }
-  function choosePhoto(type: "SHEET" | "OBJECT" | "EXTRA") {
+  function choosePhoto(type: "SHEET" | "OPENING" | "EXTRA") {
     setPhotoType(type);
     window.setTimeout(() => photoRef.current?.click(), 0);
   }
@@ -913,6 +918,11 @@ function OperationalMeasurementWorkspace() {
             )}
             {measurer && selected.status === "IN_PROGRESS" && (
               <>
+                <MeasurementDesignWorkflow
+                  key={selected.id}
+                  measurement={selected}
+                  onChanged={async () => { await load(); }}
+                />
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Количество ступеней">
                     <input
@@ -1067,8 +1077,8 @@ function OperationalMeasurementWorkspace() {
                 <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
                   <h3 className="font-semibold text-white">Фотографии</h3>
                   <p className="mt-1 text-sm text-slate-400">
-                    Фото листа замера обязательно для завершения. На телефоне
-                    можно сразу открыть камеру.
+                    Фото листа замера обязательно. Три ракурса объекта,
+                    референс и готовый эскиз добавляются в 3D-процессе выше.
                   </p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <button
@@ -1081,11 +1091,11 @@ function OperationalMeasurementWorkspace() {
                     </button>
                     <button
                       disabled={busy}
-                      onClick={() => choosePhoto("OBJECT")}
+                      onClick={() => choosePhoto("OPENING")}
                       className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-3 text-sm"
                     >
                       <Upload size={17} />
-                      Фото объекта
+                      Фото проёма
                     </button>
                     <button
                       disabled={busy}
@@ -1406,6 +1416,18 @@ function PhotoList({ photos }: { photos: Photo[] }) {
             <span className="block truncate font-medium">
               {photo.type === "SHEET"
                 ? "Лист замера"
+                : photo.type === "OPENING"
+                  ? "Лестничный проём"
+                  : photo.type === "OBJECT_FRONT"
+                    ? "Объект — спереди"
+                    : photo.type === "OBJECT_SIDE"
+                      ? "Объект — сбоку"
+                      : photo.type === "OBJECT_REAR"
+                        ? "Объект — обратный ракурс"
+                        : photo.type === "DESIGN_REFERENCE"
+                          ? "Референс клиента"
+                          : photo.type === "DESIGN_RESULT"
+                            ? "Готовый 3D-эскиз"
                 : photo.type === "OBJECT"
                   ? "Фото объекта"
                   : photo.fileName}

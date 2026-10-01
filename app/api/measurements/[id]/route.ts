@@ -15,6 +15,7 @@ import {
   saveMeasurementComment,
   saveMeasurementDraft,
   startMeasurement,
+  updateMeasurementDesignWorkflow,
 } from "@/lib/services/measurement.service";
 
 type Context = { params: Promise<{ id: string }> };
@@ -40,6 +41,14 @@ export async function PATCH(request: Request, { params }: Context) {
     const actor = measurementActor(auth.session!);
     if (action === undefined && typeof body.comment === "string" && Object.keys(body).every((key) => key === "comment")) return NextResponse.json(await saveMeasurementComment(actor, id, body.comment));
     if (action === "start") return NextResponse.json(await startMeasurement(actor, id));
+    if (action === "design-workflow") {
+      const event = body.event === "PROMPT_COPIED" || body.event === "SHOWN_TO_CLIENT" ? body.event : undefined;
+      return NextResponse.json(await updateMeasurementDesignWorkflow(actor, id, {
+        designStyle: typeof body.designStyle === "string" ? body.designStyle : undefined,
+        designNotes: typeof body.designNotes === "string" ? body.designNotes : undefined,
+        event,
+      }));
+    }
     if (action === "save-draft") return NextResponse.json(await saveMeasurementDraft(actor, id, parseMeasurementDraft(body, false)));
     if (action === "complete") {
       const clientOutcome = typeof body.clientOutcome === "string" && Object.values(MeasurementClientOutcome).includes(body.clientOutcome as MeasurementClientOutcome) ? body.clientOutcome as MeasurementClientOutcome : null;

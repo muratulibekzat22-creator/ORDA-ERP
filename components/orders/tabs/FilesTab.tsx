@@ -22,7 +22,7 @@ type Attachment = {
   uploadedBy: { name: string } | null;
 };
 
-const allowed = ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx";
+const allowed = ".pdf,.jpg,.jpeg,.png,.webp,.mp4,.mov,.doc,.docx,.xls,.xlsx";
 const control = "mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white outline-none focus:border-blue-500 disabled:opacity-70";
 
 export default function FilesTab({
@@ -110,26 +110,43 @@ export default function FilesTab({
     setSaving(true);
     setError("");
     setNotice("");
-    const body = new FormData();
-    body.set("orderId", String(orderId));
-    body.set("purpose", purpose);
-    body.set("file", selected);
-    const response = await fetch("/api/attachments", {
-      method: "POST",
-      headers: { "Idempotency-Key": crypto.randomUUID() },
-      body,
-    });
-    if (response.ok) {
+    try {
+      if (selected.type.startsWith("video/")) {
+        const { upload: uploadBlob } = await import("@vercel/blob/client");
+        const idempotencyKey = crypto.randomUUID();
+        const fileName = selected.name.normalize("NFKC").replace(/[\u0000-\u001f\u007f/\\]/g, "_").replace(/\s+/g, " ").trim().slice(0, 180) || "video.mp4";
+        const pathname = `orders/${orderId}/client-${crypto.randomUUID()}-${fileName}`;
+        await uploadBlob(pathname, selected, {
+          access: "private",
+          handleUploadUrl: "/api/attachments/client-upload",
+          clientPayload: JSON.stringify({ orderId, purpose, fileName, contentType: selected.type, size: selected.size, idempotencyKey }),
+          multipart: true,
+        });
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 500));
+          const response = await fetch(`/api/attachments?orderId=${orderId}`, { cache: "no-store" });
+          if (response.ok && ((await response.json()) as Attachment[]).some((item) => item.fileName === fileName && item.size === selected.size)) break;
+        }
+      } else {
+        const body = new FormData();
+        body.set("orderId", String(orderId));
+        body.set("purpose", purpose);
+        body.set("file", selected);
+        const response = await fetch("/api/attachments", {
+          method: "POST",
+          headers: { "Idempotency-Key": crypto.randomUUID() },
+          body,
+        });
+        if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error ?? "Не удалось загрузить файл");
+      }
       setSelected(null);
       (event.currentTarget as HTMLFormElement).reset();
       setPurpose("CLIENT_SPACE");
       await load();
       setNotice("Файл добавлен в 3D-бриф");
-    } else
-      setError(
-        ((await response.json()) as { error?: string }).error ??
-          "Не удалось загрузить файл",
-      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось загрузить файл");
+    }
     setSaving(false);
   }
 
@@ -190,7 +207,7 @@ export default function FilesTab({
             <input required type="file" accept={allowed} disabled={saving} onChange={(event) => setSelected(event.target.files?.[0] ?? null)} className="min-w-0 rounded-xl border border-slate-700 bg-slate-900 p-3 text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-white" />
             <button disabled={saving || !selected} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white disabled:opacity-50"><Upload size={18} />{saving ? "Загрузка…" : "Загрузить"}</button>
           </div>
-          <p className="mt-2 text-xs text-slate-500">PDF, JPG, PNG, WEBP, Word и Excel · до 10 МБ · закрытое хранилище.</p>
+          <p className="mt-2 text-xs text-slate-500">Фото и документы до 10 МБ, MP4 и MOV до 100 МБ · закрытое хранилище.</p>
         </form>
       )}
 
@@ -202,7 +219,7 @@ export default function FilesTab({
         {loading ? <p className="p-6 text-slate-400">Загрузка…</p> : !files.length ? <p className="p-6 text-slate-400">Файлы ещё не загружены</p> : (
           <ul className="divide-y divide-slate-800">
             {files.map((item) => {
-              const canPreview = item.contentType === "application/pdf" || item.contentType.startsWith("image/");
+              const canPreview = item.contentType === "application/pdf" || item.contentType.startsWith("image/") || item.contentType.startsWith("video/");
               return (
                 <li key={item.id} className="flex flex-wrap items-center gap-4 p-5">
                   <File className="text-blue-400" />

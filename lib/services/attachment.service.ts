@@ -7,12 +7,19 @@ import { type AttachmentPurpose } from "@/lib/orders/design-brief";
 import { prisma } from "@/lib/prisma";
 import { canUseEntities } from "@/lib/services/document.service";
 
-export const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_SIZE = 100 * 1024 * 1024;
+export const MAX_DOCUMENT_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+export const attachmentSizeLimit = (contentType: string) =>
+  contentType.startsWith("video/")
+    ? MAX_ATTACHMENT_SIZE
+    : MAX_DOCUMENT_ATTACHMENT_SIZE;
 export const ALLOWED_ATTACHMENT_TYPES = new Set([
   "application/pdf",
   "image/jpeg",
   "image/png",
   "image/webp",
+  "video/mp4",
+  "video/quicktime",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel",
@@ -76,7 +83,7 @@ export async function listAttachments(orderId: number, actor: AttachmentActor) {
   });
 }
 
-function safeFileName(value: string) {
+export function safeAttachmentFileName(value: string) {
   const cleaned = value
     .normalize("NFKC")
     .replace(/[\u0000-\u001f\u007f/\\]/g, "_")
@@ -115,6 +122,12 @@ function validFileContent(
       bytes.subarray(0, 4).toString("ascii") === "RIFF" &&
       bytes.subarray(8, 12).toString("ascii") === "WEBP"
     );
+  if (contentType === "video/mp4" || contentType === "video/quicktime")
+    return (
+      ["mp4", "mov"].includes(extension ?? "") &&
+      bytes.length >= 12 &&
+      bytes.subarray(4, 8).toString("ascii") === "ftyp"
+    );
   const zip = hasPrefix(bytes, [0x50, 0x4b, 0x03, 0x04]);
   if (
     contentType ===
@@ -146,7 +159,7 @@ export async function uploadAttachment(input: {
 }) {
   if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(input.actor.role))
     throw new Error("FORBIDDEN");
-  const fileName = safeFileName(input.file.name);
+  const fileName = safeAttachmentFileName(input.file.name);
   const bytes = Buffer.from(await input.file.arrayBuffer());
   if (!validFileContent(fileName, input.file.type, bytes))
     throw new Error("INVALID_FILE_TYPE");
@@ -190,7 +203,7 @@ export async function uploadAttachment(input: {
     contentType: input.file.type,
     addRandomSuffix: false,
     allowOverwrite: false,
-    maximumSizeInBytes: MAX_ATTACHMENT_SIZE,
+    maximumSizeInBytes: attachmentSizeLimit(input.file.type),
   });
   try {
     const attachment = await prisma.attachment.create({
@@ -213,6 +226,104 @@ export async function uploadAttachment(input: {
     await del(blob.pathname).catch(() => undefined);
     if (!isPrismaUniqueConflict(error)) throw error;
     throw new Error("IDEMPOTENCY_CONFLICT");
+  }
+}
+
+export async function registerClientUploadedVideo(input: {
+  orderId: number;
+  documentId?: number;
+  purpose: AttachmentPurpose;
+  fileName: string;
+  pathname: string;
+  contentType: string;
+  size: number;
+  idempotencyKey: string;
+  actor: AttachmentActor;
+}) {
+  const fileName = safeAttachmentFileName(input.fileName);
+  const expectedPrefix = `orders/${input.orderId}/client-`;
+  if (
+    !input.pathname.startsWith(expectedPrefix) ||
+    input.pathname.includes("..") ||
+    !["video/mp4", "video/quicktime"].includes(input.contentType) ||
+    input.size <= 0 ||
+    input.size > attachmentSizeLimit(input.contentType)
+  ) {
+    await del(input.pathname).catch(() => undefined);
+    throw new Error("INVALID_FILE_TYPE");
+  }
+  if (!(await canUseEntities(input.actor, undefined, input.orderId))) {
+    await del(input.pathname).catch(() => undefined);
+    throw new Error("FORBIDDEN");
+  }
+  if (
+    input.documentId &&
+    !(await prisma.document.findFirst({
+      where: { id: input.documentId, orderId: input.orderId },
+      select: { id: true },
+    }))
+  ) {
+    await del(input.pathname).catch(() => undefined);
+    throw new Error("INVALID_DOCUMENT");
+  }
+  const stored = await get(input.pathname, { access: "private" });
+  if (!stored || stored.statusCode !== 200) throw new Error("BLOB_NOT_FOUND");
+  const reader = stored.stream.getReader();
+  let head = Buffer.alloc(0);
+  try {
+    while (head.length < 12) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      head = Buffer.concat([head, Buffer.from(chunk.value)]);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  if (!validFileContent(fileName, input.contentType, head)) {
+    await del(input.pathname).catch(() => undefined);
+    throw new Error("INVALID_FILE_TYPE");
+  }
+  const requestHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        orderId: input.orderId,
+        documentId: input.documentId ?? null,
+        fileName,
+        pathname: input.pathname,
+        contentType: input.contentType,
+        purpose: input.purpose,
+        size: input.size,
+      }),
+    )
+    .digest("hex");
+  const repeated = await prisma.attachment.findUnique({
+    where: { idempotencyKey: input.idempotencyKey },
+    select: { requestHash: true },
+  });
+  if (repeated) {
+    if (!compareRequestHash(repeated.requestHash, requestHash))
+      throw new Error("IDEMPOTENCY_CONFLICT");
+    return;
+  }
+  try {
+    await prisma.attachment.create({
+      data: {
+        orderId: input.orderId,
+        documentId: input.documentId,
+        uploadedById: input.actor.userId,
+        fileName,
+        pathname: input.pathname,
+        contentType: input.contentType,
+        purpose: input.purpose,
+        size: input.size,
+        idempotencyKey: input.idempotencyKey,
+        requestHash,
+      },
+    });
+  } catch (error) {
+    if (isPrismaUniqueConflict(error)) return;
+    await del(input.pathname).catch(() => undefined);
+    throw error;
   }
 }
 

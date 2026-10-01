@@ -437,6 +437,11 @@ enum MeasurementPhotoType {
   SHEET
   OPENING
   OBJECT
+  OBJECT_FRONT
+  OBJECT_SIDE
+  OBJECT_REAR
+  DESIGN_REFERENCE
+  DESIGN_RESULT
   EXTRA
 }
 
@@ -2358,6 +2363,11 @@ model Measurement {
   railingLength   Float?
   railingComment  String?
   objectNotes     String?
+
+  designStyle          String    @default("")
+  designNotes          String    @default("")
+  designPromptCopiedAt DateTime?
+  designShownAt        DateTime?
 
   comment            String?
   completedSnapshot  Json?

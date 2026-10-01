@@ -64,6 +64,12 @@ export type MeasurementOutcomeInput = {
   outcomeComment?: string;
 };
 
+export type MeasurementDesignWorkflowInput = {
+  designStyle?: string;
+  designNotes?: string;
+  event?: "PROMPT_COPIED" | "SHOWN_TO_CLIENT";
+};
+
 export type ScheduleMeasurementInput = {
   clientId: number;
   orderId?: number;
@@ -1219,6 +1225,68 @@ export async function saveMeasurementComment(
   });
 }
 
+export async function updateMeasurementDesignWorkflow(
+  actor: MeasurementActor,
+  id: number,
+  input: MeasurementDesignWorkflowInput,
+) {
+  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
+  return prisma.$transaction(async (tx) => {
+    const current = await editableMeasurement(tx, actor, id);
+    if (!EDITABLE_STATUSES.includes(current.status))
+      throw new MeasurementError("IMMUTABLE_MEASUREMENT");
+    const types = current.attachments.map((attachment) => attachment.type);
+    const legacyObjectPhotos = types.filter(
+      (type) => type === MeasurementPhotoType.OBJECT,
+    ).length;
+    const hasThreeAngles =
+      legacyObjectPhotos >= 3 ||
+      [
+        MeasurementPhotoType.OBJECT_FRONT,
+        MeasurementPhotoType.OBJECT_SIDE,
+        MeasurementPhotoType.OBJECT_REAR,
+      ].every((type) => types.includes(type));
+    const hasReference = types.includes(MeasurementPhotoType.DESIGN_REFERENCE);
+    if (input.event === "PROMPT_COPIED" && (!hasThreeAngles || !hasReference))
+      throw new MeasurementError("DESIGN_INPUT_REQUIRED");
+    if (
+      input.event === "SHOWN_TO_CLIENT" &&
+      !types.includes(MeasurementPhotoType.DESIGN_RESULT)
+    )
+      throw new MeasurementError("DESIGN_RESULT_REQUIRED");
+    const now = new Date();
+    const data = {
+      ...(input.designStyle !== undefined
+        ? { designStyle: trim(input.designStyle, 200) ?? "" }
+        : {}),
+      ...(input.designNotes !== undefined
+        ? { designNotes: trim(input.designNotes, 2000) ?? "" }
+        : {}),
+      ...(input.event === "PROMPT_COPIED" ? { designPromptCopiedAt: now } : {}),
+      ...(input.event === "SHOWN_TO_CLIENT" ? { designShownAt: now } : {}),
+    };
+    const updated = await tx.measurement.update({ where: { id }, data });
+    await tx.measurementAudit.create({
+      data: {
+        measurementId: id,
+        action:
+          input.event === "PROMPT_COPIED"
+            ? "DESIGN_PROMPT_COPIED"
+            : input.event === "SHOWN_TO_CLIENT"
+              ? "DESIGN_SHOWN_TO_CLIENT"
+              : "DESIGN_BRIEF_SAVED",
+        actorId: actor.userId,
+        before: {
+          designStyle: current.designStyle,
+          designNotes: current.designNotes,
+        },
+        after: data,
+      },
+    });
+    return updated;
+  });
+}
+
 export async function completeMeasurement(
   actor: MeasurementActor,
   id: number,
@@ -1236,6 +1304,27 @@ export async function completeMeasurement(
       )
     )
       throw new MeasurementError("SHEET_PHOTO_REQUIRED");
+    const photoTypes = current.attachments.map((photo) => photo.type);
+    const legacyObjectPhotos = photoTypes.filter(
+      (type) => type === MeasurementPhotoType.OBJECT,
+    ).length;
+    const hasThreeAngles =
+      legacyObjectPhotos >= 3 ||
+      [
+        MeasurementPhotoType.OBJECT_FRONT,
+        MeasurementPhotoType.OBJECT_SIDE,
+        MeasurementPhotoType.OBJECT_REAR,
+      ].every((type) => photoTypes.includes(type));
+    if (!hasThreeAngles)
+      throw new MeasurementError("OBJECT_PHOTOS_REQUIRED");
+    if (!photoTypes.includes(MeasurementPhotoType.DESIGN_REFERENCE))
+      throw new MeasurementError("DESIGN_REFERENCE_REQUIRED");
+    if (!current.designPromptCopiedAt)
+      throw new MeasurementError("DESIGN_PROMPT_REQUIRED");
+    if (!photoTypes.includes(MeasurementPhotoType.DESIGN_RESULT))
+      throw new MeasurementError("DESIGN_RESULT_REQUIRED");
+    if (!current.designShownAt)
+      throw new MeasurementError("DESIGN_NOT_SHOWN");
     if (!outcome) throw new MeasurementError("CLIENT_OUTCOME_REQUIRED");
     const outcomeComment = trim(outcome?.outcomeComment, 2000);
     if (
