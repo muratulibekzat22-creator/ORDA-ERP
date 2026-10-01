@@ -45,7 +45,7 @@ assert.match(service, /completionTasks/, "report must include exact completion t
 assert.match(service, /recordedExpenses/, "report must include recorded expenses");
 assert.match(service, /const pricedOrders = orders\.filter/, "margin must use only orders with complete sale and production prices");
 assert.match(service, /const grossMargin = pricedSales - productionCost/, "gross margin must remain available for complete orders");
-assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gt: 0 \}/, "company profit must use completed orders with both prices");
+assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: 2 \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");
 assert.match(route, /report\.sales\.grossMargin === undefined/, "export must redact gross margin");
 console.log("Reports math, period boundaries, refunds, zero denominators and RBAC contracts: OK");

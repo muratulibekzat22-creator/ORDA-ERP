@@ -6,6 +6,7 @@ import { calculateStair } from "../lib/calculator/stair-calculation";
 import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentation";
 import { orderDataGaps } from "../lib/orders/completeness";
 import { ORDER_BOARD_TARGET_LIFECYCLE, orderBoardColumn } from "../lib/orders/board";
+import { hasProductionPrice } from "../lib/orders/production-price";
 
 assert.equal(USER_ORDER_STATUSES.length, 7);
 assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
@@ -18,6 +19,8 @@ assert.equal(orderBoardColumn(OrderLifecycle.COMPLETED), "COMPLETED");
 assert.equal(orderBoardColumn(OrderLifecycle.CANCELLED), null);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.CONTRACT, OrderLifecycle.PREPARATION);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.WORKSHOP, OrderLifecycle.READY_FOR_PRODUCTION);
+assert.equal(hasProductionPrice(1, new Date()), false, "legacy 1 ₸ placeholder entered profit calculations");
+assert.equal(hasProductionPrice(2, new Date()), true);
 assert.deepEqual(
   orderDataGaps({
     managerUserId: null,
@@ -79,6 +82,8 @@ const workshopSettlement = readFileSync("components/orders/WorkshopSettlementPan
 const orderProcess = readFileSync("components/orders/OrderProcess.tsx", "utf8");
 const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
 const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
+const dashboardService = readFileSync("lib/services/dashboard.service.ts", "utf8");
+const reportService = readFileSync("lib/services/report.service.ts", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
@@ -136,6 +141,8 @@ assert.match(order360, /code: "PRODUCTION_PRICE"[\s\S]*Не указана су�
 assert.match(order360, /target === OrderLifecycle\.PREPARATION[\s\S]*PARTNER_REQUIRED[\s\S]*PARTNER_COST_REQUIRED/);
 assert.match(ordersPage, /missing-production-price/);
 assert.match(ordersApi, /!isDirector\(role\) && role !== Role\.MANAGER/);
+for (const source of [dashboardService, reportService])
+  assert.match(source, /hasProductionPrice\(.*partnerPrice, .*partnerAgreedAt\)/, "management calculation bypasses the production-price rule");
 for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])
   assert.match(ordersApi, new RegExp(`"${field}"`));
 for (const page of ["offer", "contract", "act", "invoice", "print"])

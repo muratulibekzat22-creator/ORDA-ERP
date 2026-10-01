@@ -12,7 +12,6 @@ import {
   Plus,
   RefreshCw,
   ReceiptText,
-  Target,
   Wallet,
   X,
 } from "lucide-react";
@@ -38,6 +37,8 @@ type ManagementPayload = {
     payrollPaid: number;
     netProfit: number;
     netMargin: number | null;
+    pricedRevenue: number;
+    businessProfitability: number | null;
     dataComplete: boolean;
     ordersWithMargin: number;
     ordersWithoutMargin: number;
@@ -256,16 +257,17 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
 }
 
 function percent(value: number | null) {
-  return value === null || !Number.isFinite(value) ? "—" : `${Math.round(value).toLocaleString("ru-RU")} %`;
+  return value === null || !Number.isFinite(value)
+    ? "—"
+    : `${value.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} %`;
 }
 
 function FounderDashboard({ data }: { data: ManagementPayload }) {
   const totalOrders = data.finance.ordersWithMargin + data.finance.ordersWithoutMargin;
-  const costCoverage = totalOrders > 0 ? data.finance.ordersWithMargin / totalOrders * 100 : null;
+  const averageOrder = totalOrders > 0 ? data.finance.revenue / totalOrders : null;
   const collectionRate = data.finance.revenue > 0 ? data.finance.received / data.finance.revenue * 100 : null;
-  const expenseLoad = data.finance.revenue > 0
-    ? (data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued) / data.finance.revenue * 100
-    : null;
+  const collectedWidth = collectionRate === null ? 0 : Math.min(Math.max(collectionRate, 0), 100);
+  const profitLabel = data.finance.dataComplete ? "Чистая прибыль" : "Расчётная прибыль";
   const reports = [
     { href: "/reports", title: "Управленческие отчёты", hint: "Продажи, KPI, маркетинг и зарплаты", icon: BarChart3 },
     { href: "/finance", title: "Финансы", hint: "Доходы, расходы и движение денег", icon: Wallet },
@@ -279,43 +281,44 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
           <h2 className="text-xl font-bold text-white">Итог компании</h2>
           <p className="text-sm text-slate-400">Только показатели для принятия решений за выбранный месяц</p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-3">
           <article className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5">
-            <p className="text-sm text-emerald-200">Чистая прибыль</p>
+            <p className="text-sm text-emerald-200">{profitLabel}</p>
             <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.netProfit)}</p>
-            <p className="mt-2 text-xs text-emerald-100/70">После производства, расходов и начисленной зарплаты</p>
+            <p className="mt-2 text-xs leading-5 text-emerald-100/70">
+              Продажи в расчёте {money(data.finance.pricedRevenue)} − производство {money(data.finance.directExpenses)} − расходы {money(data.finance.operatingExpenses)} − зарплата {money(data.finance.payrollAccrued)}
+            </p>
           </article>
           <article className="rounded-2xl border border-blue-500/25 bg-blue-500/5 p-5">
             <p className="text-sm text-slate-300">Чистая маржа</p>
             <p className="mt-2 text-3xl font-bold text-white">{percent(data.finance.netMargin)}</p>
-            <p className="mt-2 text-xs text-slate-500">Чистая прибыль относительно заполненных продаж</p>
+            <p className="mt-2 text-xs text-slate-500">Прибыль относительно продаж с заполненной ценой производства</p>
           </article>
-          <article className="rounded-2xl border border-slate-800 bg-[#101827] p-5">
-            <p className="text-sm text-slate-400">Получено от клиентов</p>
-            <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.received)}</p>
-            <p className="mt-2 text-xs text-slate-500">Выручка месяца: {money(data.finance.revenue)}</p>
-          </article>
-          <article className="rounded-2xl border border-slate-800 bg-[#101827] p-5">
-            <p className="text-sm text-slate-400">Расходы и зарплата</p>
-            <p className="mt-2 text-3xl font-bold text-white">{money(data.finance.operatingExpenses + data.finance.payrollAccrued)}</p>
-            <p className="mt-2 text-xs text-slate-500">Расходы {money(data.finance.operatingExpenses)} · зарплата {money(data.finance.payrollAccrued)}</p>
+          <article className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-5">
+            <p className="text-sm text-slate-300">Рентабельность бизнеса</p>
+            <p className="mt-2 text-3xl font-bold text-white">{percent(data.finance.businessProfitability)}</p>
+            <p className="mt-2 text-xs text-slate-500">Прибыль относительно всех учтённых затрат</p>
           </article>
         </div>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex items-center gap-2">
-          <Target size={20} className="text-amber-300" />
-          <div><h2 className="text-xl font-bold text-white">Эффективность</h2><p className="text-sm text-slate-400">Короткие показатели без операционной работы</p></div>
+          <BarChart3 size={20} className="text-blue-300" />
+          <div><h2 className="text-xl font-bold text-white">Продажи за месяц</h2><p className="text-sm text-slate-400">Сумма, оплаты и средний чек</p></div>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <FounderEfficiency label="Сбор оплаты" value={percent(collectionRate)} hint="Получено относительно продаж месяца" />
-          <FounderEfficiency label="Заполненность себестоимости" value={percent(costCoverage)} hint={`${data.finance.ordersWithMargin} из ${totalOrders} заказов участвуют в прибыли`} />
-          <FounderEfficiency label="Расходная нагрузка" value={percent(expenseLoad)} hint="Производство, расходы и начисленная зарплата" />
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <FounderEfficiency label="Продажи" value={money(data.finance.revenue)} hint={`${totalOrders} заказов`} />
+          <FounderEfficiency label="Получено" value={money(data.finance.received)} hint={`${percent(collectionRate)} от продаж`} />
+          <FounderEfficiency label="Средний чек" value={averageOrder === null ? "—" : money(averageOrder)} hint="На один заказ" />
+          <FounderEfficiency label="В расчёте прибыли" value={money(data.finance.pricedRevenue)} hint={`${data.finance.ordersWithMargin} из ${totalOrders} заказов`} />
+        </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800" aria-label={`Сбор оплаты ${percent(collectionRate)}`}>
+          <div className="h-full rounded-full bg-blue-500" style={{ width: `${collectedWidth}%` }} />
         </div>
         {data.finance.ordersWithoutMargin > 0 ? (
           <p className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-            В {data.finance.ordersWithoutMargin} заказах ещё нет цены производства. Они не включены в прибыль и не искажают итог.
+            Прибыль пока рассчитана по {data.finance.ordersWithMargin} из {totalOrders} заказов. В {data.finance.ordersWithoutMargin} заказах нужно заполнить настоящую цену производства.
           </p>
         ) : null}
       </section>

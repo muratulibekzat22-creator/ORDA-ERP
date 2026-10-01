@@ -262,7 +262,9 @@ async function managementProjection(scope: DashboardScope) {
     return sum + (row.type === "REFUND" ? -amount : amount);
   }, 0);
   const pricedEconomies = periodEconomies.filter(
-    ({ order }) => Number(order.amount) > 0 && Number(order.partnerPrice) > 0,
+    ({ order }) =>
+      Number(order.amount) > 0 &&
+      hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
   );
   const pricedRevenue = pricedEconomies.reduce(
     (sum, { order }) => sum + Number(order.amount),
@@ -307,6 +309,10 @@ async function managementProjection(scope: DashboardScope) {
     pricedRevenue + additionalIncome - directExpenses - payrollAccrued - operatingExpenses;
   const netMargin = pricedRevenue > 0
     ? Math.round((netProfit / pricedRevenue) * 10_000) / 100
+    : null;
+  const totalCosts = directExpenses + payrollAccrued + operatingExpenses;
+  const businessProfitability = totalCosts > 0
+    ? Math.round((netProfit / totalCosts) * 10_000) / 100
     : null;
 
   const counts = Object.fromEntries(
@@ -386,6 +392,8 @@ async function managementProjection(scope: DashboardScope) {
       payrollPaid,
       netProfit,
       netMargin,
+      pricedRevenue,
+      businessProfitability,
       dataComplete,
       ordersWithMargin: pricedEconomies.length,
       ordersWithoutMargin,

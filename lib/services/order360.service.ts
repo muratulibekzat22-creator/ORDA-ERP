@@ -213,7 +213,7 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
       },
       {
         code: "PRODUCTION_PRICE",
-        passed: Number(order.partnerPrice) > 0,
+        passed: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
         message: "Не указана сумма производства",
       },
     ];

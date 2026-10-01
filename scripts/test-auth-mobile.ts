@@ -20,7 +20,7 @@ assert(shell.includes('["/", "/clients", "/orders", "/measurements", "/calendar"
 assert(shell.includes('["/", "/marketing", "/calendar", "/payroll"]'), "marketer personal payroll navigation is missing");
 assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/payroll", "/finance", "/partner-management", "/reports"]'), "Founder navigation must keep payroll with final controls and reports");
 assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes("if (operationsDirector) return true"), "Operations director must retain the full working navigation");
-assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Эффективность"), "Founder cockpit must show final financial and efficiency indicators");
+assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Рентабельность бизнеса") && cockpit.includes("Продажи за месяц"), "Founder cockpit must show final financial and sales indicators");
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");

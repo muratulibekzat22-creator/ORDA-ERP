@@ -2,6 +2,7 @@ import { Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
 import { orderDataGaps } from "@/lib/orders/completeness";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { projectOrderStatus, USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -43,7 +44,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
   const [customerBalance, partnerBalance, payrollTotals, expenseEntries] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
-    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null }, partnerPrice: { gt: 0 } }, _sum: { partnerBalance: true } }),
+    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null }, partnerPrice: { gte: 2 } }, _sum: { partnerBalance: true } }),
     internalFinance ? prisma.$queryRaw<PayrollTotalsRow[]>`
       SELECT 'accrual'::text AS kind,
         COALESCE(SUM(CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END), 0) AS total,
@@ -91,10 +92,12 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   orders.forEach((item) => { const key = day(item.createdAt); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.salesAmount += money(item.amount); trendMap.set(key, value); });
   payments.forEach((item) => { const key = day(item.operationDate); const value = trendMap.get(key) ?? { date: key, salesAmount: 0, received: 0 }; value.received += paymentEffect(item.type, item.amount); trendMap.set(key, value); });
   const missingProductionPrice = orders.filter(
-    (item) => money(item.partnerPrice) <= 0,
+    (item) => !hasProductionPrice(item.partnerPrice, item.partnerAgreedAt),
   ).length;
   const pricedOrders = orders.filter(
-    (item) => money(item.amount) > 0 && money(item.partnerPrice) > 0,
+    (item) =>
+      money(item.amount) > 0 &&
+      hasProductionPrice(item.partnerPrice, item.partnerAgreedAt),
   );
   const productionCost = pricedOrders.reduce(
     (sum, item) => sum + money(item.partnerPrice),
@@ -146,7 +149,9 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const recordedExpenses = operatingExpenses;
   const netProfit =
     grossMargin + additionalIncome - operatingExpenses - payrollAccrued;
-  const partnerAgreed = orders.filter((item) => money(item.partnerPrice) > 0).reduce((sum, item) => sum + money(item.partnerPrice), 0);
+  const partnerAgreed = orders
+    .filter((item) => hasProductionPrice(item.partnerPrice, item.partnerAgreedAt))
+    .reduce((sum, item) => sum + money(item.partnerPrice), 0);
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
   return {
     generatedAt: new Date().toISOString(), role: actor.role as ReportsReadModel["role"],
@@ -171,7 +176,9 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     production: production.map((item) => ({ stage: item.stage, count: item._count._all })),
     orders: visibleOrders.map((item) => {
       const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0);
-      const productionPrice = money(item.partnerPrice) > 0 ? money(item.partnerPrice) : null;
+      const productionPrice = hasProductionPrice(item.partnerPrice, item.partnerAgreedAt)
+        ? money(item.partnerPrice)
+        : null;
       const payrollAccruedForOrder = item.payrollAccruals.reduce(
         (sum, accrual) => sum + (accrual.direction === "INCREASE" ? money(accrual.amount) : -money(accrual.amount)),
         0,

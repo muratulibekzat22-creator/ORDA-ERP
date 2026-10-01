@@ -83,7 +83,7 @@ async function main() {
     assert(route.includes("!session?.user") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = session.user.role as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Выручка", "Получено от клиентов", "Цена производства", "Прочие доходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить доход", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    for (const label of ["Выручка", "Получено от клиентов", "Цена производства", "Прочие доходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Рентабельность бизнеса", "Продажи за месяц", "Средний чек", "Добавить доход", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
     assert(!dashboard.includes("<table"), "Director team performance must not regress to a wide table");
     for (const routeName of ["/orders?tab=active", "/orders?tab=active&attention=overdue"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
     for (const removed of ["/clients", "/calendar", "/warehouse", "/production", "/measurements"])
