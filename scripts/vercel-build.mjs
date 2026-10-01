@@ -24,6 +24,7 @@ run("prisma:generate");
 if (process.env.DATABASE_URL?.trim()) {
   run("seed:training");
   run("prepare:director:release");
+  run("prepare:sales-plan:release");
 } else {
   console.log("DATABASE_URL is not configured; skipping database preparation for this preview build.");
 }

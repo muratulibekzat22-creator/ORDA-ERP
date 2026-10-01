@@ -12,6 +12,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "seed:director": "tsx scripts/seed-director.ts",
     "prepare:director:release": "tsx scripts/prepare-production-director.ts",
+    "prepare:sales-plan:release": "tsx scripts/prepare-sales-plan-release.ts",
     "seed:training": "tsx scripts/seed-training.ts",
     "verify:database-restore": "tsx scripts/verify-database-restore.ts",
     "test:idempotency": "tsx scripts/test-idempotency.ts",
