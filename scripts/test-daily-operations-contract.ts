@@ -25,6 +25,8 @@ assert.match(service, /pg_advisory_xact_lock/, "concurrent generators must be se
 assert.match(service, /activeOlderTask/, "order-readiness tasks must not stack while an older task is active");
 assert.match(service, /Просрочен срок/, "order-readiness tasks must include overdue deadlines");
 assert.match(service, /ORDER_READINESS_REFRESHED/, "existing readiness tasks must refresh without duplication");
+assert.match(service, /status: \{ in: \["ASSIGNED", "IN_PROGRESS"\] \}/, "overdue active measurements must be included in manager readiness");
+assert.match(service, /Замерщик не выбран/, "unassigned measurers must be explicit in the task");
 assert.match(service, /role: Role\.MANAGER/, "daily rows must be limited to active managers");
 assert.match(mandatory.replace(/\s+/g, " "), /\{ workflow: null \}, \{ dueAt: \{ lte: now \} \}/, "scheduled workflow tasks must not block before their due time");
 assert.match(cron, /timingSafeEqual/, "cron must use constant-time secret comparison");

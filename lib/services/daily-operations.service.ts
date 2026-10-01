@@ -170,7 +170,7 @@ export async function ensureDailyManagerOperations(founderId: number, now = new 
   const todayKey = dateKeyAtAlmaty(now);
   const reportDateKey = addDays(todayKey, -1);
   const dueAt = dueAtForBusinessDate(todayKey);
-  const [founder, snapshot, orders] = await Promise.all([
+  const [founder, snapshot, orders, overdueMeasurements] = await Promise.all([
     prisma.user.findFirst({ where: { id: founderId, companyId, active: true, role: Role.DIRECTOR }, select: { id: true } }),
     getDailyCrmSnapshot({ dateKey: reportDateKey, now }),
     prisma.order.findMany({
@@ -182,6 +182,20 @@ export async function ensureDailyManagerOperations(founderId: number, now = new 
         installation: { select: { scheduledAt: true } },
       },
       orderBy: { createdAt: "asc" },
+    }),
+    prisma.measurement.findMany({
+      where: {
+        companyId,
+        visitDate: { lt: now },
+        status: { in: ["ASSIGNED", "IN_PROGRESS"] },
+        client: { managerUserId: { not: null } },
+      },
+      select: {
+        id: true, visitDate: true, status: true, city: true,
+        client: { select: { id: true, name: true, managerUserId: true } },
+        measurerUser: { select: { name: true } },
+      },
+      orderBy: { visitDate: "asc" },
     }),
   ]);
   if (!founder) throw new Error("FOUNDER_REQUIRED");
@@ -220,15 +234,20 @@ export async function ensureDailyManagerOperations(founderId: number, now = new 
           issues.push(`Просрочен срок ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty" }).format(deadline)}`);
         return { order, issues };
       }).filter((item) => item.order.managerUserId === row.managerId && item.issues.length > 0);
-      if (attention.length) {
+      const measurementsToClose = overdueMeasurements.filter((measurement) => measurement.client.managerUserId === row.managerId);
+      if (attention.length || measurementsToClose.length) {
         const readinessKey = `order-readiness:${todayKey}:${row.managerId}`;
         const activeOlderTask = await tx.calendarTask.findFirst({ where: { assigneeId: row.managerId, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION, status: { in: [...ACTIVE_TASK_STATUSES] } }, select: { id: true, title: true, description: true } });
         const existingToday = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: readinessKey } }, select: { id: true, title: true, description: true } });
-        const title = `Проверить заказы, требующие внимания (${attention.length})`;
+        const title = `Проверить данные: заказы ${attention.length} · замеры ${measurementsToClose.length}`;
         const description = [
-          "Проверьте действующие заказы и дополните их только подтверждёнными данными. Не угадывайте цену производства, срок или цех — если данных нет, уточните у директора и напишите конкретный вопрос.",
+          "Проверьте действующие заказы и незакрытые замеры. Дополняйте только подтверждёнными данными. Не угадывайте цену производства, срок, цех или результат замера — если данных нет, уточните у директора и напишите конкретный вопрос.",
           "",
+          attention.length ? "ЗАКАЗЫ" : "ЗАКАЗЫ: замечаний нет",
           ...attention.map(({ order, issues }) => `• ${order.number} · ${order.client.name}: ${issues.join(", ")} · /orders/${order.id}`),
+          "",
+          measurementsToClose.length ? "ЗАМЕРЫ, КОТОРЫЕ НУЖНО ЗАКРЫТЬ" : "ЗАМЕРЫ: просрочек нет",
+          ...measurementsToClose.map((measurement) => `• Замер №${measurement.id} · ${measurement.client.name} · ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium", timeStyle: "short" }).format(measurement.visitDate)} · ${measurement.measurerUser?.name ?? "Замерщик не выбран"} · /measurements?filter=needs-closing&measurement=${measurement.id}`),
           "",
           "По просроченному сроку проверьте фактический этап, запишите причину задержки и согласованный новый срок. После исправления откройте каждую карточку ещё раз и убедитесь, что предупреждение исчезло. В результате перечислите исправленные заказы и оставшиеся вопросы.",
         ].join("\n");
@@ -240,11 +259,11 @@ export async function ensureDailyManagerOperations(founderId: number, now = new 
             type: "TASK", priority: "URGENT", dueAt, assigneeId: row.managerId, creatorId: founderId,
             acknowledgementRequired: true,
           } });
-          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "ORDER_READINESS_ASSIGNED", actorId: founderId, after: { dateKey: todayKey, orderIds: attention.map((item) => item.order.id) } } });
+          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "ORDER_READINESS_ASSIGNED", actorId: founderId, after: { dateKey: todayKey, orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id) } } });
           result.readinessTasksCreated++;
         } else if (target.title !== title || target.description !== description) {
           await tx.calendarTask.update({ where: { id: target.id }, data: { title, description } });
-          await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "ORDER_READINESS_REFRESHED", actorId: founderId, after: { dateKey: todayKey, orderIds: attention.map((item) => item.order.id) } } });
+          await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "ORDER_READINESS_REFRESHED", actorId: founderId, after: { dateKey: todayKey, orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id) } } });
           result.readinessTasksUpdated++;
         }
       }
