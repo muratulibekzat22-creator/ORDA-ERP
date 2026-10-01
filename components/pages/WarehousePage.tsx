@@ -18,6 +18,8 @@ import PurchaseBatchesPanel from "@/components/warehouse/PurchaseBatchesPanel";
 type Material = {
   id: number;
   name: string;
+  model?: string | null;
+  description?: string | null;
   category: string;
   unit: string;
   minimumStock: number;
@@ -93,6 +95,8 @@ const empty: Data = {
 };
 const materialBlank = {
   name: "",
+  model: "",
+  description: "",
   category: "",
   unit: "шт",
   minimumStock: "0",
@@ -215,6 +219,8 @@ export default function WarehousePage() {
     event.preventDefault();
     const payload = {
       name: material.name,
+      model: material.model,
+      description: material.description,
       category: material.category,
       unit: material.unit,
       minimumStock: material.minimumStock,
@@ -254,6 +260,8 @@ export default function WarehousePage() {
     setEditing(item);
     setMaterial({
       name: item.name,
+      model: item.model ?? "",
+      description: item.description ?? "",
       category: item.category,
       unit: item.unit,
       minimumStock: String(item.minimumStock),
@@ -270,7 +278,7 @@ export default function WarehousePage() {
       data.materials.filter(
         (item) =>
           (!search ||
-            [item.name, item.category, item.supplier ?? ""].some((value) =>
+            [item.name, item.model ?? "", item.description ?? "", item.category, item.supplier ?? ""].some((value) =>
               value
                 .toLocaleLowerCase("ru")
                 .includes(search.toLocaleLowerCase("ru")),
@@ -385,6 +393,8 @@ export default function WarehousePage() {
                   {(
                     [
                       "name",
+                      "model",
+                      "description",
                       "category",
                       "unit",
                       "minimumStock",
@@ -413,6 +423,8 @@ export default function WarehousePage() {
                       placeholder={
                         {
                           name: "Название",
+                          model: "Модель / артикул",
+                          description: "Состав комплекта, например: пара = 2 шт.",
                           category: "Категория",
                           unit: "Единица",
                           minimumStock: "Минимальный остаток",
@@ -613,6 +625,7 @@ export default function WarehousePage() {
                             {item.name}
                             <span className="block text-xs text-slate-500">
                               {item.unit}
+                            {item.model ? ` · ${item.model}` : ""}
                             </span>
                           </td>
                           <td>{item.category}</td>
