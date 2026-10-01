@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { allocateEmployeeCode } from "@/lib/employee-code";
 import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { sanitizeMeasurerServiceAreas } from "@/lib/measurements/measurer-territory";
 
 const employeeInclude = {
   user: {
@@ -89,6 +90,9 @@ export function employeeDto(employee: EmployeeWithAccount) {
     position: employee.position || account?.role || "Сотрудник",
     email: employee.email || account?.email || null,
     phone: employee.phone || account?.phone || null,
+    homeCity: employee.homeCity,
+    maxTravelMinutes: employee.maxTravelMinutes,
+    serviceAreas: sanitizeMeasurerServiceAreas(employee.measurerServiceArea),
     role: account?.role ?? null,
     active: employee.active,
     hasOrdaAccess: Boolean(account),
@@ -122,6 +126,9 @@ type CreateEmployeeInput = {
   hasOrdaAccess: boolean;
   role?: Role;
   password?: string;
+  homeCity?: string;
+  maxTravelMinutes?: number;
+  serviceAreas?: unknown;
 };
 
 function validateIdentity(input: CreateEmployeeInput) {
@@ -136,6 +143,11 @@ function validateIdentity(input: CreateEmployeeInput) {
 
 export async function createEmployee(input: CreateEmployeeInput, actorId: number) {
   const identity = validateIdentity(input);
+  const homeCity = input.homeCity?.trim().slice(0, 100) ?? "";
+  const maxTravelMinutes = Number.isInteger(input.maxTravelMinutes) && Number(input.maxTravelMinutes) >= 60 && Number(input.maxTravelMinutes) <= 720
+    ? Number(input.maxTravelMinutes)
+    : 240;
+  const serviceAreas = sanitizeMeasurerServiceAreas(input.serviceAreas);
   if (input.hasOrdaAccess) {
     if (!identity.email || !input.password || input.password.length < 12)
       throw new EmployeeError("ACCESS_FIELDS_REQUIRED");
@@ -169,6 +181,9 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
       data: {
         userId,
         ...identity,
+        homeCity,
+        maxTravelMinutes,
+        measurerServiceArea: serviceAreas as Prisma.InputJsonValue,
         hiredAt: new Date(),
         active: input.active ?? true,
         payrollEnabled: true,
@@ -196,7 +211,7 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
 
 export async function updateEmployee(
   employeeId: number,
-  input: { name?: string; position?: string; phone?: string; email?: string; active?: boolean },
+  input: { name?: string; position?: string; phone?: string; email?: string; active?: boolean; homeCity?: string; maxTravelMinutes?: number; serviceAreas?: unknown },
   actorId: number,
 ) {
   return prisma.$transaction(async (tx) => {
@@ -208,6 +223,13 @@ export async function updateEmployee(
     if (previous.user?.role === Role.DIRECTOR) throw new EmployeeError("FOUNDER_PROTECTED");
     const name = typeof input.name === "string" ? input.name.trim() : undefined;
     const position = typeof input.position === "string" ? input.position.trim() : undefined;
+    const maxTravelMinutes = input.maxTravelMinutes === undefined
+      ? undefined
+      : Number.isInteger(input.maxTravelMinutes) && Number(input.maxTravelMinutes) >= 60 && Number(input.maxTravelMinutes) <= 720
+        ? Number(input.maxTravelMinutes)
+        : null;
+    if (maxTravelMinutes === null) throw new EmployeeError("INVALID_TRAVEL_LIMIT");
+    const serviceAreas = input.serviceAreas === undefined ? undefined : sanitizeMeasurerServiceAreas(input.serviceAreas);
     if (name === "" || position === "") throw new EmployeeError("EMPLOYEE_FIELDS_REQUIRED");
     const profile = await tx.employeePayrollProfile.update({
       where: { id: employeeId },
@@ -216,6 +238,9 @@ export async function updateEmployee(
         ...(position !== undefined ? { position } : {}),
         ...(typeof input.phone === "string" ? { phone: input.phone.trim() || null } : {}),
         ...(typeof input.email === "string" ? { email: input.email.trim().toLowerCase() || null } : {}),
+        ...(typeof input.homeCity === "string" ? { homeCity: input.homeCity.trim().slice(0, 100) } : {}),
+        ...(maxTravelMinutes !== undefined ? { maxTravelMinutes } : {}),
+        ...(serviceAreas !== undefined ? { measurerServiceArea: serviceAreas as Prisma.InputJsonValue } : {}),
         ...(typeof input.active === "boolean"
           ? { active: input.active, terminatedAt: input.active ? null : new Date() }
           : {}),

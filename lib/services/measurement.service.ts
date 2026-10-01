@@ -24,6 +24,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { hasTrainingClearance } from "@/lib/services/training.service";
+import { measurerTerritoryMatch, sanitizeMeasurerServiceAreas } from "@/lib/measurements/measurer-territory";
 
 export type MeasurementActor = { userId: number; role: Role; name: string };
 export class MeasurementError extends Error {}
@@ -79,6 +80,7 @@ export type ScheduleMeasurementInput = {
   address?: string;
   mapLink?: string;
   comment?: string;
+  travelApproved?: boolean;
 };
 
 export type SelfScheduleMeasurementInput = {
@@ -449,7 +451,9 @@ export function measurementWhatsAppText(input: {
   address: string;
   mapLink?: string | null;
   measurerName: string;
+  measurerPhone?: string | null;
   managerName: string;
+  managerPhone?: string | null;
   comment?: string | null;
 }) {
   const when = new Intl.DateTimeFormat("ru-RU", {
@@ -466,11 +470,44 @@ export function measurementWhatsAppText(input: {
     `Адрес: ${input.address || "по ссылке"}`,
     input.mapLink ? `Локация: ${input.mapLink}` : "",
     `Замерщик: ${input.measurerName}`,
+    input.measurerPhone ? `Телефон замерщика: ${input.measurerPhone}` : "",
     `Менеджер: ${input.managerName}`,
+    input.managerPhone ? `Телефон менеджера: ${input.managerPhone}` : "",
     input.comment ? `Комментарий: ${input.comment}` : "",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function measurementMeasurerWhatsAppText(input: {
+  measurerName: string;
+  clientName: string;
+  clientPhone: string;
+  visitDate: Date;
+  city: string;
+  address: string;
+  mapLink?: string | null;
+  managerName: string;
+  managerPhone?: string | null;
+  comment?: string | null;
+}) {
+  const when = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: BUSINESS_TIME_ZONE,
+    dateStyle: "long",
+    timeStyle: "short",
+  }).format(input.visitDate);
+  return [
+    `Здравствуйте, ${input.measurerName}! Вам назначен новый замер.`,
+    `Дата и время: ${when}`,
+    `Клиент: ${input.clientName}`,
+    `Телефон клиента: ${input.clientPhone}`,
+    `Город: ${input.city || "не указан"}`,
+    `Адрес: ${input.address || "по ссылке"}`,
+    input.mapLink ? `Локация: ${input.mapLink}` : "",
+    `Менеджер: ${input.managerName}${input.managerPhone ? ` · ${input.managerPhone}` : ""}`,
+    input.comment ? `Комментарий: ${input.comment}` : "",
+    "После визита откройте ORDA → Замеры: начните замер, загрузите 3 ракурса, референс клиента и 3D-результат, затем передайте результат менеджеру.",
+  ].filter(Boolean).join("\n");
 }
 
 export async function listMeasurements(
@@ -949,6 +986,7 @@ export async function scheduleMeasurement(
           address: true,
           manager: true,
           managerUserId: true,
+          managerUser: { select: { phone: true } },
           active: true,
           deletedAt: true,
           stage: true,
@@ -957,7 +995,7 @@ export async function scheduleMeasurement(
       });
       const measurer = input.measurerUserId ? await tx.user.findUnique({
         where: { id: input.measurerUserId },
-        select: { id: true, name: true, role: true, active: true },
+        select: { id: true, name: true, phone: true, role: true, active: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } },
       }) : null;
       const order = input.orderId
         ? await tx.order.findFirst({
@@ -984,6 +1022,14 @@ export async function scheduleMeasurement(
       const address = trim(input.address, 1000) ?? client.address.trim();
       const mapLink = trim(input.mapLink, 2000);
       if (!address && !mapLink) throw new MeasurementError("LOCATION_REQUIRED");
+      const territory = measurer ? measurerTerritoryMatch({
+        homeCity: measurer.payrollProfile?.homeCity,
+        maxTravelMinutes: measurer.payrollProfile?.maxTravelMinutes,
+        serviceAreas: sanitizeMeasurerServiceAreas(measurer.payrollProfile?.measurerServiceArea),
+      }, city) : null;
+      if (territory?.status === "OUTSIDE_AREA") throw new MeasurementError("MEASURER_OUTSIDE_SERVICE_AREA");
+      if (territory?.status === "APPROVAL_REQUIRED" && !input.travelApproved)
+        throw new MeasurementError("MEASURER_TRAVEL_APPROVAL_REQUIRED");
       const task = measurer ? await tx.calendarTask.create({
         data: {
           title: `Замер: ${client.name}`,
@@ -1097,9 +1143,38 @@ export async function scheduleMeasurement(
           address,
           mapLink,
           measurerName: measurer?.name ?? "не выбран",
+          measurerPhone: measurer?.phone,
           managerName: client.manager,
+          managerPhone: client.managerUser?.phone,
           comment: trim(input.comment),
         }),
+        whatsappGroupText: measurementWhatsAppText({
+          clientName: client.name,
+          clientPhone: client.whatsapp || client.phone,
+          visitDate: input.visitDate,
+          city,
+          address,
+          mapLink,
+          measurerName: measurer?.name ?? "не выбран",
+          measurerPhone: measurer?.phone,
+          managerName: client.manager,
+          managerPhone: client.managerUser?.phone,
+          comment: trim(input.comment),
+        }),
+        whatsappMeasurerText: measurer ? measurementMeasurerWhatsAppText({
+          measurerName: measurer.name,
+          clientName: client.name,
+          clientPhone: client.whatsapp || client.phone,
+          visitDate: input.visitDate,
+          city,
+          address,
+          mapLink,
+          managerName: client.manager,
+          managerPhone: client.managerUser?.phone,
+          comment: trim(input.comment),
+        }) : "",
+        measurerPhone: measurer?.phone ?? "",
+        territoryStatus: territory?.status ?? "UNASSIGNED",
       };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -1797,6 +1872,7 @@ export async function rescheduleMeasurement(
     address?: string;
     mapLink?: string;
     comment?: string;
+    travelApproved?: boolean;
   },
 ) {
   return prisma.$transaction(async (tx) => {
@@ -1811,7 +1887,7 @@ export async function rescheduleMeasurement(
       throw new MeasurementError("FORBIDDEN");
     const measurer = await tx.user.findFirst({
       where: { id: input.measurerUserId, role: Role.MEASURER, active: true },
-      select: { id: true, name: true },
+      select: { id: true, name: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } },
     });
     if (!measurer || Number.isNaN(input.visitDate.getTime()))
       throw new MeasurementError("MEASURER_NOT_FOUND");
@@ -1819,6 +1895,14 @@ export async function rescheduleMeasurement(
       address = trim(input.address, 1000) ?? current.address,
       mapLink = trim(input.mapLink, 2000) ?? current.mapLink;
     if (!address && !mapLink) throw new MeasurementError("LOCATION_REQUIRED");
+    const territory = measurerTerritoryMatch({
+      homeCity: measurer.payrollProfile?.homeCity,
+      maxTravelMinutes: measurer.payrollProfile?.maxTravelMinutes,
+      serviceAreas: sanitizeMeasurerServiceAreas(measurer.payrollProfile?.measurerServiceArea),
+    }, city);
+    if (territory.status === "OUTSIDE_AREA") throw new MeasurementError("MEASURER_OUTSIDE_SERVICE_AREA");
+    if (territory.status === "APPROVAL_REQUIRED" && !input.travelApproved)
+      throw new MeasurementError("MEASURER_TRAVEL_APPROVAL_REQUIRED");
     let calendarTaskId = current.calendarTaskId;
     if (calendarTaskId) {
       await tx.calendarTask.update({

@@ -13,6 +13,7 @@ import {
   RotateCcw,
   XCircle,
 } from "lucide-react";
+import { measurerTerritoryMatch, travelTimeLabel, type MeasurerServiceArea } from "@/lib/measurements/measurer-territory";
 
 type Measurement = {
   id: number;
@@ -47,10 +48,11 @@ type Measurement = {
   attachments: Array<{ id: number; type: string; fileName: string }>;
   auditEvents: Array<{ id: number; action: string; comment?: string | null; createdAt: string; actor?: { id: number; name: string } | null }>;
 };
-type Measurer = { id: number; name: string };
+type Measurer = { id: number; name: string; phone?: string | null; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
 
 const input =
   "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none focus:border-blue-500";
+const territoryRank = { AVAILABLE: 0, UNCONFIGURED: 1, APPROVAL_REQUIRED: 2, OUTSIDE_AREA: 3 } as const;
 const statusNames: Record<string, string> = {
   ASSIGNED: "Назначен",
   IN_PROGRESS: "В работе",
@@ -95,6 +97,8 @@ export default function LeadMeasurementPanel({
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [whatsappText, setWhatsappText] = useState(""),
+    [whatsappMeasurerText, setWhatsappMeasurerText] = useState(""),
+    [whatsappMeasurerPhone, setWhatsappMeasurerPhone] = useState(""),
     [scheduleOpen, setScheduleOpen] = useState(false),
     [measurersLoaded, setMeasurersLoaded] = useState(false);
   const [cancelId, setCancelId] = useState<number | null>(null),
@@ -102,7 +106,8 @@ export default function LeadMeasurementPanel({
     [cancelComment, setCancelComment] = useState(""),
     [rescheduleId, setRescheduleId] = useState<number | null>(null),
     [rescheduleDate, setRescheduleDate] = useState(""),
-    [rescheduleMeasurerId, setRescheduleMeasurerId] = useState("");
+    [rescheduleMeasurerId, setRescheduleMeasurerId] = useState(""),
+    [rescheduleTravelApproved, setRescheduleTravelApproved] = useState(false);
   const [form, setForm] = useState({
     measurerUserId: "",
     visitDate: "",
@@ -110,6 +115,7 @@ export default function LeadMeasurementPanel({
     address: initialAddress,
     mapLink: "",
     comment: "",
+    travelApproved: false,
   });
   const [office, setOffice] = useState<
     Record<number, { dueAt: string; comment: string }>
@@ -151,6 +157,8 @@ export default function LeadMeasurementPanel({
     setError("");
     setNotice("");
     setWhatsappText("");
+    setWhatsappMeasurerText("");
+    setWhatsappMeasurerPhone("");
     const response = await fetch("/api/measurements", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -164,13 +172,22 @@ export default function LeadMeasurementPanel({
     if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
     else {
       setNotice(form.measurerUserId ? "Замер назначен и добавлен в календарь замерщика" : "Замер сохранён. Замерщика можно назначить позже");
-      setWhatsappText(body.whatsappText ?? "");
-      setForm((value) => ({ ...value, visitDate: "", comment: "" }));
+      setWhatsappText(body.whatsappGroupText ?? body.whatsappText ?? "");
+      setWhatsappMeasurerText(body.whatsappMeasurerText ?? "");
+      setWhatsappMeasurerPhone(body.measurerPhone ?? "");
+      setForm((value) => ({ ...value, visitDate: "", comment: "", travelApproved: false }));
       setScheduleOpen(false);
       await load();
     }
     setBusy(false);
   }
+
+  const availableMeasurers = measurers
+    .map((row) => ({ row, match: measurerTerritoryMatch(row, form.city) }))
+    .filter(({ match }) => match.status !== "OUTSIDE_AREA")
+    .sort((a, b) => territoryRank[a.match.status] - territoryRank[b.match.status]);
+  const selectedMeasurer = measurers.find((row) => String(row.id) === form.measurerUserId);
+  const selectedTerritory = selectedMeasurer ? measurerTerritoryMatch(selectedMeasurer, form.city) : null;
 
   async function action(id: number, body: Record<string, unknown>, ok: string) {
     setBusy(true);
@@ -242,14 +259,17 @@ export default function LeadMeasurementPanel({
             }
           >
             <option value="">Замерщик не выбран</option>
-            {measurers.map((row) => (
+            {availableMeasurers.map(({ row, match }) => (
               <option key={row.id} value={row.id}>
-                {row.name}
+                {row.name}{match.area ? ` · ${match.area.city}, ${travelTimeLabel(match.area.estimatedMinutes)}` : " · зона не настроена"}{match.status === "APPROVAL_REQUIRED" ? " · по согласованию" : ""}
               </option>
             ))}
           </select>
+          {form.city && availableMeasurers.length === 0 && <span className="mt-1 block text-xs text-red-300">Для этого города нет настроенного замерщика.</span>}
+          {selectedMeasurer && <span className="mt-1 block text-xs text-slate-400">{selectedMeasurer.homeCity ? `База: ${selectedMeasurer.homeCity}` : "Базовый город не настроен"}{selectedMeasurer.phone ? ` · ${selectedMeasurer.phone}` : " · телефон не указан"}</span>}
         </label>
         }
+        {selectedTerritory?.status === "APPROVAL_REQUIRED" && <label className="flex min-h-12 items-center gap-3 rounded-xl border border-amber-700 bg-amber-950/20 px-3 text-sm text-amber-100"><input type="checkbox" checked={form.travelApproved} onChange={(event) => setForm({ ...form, travelApproved: event.target.checked })} />Дальний выезд согласован с замерщиком</label>}
         <label className="text-sm text-slate-300">
           Дата замера
           <input
@@ -267,7 +287,7 @@ export default function LeadMeasurementPanel({
           <input
             className={`${input} mt-1`}
             value={form.city}
-            onChange={(event) => setForm({ ...form, city: event.target.value })}
+            onChange={(event) => setForm({ ...form, city: event.target.value, measurerUserId: "", travelApproved: false })}
           />
         </label>
         <label className="text-sm text-slate-300 md:col-span-2">
@@ -307,7 +327,8 @@ export default function LeadMeasurementPanel({
         disabled={
           busy ||
           !form.visitDate ||
-          (!form.address.trim() && !form.mapLink.trim())
+          (!form.address.trim() && !form.mapLink.trim()) ||
+          (selectedTerritory?.status === "APPROVAL_REQUIRED" && !form.travelApproved)
         }
         onClick={() => void schedule()}
         className="mt-4 min-h-12 w-full rounded-xl bg-amber-500 px-5 font-semibold text-slate-950 disabled:opacity-50 sm:w-auto"
@@ -339,6 +360,7 @@ export default function LeadMeasurementPanel({
             Система не сообщает об отправке: официальная интеграция группового
             WhatsApp не подключена.
           </p>
+          {whatsappMeasurerText && <div className="mt-4 border-t border-green-900 pt-4"><div className="flex flex-wrap items-center justify-between gap-3"><b className="text-green-200">Личное сообщение замерщику</b><div className="flex flex-wrap gap-2">{whatsappMeasurerPhone && <a href={`https://wa.me/${whatsappMeasurerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(whatsappMeasurerText)}`} target="_blank" rel="noreferrer" className="flex min-h-11 items-center gap-2 rounded-lg bg-green-700 px-3 text-sm"><MessageCircle size={16}/>Открыть WhatsApp</a>}<button type="button" onClick={() => void navigator.clipboard.writeText(whatsappMeasurerText).then(() => setNotice("Сообщение замерщику скопировано"))} className="flex min-h-11 items-center gap-2 rounded-lg bg-slate-700 px-3 text-sm"><Clipboard size={16} />Копировать</button></div></div><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-200">{whatsappMeasurerText}</pre></div>}
         </div>
       )}
       <div className="mt-6 space-y-3">
@@ -369,7 +391,7 @@ export default function LeadMeasurementPanel({
                     <details className="relative">
                       <summary aria-label={`Действия с замером №${row.id}`} className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-lg bg-slate-800 text-slate-200 [&::-webkit-details-marker]:hidden"><MoreVertical size={17} /></summary>
                       <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-700 bg-slate-950 p-2 shadow-2xl">
-                        <button type="button" onClick={() => { setCancelId(null); setRescheduleId(row.id); setRescheduleDate(new Date(row.visitDate).toISOString().slice(0, 16)); setRescheduleMeasurerId(row.measurerUser ? String(row.measurerUser.id) : ""); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-slate-200 hover:bg-slate-800"><RotateCcw size={16} />Перенести</button>
+                        <button type="button" onClick={() => { setCancelId(null); setRescheduleId(row.id); setRescheduleDate(new Date(row.visitDate).toISOString().slice(0, 16)); setRescheduleMeasurerId(row.measurerUser ? String(row.measurerUser.id) : ""); setRescheduleTravelApproved(false); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-slate-200 hover:bg-slate-800"><RotateCcw size={16} />Перенести</button>
                         <button type="button" onClick={() => { setRescheduleId(null); setCancelId(row.id); setCancelReason(""); setCancelComment(""); }} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm text-red-300 hover:bg-red-950/50"><XCircle size={16} />Отменить замер</button>
                       </div>
                     </details>
@@ -379,8 +401,9 @@ export default function LeadMeasurementPanel({
               {rescheduleId === row.id && (
                 <div className="mt-3 grid gap-3 rounded-xl border border-amber-800 bg-amber-950/20 p-3 sm:grid-cols-2">
                   <label className="text-sm text-slate-300">Новая дата и время<input type="datetime-local" className={`${input} mt-1`} value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} /></label>
-                  <label className="text-sm text-slate-300">Замерщик<select className={`${input} mt-1`} value={rescheduleMeasurerId} onChange={(event) => setRescheduleMeasurerId(event.target.value)}><option value="">Выберите</option>{measurers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                  <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => setRescheduleId(null)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button><button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId} onClick={() => void action(row.id, { action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: row.city, address: row.address, mapLink: row.mapLink }, "Замер перенесён").then(() => setRescheduleId(null))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button></div>
+                  <label className="text-sm text-slate-300">Замерщик<select className={`${input} mt-1`} value={rescheduleMeasurerId} onChange={(event) => { setRescheduleMeasurerId(event.target.value); setRescheduleTravelApproved(false); }}><option value="">Выберите</option>{measurers.filter((item) => measurerTerritoryMatch(item, row.city).status !== "OUTSIDE_AREA").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+                  {(() => { const person = measurers.find((item) => String(item.id) === rescheduleMeasurerId); return person && measurerTerritoryMatch(person, row.city).status === "APPROVAL_REQUIRED" ? <label className="flex min-h-11 items-center gap-2 rounded-xl border border-amber-700 px-3 text-sm text-amber-100 sm:col-span-2"><input type="checkbox" checked={rescheduleTravelApproved} onChange={(event) => setRescheduleTravelApproved(event.target.checked)}/>Дальний выезд согласован</label> : null; })()}
+                  <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => setRescheduleId(null)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button><button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId || (() => { const person = measurers.find((item) => String(item.id) === rescheduleMeasurerId); return Boolean(person && measurerTerritoryMatch(person, row.city).status === "APPROVAL_REQUIRED" && !rescheduleTravelApproved); })()} onClick={() => void action(row.id, { action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: row.city, address: row.address, mapLink: row.mapLink, travelApproved: rescheduleTravelApproved }, "Замер перенесён").then(() => setRescheduleId(null))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button></div>
                 </div>
               )}
               {cancelId === row.id && (

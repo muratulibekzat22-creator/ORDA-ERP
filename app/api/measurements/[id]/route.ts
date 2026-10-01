@@ -66,7 +66,7 @@ export async function PATCH(request: Request, { params }: Context) {
     if (action === "reschedule") {
       const visitDate = parseBusinessDateTime(body.visitDate), measurerUserId = Number(body.measurerUserId);
       if (!visitDate || !Number.isInteger(measurerUserId) || measurerUserId <= 0) return NextResponse.json({ error: "Укажите дату, время и замерщика" }, { status: 400 });
-      return NextResponse.json(await rescheduleMeasurement(actor, id, { visitDate, measurerUserId, city: typeof body.city === "string" ? body.city : undefined, address: typeof body.address === "string" ? body.address : undefined, mapLink: typeof body.mapLink === "string" ? body.mapLink : undefined, comment: typeof body.comment === "string" ? body.comment : undefined }));
+      return NextResponse.json(await rescheduleMeasurement(actor, id, { visitDate, measurerUserId, city: typeof body.city === "string" ? body.city : undefined, address: typeof body.address === "string" ? body.address : undefined, mapLink: typeof body.mapLink === "string" ? body.mapLink : undefined, comment: typeof body.comment === "string" ? body.comment : undefined, travelApproved: body.travelApproved === true }));
     }
     if (action === "cancel") return NextResponse.json(await cancelMeasurement(actor, id, { reason: typeof body.reason === "string" ? body.reason : undefined, comment: typeof body.comment === "string" ? body.comment : undefined }));
     return NextResponse.json({ error: "Неподдерживаемое действие" }, { status: 400 });

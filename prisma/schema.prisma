@@ -1531,6 +1531,9 @@ model EmployeePayrollProfile {
   position               String                       @default("")
   phone                  String?
   email                  String?
+  homeCity               String                       @default("")
+  maxTravelMinutes       Int                          @default(240)
+  measurerServiceArea    Json?
   hiredAt                DateTime
   terminatedAt           DateTime?
   payrollEnabled         Boolean                      @default(true)

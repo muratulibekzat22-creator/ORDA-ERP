@@ -20,6 +20,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       phone: typeof body.phone === "string" ? body.phone : undefined,
       email: typeof body.email === "string" ? body.email : undefined,
       active: typeof body.active === "boolean" ? body.active : undefined,
+      homeCity: typeof body.homeCity === "string" ? body.homeCity : undefined,
+      maxTravelMinutes: typeof body.maxTravelMinutes === "number" ? body.maxTravelMinutes : undefined,
+      serviceAreas: body.serviceAreas,
     }, Number(auth.session!.user.id)));
   } catch (error) {
     const code = error instanceof Error ? error.message : "";

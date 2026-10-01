@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Role, roleNames } from "@/lib/roles";
+import { SEMEY_MEASURER_TERRITORY, travelTimeLabel, type MeasurerServiceArea } from "@/lib/measurements/measurer-territory";
 
 type Employee = {
   id: number;
@@ -21,6 +22,9 @@ type Employee = {
   createdAt: string;
   lastLogin: string | null;
   protectedAccount: boolean;
+  homeCity: string;
+  maxTravelMinutes: number;
+  serviceAreas: MeasurerServiceArea[];
 };
 type Form = {
   name: string;
@@ -31,6 +35,9 @@ type Form = {
   role: Role;
   password: string;
   active: boolean;
+  homeCity: string;
+  maxTravelMinutes: number;
+  serviceAreas: MeasurerServiceArea[];
 };
 type EmployeeFilter = "active" | "inactive" | "all";
 
@@ -50,6 +57,9 @@ const blank: Form = {
   role: Role.MANAGER,
   password: "",
   active: true,
+  homeCity: "",
+  maxTravelMinutes: 240,
+  serviceAreas: [],
 };
 
 export default function EmployeesPage() {
@@ -94,6 +104,9 @@ export default function EmployeesPage() {
         phone: form.phone,
         email: form.email,
         active: form.active,
+        homeCity: form.homeCity,
+        maxTravelMinutes: form.maxTravelMinutes,
+        serviceAreas: form.serviceAreas,
       } : form),
     });
     if (!response.ok) {
@@ -171,9 +184,24 @@ export default function EmployeesPage() {
       role: employee.role ?? Role.MANAGER,
       password: "",
       active: employee.active,
+      homeCity: employee.homeCity,
+      maxTravelMinutes: employee.maxTravelMinutes,
+      serviceAreas: employee.serviceAreas,
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  const measurerForm = form.role === Role.MEASURER || form.position.toLocaleLowerCase("ru").includes("замер");
+  const setSemeyTerritory = () => setForm({
+    ...form,
+    homeCity: "Семей",
+    maxTravelMinutes: 240,
+    serviceAreas: SEMEY_MEASURER_TERRITORY.map((area) => ({ ...area })),
+  });
+  const updateArea = (index: number, patch: Partial<MeasurerServiceArea>) => setForm({
+    ...form,
+    serviceAreas: form.serviceAreas.map((area, areaIndex) => areaIndex === index ? { ...area, ...patch } : area),
+  });
 
   return (
     <section className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-8">
@@ -200,6 +228,12 @@ export default function EmployeesPage() {
           <div className="flex min-w-0 gap-2"><input required minLength={12} type="text" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Временный пароль — минимум 12 символов" aria-label="Пароль" /><button type="button" onClick={() => setForm({ ...form, password: generatedPassword() })} className="shrink-0 rounded-xl bg-slate-700 px-3 text-sm text-white">Создать пароль</button></div>
         </>}
         <label className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-slate-200"><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />Активный сотрудник</label>
+        {measurerForm && <div className="space-y-3 rounded-xl border border-amber-700/50 bg-amber-950/10 p-4 md:col-span-2 lg:col-span-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-white">Территория замерщика</h3><p className="text-xs text-slate-400">Менеджер увидит обычные выезды отдельно от дальних маршрутов по согласованию.</p></div><button type="button" onClick={setSemeyTerritory} className="min-h-10 rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white">Шаблон для Семея</button></div>
+          <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm text-slate-300">Базовый город<input value={form.homeCity} onChange={(event) => setForm({ ...form, homeCity: event.target.value })} placeholder="Например, Семей" className="mt-1 w-full" /></label><label className="text-sm text-slate-300">Максимум дороги в одну сторону<select value={form.maxTravelMinutes} onChange={(event) => setForm({ ...form, maxTravelMinutes: Number(event.target.value) })} className="mt-1 w-full"><option value={180}>3 часа</option><option value={240}>4 часа</option><option value={300}>5 часов</option><option value={360}>6 часов</option></select></label></div>
+          <div className="space-y-2">{form.serviceAreas.map((area, index) => <div key={`${index}-${area.city}`} className="grid gap-2 rounded-lg bg-slate-950/60 p-2 sm:grid-cols-[1fr_150px_190px_auto]"><input value={area.city} onChange={(event) => updateArea(index, { city: event.target.value })} placeholder="Город" aria-label={`Город зоны ${index + 1}`} /><input type="number" min={0} max={900} value={area.estimatedMinutes} onChange={(event) => updateArea(index, { estimatedMinutes: Number(event.target.value) })} aria-label={`Минуты в пути ${index + 1}`} /><select value={area.approvalRequired ? "approval" : "regular"} onChange={(event) => updateArea(index, { approvalRequired: event.target.value === "approval" })} aria-label={`Режим выезда ${index + 1}`}><option value="regular">Обычный выезд</option><option value="approval">По согласованию</option></select><button type="button" onClick={() => setForm({ ...form, serviceAreas: form.serviceAreas.filter((_, areaIndex) => areaIndex !== index) })} className="min-h-11 rounded-lg bg-red-950 px-3 text-red-200">Убрать</button></div>)}</div>
+          <button type="button" onClick={() => setForm({ ...form, serviceAreas: [...form.serviceAreas, { city: "", estimatedMinutes: 0, approvalRequired: false }] })} className="min-h-10 rounded-lg bg-slate-700 px-3 text-sm text-white">+ Добавить город</button>
+        </div>}
         <button className="min-h-12 rounded-xl bg-blue-600 p-3 font-semibold text-white hover:bg-blue-700">{edit ? "Сохранить изменения" : "Добавить сотрудника"}</button>
         {edit && <button type="button" onClick={() => { setEdit(null); setForm(blank); }} className="min-h-12 rounded-xl bg-slate-700 p-3 text-white">Отмена</button>}
       </form>
@@ -218,6 +252,7 @@ export default function EmployeesPage() {
             <span className={`shrink-0 rounded-full px-3 py-1 text-xs ${employee.active ? "bg-green-700 text-white" : "bg-slate-700 text-slate-300"}`}>{employee.active ? "Активен" : "Неактивен"}</span>
           </div>
           <div className="mt-3 rounded-xl bg-slate-900 p-3 text-sm"><p className={employee.hasOrdaAccess && employee.accountActive ? "text-emerald-300" : "text-slate-400"}>{!employee.hasOrdaAccess ? "Без доступа в ORDA" : employee.accountActive ? `Доступ активен · ${employee.role ? roleNames[employee.role] : ""}` : "Доступ в ORDA отключён"}</p>{employee.hasOrdaAccess && <p className="mt-1 text-xs text-slate-500">Последний вход: {employee.lastLogin ? new Date(employee.lastLogin).toLocaleString("ru-RU") : "ещё не входил"}</p>}</div>
+          {(employee.role === Role.MEASURER || employee.position.toLocaleLowerCase("ru").includes("замер")) && <div className="mt-3 rounded-xl border border-amber-900/60 bg-amber-950/10 p-3 text-sm"><b className="text-amber-100">Зона: {employee.homeCity || "не настроена"}</b><p className="mt-1 text-xs text-slate-400">Лимит: {travelTimeLabel(employee.maxTravelMinutes)} в одну сторону</p>{employee.serviceAreas.length > 0 && <p className="mt-2 text-xs text-slate-300">{employee.serviceAreas.map((area) => `${area.city} — ${travelTimeLabel(area.estimatedMinutes)}${area.approvalRequired ? " (по согласованию)" : ""}`).join(" · ")}</p>}</div>}
           <div className="mt-4 grid grid-cols-2 gap-2">
             {!employee.protectedAccount && <button type="button" onClick={() => startEdit(employee)} className="min-h-11 rounded-lg bg-slate-700 px-3 text-white">Изменить</button>}
             {!employee.protectedAccount && <button type="button" onClick={() => void updateProfile(employee, { active: !employee.active })} className="min-h-11 rounded-lg bg-amber-800 px-3 text-white">{employee.active ? "Деактивировать" : "Активировать"}</button>}

@@ -41,6 +41,9 @@ export async function POST(request: Request) {
       hasOrdaAccess,
       role,
       password: typeof body.password === "string" ? body.password : undefined,
+      homeCity: typeof body.homeCity === "string" ? body.homeCity : undefined,
+      maxTravelMinutes: typeof body.maxTravelMinutes === "number" ? body.maxTravelMinutes : undefined,
+      serviceAreas: body.serviceAreas,
     }, Number(auth.session!.user.id));
     return NextResponse.json(employee, { status: 201 });
   } catch (error) {
