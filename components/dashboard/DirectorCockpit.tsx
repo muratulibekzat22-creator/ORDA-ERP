@@ -264,7 +264,7 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
         </p>
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
-      {data && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} compact={founder} /> : null}
+      {data && !founder && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} /> : null}
       {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
         founder ? <FounderDashboard data={data} /> : (
           <ManagementDashboard
@@ -337,6 +337,8 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         {attention.length ? <div className="mt-4 flex flex-wrap gap-2">{attention.map((item) => <span key={item} className="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">{item}</span>)}</div> : null}
       </section>
 
+      <SalesPlanCard month={data.month} compact />
+
       <section className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
         <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Доходы и расходы</h2><p className="text-sm text-slate-400">Понятный финансовый итог без лишних графиков</p></div><Link href="/finance" className="text-sm font-semibold text-blue-300">Открыть финансы</Link></div>
@@ -345,6 +347,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
               <FounderFinanceRow label="Оборот по заказам" value={data.finance.revenue} />
               <FounderFinanceRow label="Поступило от клиентов" value={data.finance.received} />
               <FounderFinanceRow label="Осталось получить" value={outstanding} warning={outstanding > 0} />
+              <FounderFinanceRow label="Прочие доходы" value={data.finance.additionalIncome} />
               <FounderFinanceRow label="Цена производства" value={data.finance.directExpenses} expense />
               <FounderFinanceRow label="Операционные расходы" value={data.finance.operatingExpenses} expense />
               <FounderFinanceRow label="Начисленная зарплата" value={data.finance.payrollAccrued} expense />
