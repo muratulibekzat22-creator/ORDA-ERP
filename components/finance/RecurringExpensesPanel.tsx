@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { CalendarClock, CheckCircle2, Plus } from "lucide-react";
 
 type Category = { id: number; code: string; name: string };
@@ -44,22 +44,30 @@ const blank = (): PlanForm => ({ name: "", categoryId: "", amount: "", dayOfMont
 const money = (value: number) => `${value.toLocaleString("ru-RU")} ₸`;
 const methods: Record<string, string> = { cash: "Наличные", kaspi: "Kaspi", bank_transfer: "Банк", card: "Карта", other: "Другое" };
 
-export default function RecurringExpensesPanel({ onChanged }: { onChanged: () => void }) {
+export default function RecurringExpensesPanel({ onChanged, journalMonth = null }: { onChanged: () => void; journalMonth?: string | null }) {
   const { data: session } = useSession();
   const director = session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR";
-  const [period, setPeriod] = useState(currentMonth());
+  const [manualPeriod, setPeriod] = useState(currentMonth());
+  const period = journalMonth ?? manualPeriod;
   const [data, setData] = useState<Data | null>(null);
   const [form, setForm] = useState<PlanForm | null>(null);
   const [busy, setBusy] = useState<number | "form" | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
-    const response = await fetch(`/api/finance/recurring?period=${period}`, { cache: "no-store" });
-    const body = await response.json() as Data & { error?: string };
-    if (!response.ok) return setError(body.error ?? "Не удалось загрузить постоянные расходы");
-    setData(body);
-    setError("");
+    const sequence = ++loadSequence.current;
+    try {
+      const response = await fetch(`/api/finance/recurring?period=${period}`, { cache: "no-store" });
+      const body = await response.json() as Data & { error?: string };
+      if (sequence !== loadSequence.current) return;
+      if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить постоянные расходы");
+      setData(body);
+      setError("");
+    } catch (cause) {
+      if (sequence === loadSequence.current) setError(cause instanceof Error ? cause.message : "Не удалось загрузить постоянные расходы");
+    }
   }, [period]);
 
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
@@ -80,6 +88,7 @@ export default function RecurringExpensesPanel({ onChanged }: { onChanged: () =>
   }
 
   async function post(plan: Plan) {
+    if (!data || data.period !== period || busy !== null) return;
     setBusy(plan.id); setError(""); setMessage("");
     const response = await fetch("/api/finance/recurring", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "post", planId: plan.id, period }) });
     const body = await response.json() as { error?: string };
@@ -108,11 +117,12 @@ export default function RecurringExpensesPanel({ onChanged }: { onChanged: () =>
           <p className="mt-1 text-sm text-slate-400">План не списывает деньги сам: директор подтверждает расход за каждый месяц.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <input aria-label="Месяц постоянных расходов" type="month" value={period} onChange={(event) => setPeriod(event.target.value)} className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" />
+          <input aria-label="Месяц постоянных расходов" type="month" value={period} disabled={Boolean(journalMonth) || busy !== null} onChange={(event) => setPeriod(event.target.value)} className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" />
           {director && <button type="button" onClick={() => setForm(blank())} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-700 px-4 font-semibold text-white"><Plus size={17} />Добавить план</button>}
         </div>
       </div>
-      {data && <div className="mt-4 grid grid-cols-3 gap-2"><Mini label="План" value={money(data.totals.planned)} /><Mini label="Проведено" value={money(data.totals.posted)} /><Mini label="Ожидает" value={money(data.totals.pending)} /></div>}
+      <p className="mt-2 text-xs text-slate-400">{journalMonth ? "Месяц совпадает с выбранным периодом журнала." : "Журнал охватывает несколько дат: месяц проведения постоянных расходов выбирается отдельно."} Проведение за {period}.</p>
+      {data?.period === period && <div className="mt-4 grid grid-cols-3 gap-2"><Mini label="План" value={money(data.totals.planned)} /><Mini label="Проведено" value={money(data.totals.posted)} /><Mini label="Ожидает" value={money(data.totals.pending)} /></div>}
       <div className="mt-4 rounded-xl border border-blue-900 bg-blue-950/20 p-3 text-sm text-blue-100">
         Оклады менеджеров, директора и бонусы ведутся в <Link href="/payroll" className="font-semibold underline">«Зарплатах»</Link> — здесь их повторно добавлять не нужно.
       </div>
@@ -129,7 +139,7 @@ export default function RecurringExpensesPanel({ onChanged }: { onChanged: () =>
         <div className="flex items-end gap-2"><button disabled={busy === "form"} className="min-h-11 flex-1 rounded-xl bg-blue-700 px-4 font-semibold text-white disabled:opacity-50">Сохранить</button><button type="button" onClick={() => setForm(null)} className="min-h-11 rounded-xl bg-slate-700 px-4 text-white">Отмена</button></div>
       </form>}
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        {data?.plans.map((plan) => <article key={plan.id} className={`rounded-xl border p-4 ${plan.active ? "border-slate-700 bg-slate-950/50" : "border-slate-800 opacity-60"}`}>
+        {data?.period === period && data.plans.map((plan) => <article key={plan.id} className={`rounded-xl border p-4 ${plan.active ? "border-slate-700 bg-slate-950/50" : "border-slate-800 opacity-60"}`}>
           <div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold text-white">{plan.name}</h3><p className="mt-1 text-sm text-slate-400">{plan.category.name} · до {plan.dayOfMonth}-го числа · {methods[plan.method] ?? plan.method}</p></div><b className="whitespace-nowrap text-white">{money(plan.amount)}</b></div>
           <div className="mt-3 flex flex-wrap items-center gap-2">{plan.posted ? <span className="flex items-center gap-1 text-sm font-semibold text-emerald-300"><CheckCircle2 size={16} />Проведено</span> : plan.active ? <button type="button" disabled={busy === plan.id} onClick={() => void post(plan)} className="min-h-10 rounded-lg bg-emerald-700 px-3 text-sm font-semibold text-white disabled:opacity-50">Провести за месяц</button> : <span className="text-sm text-slate-500">Приостановлено</span>}{director && <><button type="button" onClick={() => edit(plan)} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm text-white">Изменить</button><button type="button" disabled={busy === plan.id} onClick={() => void toggle(plan)} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm text-slate-300">{plan.active ? "Пауза" : "Включить"}</button></>}</div>
         </article>)}

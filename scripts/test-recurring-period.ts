@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import { recurringJournalMonth } from "../lib/finance/recurring-period";
+const now = new Date("2026-10-01T21:00:00Z");
+assert.equal(recurringJournalMonth("month", "", "", now), "2026-10");
+assert.equal(recurringJournalMonth("previous_month", "", "", now), "2026-09");
+assert.equal(recurringJournalMonth("previous_month", "", "", new Date("2026-01-15T12:00:00Z")), "2025-12");
+assert.equal(recurringJournalMonth("month", "", "", new Date("2026-09-30T21:00:00Z")), "2026-10");
+assert.equal(recurringJournalMonth("custom", "2026-09-01", "2026-09-30", now), "2026-09");
+assert.equal(recurringJournalMonth("custom", "2026-09-30", "2026-09-01", now), null);
+assert.equal(recurringJournalMonth("custom", "2026-08-25", "2026-09-25", now), null);
+assert.equal(recurringJournalMonth("year", "", "", now), null);
+assert.equal(recurringJournalMonth("week", "", "", now), null);
+console.log("Recurring month follows journal with year rollover and Kazakhstan timezone; multi-month ranges stay explicit");

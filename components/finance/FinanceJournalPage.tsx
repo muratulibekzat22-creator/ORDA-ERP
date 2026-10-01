@@ -13,6 +13,7 @@ import {
 import { useIdempotencyKey } from "@/hooks/useIdempotencyKey";
 import BankStatementPanel from "@/components/finance/BankStatementPanel";
 import RecurringExpensesPanel from "@/components/finance/RecurringExpensesPanel";
+import { recurringJournalMonth } from "@/lib/finance/recurring-period";
 
 type Direction = "INCOME" | "EXPENSE";
 type Option = { id: number; name: string };
@@ -418,7 +419,7 @@ export default function FinanceJournalPage() {
         />
       </div>
 
-      <RecurringExpensesPanel onChanged={() => void load()} />
+      <RecurringExpensesPanel journalMonth={recurringJournalMonth(period, from, to)} onChanged={() => void load()} />
 
       <BankStatementPanel onChanged={() => void load()} />
 
