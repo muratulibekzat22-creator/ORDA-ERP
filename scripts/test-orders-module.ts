@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { OrderLifecycle } from "@prisma/client";
-import { ACTIVE_ORDER_BOARD_COLUMNS, orderBoardColumn } from "../lib/orders/board";
+import { ACTIVE_ORDER_BOARD_COLUMNS, ORDER_BOARD_COLUMNS, ORDER_BOARD_TARGET_LIFECYCLE, orderBoardColumn } from "../lib/orders/board";
 
 import {
   isOrderOverdue,
@@ -51,6 +51,12 @@ assert.equal(
 );
 assert.equal(isOrderOverdue(null, OrderLifecycle.IN_PRODUCTION), false);
 assert.deepEqual(ACTIVE_ORDER_BOARD_COLUMNS.map(c => c.key), ["ORDERED", "CONTRACT", "WORKSHOP"]);
+assert.equal(ORDER_BOARD_COLUMNS.length, 4);
+assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.COMPLETED, OrderLifecycle.COMPLETED);
+const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
+assert(orderKanban.includes('column.key === "COMPLETED" ? []'));
+assert(orderKanban.includes("Перетащите сюда, чтобы завершить заказ"));
+assert(orderKanban.includes("ORDER_BOARD_COLUMNS.map((target)"), "mobile retains completion target");
 for (const lifecycle of [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED]) {
   assert.equal(ACTIVE_ORDER_BOARD_COLUMNS.some(c => c.key === orderBoardColumn(lifecycle)), false);
 }

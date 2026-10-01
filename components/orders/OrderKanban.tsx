@@ -4,7 +4,7 @@ import { AlertCircle, CalendarDays, CircleDollarSign, GripVertical, UserRound, W
 import Link from "next/link";
 
 import type { OrderListItem } from "@/components/orders/OrderTable";
-import { ACTIVE_ORDER_BOARD_COLUMNS, orderBoardColumn, type OrderBoardColumn } from "@/lib/orders/board";
+import { ORDER_BOARD_COLUMNS, orderBoardColumn, type OrderBoardColumn } from "@/lib/orders/board";
 
 const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Срок не указан";
@@ -22,9 +22,9 @@ export default function OrderKanban({
 }) {
   return (
     <section aria-label="Канбан заказов" className="-mx-4 overflow-x-auto px-4 pb-3 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0">
-      <div className="grid min-w-[900px] grid-cols-3 gap-4 lg:min-w-0">
-        {ACTIVE_ORDER_BOARD_COLUMNS.map((column) => {
-          const columnOrders = orders.filter((order) => orderBoardColumn(order.lifecycle) === column.key);
+      <div className="grid min-w-[1180px] grid-cols-4 gap-4 lg:min-w-0">
+        {ORDER_BOARD_COLUMNS.map((column) => {
+          const columnOrders = column.key === "COMPLETED" ? [] : orders.filter((order) => orderBoardColumn(order.lifecycle) === column.key);
           return (
             <div
               key={column.key}
@@ -91,13 +91,13 @@ export default function OrderKanban({
                           onChange={(event) => onMove(order.id, event.target.value as OrderBoardColumn)}
                           className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-white disabled:opacity-50"
                         >
-                          {ACTIVE_ORDER_BOARD_COLUMNS.map((target) => <option key={target.key} value={target.key}>{target.label}</option>)}
+                          {ORDER_BOARD_COLUMNS.map((target) => <option key={target.key} value={target.key}>{target.label}</option>)}
                         </select>
                       </label>
                     ) : null}
                   </article>
                 );})}
-                {!columnOrders.length ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-500">Нет заказов</p> : null}
+                {!columnOrders.length ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-500">{column.key === "COMPLETED" ? "Перетащите сюда, чтобы завершить заказ. Закрытые карточки сохраняются в истории." : "Нет заказов"}</p> : null}
               </div>
             </div>
           );
