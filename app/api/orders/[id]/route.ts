@@ -14,6 +14,7 @@ import {
 } from "@/lib/orders/lifecycle";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
 import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
+import { partnerOnlySettlement, stripPartnerAllocation } from "@/lib/orders/settlement-redaction";
 import { prisma } from "@/lib/prisma";
 import {
   assignPartnerToOrder,
@@ -111,6 +112,7 @@ function redactForRole<T extends Record<string, unknown>>(
   if (role === Role.OPERATIONS_DIRECTOR) {
     delete result.companyProfit;
     delete result.payrollAccruals;
+    result.settlement = stripPartnerAllocation(result.settlement);
     if (result.settlement && typeof result.settlement === "object") {
       const settlement = result.settlement as Record<string, unknown>;
       delete settlement.manager;
@@ -127,6 +129,7 @@ function redactForRole<T extends Record<string, unknown>>(
   }
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
+    result.settlement = stripPartnerAllocation(result.settlement);
     if (Array.isArray(result.calculations))
       result.calculations = result.calculations.map((value) => {
         const calculation = { ...(value as Record<string, unknown>) };
@@ -146,21 +149,7 @@ function redactForRole<T extends Record<string, unknown>>(
     delete result.calculations;
     delete result.payrollAccruals;
     delete result.managerUser;
-    if (result.settlement && typeof result.settlement === "object") {
-      const settlement = result.settlement as Record<string, unknown>;
-      delete settlement.client;
-      if (settlement.partner && typeof settlement.partner === "object") {
-        const partner = settlement.partner as Record<string, unknown>;
-        partner.payouts = Array.isArray(partner.payouts)
-          ? partner.payouts.filter(
-              (item) =>
-                (item as Record<string, unknown>).partnerId ===
-                result.partnerId,
-            )
-          : [];
-        delete partner.assignments;
-      }
-    }
+    result.settlement = partnerOnlySettlement(result.settlement, result.partnerId);
     return result;
   }
   for (const field of [

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PartnerRewardRule, PartnerSettlementOperationStatus, PartnerSettlementOperationType, PartnerSettlementStatus, PayrollAccrualType, PayrollDirection, Role } from "@prisma/client";
 
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { partnerOnlySettlement, stripPartnerAllocation } from "@/lib/orders/settlement-redaction";
 import { calculateProfitFirstAllocation } from "@/lib/partners/profit-first";
 import { calculatePartnerSettlement, calculateReward } from "@/lib/partners/settlement";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
@@ -140,4 +141,12 @@ const orderDetailSettlement = buildOrderSettlement({
 assert.equal(orderDetailSettlement.client.received, 1_100_000, "order detail uses the same direct-payment receipt total");
 assert.equal(orderDetailSettlement.partner.paid, 700_000, "order detail counts direct money still held by workshop");
 assert.equal(orderDetailSettlement.partner.allocation.readyToPayWorkshop, 100_000, "order detail uses the same profit-first allocation");
+
+const partnerPayload = partnerOnlySettlement(orderDetailSettlement, 1);
+const serializedPartnerPayload = JSON.stringify(partnerPayload);
+for (const forbidden of ["allocation", "totalSale", "plannedCompanyIncome", "companyIncomeRetained", "companyCashHeld", "clientReceived"])
+  assert(!serializedPartnerPayload.includes(forbidden), `partner payload leaked ${forbidden}`);
+assert.equal((partnerPayload.partner as unknown as { agreed: number }).agreed, 1_500_000, "partner keeps its own agreed amount");
+const restrictedManagementPayload = JSON.stringify(stripPartnerAllocation(orderDetailSettlement));
+assert(!restrictedManagementPayload.includes("plannedCompanyIncome"), "restricted management payload leaked company income");
 console.log("Partner calculations: fixed/order/paid/profit/manual, Decimal precision, debt and reversal PASS");

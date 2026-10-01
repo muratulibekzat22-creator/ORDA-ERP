@@ -11,6 +11,7 @@ import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 import { enterTenantFromSession } from "@/lib/tenant-context";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { hasProductionPrice } from "@/lib/orders/production-price";
+import { partnerOnlySettlement, stripPartnerAllocation } from "@/lib/orders/settlement-redaction";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -91,6 +92,7 @@ export async function getAuthorizedOrder(id: number) {
       payrollAccruals: [],
       companyLedgerEntries: [],
       economy: undefined,
+      settlement: stripPartnerAllocation(order.settlement),
       calculations: order.calculations.map((calculation) => {
         const result = { ...calculation } as Partial<typeof calculation>;
         delete result.grossDifference;
@@ -102,6 +104,7 @@ export async function getAuthorizedOrder(id: number) {
     return {
       ...order,
       companyProfit: undefined,
+      settlement: stripPartnerAllocation(order.settlement),
       calculations: order.calculations.map((calculation) => {
         const result = { ...calculation } as Partial<typeof calculation>;
         delete result.grossDifference;
@@ -129,15 +132,7 @@ export async function getAuthorizedOrder(id: number) {
         delete safe.measurerUser;
         return safe;
       }),
-      settlement: {
-        partner: {
-          ...order.settlement.partner,
-          payouts: order.settlement.partner.payouts.filter(
-            (payment) => payment.partnerId === order.partnerId,
-          ),
-          assignments: [],
-        },
-      },
+      settlement: partnerOnlySettlement(order.settlement, order.partnerId),
       calculations: [],
     } as unknown as typeof order;
 
