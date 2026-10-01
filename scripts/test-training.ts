@@ -100,7 +100,7 @@ async function main() {
   assert.equal(await prisma.trainingAssignment.count({ where: { userId: manager.id } }), 0);
   assert.equal(await prisma.$transaction((tx) => hasTrainingClearance(tx, measurer.id)), false);
 
-  await recordTrainingHeartbeat(measurer.id, { currentTime: 99, duration: 100, playerState: "PLAYING", courseVersion: 999 });
+  await recordTrainingHeartbeat(measurer.id, { lessonKey: "", currentTime: 99, duration: 100, playerState: "PLAYING", courseVersion: 999 });
   assert.equal((await prisma.trainingAssignment.findUniqueOrThrow({ where: { id: assignment.id } })).progressPercent, 0, "seek-to-end unlocked progress");
   await assert.rejects(() => startTrainingAttempt(measurer.id), /QUIZ_LOCKED/);
 
@@ -109,35 +109,37 @@ async function main() {
       where: { id: assignment.id },
       data: { lastVideoTime: start, lastHeartbeatAt: new Date(Date.now() - 7_000) },
     });
-    await recordTrainingHeartbeat(measurer.id, { currentTime: Math.min(start + 7, 91), duration: 100, playerState: "PLAYING", courseVersion: 999 });
+    await recordTrainingHeartbeat(measurer.id, { lessonKey: "", currentTime: Math.min(start + 7, 91), duration: 100, playerState: "PLAYING", courseVersion: 999 });
   }
   const watched = await prisma.trainingAssignment.findUniqueOrThrow({ where: { id: assignment.id } });
   assert(watched.progressPercent >= 90);
   await assert.rejects(() => startTrainingAttempt(measurer.id), /QUIZ_LOCKED/, "acknowledgement was not required");
   await acknowledgeTraining(measurer.id);
   const started = await startTrainingAttempt(measurer.id);
-  assert.equal(started.questions.length, 15);
+  assert.equal(started.questions.length, MEASURER_QUESTIONS.length);
   assert(!JSON.stringify(started.questions).includes("correctOption"), "correct answers leaked before submit");
   const storedQuestions = await prisma.trainingQuestion.findMany({ where: { courseId: course.id }, orderBy: { position: "asc" } });
-  const twelveAnswers = storedQuestions.map((question, index) => ({ questionId: question.id, optionIndex: index < 12 ? question.correctOption : (question.correctOption + 1) % 4 }));
-  const passed = await submitTrainingAttempt(measurer.id, started.attemptId, twelveAnswers);
-  assert.equal(passed.score, 12);
+  const passingCount = Math.ceil(storedQuestions.length * 0.8);
+  const passingAnswers = storedQuestions.map((question, index) => ({ questionId: question.id, optionIndex: index < passingCount ? question.correctOption : (question.correctOption + 1) % 4 }));
+  const passed = await submitTrainingAttempt(measurer.id, started.attemptId, passingAnswers);
+  assert.equal(passed.score, passingCount);
   assert.equal(passed.passed, true);
   assert.equal(await prisma.$transaction((tx) => hasTrainingClearance(tx, measurer.id)), true);
 
   const failedAssignment = await ready(secondMeasurer.id);
   const failedAttempt = await startTrainingAttempt(secondMeasurer.id);
-  await assert.rejects(() => submitTrainingAttempt(measurer.id, failedAttempt.attemptId, twelveAnswers), /ATTEMPT_NOT_FOUND/, "attempt IDOR succeeded");
-  const elevenAnswers = storedQuestions.map((question, index) => ({ questionId: question.id, optionIndex: index < 11 ? question.correctOption : (question.correctOption + 1) % 4 }));
-  const failed = await submitTrainingAttempt(secondMeasurer.id, failedAttempt.attemptId, elevenAnswers);
-  assert.equal(failed.score, 11);
+  await assert.rejects(() => submitTrainingAttempt(measurer.id, failedAttempt.attemptId, passingAnswers), /ATTEMPT_NOT_FOUND/, "attempt IDOR succeeded");
+  const failingCount = passingCount - 1;
+  const failingAnswers = storedQuestions.map((question, index) => ({ questionId: question.id, optionIndex: index < failingCount ? question.correctOption : (question.correctOption + 1) % 4 }));
+  const failed = await submitTrainingAttempt(secondMeasurer.id, failedAttempt.attemptId, failingAnswers);
+  assert.equal(failed.score, failingCount);
   assert.equal(failed.passed, false);
   const retry = await startTrainingAttempt(secondMeasurer.id);
   const perfect = await submitTrainingAttempt(secondMeasurer.id, retry.attemptId, storedQuestions.map((question) => ({ questionId: question.id, optionIndex: question.correctOption })));
-  assert.equal(perfect.score, 15);
+  assert.equal(perfect.score, storedQuestions.length);
   const retryState = await prisma.trainingAssignment.findUniqueOrThrow({ where: { id: failedAssignment.id } });
   assert.equal(retryState.attemptsCount, 2);
-  assert.equal(retryState.bestScore, 15);
+  assert.equal(retryState.bestScore, storedQuestions.length);
 
   const overrideAssignment = await prisma.$transaction((tx) => ensureCurrentMeasurerTraining(tx, overrideMeasurer.id));
   assert(overrideAssignment);

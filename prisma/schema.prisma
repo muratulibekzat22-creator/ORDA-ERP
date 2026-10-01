@@ -2432,6 +2432,7 @@ model TrainingCourse {
   videoLanguage    String
   quizLanguage     String
   youtubeVideoId   String
+  videoLessons     Json?
   passScorePercent Int      @default(80)
   requiredCoverage Int      @default(90)
   mandatory        Boolean  @default(true)
@@ -2472,6 +2473,7 @@ model TrainingAssignment {
   status            TrainingStatus @default(NOT_STARTED)
   progressPercent   Float          @default(0)
   watchedRanges     Json           @default("[]")
+  lessonProgress    Json           @default("{}")
   videoDuration     Float?
   lastVideoTime     Float?
   lastHeartbeatAt   DateTime?

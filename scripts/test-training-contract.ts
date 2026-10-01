@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { MEASURER_COURSE, MEASURER_QUESTIONS } from "@/lib/training-course";
+import {
+  MEASURER_COURSE,
+  MEASURER_LESSONS,
+  MEASURER_QUESTIONS,
+} from "@/lib/training-course";
 import {
   acceptedHeartbeatRange,
   mergeWatchedRanges,
@@ -28,17 +32,20 @@ assert.equal(
   null,
 );
 
-assert.equal(MEASURER_COURSE.version, 1);
+assert.equal(MEASURER_COURSE.version, 2);
 assert.equal(MEASURER_COURSE.youtubeVideoId, "jBk1-0ku2PY");
 assert.equal(MEASURER_COURSE.requiredCoverage, 90);
-assert.equal(MEASURER_COURSE.passScorePercent, 80);
-assert.equal(MEASURER_QUESTIONS.length, 15);
+assert.equal(MEASURER_COURSE.passScorePercent, 85);
+assert.equal(MEASURER_LESSONS.length, 9);
+assert.equal(new Set(MEASURER_LESSONS.map((lesson) => lesson.key)).size, 9);
+assert.equal(new Set(MEASURER_LESSONS.map((lesson) => lesson.youtubeVideoId)).size, 9);
+assert.equal(MEASURER_QUESTIONS.length, 20);
 for (const question of MEASURER_QUESTIONS) {
   assert.equal(question.options.length, 4);
   assert(question.correctOption >= 0 && question.correctOption < 4);
 }
-assert.equal((12 / 15) * 100 >= 80, true);
-assert.equal((11 / 15) * 100 >= 80, false);
+assert.equal((17 / 20) * 100 >= 85, true);
+assert.equal((16 / 20) * 100 >= 85, false);
 
 const service = readFileSync("lib/services/training.service.ts", "utf8");
 const trainingApi = readFileSync("lib/training-api.ts", "utf8");
@@ -57,6 +64,8 @@ assert(service.includes("unique.get(question.id) === question.correctOption"), "
 assert(trainingApi.includes("Role.MEASURER") || trainingApi.includes("roles.includes"));
 assert(measurement.includes("hasTrainingClearance") && measurement.includes("TRAINING_REQUIRED"));
 assert(workspace.includes("https://www.youtube.com/iframe_api") && workspace.includes("7_000"));
+assert(workspace.includes("course.lessons.map") && workspace.includes("lessonKey"));
+assert(service.includes("hasRequiredLessonCoverage"), "each lesson must reach required coverage");
 assert(
   nextConfig.includes("script-src 'self' 'unsafe-inline' https://www.youtube.com") &&
     nextConfig.includes("frame-src https://www.youtube.com https://www.youtube-nocookie.com"),

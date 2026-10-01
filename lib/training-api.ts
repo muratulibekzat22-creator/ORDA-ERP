@@ -49,12 +49,12 @@ export function trainingError(error: unknown) {
     return NextResponse.json({ error: "Обучение не назначено" }, { status: 404 });
   if (code === "QUIZ_LOCKED")
     return NextResponse.json(
-      { error: "Сначала посмотрите не менее 90% видео и подтвердите ознакомление" },
+      { error: "Сначала посмотрите не менее 90% каждого урока и подтвердите ознакомление" },
       { status: 409 },
     );
   if (code === "ACKNOWLEDGEMENT_LOCKED")
     return NextResponse.json(
-      { error: "Подтверждение доступно после просмотра 90% видео" },
+      { error: "Подтверждение доступно после просмотра 90% каждого урока" },
       { status: 409 },
     );
   if (code === "ATTEMPT_NOT_FOUND")

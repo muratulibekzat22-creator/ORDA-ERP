@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { MEASURER_KNOWLEDGE } from "@/lib/training-course";
 import {
   acceptedHeartbeatRange,
   mergeWatchedRanges,
@@ -16,12 +17,132 @@ import {
 
 type Db = Prisma.TransactionClient;
 type Heartbeat = {
+  lessonKey: string;
   currentTime: number;
   duration: number;
   playerState: string;
   courseVersion: number;
 };
 type SubmittedAnswer = { questionId: number; optionIndex: number };
+type CourseLesson = {
+  key: string;
+  title: string;
+  description: string;
+  youtubeVideoId: string;
+};
+type StoredLessonProgress = {
+  watchedRanges: [number, number][];
+  videoDuration: number | null;
+  lastVideoTime: number | null;
+  lastHeartbeatAt: string | null;
+  progressPercent: number;
+};
+type LessonProgressMap = Record<string, StoredLessonProgress>;
+
+function courseLessons(course: {
+  videoLessons: Prisma.JsonValue | null;
+  youtubeVideoId: string;
+}): CourseLesson[] {
+  if (Array.isArray(course.videoLessons)) {
+    const lessons = course.videoLessons.flatMap((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const lesson = value as Record<string, unknown>;
+      if (
+        typeof lesson.key !== "string" ||
+        typeof lesson.title !== "string" ||
+        typeof lesson.description !== "string" ||
+        typeof lesson.youtubeVideoId !== "string"
+      )
+        return [];
+      return [
+        {
+          key: lesson.key,
+          title: lesson.title,
+          description: lesson.description,
+          youtubeVideoId: lesson.youtubeVideoId,
+        },
+      ];
+    });
+    if (lessons.length) return lessons;
+  }
+  return [
+    {
+      key: "main",
+      title: "Обучающее видео",
+      description: "Обязательный видеоурок курса.",
+      youtubeVideoId: course.youtubeVideoId,
+    },
+  ];
+}
+
+function parseLessonProgress(value: Prisma.JsonValue): LessonProgressMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, raw]) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+      const item = raw as Record<string, unknown>;
+      const videoDuration =
+        typeof item.videoDuration === "number" && Number.isFinite(item.videoDuration)
+          ? item.videoDuration
+          : null;
+      const lastVideoTime =
+        typeof item.lastVideoTime === "number" && Number.isFinite(item.lastVideoTime)
+          ? item.lastVideoTime
+          : null;
+      const progressPercent =
+        typeof item.progressPercent === "number" && Number.isFinite(item.progressPercent)
+          ? Math.max(0, Math.min(100, item.progressPercent))
+          : 0;
+      return [[key, {
+        watchedRanges: parseWatchedRanges(item.watchedRanges as Prisma.JsonValue),
+        videoDuration,
+        lastVideoTime,
+        lastHeartbeatAt:
+          typeof item.lastHeartbeatAt === "string" ? item.lastHeartbeatAt : null,
+        progressPercent,
+      } satisfies StoredLessonProgress]];
+    }),
+  );
+}
+
+function lessonStates(
+  course: { videoLessons: Prisma.JsonValue | null; youtubeVideoId: string },
+  assignment: {
+    lessonProgress: Prisma.JsonValue;
+    watchedRanges: Prisma.JsonValue;
+    videoDuration: number | null;
+    lastVideoTime: number | null;
+    lastHeartbeatAt: Date | null;
+    progressPercent: number;
+  },
+) {
+  const lessons = courseLessons(course);
+  const stored = parseLessonProgress(assignment.lessonProgress);
+  if (lessons.length === 1 && lessons[0].key === "main" && !stored.main) {
+    stored.main = {
+      watchedRanges: parseWatchedRanges(assignment.watchedRanges),
+      videoDuration: assignment.videoDuration,
+      lastVideoTime: assignment.lastVideoTime,
+      lastHeartbeatAt: assignment.lastHeartbeatAt?.toISOString() ?? null,
+      progressPercent: assignment.progressPercent,
+    };
+  }
+  const presented = lessons.map((lesson) => ({
+    ...lesson,
+    progressPercent: Math.round((stored[lesson.key]?.progressPercent ?? 0) * 10) / 10,
+  }));
+  return { lessons, stored, presented };
+}
+
+function hasRequiredLessonCoverage(
+  lessons: CourseLesson[],
+  stored: LessonProgressMap,
+  requiredCoverage: number,
+) {
+  return lessons.every(
+    (lesson) => (stored[lesson.key]?.progressPercent ?? 0) >= requiredCoverage,
+  );
+}
 
 const activeCourse = (db: Db | typeof prisma) =>
   db.trainingCourse.findFirst({
@@ -88,6 +209,12 @@ export async function getMyTraining(userId: number) {
       },
     },
   });
+  const progress = lessonStates(assignment.course, assignment);
+  const hasCoverage = hasRequiredLessonCoverage(
+    progress.lessons,
+    progress.stored,
+    assignment.course.requiredCoverage,
+  );
   return {
     id: assignment.id,
     status: assignment.status,
@@ -108,17 +235,15 @@ export async function getMyTraining(userId: number) {
       videoLanguage: assignment.course.videoLanguage,
       quizLanguage: assignment.course.quizLanguage,
       youtubeVideoId: assignment.course.youtubeVideoId,
+      lessons: progress.presented,
       passScorePercent: assignment.course.passScorePercent,
       requiredCoverage: assignment.course.requiredCoverage,
       questionsCount: assignment.course._count.questions,
     },
+    knowledge: MEASURER_KNOWLEDGE,
     attempts: assignment.attempts,
-    canAcknowledge:
-      assignment.progressPercent >= assignment.course.requiredCoverage &&
-      !assignment.acknowledgedAt,
-    canStartQuiz:
-      assignment.progressPercent >= assignment.course.requiredCoverage &&
-      Boolean(assignment.acknowledgedAt),
+    canAcknowledge: hasCoverage && !assignment.acknowledgedAt,
+    canStartQuiz: hasCoverage && Boolean(assignment.acknowledgedAt),
   };
 }
 
@@ -130,7 +255,8 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
     input.duration < 30 ||
     input.duration > 28_800 ||
     input.currentTime > input.duration + 2 ||
-    !Number.isInteger(input.courseVersion)
+    !Number.isInteger(input.courseVersion) ||
+    typeof input.lessonKey !== "string"
   )
     throw new Error("INVALID_HEARTBEAT");
 
@@ -143,36 +269,69 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
     if (course.version !== input.courseVersion)
       throw new Error("INVALID_HEARTBEAT");
 
+    const progress = lessonStates(course, assignment);
+    const lesson =
+      progress.lessons.find((item) => item.key === input.lessonKey) ??
+      (progress.lessons.length === 1 && !input.lessonKey
+        ? progress.lessons[0]
+        : null);
+    if (!lesson) throw new Error("INVALID_HEARTBEAT");
+    const current = progress.stored[lesson.key] ?? {
+      watchedRanges: [],
+      videoDuration: null,
+      lastVideoTime: null,
+      lastHeartbeatAt: null,
+      progressPercent: 0,
+    };
+
     const receivedAt = new Date();
-    const stableDuration = assignment.videoDuration ?? input.duration;
+    const stableDuration = current.videoDuration ?? input.duration;
     const durationChanged =
-      assignment.videoDuration !== null &&
-      Math.abs(input.duration - assignment.videoDuration) >
-        Math.max(3, assignment.videoDuration * 0.02);
+      current.videoDuration !== null &&
+      Math.abs(input.duration - current.videoDuration) >
+        Math.max(3, current.videoDuration * 0.02);
     const accepted = durationChanged
       ? null
       : acceptedHeartbeatRange({
-          previousTime: assignment.lastVideoTime,
-          previousAt: assignment.lastHeartbeatAt,
+          previousTime: current.lastVideoTime,
+          previousAt: current.lastHeartbeatAt
+            ? new Date(current.lastHeartbeatAt)
+            : null,
           currentTime: input.currentTime,
           receivedAt,
           playerState: input.playerState,
         });
-    const ranges = parseWatchedRanges(assignment.watchedRanges);
     const merged = mergeWatchedRanges(
-      accepted ? [...ranges, accepted] : ranges,
+      accepted ? [...current.watchedRanges, accepted] : current.watchedRanges,
       stableDuration,
     );
-    const progressPercent = Math.max(
-      assignment.progressPercent,
+    const lessonProgressPercent = Math.max(
+      current.progressPercent,
       watchedPercent(merged, stableDuration),
+    );
+    progress.stored[lesson.key] = {
+      watchedRanges: merged,
+      videoDuration: stableDuration,
+      lastVideoTime: input.currentTime,
+      lastHeartbeatAt: receivedAt.toISOString(),
+      progressPercent: lessonProgressPercent,
+    };
+    const progressPercent =
+      progress.lessons.reduce(
+        (total, item) => total + (progress.stored[item.key]?.progressPercent ?? 0),
+        0,
+      ) / progress.lessons.length;
+    const hasCoverage = hasRequiredLessonCoverage(
+      progress.lessons,
+      progress.stored,
+      course.requiredCoverage,
     );
     const status =
       assignment.status === TrainingStatus.PASSED ||
       assignment.status === TrainingStatus.FAILED
         ? assignment.status
         : assignment.acknowledgedAt &&
-            progressPercent >= course.requiredCoverage
+            hasCoverage
           ? TrainingStatus.READY_FOR_TEST
           : progressPercent > 0
             ? TrainingStatus.IN_PROGRESS
@@ -181,6 +340,7 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
       where: { id: assignment.id },
       data: {
         watchedRanges: merged as Prisma.InputJsonValue,
+        lessonProgress: progress.stored as unknown as Prisma.InputJsonValue,
         progressPercent,
         videoDuration: stableDuration,
         lastVideoTime: input.currentTime,
@@ -191,12 +351,15 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
     });
     return {
       progressPercent: Math.round(updated.progressPercent * 10) / 10,
-      canAcknowledge:
-        updated.progressPercent >= course.requiredCoverage &&
-        !updated.acknowledgedAt,
-      canStartQuiz:
-        updated.progressPercent >= course.requiredCoverage &&
-        Boolean(updated.acknowledgedAt),
+      lessonKey: lesson.key,
+      lessonProgressPercent: Math.round(lessonProgressPercent * 10) / 10,
+      lessons: progress.lessons.map((item) => ({
+        key: item.key,
+        progressPercent:
+          Math.round((progress.stored[item.key]?.progressPercent ?? 0) * 10) / 10,
+      })),
+      canAcknowledge: hasCoverage && !updated.acknowledgedAt,
+      canStartQuiz: hasCoverage && Boolean(updated.acknowledgedAt),
     };
   });
 }
@@ -208,7 +371,14 @@ export async function acknowledgeTraining(userId: number) {
     const course = await tx.trainingCourse.findUniqueOrThrow({
       where: { id: assignment.courseId },
     });
-    if (assignment.progressPercent < course.requiredCoverage)
+    const progress = lessonStates(course, assignment);
+    if (
+      !hasRequiredLessonCoverage(
+        progress.lessons,
+        progress.stored,
+        course.requiredCoverage,
+      )
+    )
       throw new Error("ACKNOWLEDGEMENT_LOCKED");
     if (assignment.acknowledgedAt) return assignment;
     const now = new Date();
@@ -248,8 +418,13 @@ export async function startTrainingAttempt(userId: number) {
     const course = await tx.trainingCourse.findUniqueOrThrow({
       where: { id: assignment.courseId },
     });
+    const progress = lessonStates(course, assignment);
     if (
-      assignment.progressPercent < course.requiredCoverage ||
+      !hasRequiredLessonCoverage(
+        progress.lessons,
+        progress.stored,
+        course.requiredCoverage,
+      ) ||
       !assignment.acknowledgedAt
     )
       throw new Error("QUIZ_LOCKED");
