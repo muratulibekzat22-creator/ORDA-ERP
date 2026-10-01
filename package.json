@@ -77,6 +77,7 @@
     "test:order-soft-delete": "tsx scripts/test-order-soft-delete.ts",
     "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",
     "test:payment-follow-up": "tsx scripts/test-payment-follow-up.ts",
+    "test:payment-follow-up:contract": "tsx scripts/test-payment-follow-up-contract.ts",
     "test:dashboard-director": "tsx scripts/test-dashboard-director.ts",
     "test:company-contacts": "tsx scripts/test-company-contacts.tsx",
     "test:documents": "tsx scripts/test-documents-module.ts",

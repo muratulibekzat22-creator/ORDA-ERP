@@ -22,6 +22,8 @@ export async function POST(request: Request) {
     return NextResponse.json(await acknowledgeMandatoryTask(calendarActor(auth.session!), taskId, plannedCompletionAt, typeof body?.comment === "string" ? body.comment : ""));
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
+    if (code === "PAYMENT_FOLLOW_UP_COMPLETION_TOO_LATE")
+      return NextResponse.json({ error: "Связаться с клиентом нужно не позднее 24 часов" }, { status: 400 });
     return NextResponse.json({ error: code === "INVALID_COMPLETION_DATE" ? "Укажите реальную дату выполнения" : "Задача не найдена" }, { status: code === "INVALID_COMPLETION_DATE" ? 400 : 404 });
   }
 }

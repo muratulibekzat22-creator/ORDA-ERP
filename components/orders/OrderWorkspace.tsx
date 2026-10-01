@@ -286,7 +286,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         </section>
       ) : null}
 
-      {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role) ? <PaymentFollowUpPanel orderId={order.id} balance={Number(order.balance)} clientName={order.client.name} clientPhone={order.client.phone} readOnly={archived} /> : null}
+      {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role) ? <PaymentFollowUpPanel orderId={order.id} balance={Number(order.balance)} clientName={order.client.name} clientPhone={order.client.phone} readOnly={archived} canCancelOverdue={operationalManagement} /> : null}
 
       {director ? <OrderEconomy order={order} /> : null}
 

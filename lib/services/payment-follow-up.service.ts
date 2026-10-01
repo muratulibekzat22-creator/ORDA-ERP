@@ -44,10 +44,21 @@ const select = {
   },
 } satisfies Prisma.CalendarTaskSelect;
 
-function assertInput(amount: number, dueAt: Date) {
+export const PAYMENT_FOLLOW_UP_MIN_LEAD_MS = 30_000;
+
+export function assertPaymentFollowUpInput(amount: number, dueAt: Date, now = new Date()) {
   if (!Number.isFinite(amount) || amount <= 0 || amount > 9_999_999_999.99)
     throw new Error("INVALID_PAYMENT_FOLLOW_UP_AMOUNT");
-  if (Number.isNaN(dueAt.getTime())) throw new Error("INVALID_PAYMENT_FOLLOW_UP_DATE");
+  if (Number.isNaN(dueAt.getTime()) || dueAt.getTime() < now.getTime() + PAYMENT_FOLLOW_UP_MIN_LEAD_MS)
+    throw new Error("INVALID_PAYMENT_FOLLOW_UP_DATE");
+}
+
+export function paymentPromisesFitBalance(
+  activeAmount: Prisma.Decimal.Value,
+  nextAmount: Prisma.Decimal.Value,
+  balance: Prisma.Decimal.Value,
+) {
+  return new Prisma.Decimal(activeAmount).add(new Prisma.Decimal(nextAmount)).lessThanOrEqualTo(new Prisma.Decimal(balance));
 }
 
 function canManage(actor: PaymentFollowUpActor, managerUserId: number | null) {
@@ -82,20 +93,24 @@ export async function createPaymentFollowUp(input: {
   actor: PaymentFollowUpActor;
   idempotencyKey: string;
   requestHash: string;
+  now?: Date;
 }) {
-  assertInput(input.amount, input.dueAt);
   return prisma.$transaction(async (tx) => {
     const workflowKey = `payment-collection:${input.idempotencyKey}`;
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${input.orderId})`;
     const existing = await tx.calendarTask.findFirst({
       where: { workflowKey },
       select: { ...select, auditEvents: { where: { action: "PAYMENT_FOLLOW_UP_SCHEDULED" }, take: 1, select: { after: true } } },
     });
     if (existing) {
+      if (existing.orderId !== input.orderId || !existing.order || !canManage(input.actor, existing.order.managerUserId))
+        throw new Error("ORDER_NOT_FOUND");
       const audit = existing.auditEvents[0]?.after as { requestHash?: string } | null;
       if (!compareRequestHash(audit?.requestHash ?? null, input.requestHash))
         throw new Error("IDEMPOTENCY_CONFLICT");
       return existing;
     }
+    assertPaymentFollowUpInput(input.amount, input.dueAt, input.now ?? new Date());
     const order = await tx.order.findFirst({
       where: { id: input.orderId, deletedAt: null },
       select: {
@@ -110,7 +125,17 @@ export async function createPaymentFollowUp(input: {
     });
     if (!order || !canManage(input.actor, order.managerUserId)) throw new Error("ORDER_NOT_FOUND");
     if (!order.managerUserId) throw new Error("ORDER_MANAGER_REQUIRED");
-    if (input.amount > Number(order.balance)) throw new Error("PAYMENT_FOLLOW_UP_EXCEEDS_BALANCE");
+    const activePromises = await tx.calendarTask.aggregate({
+      where: {
+        orderId: order.id,
+        workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION,
+        status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
+      },
+      _sum: { expectedAmount: true },
+    });
+    const expectedAmount = new Prisma.Decimal(input.amount);
+    if (!paymentPromisesFitBalance(activePromises._sum.expectedAmount ?? 0, expectedAmount, order.balance))
+      throw new Error("PAYMENT_FOLLOW_UPS_EXCEED_BALANCE");
 
     const amountLabel = Math.round(input.amount).toLocaleString("ru-RU");
     const task = await tx.calendarTask.create({
@@ -128,7 +153,7 @@ export async function createPaymentFollowUp(input: {
         acknowledgementRequired: true,
         workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION,
         workflowKey,
-        expectedAmount: new Prisma.Decimal(input.amount),
+        expectedAmount,
       },
       select,
     });
@@ -151,71 +176,34 @@ export async function createPaymentFollowUp(input: {
     return task;
   });
 }
-
 export async function cancelPaymentFollowUp(input: {
   orderId: number;
   taskId: number;
+  reason: string;
   actor: PaymentFollowUpActor;
 }) {
+  const reason = input.reason.trim().slice(0, 1000);
+  if (reason.length < 5) throw new Error("PAYMENT_FOLLOW_UP_CANCEL_REASON_REQUIRED");
   return prisma.$transaction(async (tx) => {
     const task = await tx.calendarTask.findFirst({
       where: { id: input.taskId, orderId: input.orderId, workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION },
-      select: { id: true, status: true, order: { select: { managerUserId: true } } },
+      select: { id: true, status: true, dueAt: true, order: { select: { id: true, number: true, managerUserId: true } } },
     });
     if (!task || !task.order || !canManage(input.actor, task.order.managerUserId)) throw new Error("PAYMENT_FOLLOW_UP_NOT_FOUND");
     if (task.status === CalendarTaskStatus.COMPLETED || task.status === CalendarTaskStatus.CANCELLED)
       throw new Error("PAYMENT_FOLLOW_UP_TERMINAL");
     const now = new Date();
+    if (input.actor.role === Role.MANAGER && task.dueAt <= now)
+      throw new Error("PAYMENT_FOLLOW_UP_DIRECTOR_REQUIRED");
     const updated = await tx.calendarTask.update({
       where: { id: task.id },
       data: { status: CalendarTaskStatus.CANCELLED, cancelledAt: now },
       select,
     });
     await tx.calendarTaskAudit.create({
-      data: { taskId: task.id, action: "PAYMENT_FOLLOW_UP_CANCELLED", actorId: input.actor.userId, before: { status: task.status }, after: { status: CalendarTaskStatus.CANCELLED } },
+      data: { taskId: task.id, action: "PAYMENT_FOLLOW_UP_CANCELLED", actorId: input.actor.userId, before: { status: task.status, dueAt: task.dueAt }, after: { status: CalendarTaskStatus.CANCELLED, reason } },
     });
+    await tx.orderEvent.create({ data: { orderId: task.order.id, title: "Отменено обещание доплаты", description: `${reason} · срок ${task.dueAt.toISOString()}`, user: input.actor.name } });
     return updated;
   });
-}
-
-export async function completeCoveredPaymentFollowUps(
-  tx: Prisma.TransactionClient,
-  input: { orderId: number; paymentId: number; paymentAmount: number; actorId?: number; actorName?: string },
-) {
-  let remaining = new Prisma.Decimal(input.paymentAmount);
-  const tasks = await tx.calendarTask.findMany({
-    where: {
-      orderId: input.orderId,
-      workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION,
-      status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
-    },
-    select: { id: true, status: true, expectedAmount: true, assigneeId: true },
-    orderBy: [{ dueAt: "asc" }, { id: "asc" }],
-  });
-  const now = new Date();
-  for (const task of tasks) {
-    if (!task.expectedAmount || remaining.lessThan(task.expectedAmount)) break;
-    remaining = remaining.sub(task.expectedAmount);
-    await tx.calendarTask.update({
-      where: { id: task.id },
-      data: {
-        status: CalendarTaskStatus.COMPLETED,
-        acknowledgedAt: task.status === CalendarTaskStatus.PLANNED ? now : undefined,
-        acknowledgementComment: task.status === CalendarTaskStatus.PLANNED ? "Оплата поступила до напоминания" : undefined,
-        resultText: `Оплата зарегистрирована в ORDA: ${Number(task.expectedAmount).toLocaleString("ru-RU")} ₸`,
-        resultSubmittedAt: now,
-        completedAt: now,
-        completedById: input.actorId,
-      },
-    });
-    await tx.calendarTaskAudit.create({
-      data: {
-        taskId: task.id,
-        action: "AUTO_COMPLETED_BY_PAYMENT",
-        actorId: input.actorId ?? task.assigneeId,
-        before: { status: task.status },
-        after: { paymentId: input.paymentId, paymentAmount: input.paymentAmount, actorName: input.actorName ?? null },
-      },
-    });
-  }
 }

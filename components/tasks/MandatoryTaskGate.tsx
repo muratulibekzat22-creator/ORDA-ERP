@@ -20,16 +20,27 @@ type Pending = {
 };
 
 const dateTime = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-const defaultPlan = () => {
-  const value = new Date(Date.now() + 86400_000);
+const defaultPlan = (now: number) => {
+  const value = new Date(now + 86400_000);
   value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
   return value.toISOString().slice(0, 16);
 };
 
-const paymentPlan = () => {
-  const value = new Date(Date.now() + 60 * 60_000);
+const paymentPlan = (now: number) => {
+  const value = new Date(now + 60 * 60_000);
   value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
   return value.toISOString().slice(0, 16);
+};
+
+const localDateTime = (timestamp: number) => {
+  const value = new Date(timestamp);
+  value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
+  return value.toISOString().slice(0, 16);
+};
+
+const makePlanWindow = () => {
+  const now = Date.now();
+  return { min: localDateTime(now), max: localDateTime(now + 24 * 60 * 60_000), regular: defaultPlan(now), payment: paymentPlan(now) };
 };
 
 export default function MandatoryTaskGate({ children }: { children: React.ReactNode }) {
@@ -37,6 +48,7 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
   const [loaded, setLoaded] = useState(false);
   const [understood, setUnderstood] = useState(false);
   const [plannedAt, setPlannedAt] = useState("");
+  const [planWindow, setPlanWindow] = useState(makePlanWindow);
   const [comment, setComment] = useState("");
   const [resultText, setResultText] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -47,6 +59,7 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
     if (response.ok) {
       const body = await response.json() as { pending: Pending | null };
       setPending(body.pending);
+      if (body.pending) setPlanWindow(makePlanWindow());
     }
     setLoaded(true);
   }, []);
@@ -62,7 +75,7 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
     event.preventDefault();
     if (!pending || !understood) return;
     setSaving(true); setError("");
-    const selectedPlan = plannedAt || (pending.task.workflow === "PAYMENT_COLLECTION" ? paymentPlan() : defaultPlan());
+    const selectedPlan = plannedAt || (pending.task.workflow === "PAYMENT_COLLECTION" ? planWindow.payment : planWindow.regular);
     const response = await fetch("/api/calendar/mandatory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId: pending.task.id, plannedCompletionAt: new Date(selectedPlan).toISOString(), comment }) });
     const body = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) setError(body.error ?? "Не удалось подтвердить ознакомление");
@@ -95,7 +108,7 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
       {paymentCollection && phone ? <a href={`https://wa.me/${phone.replace(/\D/g, "")}?text=${whatsappText}`} target="_blank" rel="noreferrer" className="mt-4 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 font-semibold hover:bg-emerald-600"><MessageCircle size={18}/>Написать клиенту в WhatsApp</a> : null}
       {pending.phase === "ACKNOWLEDGE" ? <form onSubmit={acknowledge} className="mt-6 space-y-4">
         <label className="flex items-start gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-4"><input type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} className="mt-1 size-5 accent-blue-600"/><span><b>Я ознакомился и понял задачу</b><span className="mt-1 block text-sm text-slate-400">После подтверждения рабочий кабинет откроется.</span></span></label>
-        <label className="block text-sm text-slate-300">{paymentCollection ? "Когда свяжетесь с клиентом" : "Когда будет выполнено"}<input required type="datetime-local" min={new Date().toISOString().slice(0,16)} value={plannedAt || (paymentCollection ? paymentPlan() : defaultPlan())} onChange={(event) => setPlannedAt(event.target.value)} className="control mt-1"/></label>
+        <label className="block text-sm text-slate-300">{paymentCollection ? "Когда свяжетесь с клиентом" : "Когда будет выполнено"}<input required type="datetime-local" min={planWindow.min} max={paymentCollection ? planWindow.max : undefined} value={plannedAt || (paymentCollection ? planWindow.payment : planWindow.regular)} onChange={(event) => setPlannedAt(event.target.value)} className="control mt-1"/></label>
         <label className="block text-sm text-slate-300">Что понял / комментарий<textarea value={comment} onChange={(event) => setComment(event.target.value)} rows={3} className="control mt-1 resize-none" placeholder="Коротко подтвердите, что именно нужно сделать"/></label>
         <button disabled={!understood || saving} className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold disabled:opacity-50">{saving ? "Сохраняем…" : "Подтвердить и перейти к работе"}</button>
       </form> : <form onSubmit={submitResult} className="mt-6 space-y-4">

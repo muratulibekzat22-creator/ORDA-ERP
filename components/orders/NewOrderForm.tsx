@@ -37,6 +37,13 @@ function todayForInput() {
   return local.toISOString().slice(0, 10);
 }
 
+function minimumPromiseTime() {
+  const value = new Date(Date.now() + 120_000);
+  value.setSeconds(0, 0);
+  value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
+  return value.toISOString().slice(0, 16);
+}
+
 export default function NewOrderForm() {
   const router = useRouter();
   const [options, setOptions] = useState<RegistrationOptions | null>(null);
@@ -123,6 +130,9 @@ export default function NewOrderForm() {
       return setError("Для доплаты укажите и сумму, и дату обещания клиента");
     if (hasPaymentPromise && Number(form.paymentPromiseAmount) > Number(form.amount) - Number(form.initialPayment))
       return setError("Обещанная доплата не может превышать остаток клиента");
+    const paymentPromiseTimestamp = hasPaymentPromise ? new Date(form.paymentPromiseAt).getTime() : 0;
+    if (hasPaymentPromise && (Number.isNaN(paymentPromiseTimestamp) || paymentPromiseTimestamp < Date.now() + 30_000))
+      return setError("Дата обещанной доплаты должна быть в будущем");
     submitting.current = true;
     setSaving(true);
     try {
@@ -200,7 +210,7 @@ export default function NewOrderForm() {
           <p className="mt-1 text-sm text-slate-400">Если клиент обещал довнести часть оплаты, ORDA напомнит ответственному менеджеру точно в указанное время.</p>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <Field label="Сумма следующей доплаты"><input type="number" min="0.01" step="0.01" inputMode="decimal" value={form.paymentPromiseAmount} onChange={(event) => set("paymentPromiseAmount", event.target.value)} placeholder="Например, 1 000 000" className={control} /></Field>
-            <Field label="Когда клиент обещал оплатить"><input type="datetime-local" value={form.paymentPromiseAt} onChange={(event) => set("paymentPromiseAt", event.target.value)} className={control} /></Field>
+            <Field label="Когда клиент обещал оплатить"><input type="datetime-local" min={minimumPromiseTime()} value={form.paymentPromiseAt} onChange={(event) => set("paymentPromiseAt", event.target.value)} className={control} /></Field>
           </div>
         </div>
       </section>

@@ -61,9 +61,11 @@ export async function acknowledgeMandatoryTask(actor: CalendarActor, taskId: num
   if (Number.isNaN(plannedCompletionAt.getTime()) || plannedCompletionAt.getTime() < Date.now() - 5 * 60_000 || plannedCompletionAt.getTime() > Date.now() + 366 * 86400_000)
     throw new Error("INVALID_COMPLETION_DATE");
   return prisma.$transaction(async (tx) => {
-    const task = await tx.calendarTask.findFirst({ where: { id: taskId, assigneeId: actor.userId, acknowledgementRequired: true, acknowledgedAt: null, status: { notIn: [CalendarTaskStatus.COMPLETED, CalendarTaskStatus.CANCELLED] } }, select: { id: true, status: true } });
+    const task = await tx.calendarTask.findFirst({ where: { id: taskId, assigneeId: actor.userId, acknowledgementRequired: true, acknowledgedAt: null, status: { notIn: [CalendarTaskStatus.COMPLETED, CalendarTaskStatus.CANCELLED] } }, select: { id: true, status: true, workflow: true } });
     if (!task) throw new Error("TASK_NOT_FOUND");
     const now = new Date();
+    if (task.workflow === CalendarTaskWorkflow.PAYMENT_COLLECTION && plannedCompletionAt.getTime() > now.getTime() + 24 * 60 * 60_000)
+      throw new Error("PAYMENT_FOLLOW_UP_COMPLETION_TOO_LATE");
     const updated = await tx.calendarTask.update({
       where: { id: taskId },
       data: { acknowledgedAt: now, acknowledgementComment: comment.slice(0, 1000) || "Ознакомился и понял", plannedCompletionAt, status: CalendarTaskStatus.IN_PROGRESS },

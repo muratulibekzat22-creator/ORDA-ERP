@@ -8,6 +8,7 @@ import { orderDeadline, projectOrderStatus } from "@/lib/orders/presentation";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf } from "@/lib/services/payment-receipt.service";
+import { assertPaymentFollowUpInput } from "@/lib/services/payment-follow-up.service";
 
 export async function getOrders(
   where: import("@prisma/client").Prisma.OrderWhereInput = {},
@@ -342,6 +343,7 @@ type CreateOrderInput = {
   enforceClientOwnership?: boolean;
   idempotencyKey?: string;
   requestHash?: string;
+  validationNow?: Date;
 };
 
 function orderNumber() {
@@ -405,6 +407,8 @@ export async function createOrder(data: CreateOrderInput) {
               };
             }
           }
+          if (data.paymentPromiseAmount != null && data.paymentPromiseAt)
+            assertPaymentFollowUpInput(data.paymentPromiseAmount, data.paymentPromiseAt, data.validationNow ?? new Date());
 
           let clientId = data.clientId;
           if (data.client) {

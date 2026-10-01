@@ -51,8 +51,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     if (error instanceof Error && error.message === "ORDER_MANAGER_REQUIRED")
       return NextResponse.json({ error: "Сначала назначьте ответственного менеджера" }, { status: 409 });
-    if (error instanceof Error && error.message === "PAYMENT_FOLLOW_UP_EXCEEDS_BALANCE")
-      return NextResponse.json({ error: "Обещанная сумма превышает остаток клиента" }, { status: 409 });
+    if (error instanceof Error && error.message === "PAYMENT_FOLLOW_UPS_EXCEED_BALANCE")
+      return NextResponse.json({ error: "Сумма активных обещаний превышает остаток клиента. Отмените ошибочное обещание или уменьшите сумму." }, { status: 409 });
     if (error instanceof Error && error.message.startsWith("INVALID_PAYMENT_FOLLOW_UP"))
       return NextResponse.json({ error: "Проверьте сумму и дату обещанной доплаты" }, { status: 400 });
     throw error;

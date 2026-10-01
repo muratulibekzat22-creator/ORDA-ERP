@@ -16,7 +16,7 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
       client: { select: { phone: true, city: true } },
     } }),
     db.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
-    db.calendarTask.findMany({ where: { OR: [{ controlKey: { not: null } }, { workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION }] }, select: {
+    db.calendarTask.findMany({ where: { OR: [{ controlKey: { not: null } }, { workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION, status: { in: ["PLANNED", "IN_PROGRESS"] } }] }, select: {
       id: true, controlKey: true, workflow: true, expectedAmount: true, assigneeId: true, status: true, dueAt: true, acknowledgedAt: true,
       resultSubmittedAt: true, controlVerifiedAt: true, controlRemindedAt: true, createdAt: true,
       orderId: true, clientId: true, order: { select: { number: true, client: { select: { name: true } } } },

@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/server-auth";
 import { cancelPaymentFollowUp } from "@/lib/services/payment-follow-up.service";
 
-export async function DELETE(_: Request, { params }: { params: Promise<{ id: string; taskId: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string; taskId: string }> }) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
   const values = await params;
@@ -13,9 +13,11 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   if (![orderId, taskId].every((value) => Number.isInteger(value) && value > 0))
     return NextResponse.json({ error: "Некорректное напоминание" }, { status: 400 });
   try {
+    const body = await request.json().catch(() => null) as { reason?: unknown } | null;
     return NextResponse.json(await cancelPaymentFollowUp({
       orderId,
       taskId,
+      reason: typeof body?.reason === "string" ? body.reason : "",
       actor: {
         userId: Number(auth.session!.user.id),
         name: auth.session!.user.name ?? "Пользователь",
@@ -27,6 +29,10 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Напоминание не найдено" }, { status: 404 });
     if (error instanceof Error && error.message === "PAYMENT_FOLLOW_UP_TERMINAL")
       return NextResponse.json({ error: "Завершённое напоминание нельзя отменить" }, { status: 409 });
+    if (error instanceof Error && error.message === "PAYMENT_FOLLOW_UP_CANCEL_REASON_REQUIRED")
+      return NextResponse.json({ error: "Укажите причину отмены" }, { status: 400 });
+    if (error instanceof Error && error.message === "PAYMENT_FOLLOW_UP_DIRECTOR_REQUIRED")
+      return NextResponse.json({ error: "Просроченное обещание может отменить только директор" }, { status: 403 });
     throw error;
   }
 }

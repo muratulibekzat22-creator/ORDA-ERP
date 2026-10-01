@@ -340,6 +340,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Не удалось создать номер заказа" }, { status: 409 });
     if (error instanceof Error && error.message === "CLIENT_NOT_FOUND")
       return NextResponse.json({ error: "Клиент не найден" }, { status: 404 });
+    if (error instanceof Error && ["INVALID_PAYMENT_FOLLOW_UP", "INVALID_PAYMENT_FOLLOW_UP_AMOUNT", "INVALID_PAYMENT_FOLLOW_UP_DATE"].includes(error.message))
+      return NextResponse.json({ error: "Проверьте сумму и будущую дату обещанной доплаты" }, { status: 400 });
     if (
       error instanceof Error &&
       ["FORBIDDEN_CLIENT_OWNERSHIP", "CLIENT_PHONE_MISMATCH"].includes(error.message)
