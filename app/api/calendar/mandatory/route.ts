@@ -24,6 +24,8 @@ export async function POST(request: Request) {
     const code = error instanceof Error ? error.message : "";
     if (code === "PAYMENT_FOLLOW_UP_COMPLETION_TOO_LATE")
       return NextResponse.json({ error: "Связаться с клиентом нужно не позднее 24 часов" }, { status: 400 });
+    if (code === "TASK_COMPLETION_TOO_LATE")
+      return NextResponse.json({ error: "Рабочую задачу нужно выполнить не позднее 24 часов" }, { status: 400 });
     return NextResponse.json({ error: code === "INVALID_COMPLETION_DATE" ? "Укажите реальную дату выполнения" : "Задача не найдена" }, { status: code === "INVALID_COMPLETION_DATE" ? 400 : 404 });
   }
 }

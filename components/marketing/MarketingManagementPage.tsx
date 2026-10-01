@@ -15,6 +15,11 @@ type Data = {
   vacancies: Vacancy[];
   assignees: Array<{ id: number; name: string; role: string }>;
   summary: { spend: number; leads: number; orders: number; revenue: number; cpl: number; cac: number; roas: number; conversion: number };
+  dailyCrm: {
+    dateLabel: string;
+    totals: { leadsReceived: number; contacted: number; interested: number; measurementsScheduled: number; measurementsCompleted: number; ordersCreated: number; revenue: number };
+    managers: Array<{ managerId: number; manager: string; leadsReceived: number; contacted: number; interested: number; measurementsScheduled: number; measurementsCompleted: number; ordersCreated: number; revenue: number; reportStatus: "NOT_SENT" | "ACKNOWLEDGED" | "SENT" }>;
+  };
 };
 
 const money = (value: number | string) => `${Math.round(Number(value)).toLocaleString("ru-RU")} ₸`;
@@ -60,6 +65,12 @@ export default function MarketingManagementPage() {
     {data ? <>
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
         <Stat label="Расход рекламы" value={money(data.summary.spend)}/><Stat label="Лиды" value={data.summary.leads}/><Stat label="Заказы" value={data.summary.orders}/><Stat label="Выручка" value={money(data.summary.revenue)}/><Stat label="Цена лида" value={money(data.summary.cpl)}/><Stat label="Цена клиента" value={money(data.summary.cac)}/><Stat label="ROAS" value={`${data.summary.roas.toFixed(2)}×`}/><Stat label="Конверсия" value={`${data.summary.conversion.toFixed(1)}%`}/>
+      </section>
+
+      <section className="rounded-2xl border border-cyan-500/20 bg-[#101827] p-4">
+        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">CRM за предыдущий день</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Показывает фактическую обработку лидов менеджерами; рекламные расходы Meta заполняются отдельно выше.</p></div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7"><Stat label="Новые заявки" value={data.dailyCrm.totals.leadsReceived}/><Stat label="Есть контакт" value={data.dailyCrm.totals.contacted}/><Stat label="Заинтересованы" value={data.dailyCrm.totals.interested}/><Stat label="Замеры назначены" value={data.dailyCrm.totals.measurementsScheduled}/><Stat label="Замеры завершены" value={data.dailyCrm.totals.measurementsCompleted}/><Stat label="Заказы" value={data.dailyCrm.totals.ordersCreated}/><Stat label="Продажи" value={money(data.dailyCrm.totals.revenue)}/></div>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[800px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер","Заявки","Контакт","Интерес","Замеры","Заказы","Продажи","Отчёт"].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{data.dailyCrm.managers.map(row=><tr key={row.managerId}><td className="px-3 py-3 font-semibold text-white">{row.manager}</td><td className="px-3 py-3">{row.leadsReceived}</td><td className="px-3 py-3">{row.contacted}</td><td className="px-3 py-3">{row.interested}</td><td className="px-3 py-3">{row.measurementsScheduled} / {row.measurementsCompleted}</td><td className="px-3 py-3">{row.ordersCreated}</td><td className="px-3 py-3">{money(row.revenue)}</td><td className={`px-3 py-3 font-semibold ${row.reportStatus==="SENT"?"text-emerald-300":row.reportStatus==="ACKNOWLEDGED"?"text-blue-300":"text-amber-300"}`}>{row.reportStatus==="SENT"?"Отправлен":row.reportStatus==="ACKNOWLEDGED"?"Ознакомлен":"Ждёт отчёта"}</td></tr>)}</tbody></table></div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">

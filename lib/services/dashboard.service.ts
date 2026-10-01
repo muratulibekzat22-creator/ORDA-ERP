@@ -18,6 +18,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
+import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 
 type DashboardScope = {
   role: Role;
@@ -153,7 +154,7 @@ async function managementProjection(scope: DashboardScope) {
     select: typeof orderEconomySelect;
   }>;
 
-  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads] = await Promise.all([
+  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm] = await Promise.all([
     prisma.order.findMany({
       where: {
         companyId,
@@ -275,6 +276,7 @@ async function managementProjection(scope: DashboardScope) {
         },
       },
     }),
+    getDailyCrmSnapshot({ now }),
   ]);
 
   const [payrollAccruals, payrollPayments] = await Promise.all([
@@ -499,6 +501,7 @@ async function managementProjection(scope: DashboardScope) {
       designConversion: designDone.length > 0 ? Math.round((designConverted / designDone.length) * 10_000) / 100 : null,
     },
     attention,
+    dailyCrm,
     expenses: ledgerEntries
       .filter(
         (entry) =>
@@ -529,7 +532,7 @@ async function managerProjection(scope: DashboardScope) {
       { leadConversion: { managerId: scope.userId } },
     ],
   };
-  const [orders, paymentFollowUps] = await Promise.all([
+  const [orders, paymentFollowUps, dailyCrm] = await Promise.all([
     prisma.order.findMany({
       where,
       select: {
@@ -567,6 +570,7 @@ async function managerProjection(scope: DashboardScope) {
       orderBy: [{ dueAt: "asc" }, { id: "asc" }],
       take: 20,
     }),
+    getDailyCrmSnapshot({ managerId: scope.userId, now }),
   ]);
   return {
     role: scope.role,
@@ -602,6 +606,7 @@ async function managerProjection(scope: DashboardScope) {
       ...task,
       overdue: task.dueAt < now,
     })),
+    dailyCrm,
   };
 }
 

@@ -39,6 +39,12 @@ export async function getMandatoryTask(actor: CalendarActor) {
         {
           OR: [
             { workflow: null },
+            { dueAt: { lte: now } },
+          ],
+        },
+        {
+          OR: [
+            { workflow: null },
             { workflow: { not: CalendarTaskWorkflow.PAYMENT_COLLECTION } },
             { dueAt: { lte: now } },
           ],
@@ -66,6 +72,8 @@ export async function acknowledgeMandatoryTask(actor: CalendarActor, taskId: num
     const now = new Date();
     if (task.workflow === CalendarTaskWorkflow.PAYMENT_COLLECTION && plannedCompletionAt.getTime() > now.getTime() + 24 * 60 * 60_000)
       throw new Error("PAYMENT_FOLLOW_UP_COMPLETION_TOO_LATE");
+    if (task.workflow && task.workflow !== CalendarTaskWorkflow.PAYMENT_COLLECTION && plannedCompletionAt.getTime() > now.getTime() + 24 * 60 * 60_000)
+      throw new Error("TASK_COMPLETION_TOO_LATE");
     const updated = await tx.calendarTask.update({
       where: { id: taskId },
       data: { acknowledgedAt: now, acknowledgementComment: comment.slice(0, 1000) || "Ознакомился и понял", plannedCompletionAt, status: CalendarTaskStatus.IN_PROGRESS },

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { marketingMonthRange } from "@/lib/marketing";
 import { requirePermission } from "@/lib/server-auth";
+import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 
 const canUseMarketing = (role: Role) =>
   role === Role.DIRECTOR ||
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
   if (requestedMonth && !/^\d{4}-\d{2}$/.test(requestedMonth))
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   const month = marketingMonthRange(requestedMonth);
-  const [tasks, metrics, vacancies, assignees] = await Promise.all([
+  const [tasks, metrics, vacancies, assignees, dailyCrm] = await Promise.all([
     prisma.managementMarketingTask.findMany({
       include: { assignee: { select: { id: true, name: true } } },
       orderBy: [{ status: "asc" }, { priority: "desc" }, { dueAt: "asc" }],
@@ -52,6 +53,7 @@ export async function GET(request: Request) {
       select: { id: true, name: true, role: true },
       orderBy: { name: "asc" },
     }),
+    getDailyCrmSnapshot(),
   ]);
   const totals = metrics.reduce(
     (sum, item) => ({
@@ -69,6 +71,7 @@ export async function GET(request: Request) {
     metrics,
     vacancies,
     assignees,
+    dailyCrm,
     summary: {
       ...totals,
       cpl: totals.leads ? totals.spend / totals.leads : 0,

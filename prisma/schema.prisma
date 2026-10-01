@@ -421,6 +421,9 @@ enum CalendarTaskPriority {
 
 enum CalendarTaskWorkflow {
   PAYMENT_COLLECTION
+  DAILY_CRM_REPORT
+  ORDER_DATA_COMPLETION
+  PLATFORM_ORIENTATION
 }
 
 enum MeasurementStatus {
