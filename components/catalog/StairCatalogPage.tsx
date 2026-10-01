@@ -117,6 +117,7 @@ export default function StairCatalogPage() {
           <Link
             href="/api/design-catalog/download"
             prefetch={false}
+            download="ALTYN-SAPA-stair-catalog.zip"
             className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold text-white hover:bg-blue-500"
           >
             <Download size={19} /> Скачать весь каталог ZIP
