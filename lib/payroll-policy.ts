@@ -67,6 +67,9 @@ export const isValidKaspiReference = (value: string | undefined) => {
   return normalized.length >= 3 && normalized.length <= 120;
 };
 
+export const isPayrollReconciled = (delta: number) =>
+  Number.isFinite(delta) && Math.abs(delta) < 0.01;
+
 export const payrollPaymentReference = (
   year: number,
   month: number,

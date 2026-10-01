@@ -214,6 +214,7 @@ const errorLabels: Record<string, string> = {
   KASPI_METHOD_REQUIRED: "Финальная зарплата выплачивается через Kaspi",
   KASPI_REFERENCE_REQUIRED: "Укажите реальный номер или референс перевода Kaspi",
   KASPI_REFERENCE_ALREADY_USED: "Этот референс Kaspi уже использован в другой выплате",
+  PAYROLL_RECONCILIATION_REQUIRED: "Сначала примените проверку системы: оклад или бонусы по заказам ещё не сверены",
   INVALID_ACTION: "Операция не поддерживается",
 };
 const methodLabels: Record<string, string> = {

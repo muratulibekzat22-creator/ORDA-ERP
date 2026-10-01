@@ -1,11 +1,11 @@
--- One manager order may produce one guaranteed order-bonus submission only.
--- Corrections are separate ADJUSTMENT_* rows, so the original fact remains auditable.
-CREATE UNIQUE INDEX IF NOT EXISTS "PayrollAccrual_one_order_bonus"
-ON "PayrollAccrual" ("orderId")
-WHERE "orderId" IS NOT NULL
-  AND "type" IN ('ORDER_BONUS', 'GUARANTEED_ORDER_BONUS')
-  AND "direction" = 'INCREASE'
-  AND "reversalOfId" IS NULL;
+-- Existing history stays untouched. Every new primary order bonus receives the
+-- same deterministic key, making concurrent submissions race-safe.
+ALTER TABLE "PayrollAccrual"
+ADD COLUMN IF NOT EXISTS "orderBonusUniquenessKey" TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS "PayrollAccrual_orderBonusUniquenessKey_key"
+ON "PayrollAccrual" ("orderBonusUniquenessKey")
+WHERE "orderBonusUniquenessKey" IS NOT NULL;
 
 ALTER TABLE "PayrollPayment"
 ADD COLUMN IF NOT EXISTS "externalReference" TEXT;

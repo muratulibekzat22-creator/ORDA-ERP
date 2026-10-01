@@ -5,6 +5,7 @@ import {
   isDateInPayrollPeriod,
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
+  isPayrollReconciled,
   isValidKaspiReference,
   managerOrderBonus,
   payrollPaymentPurpose,
@@ -66,6 +67,10 @@ assert.equal(isValidKaspiReference("  "), false);
 assert.equal(isValidKaspiReference("K1"), false);
 assert.equal(isValidKaspiReference("KASPI-123456"), true);
 assert.equal(isValidKaspiReference("X".repeat(121)), false);
+assert.equal(isPayrollReconciled(0), true);
+assert.equal(isPayrollReconciled(0.009), true);
+assert.equal(isPayrollReconciled(30_000), false);
+assert.equal(isPayrollReconciled(Number.NaN), false);
 
 const gulsimOrders = [
   6_000_000,
@@ -99,8 +104,10 @@ const migrationSource = readFileSync(
 );
 assert.match(serviceSource, /FOUNDER_CONFIRMATION_REQUIRED/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
+assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
+assert.match(serviceSource, /managerPayrollPolicyState/);
 assert.match(serviceSource, /payroll-policy:v1:/);
-assert.match(migrationSource, /PayrollAccrual_one_order_bonus/);
+assert.match(migrationSource, /PayrollAccrual_orderBonusUniquenessKey_key/);
 assert.match(migrationSource, /PayrollPayment_externalReference_key/);
 
 console.log("Payroll policy tests passed");

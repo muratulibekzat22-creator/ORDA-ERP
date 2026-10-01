@@ -1139,6 +1139,7 @@ model CalendarTask {
   resultAttachments       CalendarTaskResultAttachment[]
   measurement             Measurement?
 
+  @@unique([companyId, controlKey])
   @@index([assigneeId, dueAt])
   @@index([status, dueAt])
   @@index([clientId, dueAt])
@@ -1146,7 +1147,6 @@ model CalendarTask {
   @@index([companyId, dueAt, status])
   @@index([assigneeId, acknowledgementRequired, acknowledgedAt])
   @@index([assigneeId, plannedCompletionAt, resultSubmittedAt])
-  @@unique([companyId, controlKey])
 }
 
 model CalendarTaskResultAttachment {
@@ -1618,34 +1618,35 @@ model PayrollAuditEvent {
 }
 
 model PayrollAccrual {
-  id             Int                    @id @default(autoincrement())
-  employeeId     Int
-  employee       EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  periodId       Int
-  period         PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
-  earnedPeriodId Int?
-  type           PayrollAccrualType
-  direction      PayrollDirection
-  amount         Decimal                @db.Decimal(14, 2)
-  orderId        Int?
-  order          Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  measurementId  Int?                   @unique
-  measurement    Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
-  reason         String
-  paymentMode    BonusPaymentMode?
-  approvedAt     DateTime               @default(now())
-  approvedById   Int
-  approvedBy     User                   @relation("PayrollAccrualApprover", fields: [approvedById], references: [id], onDelete: Restrict)
-  createdById    Int
-  createdBy      User                   @relation("PayrollAccrualCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  reversalOfId   Int?                   @unique
-  reversalOf     PayrollAccrual?        @relation("PayrollReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy     PayrollAccrual?        @relation("PayrollReversal")
-  idempotencyKey String                 @unique
-  requestHash    String
-  ledgerEntry    CompanyLedgerEntry?
-  payments       PayrollPayment[]
-  createdAt      DateTime               @default(now())
+  id                      Int                    @id @default(autoincrement())
+  employeeId              Int
+  employee                EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId                Int
+  period                  PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  earnedPeriodId          Int?
+  type                    PayrollAccrualType
+  direction               PayrollDirection
+  amount                  Decimal                @db.Decimal(14, 2)
+  orderId                 Int?
+  order                   Order?                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  measurementId           Int?                   @unique
+  measurement             Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
+  reason                  String
+  paymentMode             BonusPaymentMode?
+  approvedAt              DateTime               @default(now())
+  approvedById            Int
+  approvedBy              User                   @relation("PayrollAccrualApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  createdById             Int
+  createdBy               User                   @relation("PayrollAccrualCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reversalOfId            Int?                   @unique
+  reversalOf              PayrollAccrual?        @relation("PayrollReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy              PayrollAccrual?        @relation("PayrollReversal")
+  idempotencyKey          String                 @unique
+  orderBonusUniquenessKey String?                @unique
+  requestHash             String
+  ledgerEntry             CompanyLedgerEntry?
+  payments                PayrollPayment[]
+  createdAt               DateTime               @default(now())
 
   @@index([employeeId, periodId])
   @@index([orderId])
