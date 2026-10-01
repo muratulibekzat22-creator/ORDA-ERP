@@ -10,6 +10,7 @@ import {
   Role,
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
+import { companyMonthRange } from "@/lib/company-calendar";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -339,10 +340,12 @@ async function createAccrualInternal(
         throw new PayrollError("ORDER_REQUIRED");
       let cancelledOrderWarning = false;
       if (input.orderId) {
+        const monthRange = companyMonthRange(period.year, period.month);
         const order = await tx.order.findFirst({
           where: {
             id: input.orderId,
             deletedAt: null,
+            orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
             ...(orderScope
               ? {
                   OR: [
@@ -361,7 +364,7 @@ async function createAccrualInternal(
           },
           select: { status: true },
         });
-        if (!order) throw new PayrollError("ORDER_NOT_FOUND");
+        if (!order) throw new PayrollError("ORDER_OUTSIDE_PERIOD");
         cancelledOrderWarning = /отмен|cancel/i.test(order.status);
       }
       if (input.type === PayrollAccrualType.ORDER_BONUS) {

@@ -7,6 +7,7 @@ import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentat
 import { orderDataGaps } from "../lib/orders/completeness";
 import { ORDER_BOARD_TARGET_LIFECYCLE, orderBoardColumn } from "../lib/orders/board";
 import { hasProductionPrice } from "../lib/orders/production-price";
+import { companyMonthRange } from "../lib/company-calendar";
 
 assert.equal(USER_ORDER_STATUSES.length, 7);
 assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
@@ -21,6 +22,16 @@ assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.CONTRACT, OrderLifecycle.PREPARATION);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.WORKSHOP, OrderLifecycle.READY_FOR_PRODUCTION);
 assert.equal(hasProductionPrice(1, new Date()), false, "legacy 1 ₸ placeholder entered profit calculations");
 assert.equal(hasProductionPrice(2, new Date()), true);
+assert.deepEqual(
+  Object.fromEntries(
+    Object.entries(companyMonthRange(2026, 9)).map(([key, value]) => [key, value.toISOString()]),
+  ),
+  {
+    start: "2026-08-31T19:00:00.000Z",
+    end: "2026-09-30T19:00:00.000Z",
+  },
+  "company month must use the Kazakhstan UTC+5 business boundary",
+);
 assert.deepEqual(
   orderDataGaps({
     managerUserId: null,

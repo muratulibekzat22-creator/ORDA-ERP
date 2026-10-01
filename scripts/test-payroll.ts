@@ -184,6 +184,7 @@ async function main() {
         amount: 100000,
         manager: manager.name,
         status: "Оформлен",
+        orderReceivedAt: new Date(Date.UTC(periodYear, 7, 15, 12)),
       },
     });
     ids.orders.push(order.id);
@@ -468,6 +469,7 @@ async function main() {
         manager: manager.name,
         managerUserId: manager.id,
         status: "Оформлен",
+        orderReceivedAt: new Date(Date.UTC(periodYear, 11, 15, 12)),
       },
     });
     ids.orders.push(trackedOrder.id);
@@ -495,6 +497,7 @@ async function main() {
         manager: manager.name,
         managerUserId: manager.id,
         status: "Оформлен",
+        orderReceivedAt: new Date(Date.UTC(periodYear, 11, 16, 12)),
       },
     });
     ids.orders.push(selfOrder.id);
@@ -664,6 +667,7 @@ async function main() {
         manager: manager.name,
         managerUserId: manager.id,
         status: "Отменён",
+        orderReceivedAt: new Date(Date.UTC(periodYear, 8, 15, 12)),
       },
     });
     ids.orders.push(cancelledOrder.id);

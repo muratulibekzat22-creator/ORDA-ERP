@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { ACCOUNT_FAILURE_LIMIT, AUTH_AUDIT_RETENTION_DAYS, IP_ABUSE_FAILURE_LIMIT } from "../lib/auth-security";
 
 const read = (path: string) => readFileSync(path, "utf8");
-const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), serverAuth = read("lib/server-auth.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx");
+const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), serverAuth = read("lib/server-auth.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx"), payroll = read("app/payroll/page.tsx"), selfPayrollApi = read("app/api/payroll/self/route.ts");
 
 assert.equal(ACCOUNT_FAILURE_LIMIT, 5);
 assert.equal(IP_ABUSE_FAILURE_LIMIT, Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 100));
@@ -21,6 +21,9 @@ assert(shell.includes('["/", "/marketing", "/calendar", "/payroll"]'), "marketer
 assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes('["/", "/training", "/payroll", "/finance", "/partner-management", "/reports"]'), "Founder navigation must keep payroll with final controls and reports");
 assert(shell.includes('accountRole === "OPERATIONS_DIRECTOR"') && shell.includes("if (operationsDirector) return true"), "Operations director must retain the full working navigation");
 assert(cockpit.includes("FounderDashboard") && cockpit.includes("Чистая прибыль") && cockpit.includes("Рентабельность бизнеса") && cockpit.includes("Продажи за месяц"), "Founder cockpit must show final financial and sales indicators");
+assert(!payroll.includes("Запросить аванс") && !payroll.includes("Сообщить о получении"), "removed payroll self-service actions returned to the UI");
+assert(payroll.includes('year: String(period.year)') && payroll.includes('month: String(period.month)') && payroll.includes("Сначала оформите заказ"), "payroll order bonus is not scoped to the selected month");
+assert(!selfPayrollApi.includes('body.action === "report-payment"') && selfPayrollApi.includes('error: "INVALID_ACTION"'), "removed payroll self-service actions are still accepted by the API");
 assert(passwordReset.includes("auth.session!.user.role !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "director-only password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");

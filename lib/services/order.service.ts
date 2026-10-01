@@ -1,5 +1,6 @@
 import { Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
+import { companyMonthRange } from "@/lib/company-calendar";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { orderDataGaps } from "@/lib/orders/completeness";
 import { hasProductionPrice } from "@/lib/orders/production-price";
@@ -131,7 +132,12 @@ export async function getOrders(
 
 export type OrderSearchActor = { role: Role; userId: number; name: string };
 
-export async function searchOrderOptions(actor: OrderSearchActor, query = "", limit = 20) {
+export async function searchOrderOptions(
+  actor: OrderSearchActor,
+  query = "",
+  limit = 20,
+  period?: { year: number; month: number },
+) {
   const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
     ? { OR: [
         { managerUserId: actor.userId },
@@ -149,6 +155,7 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
             : {};
   const search = query.trim().slice(0, 120);
   const digits = search.replace(/\D/g, "");
+  const monthRange = period ? companyMonthRange(period.year, period.month) : null;
   const searchWhere: Prisma.OrderWhereInput = search ? { OR: [
     { number: { contains: search, mode: "insensitive" } },
     { client: { name: { contains: search, mode: "insensitive" } } },
@@ -156,7 +163,12 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
     ...(digits.length >= 3 && digits !== search ? [{ client: { phone: { contains: digits } } }] : []),
   ] } : {};
   return prisma.order.findMany({
-    where: { deletedAt: null, lifecycle: { not: "CANCELLED" }, AND: [roleScope, searchWhere] },
+    where: {
+      deletedAt: null,
+      lifecycle: { not: "CANCELLED" },
+      ...(monthRange ? { orderReceivedAt: { gte: monthRange.start, lt: monthRange.end } } : {}),
+      AND: [roleScope, searchWhere],
+    },
     select: { id: true, number: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: Math.min(50, Math.max(1, Math.trunc(limit))),

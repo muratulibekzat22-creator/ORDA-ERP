@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,7 +11,6 @@ import {
   Check,
   ChevronRight,
   CircleDollarSign,
-  Clock3,
   History,
   Plus,
   UserRound,
@@ -42,26 +42,6 @@ type Payment = {
   reversedAt?: string | null;
   reversal?: { id: number } | null;
 };
-type Confirmation = {
-  id: number;
-  amount: string;
-  type: string;
-  claimedPaymentDate: string;
-  method?: string | null;
-  comment?: string | null;
-  status: "PENDING" | "CONFIRMED" | "REJECTED";
-  reviewComment?: string | null;
-  confirmedPaymentId?: number | null;
-  createdAt: string;
-};
-type Advance = {
-  id: number;
-  status: string;
-  requestedAmount: string;
-  approvedAmount?: string | null;
-  comment?: string | null;
-  createdAt: string;
-};
 type PayrollRow = {
   id: number;
   userId: number | null;
@@ -82,8 +62,6 @@ type PayrollRow = {
   salaryEffectiveFrom: string;
   accruals: Accrual[];
   payments: Payment[];
-  paymentConfirmations: Confirmation[];
-  advanceRequests: Advance[];
   totals: { accrued: number; paid: number; pending: number; payable: number };
   breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
   bonusAccruals: Array<{ id: number; orderId?: number | null; order?: OrderOption | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
@@ -97,7 +75,7 @@ type Payload = {
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
-  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advancePayment" | "reversal";
+  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "reversal";
 type OrderOption = {
   id: number;
   number: string;
@@ -184,6 +162,7 @@ const errorLabels: Record<string, string> = {
   EMPLOYEE_NOT_FOUND: "Сотрудник не найден",
   ORDER_REQUIRED: "Для бонуса за заказ укажите заказ",
   ORDER_NOT_FOUND: "Заказ не найден",
+  ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
   INVALID_ACTION: "Операция не поддерживается",
 };
@@ -223,15 +202,7 @@ export default function PayrollPage() {
   const [details, setDetails] = useState<PayrollRow | null>(null),
     [operation, setOperation] = useState<Operation | null>(null),
     [target, setTarget] = useState<PayrollRow | null>(null);
-  const [form, setForm] = useState<Form>(emptyForm),
-    [advanceAmount, setAdvanceAmount] = useState("");
-  const [receipt, setReceipt] = useState({
-    amount: "",
-    type: "SALARY_PAYMENT",
-    paymentDate: new Date().toISOString().slice(0, 10),
-    method: "bank_transfer",
-    comment: "",
-  });
+  const [form, setForm] = useState<Form>(emptyForm);
   const role = session?.user.role ?? "",
     director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
     accountant = role === "ACCOUNTANT",
@@ -352,14 +323,6 @@ export default function PayrollPage() {
         comment: form.reason,
         relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
       };
-    else if (operation === "advancePayment")
-      body = {
-        action: "pay-advance",
-        id: Number(form.accrualId),
-        paymentDate: form.date,
-        method: form.method,
-        comment: form.reason,
-      };
     else if (operation === "reversal")
       body = {
         action: "reverse-accrual",
@@ -396,7 +359,7 @@ export default function PayrollPage() {
       };
     const saved = managerSelfService && (operation === "bonus" || operation === "deduction")
       ? await runSelf(body, operation === "bonus" ? "Бонус за заказ добавлен" : "Штраф добавлен")
-      : await run(body, operation === "advancePayment" ? "Выплата аванса зарегистрирована" : "Операция выполнена");
+      : await run(body);
     if (saved) {
       setOperation(null);
       setDetails(null);
@@ -414,101 +377,10 @@ export default function PayrollPage() {
       status === "REVIEW" ? "Месяц отправлен на проверку" : status === "CLOSED" ? "Месяц закрыт" : "Месяц открыт для изменений",
     );
   };
-  const reviewAdvance = (item: Advance, decision: "APPROVED" | "REJECTED") =>
-    run(
-      {
-        action: "review-advance",
-        id: item.id,
-        status: decision,
-        approvedAmount:
-          decision === "APPROVED" ? Number(item.requestedAmount) : undefined,
-      },
-      decision === "APPROVED" ? "Аванс одобрен" : "Запрос отклонён",
-    );
-  const payAdvance = async (item: Advance) => {
-    const employee = data.rows.find((row) =>
-      row.advanceRequests.some((request) => request.id === item.id),
-    );
-    if (!employee) return;
-    setTarget(employee);
-    setOperation("advancePayment");
-    setForm({
-      ...emptyForm(),
-      amount: String(item.approvedAmount ?? item.requestedAmount),
-      accrualId: String(item.id),
-      method: "cash",
-      reason: item.comment ?? "Аванс",
-    });
-  };
-  const reviewConfirmation = async (
-    item: Confirmation,
-    decision: "CONFIRM" | "REJECT",
-    editAmount = false,
-  ) => {
-    const amount = editAmount
-      ? Number(window.prompt("Подтверждённая сумма", String(item.amount)))
-      : Number(item.amount);
-    if (decision === "CONFIRM" && (!Number.isFinite(amount) || amount <= 0))
-      return setError("Введите корректную сумму");
-    const comment = decision === "REJECT"
-      ? window.prompt("Причина отклонения", "Выплата не подтверждена")?.trim()
-      : item.comment ?? "";
-    if (decision === "REJECT" && !comment) return;
-    await run(
-      {
-        action: "review-payment-confirmation",
-        id: item.id,
-        decision,
-        amount: decision === "CONFIRM" ? amount : undefined,
-        paymentDate: item.claimedPaymentDate,
-        method: item.method,
-        comment,
-      },
-      decision === "CONFIRM" ? "Выплата подтверждена" : "Сообщение отклонено",
-    );
-  };
   const reversePayrollPayment = async (item: Payment) => {
     const reason = window.prompt("Обязательная причина сторно")?.trim();
     if (!reason) return;
     await run({ action: "reverse-payment", id: item.id, reason }, "Выплата сторнирована");
-  };
-  const reportReceipt = async () => {
-    if (!data.period || Number(receipt.amount) <= 0) return;
-    setError("");
-    const response = await fetch("/api/payroll/self", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-      body: JSON.stringify({ action: "report-payment", periodId: data.period.id, ...receipt, amount: Number(receipt.amount) }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) setError(errorLabels[result.error] ?? "Не удалось сообщить о получении");
-    else {
-      setReceipt((value) => ({ ...value, amount: "", comment: "" }));
-      setNotice("Сообщение отправлено директору. Выплата пока не подтверждена.");
-      await load();
-    }
-  };
-  const requestAdvance = async () => {
-    if (!data.period || Number(advanceAmount) <= 0) return;
-    const response = await fetch("/api/payroll/self", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          periodId: data.period.id,
-          amount: Number(advanceAmount),
-        }),
-      }),
-      result = await response.json().catch(() => ({}));
-    if (!response.ok)
-      setError(errorLabels[result.error] ?? "Не удалось отправить запрос");
-    else {
-      setAdvanceAmount("");
-      setNotice("Запрос на аванс отправлен");
-      await load();
-    }
   };
   const configureEmployee = async (user: { id: number; name: string }) => {
     const value = window.prompt(`Укажите оклад для ${user.name}`, "0");
@@ -526,21 +398,6 @@ export default function PayrollPage() {
       "Зарплатный профиль настроен",
     );
   };
-  const pending = useMemo(
-    () =>
-      data.rows.flatMap((row) =>
-        row.advanceRequests
-          .filter(
-            (item) => item.status === "REQUESTED" || item.status === "APPROVED",
-          )
-          .map((item) => ({ row, item })),
-      ),
-    [data.rows],
-  );
-  const pendingConfirmations = useMemo(
-    () => data.rows.flatMap((row) => row.paymentConfirmations.filter((item) => item.status === "PENDING").map((item) => ({ row, item }))),
-    [data.rows],
-  );
   const stats: Array<[string, number, LucideIcon, string]> = [
     ["Начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
     ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
@@ -657,79 +514,6 @@ export default function PayrollPage() {
             </article>
           ))}
         </section>
-        {director && pendingConfirmations.length > 0 && (
-          <section className="mt-5 rounded-2xl border border-orange-500/30 bg-orange-500/5 p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Clock3 size={19} className="text-orange-300" />
-              <h2 className="font-semibold">Требуют подтверждения</h2>
-            </div>
-            <div className="grid gap-3 lg:grid-cols-2">
-              {pendingConfirmations.map(({ row, item }) => (
-                <article key={item.id} className="min-w-0 rounded-xl bg-slate-900 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div><b>{row.user.name}</b><p className="text-sm text-slate-400">{labels[item.type] ?? item.type}</p></div>
-                    <strong className="text-orange-200">{currency(item.amount)}</strong>
-                  </div>
-                  <p className="mt-2 break-words text-sm text-slate-400">{dateLabel(item.claimedPaymentDate)}{item.comment ? ` · ${item.comment}` : ""}</p>
-                  {!locked && <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    <button onClick={() => void reviewConfirmation(item, "CONFIRM")} className="min-h-11 rounded-lg bg-emerald-700 px-3 text-sm font-semibold">Подтвердить выплату</button>
-                    <button onClick={() => void reviewConfirmation(item, "CONFIRM", true)} className="min-h-11 rounded-lg bg-blue-700 px-3 text-sm font-semibold">Изменить сумму</button>
-                    <button onClick={() => void reviewConfirmation(item, "REJECT")} className="min-h-11 rounded-lg bg-red-900 px-3 text-sm font-semibold">Отклонить</button>
-                  </div>}
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-        {adminView && pending.length > 0 && (
-          <section className="mt-5 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <Clock3 size={19} className="text-amber-300" />
-              <h2 className="font-semibold">Запросы на аванс</h2>
-            </div>
-            <div className="grid gap-2 lg:grid-cols-2">
-              {pending.map(({ row, item }) => (
-                <div
-                  key={item.id}
-                  className="flex flex-col gap-3 rounded-xl bg-slate-900 p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    <b>{row.user.name}</b>
-                    <p className="text-sm text-slate-400">
-                      {currency(item.requestedAmount)} · {labels[item.status]}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    {director && !locked && item.status === "REQUESTED" && (
-                      <>
-                        <button
-                          onClick={() => void reviewAdvance(item, "APPROVED")}
-                          className="rounded-lg bg-emerald-700 px-3 py-2 text-sm"
-                        >
-                          Одобрить
-                        </button>
-                        <button
-                          onClick={() => void reviewAdvance(item, "REJECTED")}
-                          className="rounded-lg bg-red-900 px-3 py-2 text-sm"
-                        >
-                          Отклонить
-                        </button>
-                      </>
-                    )}
-                    {director && !locked && item.status === "APPROVED" && (
-                      <button
-                        onClick={() => void payAdvance(item)}
-                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm"
-                      >
-                        Зарегистрировать выплату
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
         {!adminView && data.rows[0] && (
           <section className="mt-5 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -745,41 +529,6 @@ export default function PayrollPage() {
                   <button onClick={() => openOperation("deduction", data.rows[0])} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-200">+ Штраф</button>
                 </div>
               )}
-            </div>
-          </section>
-        )}
-        {!adminView && data.period && !locked && (
-          <section className="mt-5 rounded-2xl border border-orange-500/30 bg-orange-500/5 p-4">
-            <h2 className="font-semibold">Сообщить о получении</h2>
-            <p className="mt-1 text-sm text-slate-400">Это создаст запрос со статусом «Ожидает подтверждения директора», а не финансовую выплату.</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <input type="number" min="1" inputMode="decimal" value={receipt.amount} onChange={(e) => setReceipt({ ...receipt, amount: e.target.value })} placeholder="Сумма, ₸" className="control min-w-0" />
-              <select value={receipt.type} onChange={(e) => setReceipt({ ...receipt, type: e.target.value })} className="control min-w-0"><option value="SALARY_PAYMENT">Зарплата</option><option value="GUARANTEED_BONUS_PAYMENT">Гарантированный бонус</option><option value="ORDER_BONUS_PAYMENT">Бонус за заказ</option><option value="PREMIUM_PAYMENT">Премия</option><option value="ADVANCE">Аванс</option><option value="FINAL_SETTLEMENT">Окончательный расчёт</option><option value="OTHER_PAYROLL_PAYMENT">Другое</option></select>
-              <input type="date" value={receipt.paymentDate} onChange={(e) => setReceipt({ ...receipt, paymentDate: e.target.value })} className="control min-w-0" />
-              <select value={receipt.method} onChange={(e) => setReceipt({ ...receipt, method: e.target.value })} className="control min-w-0"><option value="cash">Наличные</option><option value="kaspi">Kaspi</option><option value="bank_transfer">Банковский перевод</option><option value="other">Другое</option></select>
-              <button onClick={() => void reportReceipt()} disabled={Number(receipt.amount) <= 0} className="min-h-11 rounded-xl bg-orange-700 px-4 font-semibold disabled:opacity-40">Отметить как полученное</button>
-              <input value={receipt.comment} onChange={(e) => setReceipt({ ...receipt, comment: e.target.value })} placeholder="Комментарий" className="control min-w-0 sm:col-span-2 lg:col-span-5" />
-            </div>
-          </section>
-        )}
-        {!adminView && data.period && !locked && (
-          <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
-            <h2 className="font-semibold">Запросить аванс</h2>
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-              <input
-                type="number"
-                min={operation === "allowance" ? "0" : "1"}
-                value={advanceAmount}
-                onChange={(e) => setAdvanceAmount(e.target.value)}
-                placeholder="Сумма, ₸"
-                className="control flex-1"
-              />
-              <button
-                onClick={() => void requestAdvance()}
-                className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold"
-              >
-                Отправить запрос
-              </button>
             </div>
           </section>
         )}
@@ -888,8 +637,6 @@ export default function PayrollPage() {
           closed={locked}
           onClose={() => setDetails(null)}
           onOperation={openOperation}
-          onReview={reviewAdvance}
-          onPayAdvance={payAdvance}
           onReversePayment={reversePayrollPayment}
         />
       )}{" "}
@@ -906,6 +653,7 @@ export default function PayrollPage() {
           }}
           form={form}
           setForm={setForm}
+          period={selected}
           onClose={() => setOperation(null)}
           onSubmit={submitOperation}
         />
@@ -1013,8 +761,6 @@ function EmployeeDrawer({
   closed,
   onClose,
   onOperation,
-  onReview,
-  onPayAdvance,
   onReversePayment,
 }: {
   row: PayrollRow;
@@ -1023,11 +769,6 @@ function EmployeeDrawer({
   closed: boolean;
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
-  onReview: (
-    item: Advance,
-    decision: "APPROVED" | "REJECTED",
-  ) => Promise<unknown>;
-  onPayAdvance: (item: Advance) => Promise<unknown>;
   onReversePayment: (item: Payment) => Promise<unknown>;
 }) {
   const accrualTotal = (types: string[]) =>
@@ -1172,75 +913,11 @@ function EmployeeDrawer({
             )}
           </section>
         )}
-        {row.advanceRequests.length > 0 && (
-          <section className="mt-5">
-            <h3 className="font-semibold">Запросы на аванс</h3>
-            <div className="mt-2 space-y-2">
-              {row.advanceRequests.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-xl border border-slate-800 bg-slate-900 p-3"
-                >
-                  <div className="flex justify-between">
-                    <span>{currency(item.requestedAmount)}</span>
-                    <span className="text-sm text-slate-400">
-                      {labels[item.status]}
-                    </span>
-                  </div>
-                  {!closed && (
-                    <div className="mt-2 flex gap-2">
-                      {director && item.status === "REQUESTED" && (
-                        <>
-                          <button
-                            onClick={() => void onReview(item, "APPROVED")}
-                            className="rounded-lg bg-emerald-700 px-3 py-2 text-sm"
-                          >
-                            Одобрить
-                          </button>
-                          <button
-                            onClick={() => void onReview(item, "REJECTED")}
-                            className="rounded-lg bg-red-900 px-3 py-2 text-sm"
-                          >
-                            Отклонить
-                          </button>
-                        </>
-                      )}
-                      {director && item.status === "APPROVED" && (
-                        <button
-                          onClick={() => void onPayAdvance(item)}
-                          className="rounded-lg bg-blue-600 px-3 py-2 text-sm"
-                        >
-                          Зарегистрировать выплату
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
         {row.bonusAccruals.length > 0 && (
           <section className="mt-5">
             <h3 className="font-semibold">Бонусы</h3>
             <div className="mt-2 space-y-2">
               {row.bonusAccruals.map((item) => <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span>{labels[item.type] ?? item.type}{item.order ? ` · ${item.order.number} · ${item.order.client.name}` : item.orderId ? ` · заказ ${item.orderId}` : ""}</span><b>{currency(item.amount)}</b></div><div className="mt-1 flex flex-wrap justify-between gap-2 text-slate-400"><span>{item.status === "PAID" ? "Выплачено" : item.status === "PARTIALLY_PAID" ? "Частично выплачено" : "Начислено"}</span><span>Выплачено {currency(item.paid)} · к выплате {currency(item.payable)}</span></div></div>)}
-            </div>
-          </section>
-        )}
-        {row.paymentConfirmations.length > 0 && (
-          <section className="mt-5">
-            <h3 className="font-semibold">Сообщения о получении</h3>
-            <div className="mt-2 space-y-2">
-              {row.paymentConfirmations.map((item) => (
-                <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span>{labels[item.type] ?? item.type} · {dateLabel(item.claimedPaymentDate)}</span>
-                    <b>{currency(item.amount)}</b>
-                  </div>
-                  <p className="mt-1 text-sm text-slate-400">{labels[item.status] ?? item.status}{item.comment ? ` · ${item.comment}` : ""}{item.reviewComment ? ` · ${item.reviewComment}` : ""}</p>
-                </div>
-              ))}
             </div>
           </section>
         )}
@@ -1338,6 +1015,7 @@ function OperationModal({
   onRowChange,
   form,
   setForm,
+  period,
   onClose,
   onSubmit,
 }: {
@@ -1347,6 +1025,7 @@ function OperationModal({
   onRowChange: (row: PayrollRow) => void;
   form: Form;
   setForm: (value: Form) => void;
+  period: { year: number; month: number };
   onClose: () => void;
   onSubmit: () => Promise<void>;
 }) {
@@ -1358,7 +1037,6 @@ function OperationModal({
       premium: "Назначить премию",
       deduction: "Добавить штраф / удержание",
       payment: "Зарегистрировать выплату",
-      advancePayment: "Зарегистрировать выплату аванса",
       reversal: "Сторнировать начисление",
     },
     reversible = row.accruals.filter(
@@ -1377,7 +1055,12 @@ function OperationModal({
     const timer = window.setTimeout(async () => {
       setOrdersLoading(true);
       try {
-        const params = new URLSearchParams({ q: orderQuery, limit: "30" });
+        const params = new URLSearchParams({
+          q: orderQuery,
+          limit: "30",
+          year: String(period.year),
+          month: String(period.month),
+        });
         const response = await fetch(`/api/orders/search?${params}`, {
           signal: controller.signal,
         });
@@ -1391,7 +1074,7 @@ function OperationModal({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [orderOperation, orderQuery]);
+  }, [orderOperation, orderQuery, period.month, period.year]);
   return (
     <div
       className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4"
@@ -1413,7 +1096,7 @@ function OperationModal({
           </button>
         </div>
         <div className="mt-5 space-y-4">
-          {rows.length > 1 && operation !== "advancePayment" && (
+          {rows.length > 1 && (
             <Field label="Сотрудник">
               <select
                 value={row.id}
@@ -1456,17 +1139,15 @@ function OperationModal({
                 min="1"
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                readOnly={operation === "advancePayment"}
                 className="control"
               />
             </Field>
           )}
-          {(operation === "payment" || operation === "advancePayment") && (
+          {operation === "payment" && (
             <Field label="Тип выплаты">
               <select
-                value={operation === "advancePayment" ? "ADVANCE" : form.type}
+                value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
-                disabled={operation === "advancePayment"}
                 className="control"
               >
                 <option value="SALARY_PAYMENT">Зарплата</option>
@@ -1479,7 +1160,7 @@ function OperationModal({
               </select>
             </Field>
           )}
-          {(operation === "payment" || operation === "advancePayment") && (
+          {operation === "payment" && (
             <Field label="Способ выплаты">
               <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control">
                 <option value="cash">Наличные</option>
@@ -1500,6 +1181,9 @@ function OperationModal({
           {orderOperation && (
             <Field label={operation === "bonus" ? "Заказ (обязательно)" : "Заказ (необязательно)"}>
               <div className="space-y-2">
+                <p className="text-xs text-blue-300">
+                  Только заказы за {months[period.month - 1].toLowerCase()} {period.year} года
+                </p>
                 <input
                   value={orderQuery}
                   onChange={(e) => setOrderQuery(e.target.value)}
@@ -1518,10 +1202,23 @@ function OperationModal({
                     </option>
                   ))}
                 </select>
+                {!ordersLoading && orders.length === 0 && (
+                  orderQuery ? (
+                    <p className="text-sm text-slate-400">Поиск ничего не нашёл в выбранном месяце.</p>
+                  ) : (
+                    <p className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+                      За выбранный месяц заказов нет. {" "}
+                      <Link href="/orders/new" className="font-semibold underline">
+                        Сначала оформите заказ
+                      </Link>
+                      .
+                    </p>
+                  )
+                )}
               </div>
             </Field>
           )}
-          {(operation === "salary" || operation === "payment" || operation === "advancePayment") && (
+          {(operation === "salary" || operation === "payment") && (
             <Field
               label={
                 operation === "salary" ? "Дата начала действия" : "Дата выплаты"
