@@ -8,6 +8,7 @@ import {
 } from "@/lib/idempotency";
 import { companyDisplayPhones } from "@/lib/company-contacts";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
+import { proposalProgress, REQUIRED_PROPOSAL_MATERIALS } from "@/lib/leads/automatic-stage";
 import { warrantyLabel } from "@/lib/contracts/domain";
 import { prisma } from "@/lib/prisma";
 import { PROPOSAL_VALIDITY_DAYS } from "@/lib/proposals/presentation";
@@ -163,7 +164,7 @@ export async function POST(request: Request, context: Context) {
     const byMaterial = new Map(
       calculations.map((item) => [item.material, item]),
     );
-    const ordered = ["Сосна", "Карагач", "Дуб ламель"]
+    const ordered = REQUIRED_PROPOSAL_MATERIALS
       .map((material) => byMaterial.get(material))
       .filter((item): item is NonNullable<typeof item> => Boolean(item));
     if (!client || ordered.length !== 3)
@@ -209,6 +210,12 @@ export async function POST(request: Request, context: Context) {
     const total = Math.max(...variants.map((item) => item.total));
     const result = await prisma.$transaction(
       async (tx) => {
+        const currentClient = await tx.client.findUnique({
+          where: { id: clientId },
+          select: { stage: true, status: true, managerUserId: true },
+        });
+        if (!currentClient || (role === Role.MANAGER && currentClient.managerUserId !== userId))
+          throw new Error("LEAD_NOT_FOUND");
         const rootNumber =
           previous?.rootNumber ??
           previous?.number ??
@@ -276,19 +283,23 @@ export async function POST(request: Request, context: Context) {
             requestHash,
           },
         });
+        const progress = proposalProgress(currentClient.stage, currentClient.status);
         await tx.client.update({
           where: { id: clientId },
-          data: { status: "КП подготовлено" },
+          data: { stage: progress.stage, status: progress.status },
         });
-        await tx.leadStatusHistory.create({
-          data: {
-            clientId,
-            fromStatus: client.status,
-            toStatus: "КП подготовлено",
-            authorId: userId,
-            authorName: auth.session!.user.name ?? client.manager,
-          },
-        });
+        if (progress.stage !== currentClient.stage || progress.status !== currentClient.status)
+          await tx.leadStatusHistory.create({
+            data: {
+              clientId,
+              fromStatus: currentClient.status,
+              toStatus: progress.status,
+              fromStage: currentClient.stage,
+              toStage: progress.stage,
+              authorId: userId,
+              authorName: auth.session!.user.name ?? client.manager,
+            },
+          });
         return created;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -298,6 +309,8 @@ export async function POST(request: Request, context: Context) {
       { status: 201 },
     );
   } catch (error) {
+    if (error instanceof Error && error.message === "LEAD_NOT_FOUND")
+      return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"

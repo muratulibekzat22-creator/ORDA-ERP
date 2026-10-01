@@ -39,6 +39,7 @@
     "test:clients": "tsx scripts/test-clients-workspace.ts",
     "test:client-force-delete": "tsx scripts/test-client-force-delete.ts",
     "test:sales-funnel": "tsx scripts/test-sales-funnel.ts",
+    "test:lead-automatic-stage": "tsx scripts/test-lead-automatic-stage.ts",
     "test:commercial-boundary": "tsx scripts/test-commercial-boundary.ts",
     "test:role-acceptance": "tsx scripts/test-role-acceptance.ts",
     "test:auth-mobile": "tsx scripts/test-auth-mobile.ts",
