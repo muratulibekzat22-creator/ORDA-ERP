@@ -25,6 +25,9 @@ export const ORDER_BOARD_COLUMNS = [
 
 export type OrderBoardColumn = (typeof ORDER_BOARD_COLUMNS)[number]["key"];
 
+// Completion remains available in the order card; the daily board is active work only.
+export const ACTIVE_ORDER_BOARD_COLUMNS = ORDER_BOARD_COLUMNS.filter(column => column.key !== "COMPLETED");
+
 export const ORDER_BOARD_TARGET_LIFECYCLE: Record<
   OrderBoardColumn,
   OrderLifecycle

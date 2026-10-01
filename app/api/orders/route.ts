@@ -102,9 +102,7 @@ export async function GET(request: Request) {
     const lifecycleScope: Prisma.OrderWhereInput =
       tab === "completed"
         ? { lifecycle: { in: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
-        : tab === "board"
-          ? { lifecycle: { not: OrderLifecycle.CANCELLED } }
-        : tab === "active"
+        : tab === "active" || tab === "board"
           ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
           : {};
     const attention = params.get("attention") ?? "";

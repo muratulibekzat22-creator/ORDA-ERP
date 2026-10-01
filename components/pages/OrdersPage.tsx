@@ -35,10 +35,10 @@ type Application = {
 type Pagination = { page: number; total: number; totalPages?: number; pages?: number };
 
 const tabs: Array<[Tab, string]> = [
-  ["applications", "Заявки"],
-  ["board", "Канбан"],
+  ["board", "Активные заказы"],
   ["all", "Все заказы"],
-  ["completed", "Завершённые"],
+  ["completed", "Закрытые заказы"],
+  ["applications", "Заявки"],
 ];
 
 const normalizeTab = (value: string): Tab =>
@@ -192,7 +192,7 @@ export default function OrdersPage({
         <div>
           <p className="text-sm font-semibold uppercase tracking-widest text-blue-400">Продажи</p>
           <h1 className="mt-1 text-3xl font-bold">Заказы</h1>
-          <p className="mt-1 text-sm text-slate-400">Заявки и заказы в одном рабочем разделе.</p>
+          <p className="mt-1 text-sm text-slate-400">Активные заказы — в работе. Завершённые и отменённые сохранены в разделе «Закрытые заказы» вместе с документами и историей.</p>
         </div>
         <Link href="/orders/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold hover:bg-blue-500">
           <Plus size={18} /> Новый заказ
@@ -201,11 +201,13 @@ export default function OrdersPage({
 
       <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-800 bg-[#101827] p-1 sm:grid-cols-4">
         {tabs.map(([value, label]) => (
-          <button key={value} type="button" onClick={() => changeTab(value)} className={`min-h-11 rounded-xl px-2 text-sm font-semibold transition sm:px-4 ${tab === value ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}>
+          <button key={value} type="button" aria-pressed={tab === value} onClick={() => changeTab(value)} className={`min-h-11 rounded-xl px-2 text-sm font-semibold transition sm:px-4 ${tab === value ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}>
             {label}
           </button>
         ))}
       </div>
+
+      {tab === "completed" && <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Закрытие работ не означает погашение долга. Остатки оплаты видны в таблице; договоры, платежи и история доступны внутри заказа. Здесь ничего не удаляется.</p>}
 
       <section className="grid gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 sm:grid-cols-[minmax(0,1fr)_220px_240px]">
         <label className="relative min-w-0">
@@ -224,7 +226,7 @@ export default function OrdersPage({
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
           </select>
         </label>
-        <label className={tab === "applications" ? "hidden" : "block"}>
+        <label className={tab === "applications" || tab === "completed" ? "hidden" : "block"}>
           <span className="sr-only">Контроль данных</span>
           <select value={attention} onChange={(event) => changeAttention(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
             <option value="">Все данные</option>
@@ -257,5 +259,5 @@ function ApplicationsList({ applications }: { applications: Application[] }) {
 }
 
 function Empty({ tab }: { tab: Tab }) {
-  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "applications" ? "Заявок пока нет" : tab === "completed" ? "Завершённых заказов пока нет" : "Заказов по выбранному фильтру нет"}</div>;
+  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "applications" ? "Заявок по выбранному фильтру нет" : tab === "completed" ? "Закрытых заказов по выбранному фильтру нет" : "Заказов по выбранному фильтру нет"}</div>;
 }

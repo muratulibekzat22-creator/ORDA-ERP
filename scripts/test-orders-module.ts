@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { OrderLifecycle } from "@prisma/client";
+import { ACTIVE_ORDER_BOARD_COLUMNS, orderBoardColumn } from "../lib/orders/board";
 
 import {
   isOrderOverdue,
@@ -49,14 +50,19 @@ assert.equal(
   false,
 );
 assert.equal(isOrderOverdue(null, OrderLifecycle.IN_PRODUCTION), false);
+assert.deepEqual(ACTIVE_ORDER_BOARD_COLUMNS.map(c => c.key), ["ORDERED", "CONTRACT", "WORKSHOP"]);
+for (const lifecycle of [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED]) {
+  assert.equal(ACTIVE_ORDER_BOARD_COLUMNS.some(c => c.key === orderBoardColumn(lifecycle)), false);
+}
 
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
-for (const tab of ["Заявки", "Канбан", "Все заказы", "Завершённые"])
+for (const tab of ["Заявки", "Активные заказы", "Все заказы", "Закрытые заказы"])
   assert(ordersPage.includes(tab), `Orders page is missing the ${tab} tab`);
 for (const removed of ["without-partner", "partner-payable", "overdue-client"])
   assert(!ordersPage.includes(removed), `Legacy settlement filter remains: ${removed}`);
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
 assert(ordersApi.includes("[OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED]"), "completed tab must retain cancelled orders");
+assert.match(ordersApi, /tab === "active" \|\| tab === "board"\s*\? \{ lifecycle: \{ notIn: \[OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED\]/);
 assert(ordersApi.includes('mode: "insensitive"'), "legacy manager order fallback must ignore name casing");
 const ownershipMigration = readFileSync(
   "prisma/migrations/20260925143000_normalize_manager_ownership/migration.sql",
