@@ -1,5 +1,5 @@
 export function recurringJournalMonth(period: string, from: string, to: string, now = new Date()): string | null {
-  const key = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Qyzylorda", year: "numeric", month: "2-digit" }).format(now);
+  const key = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty", year: "numeric", month: "2-digit" }).format(now);
   if (period === "month" || period === "today") return key;
   if (period === "previous_month") {
     const [year, month] = key.split("-").map(Number);

@@ -10,4 +10,4 @@ assert.equal(recurringJournalMonth("custom", "2026-09-30", "2026-09-01", now), n
 assert.equal(recurringJournalMonth("custom", "2026-08-25", "2026-09-25", now), null);
 assert.equal(recurringJournalMonth("year", "", "", now), null);
 assert.equal(recurringJournalMonth("week", "", "", now), null);
-console.log("Recurring month follows journal with year rollover and Kazakhstan timezone; multi-month ranges stay explicit");
+console.log("Recurring month follows journal with year rollover and ORDA Asia/Almaty timezone; multi-month ranges stay explicit");
