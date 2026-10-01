@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 
-import { STAIR_CATALOG_REFERENCE } from "@/lib/design-catalog";
+import { STAIR_CATALOG_REFERENCES } from "@/lib/design-catalog";
 
 type OrderCatalogItem = {
   id: number;
@@ -30,6 +30,8 @@ type CatalogItem = {
   note: string;
   imageUrl: string;
   downloadUrl: string;
+  downloadFileName?: string;
+  sourceUrl?: string;
   image: boolean;
 };
 
@@ -45,18 +47,20 @@ function asCatalogItem(item: OrderCatalogItem): CatalogItem {
   };
 }
 
-const reference: CatalogItem = {
-  key: STAIR_CATALOG_REFERENCE.id,
-  title: STAIR_CATALOG_REFERENCE.title,
-  material: STAIR_CATALOG_REFERENCE.material,
-  note: STAIR_CATALOG_REFERENCE.note,
-  imageUrl: STAIR_CATALOG_REFERENCE.publicUrl,
-  downloadUrl: STAIR_CATALOG_REFERENCE.publicUrl,
+const references: CatalogItem[] = STAIR_CATALOG_REFERENCES.map((item) => ({
+  key: item.id,
+  title: item.title,
+  material: item.material,
+  note: item.note,
+  imageUrl: item.publicUrl,
+  downloadUrl: item.publicUrl,
+  downloadFileName: item.downloadFileName,
+  sourceUrl: "sourceUrl" in item ? item.sourceUrl : undefined,
   image: true,
-};
+}));
 
 export default function StairCatalogPage() {
-  const [items, setItems] = useState<CatalogItem[]>([reference]);
+  const [items, setItems] = useState<CatalogItem[]>(references);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -103,7 +107,7 @@ export default function StairCatalogPage() {
         const orderItems = (body as OrderCatalogItem[])
           .map(asCatalogItem)
           .filter((item) => item.image);
-        setItems([reference, ...orderItems]);
+        setItems([...references, ...orderItems]);
       })
       .catch((reason) => {
         if (reason instanceof DOMException && reason.name === "AbortError") return;
@@ -177,7 +181,7 @@ export default function StairCatalogPage() {
 
       {error && (
         <p role="alert" className="rounded-xl border border-red-800 bg-red-950/30 p-4 text-red-200">
-          {error}. Визуальный пример всё равно доступен ниже.
+          {error}. Подготовленные фотографии всё равно доступны ниже.
         </p>
       )}
       {loading && <p className="text-sm text-slate-400">Загружаю фотографии из заказов…</p>}
@@ -207,6 +211,16 @@ export default function StairCatalogPage() {
               <h2 className="font-semibold text-white">{item.title}</h2>
               <p className="mt-1 text-sm text-slate-300">{item.material}</p>
               <p className="mt-2 text-xs text-slate-500">{item.note}</p>
+              {item.sourceUrl && (
+                <a
+                  href={item.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue-300 hover:text-blue-200"
+                >
+                  Официальная публикация <ExternalLink size={13} />
+                </a>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -217,7 +231,7 @@ export default function StairCatalogPage() {
                 </button>
                 <a
                   href={item.downloadUrl}
-                  download={item.key === STAIR_CATALOG_REFERENCE.id ? STAIR_CATALOG_REFERENCE.fileName : undefined}
+                  download={item.downloadFileName}
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-sm font-semibold"
                 >
                   <Download size={17} /> Скачать
@@ -240,7 +254,7 @@ export default function StairCatalogPage() {
             <Image src={preview.imageUrl} alt={preview.title} width={1400} height={1000} unoptimized className="min-h-0 w-full flex-1 object-contain" />
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 p-4">
               <div><b>{preview.title}</b><p className="text-sm text-slate-400">{preview.material}</p></div>
-              <a href={preview.downloadUrl} download={preview.key === STAIR_CATALOG_REFERENCE.id ? STAIR_CATALOG_REFERENCE.fileName : undefined} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold"><Download size={18}/>Скачать фото</a>
+              <a href={preview.downloadUrl} download={preview.downloadFileName} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold"><Download size={18}/>Скачать фото</a>
             </div>
           </div>
         </div>

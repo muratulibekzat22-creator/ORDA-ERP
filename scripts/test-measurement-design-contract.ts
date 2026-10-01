@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 
+import { STAIR_CATALOG_REFERENCES } from "@/lib/design-catalog";
 import { buildMeasurementDesignPrompt } from "@/lib/orders/design-brief";
 
 const prompt = buildMeasurementDesignPrompt(
@@ -64,6 +66,13 @@ assert(catalogDownloadRoute.includes('requirePermission("measurements")'));
 assert(catalogDownloadRoute.includes("application/zip"));
 assert(catalogPage.includes("Скачать весь каталог ZIP"));
 assert(catalogPage.includes("Открыть крупно"));
+assert(STAIR_CATALOG_REFERENCES.filter((item) => item.isReal).length >= 3);
+for (const item of STAIR_CATALOG_REFERENCES) {
+  assert(
+    existsSync(path.join("public", "catalog", "stairs", item.fileName)),
+    `missing curated catalog file ${item.fileName}`,
+  );
+}
 assert(attachmentService.includes('"video/mp4"'));
 assert(attachmentService.includes('"video/quicktime"'));
 assert(attachmentService.includes('bytes.subarray(4, 8).toString("ascii") === "ftyp"'));

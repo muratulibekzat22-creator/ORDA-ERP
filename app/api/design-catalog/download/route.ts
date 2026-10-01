@@ -4,7 +4,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import { NextResponse } from "next/server";
 
-import { STAIR_CATALOG_REFERENCE } from "@/lib/design-catalog";
+import { STAIR_CATALOG_REFERENCES } from "@/lib/design-catalog";
 import { requirePermission } from "@/lib/server-auth";
 import {
   getDesignCatalogContent,
@@ -64,19 +64,25 @@ export async function GET() {
     );
 
   const used = new Set<string>();
-  const referenceBytes = await readFile(
-    path.join(
-      process.cwd(),
-      "public",
-      "catalog",
-      "stairs",
-      STAIR_CATALOG_REFERENCE.fileName,
-    ),
-  );
-  folder.file(
-    uniqueName(used, `00-пример-дизайна-${STAIR_CATALOG_REFERENCE.fileName}`),
-    referenceBytes,
-  );
+  for (const [index, reference] of STAIR_CATALOG_REFERENCES.entries()) {
+    const referenceBytes = await readFile(
+      path.join(
+        process.cwd(),
+        "public",
+        "catalog",
+        "stairs",
+        reference.fileName,
+      ),
+    );
+    const prefix = reference.isReal ? "реальный-проект" : "пример-дизайна";
+    folder.file(
+      uniqueName(
+        used,
+        `${String(index + 1).padStart(2, "0")}-${prefix}-${reference.downloadFileName}`,
+      ),
+      referenceBytes,
+    );
+  }
 
   let added = 0;
   for (const item of items) {
@@ -100,8 +106,9 @@ export async function GET() {
       "1. Откройте фотографии на телефоне или планшете и уточните, какой стиль нравится клиенту.",
       "2. Не обещайте точное повторение до замера и расчёта.",
       "3. Файл с пометкой «пример дизайна» является визуальным ориентиром, а не выполненным объектом.",
-      `4. Фотографий из реальных заказов в этом архиве: ${added}.`,
-      "5. После выбора сохраните пожелания клиента в замере ORDA ERP.",
+      `4. Подготовленных фотографий реальных проектов ALTYN SAPA: ${STAIR_CATALOG_REFERENCES.filter((item) => item.isReal).length}.`,
+      `5. Дополнительных фотографий из заказов ORDA ERP: ${added}.`,
+      "6. После выбора сохраните пожелания клиента в замере ORDA ERP.",
     ].join("\r\n"),
   );
 
