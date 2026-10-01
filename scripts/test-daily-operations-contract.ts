@@ -23,6 +23,8 @@ assert.match(service, /orderReceivedAt: \{ gte: start, lt: end \}/, "orders must
 assert.match(service, /companyId_workflowKey/, "task generation must be idempotent per tenant and workflow key");
 assert.match(service, /pg_advisory_xact_lock/, "concurrent generators must be serialized");
 assert.match(service, /activeOlderTask/, "order-readiness tasks must not stack while an older task is active");
+assert.match(service, /Просрочен срок/, "order-readiness tasks must include overdue deadlines");
+assert.match(service, /ORDER_READINESS_REFRESHED/, "existing readiness tasks must refresh without duplication");
 assert.match(service, /role: Role\.MANAGER/, "daily rows must be limited to active managers");
 assert.match(mandatory.replace(/\s+/g, " "), /\{ workflow: null \}, \{ dueAt: \{ lte: now \} \}/, "scheduled workflow tasks must not block before their due time");
 assert.match(cron, /timingSafeEqual/, "cron must use constant-time secret comparison");

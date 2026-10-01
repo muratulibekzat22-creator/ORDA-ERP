@@ -187,7 +187,7 @@ export async function ensureDailyManagerOperations(founderId: number, now = new 
   if (!founder) throw new Error("FOUNDER_REQUIRED");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${companyId}, 87243)::text`;
-    const result = { dailyReportsCreated: 0, readinessTasksCreated: 0, orientationsCreated: 0 };
+    const result = { dailyReportsCreated: 0, readinessTasksCreated: 0, readinessTasksUpdated: 0, orientationsCreated: 0 };
     for (const row of snapshot.managers) {
       const reportKey = `daily-crm:${reportDateKey}:${row.managerId}`;
       const existingReport = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: reportKey } }, select: { id: true } });
@@ -213,27 +213,39 @@ export async function ensureDailyManagerOperations(founderId: number, now = new 
         await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "PLATFORM_ORIENTATION_ASSIGNED", actorId: founderId, after: { version: 1 } } });
         result.orientationsCreated++;
       }
-      const incomplete = orders.map((order) => ({ order, gaps: orderDataGaps(order) })).filter((item) => item.order.managerUserId === row.managerId && item.gaps.length > 0);
-      if (incomplete.length) {
+      const attention = orders.map((order) => {
+        const issues = orderDataGaps(order);
+        const deadline = order.promisedAt ?? order.productionDeadline ?? order.installation?.scheduledAt ?? null;
+        if (deadline && deadline < now)
+          issues.push(`Просрочен срок ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty" }).format(deadline)}`);
+        return { order, issues };
+      }).filter((item) => item.order.managerUserId === row.managerId && item.issues.length > 0);
+      if (attention.length) {
         const readinessKey = `order-readiness:${todayKey}:${row.managerId}`;
-        const activeOlderTask = await tx.calendarTask.findFirst({ where: { assigneeId: row.managerId, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION, status: { in: [...ACTIVE_TASK_STATUSES] } }, select: { id: true } });
-        const existingToday = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: readinessKey } }, select: { id: true } });
-        if (!activeOlderTask && !existingToday) {
-          const description = [
-            "Дополните действующие заказы подтверждёнными данными. Не угадывайте цену производства, срок или цех — если данных нет, уточните у директора и напишите конкретный вопрос.",
-            "",
-            ...incomplete.map(({ order, gaps }) => `• ${order.number} · ${order.client.name}: ${gaps.join(", ")} · /orders/${order.id}`),
-            "",
-            "После исправления откройте каждую карточку ещё раз и убедитесь, что предупреждение исчезло. В результате перечислите исправленные заказы и оставшиеся вопросы.",
-          ].join("\n");
+        const activeOlderTask = await tx.calendarTask.findFirst({ where: { assigneeId: row.managerId, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION, status: { in: [...ACTIVE_TASK_STATUSES] } }, select: { id: true, title: true, description: true } });
+        const existingToday = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: readinessKey } }, select: { id: true, title: true, description: true } });
+        const title = `Проверить заказы, требующие внимания (${attention.length})`;
+        const description = [
+          "Проверьте действующие заказы и дополните их только подтверждёнными данными. Не угадывайте цену производства, срок или цех — если данных нет, уточните у директора и напишите конкретный вопрос.",
+          "",
+          ...attention.map(({ order, issues }) => `• ${order.number} · ${order.client.name}: ${issues.join(", ")} · /orders/${order.id}`),
+          "",
+          "По просроченному сроку проверьте фактический этап, запишите причину задержки и согласованный новый срок. После исправления откройте каждую карточку ещё раз и убедитесь, что предупреждение исчезло. В результате перечислите исправленные заказы и оставшиеся вопросы.",
+        ].join("\n");
+        const target = existingToday ?? activeOlderTask;
+        if (!target) {
           const task = await tx.calendarTask.create({ data: {
             companyId, workflowKey: readinessKey, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
-            title: `Дополнить действующие заказы (${incomplete.length})`, description,
+            title, description,
             type: "TASK", priority: "URGENT", dueAt, assigneeId: row.managerId, creatorId: founderId,
             acknowledgementRequired: true,
           } });
-          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "ORDER_READINESS_ASSIGNED", actorId: founderId, after: { dateKey: todayKey, orderIds: incomplete.map((item) => item.order.id) } } });
+          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "ORDER_READINESS_ASSIGNED", actorId: founderId, after: { dateKey: todayKey, orderIds: attention.map((item) => item.order.id) } } });
           result.readinessTasksCreated++;
+        } else if (target.title !== title || target.description !== description) {
+          await tx.calendarTask.update({ where: { id: target.id }, data: { title, description } });
+          await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "ORDER_READINESS_REFRESHED", actorId: founderId, after: { dateKey: todayKey, orderIds: attention.map((item) => item.order.id) } } });
+          result.readinessTasksUpdated++;
         }
       }
     }
