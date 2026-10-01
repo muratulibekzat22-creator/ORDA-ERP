@@ -7,6 +7,7 @@ const calculator = read("components/calculator/StairCalculator.tsx");
 const configApi = read("app/api/calculator-config/route.ts");
 const settings = read("components/pages/SettingsPage.tsx");
 const header = read("components/Header.tsx");
+const routeShell = read("components/layout/RouteShell.tsx");
 
 for (const field of [
   "companyProfit",
@@ -40,8 +41,10 @@ if (settings.includes("Цены калькулятора"))
     "Calculator configuration still exists inside general settings",
   );
 if (
-  !header.includes('accountRole === "OPERATIONS_DIRECTOR"') ||
-  !header.includes('grantedPermissions?.includes("settings")') ||
+  !routeShell.includes('accountRole === "OPERATIONS_DIRECTOR"') ||
+  !routeShell.includes('grantedPermissions.includes("settings")') ||
+  !routeShell.includes("canManageSettings={canManageSettings}") ||
+  !header.includes("canManageSettings") ||
   !header.includes('/calculator-config') ||
   !header.includes("Настройки калькулятора")
 )

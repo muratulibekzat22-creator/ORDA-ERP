@@ -97,6 +97,8 @@ const authRoute = read("app/api/auth/[...nextauth]/route.ts");
 assert.match(authRoute, /accountRole === "OPERATIONS_DIRECTOR"[\s\S]*\? "DIRECTOR"/);
 const header = read("components/Header.tsx");
 assert.match(header, /session\?\.user\?\.accountRole \|\| role/);
+assert.doesNotMatch(header, /\/api\/session\/permissions/);
+assert.match(header, /canManageSettings/);
 
 const proxy = read("proxy.ts");
 includesAll(
@@ -114,6 +116,8 @@ const routeShell = read("components/layout/RouteShell.tsx");
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
 assert.match(routeShell, /accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /\/api\/session\/permissions/);
+assert.match(routeShell, /if \(!session\?\.user \|\| founder\) return/);
+assert.match(routeShell, /canManageSettings=\{canManageSettings\}/);
 assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar", "\/payroll"\]/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);

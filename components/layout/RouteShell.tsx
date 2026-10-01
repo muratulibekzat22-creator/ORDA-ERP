@@ -113,20 +113,27 @@ export default function RouteShell({
         : hasDefaultPermission(accountRole ?? role, permissionByHref[href]!)),
     );
   };
+  const canManageSettings = founder || (
+    accountRole === "OPERATIONS_DIRECTOR" && (
+      grantedPermissions
+        ? grantedPermissions.includes("settings")
+        : hasDefaultPermission(accountRole, "settings")
+    )
+  );
   const [open, setOpen] = useState(false);
   const [secondaryOpen, setSecondaryOpen] = useState(() =>
     founderSecondary.some(([href]) => pathname.startsWith(href)),
   );
   const standalone = pathname === "/login" || pathname === "/partner";
   useEffect(() => {
-    if (!session?.user) return;
+    if (!session?.user || founder) return;
     const controller = new AbortController();
     void fetch("/api/session/permissions", { cache: "no-store", signal: controller.signal })
       .then(async (response) => response.ok ? response.json() as Promise<{ permissions: Permission[] }> : null)
       .then((payload) => payload && setGrantedPermissions(payload.permissions))
       .catch(() => undefined);
     return () => controller.abort();
-  }, [session?.user]);
+  }, [founder, session?.user]);
   useEffect(() => {
     if (founder || !accountRole || grantedPermissions === null) return;
     const first = pathname.split("/").filter(Boolean)[0] ?? "";
@@ -159,7 +166,10 @@ export default function RouteShell({
     href === "/" ? pathname === "/" : pathname.startsWith(href);
   return (
     <main className="flex h-screen flex-col overflow-hidden bg-slate-950 text-white">
-      <Header onOpenMenu={() => setOpen(true)} />
+      <Header
+        onOpenMenu={() => setOpen(true)}
+        canManageSettings={canManageSettings}
+      />
       <div className="flex min-h-0 flex-1">
         {open && (
           <button

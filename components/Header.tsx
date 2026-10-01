@@ -7,15 +7,19 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { roleNames, type Role } from "@/lib/roles";
-import type { Permission } from "@/lib/permissions";
 
-export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
+export default function Header({
+  onOpenMenu,
+  canManageSettings = false,
+}: {
+  onOpenMenu?: () => void;
+  canManageSettings?: boolean;
+}) {
   const { data: session } = useSession();
   const pathname = usePathname();
   const router = useRouter();
   const [time, setTime] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
-  const [grantedPermissions, setGrantedPermissions] = useState<Permission[] | null>(null);
 
   useEffect(() => {
     const update = () => setTime(new Date().toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }));
@@ -26,19 +30,6 @@ export default function Header({ onOpenMenu }: { onOpenMenu?: () => void }) {
 
   const role = session?.user?.role as Role | undefined;
   const accountRole = (session?.user?.accountRole || role) as Role | undefined;
-  const canManageSettings = accountRole === "DIRECTOR" || (
-    accountRole === "OPERATIONS_DIRECTOR" && grantedPermissions?.includes("settings") === true
-  );
-
-  useEffect(() => {
-    if (accountRole !== "OPERATIONS_DIRECTOR") return;
-    const controller = new AbortController();
-    void fetch("/api/session/permissions", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => response.ok ? response.json() as Promise<{ permissions: Permission[] }> : null)
-      .then((payload) => setGrantedPermissions(payload?.permissions ?? []))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [accountRole]);
 
   return (
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-[#0f172a]/95 px-3 py-2 backdrop-blur md:px-6">
