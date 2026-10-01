@@ -19,15 +19,19 @@ export function partnerStatementCsv(statement: Statement, from?: Date, to?: Date
     ["Выписка по партнёру", statement.partner.name],
     ["Период", from ? date(from) : "За всё время", to ? date(to) : ""],
     [],
-    ["Заказ", "Клиент", "Сумма заказа", "Получено", "Начислено партнёру", "Выплачено", "Баланс"],
+    ["Заказ", "Клиент", "Сумма заказа", "Получено", "Цена производства", "Наш доход (план)", "Наш доход удержан", "Можно выплатить сейчас", "Выплачено цеху", "После оплат клиента", "Остаток цеху"],
     ...statement.orders.map((item) => [
       item.order.number,
       item.order.client.name,
       item.metrics.orderAmount.toFixed(2),
       item.metrics.received.toFixed(2),
-      item.metrics.partnerAccrued.toFixed(2),
-      item.metrics.companyPaidPartner.toFixed(2),
-      item.metrics.partnerBalance.toFixed(2),
+      item.allocation.dataComplete ? item.allocation.productionCost.toFixed(2) : "Не указана",
+      item.allocation.plannedCompanyIncome?.toFixed(2) ?? "",
+      item.allocation.companyIncomeRetained?.toFixed(2) ?? "",
+      item.allocation.readyToPayWorkshop?.toFixed(2) ?? "",
+      item.allocation.workshopReceived.toFixed(2),
+      item.allocation.awaitingClientForWorkshop?.toFixed(2) ?? "",
+      item.allocation.workshopRemaining?.toFixed(2) ?? "",
     ]),
     [],
     ["Дата", "Операция", "Заказ", "Сумма", "Счёт", "Комментарий", "Статус"],
@@ -56,16 +60,20 @@ export async function partnerStatementPdf(statement: Statement, from?: Date, to?
     for (const [label, value] of [
       ["Заказов", String(totals.orders)], ["Сумма заказов", money(totals.orderAmount)],
       ["Получено от клиентов", money(totals.received)], ["Остаток клиентов", money(totals.clientRemaining)],
-      ["Начислено партнёру", money(totals.partnerAccrued)], ["Выплачено партнёру", money(totals.partnerPaid)],
-      ["Текущий баланс", money(totals.balance)], ["Прибыль компании", money(totals.profit)],
+      ["Цена производства", money(totals.partnerAccrued)], ["Выплачено цеху", money(totals.partnerPaid)],
+      ["Наш доход по плану", money(totals.plannedCompanyIncome)], ["Наш доход уже удержан", money(totals.companyIncomeRetained)],
+      ["Можно выплатить цеху сейчас", money(totals.readyToPayWorkshop)], ["После оплат клиента", money(totals.awaitingClientForWorkshop)],
     ]) doc.font("DejaVu").fontSize(10).text(`${label}: ${value}`);
     doc.moveDown().font("DejaVuBold").fontSize(13).text("Заказы");
     for (const item of statement.orders) {
       ensure(68);
       doc.font("DejaVuBold").fontSize(10).text(`${item.order.number} · ${item.order.client.name}`);
       doc.font("DejaVu").fontSize(9).text(
-        `Сумма ${money(item.metrics.orderAmount)} · получено ${money(item.metrics.received)} · ` +
-        `начислено партнёру ${money(item.metrics.partnerAccrued)} · баланс ${money(item.metrics.partnerBalance)}`,
+        `Продажа ${money(item.metrics.orderAmount)} · получено ${money(item.metrics.received)} · ` +
+        (item.allocation.dataComplete
+          ? `производство ${money(item.allocation.productionCost)} · наш доход ${money(item.allocation.plannedCompanyIncome ?? 0)} · ` +
+            `можно выплатить сейчас ${money(item.allocation.readyToPayWorkshop ?? 0)} · после оплат клиента ${money(item.allocation.awaitingClientForWorkshop ?? 0)}`
+          : "цена производства не указана"),
       );
       doc.moveDown(0.35);
     }

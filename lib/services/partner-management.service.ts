@@ -15,6 +15,8 @@ import {
 import { compareRequestHash } from "@/lib/idempotency";
 import { normalizePhone } from "@/lib/leads/domain";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { hasProductionPrice } from "@/lib/orders/production-price";
+import { calculateProfitFirstAllocation } from "@/lib/partners/profit-first";
 import { calculatePartnerSettlement } from "@/lib/partners/settlement";
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation, reverseFinanceOperation } from "@/lib/services/payment.service";
@@ -99,15 +101,17 @@ function canonicalPaymentTotals(relation: LoadedRelation) {
 
 export function calculateLoadedPartnerRelation(relation: LoadedRelation) {
   const canonical = canonicalPaymentTotals(relation);
+  const confirmedOrderCost = relation.order.partnerId === relation.partnerId &&
+    hasProductionPrice(relation.order.partnerPrice, relation.order.partnerAgreedAt);
   return calculatePartnerSettlement({
     orderAmount: relation.order.amount,
     companyProfit: relation.profitBasis,
     companyClientReceived: canonical.clientReceived,
     companyPaidPartner: canonical.partnerPaid,
-    rewardRule: relation.rewardRule,
+    rewardRule: confirmedOrderCost ? PartnerRewardRule.MANUAL : relation.rewardRule,
     rewardPercent: relation.rewardPercent,
     fixedAmount: relation.fixedAmount,
-    manualAmount: relation.manualAmount,
+    manualAmount: confirmedOrderCost ? relation.order.partnerPrice : relation.manualAmount,
     operations: relation.operations,
     disputed: relation.settlementStatus === PartnerSettlementStatus.DISPUTED,
     cancelled:
@@ -119,13 +123,29 @@ export function calculateLoadedPartnerRelation(relation: LoadedRelation) {
 
 function relationView(relation: LoadedRelation) {
   const metrics = calculateLoadedPartnerRelation(relation);
+  const productionPriceSet = hasProductionPrice(
+    metrics.partnerAccrued,
+    relation.order.partnerAgreedAt ?? (metrics.partnerAccrued.gte(2) ? relation.startsAt : null),
+  );
+  const allocation = calculateProfitFirstAllocation({
+    totalSale: metrics.orderAmount,
+    productionCost: metrics.partnerAccrued,
+    companyClientReceived: metrics.companyClientReceived,
+    clientPaidToWorkshop: metrics.clientPaidToPartner,
+    workshopReturnedToClient: metrics.partnerReturned,
+    workshopTransferredToCompany: metrics.partnerTransferred,
+    companyPaidWorkshop: metrics.companyPaidPartner,
+    dataComplete: productionPriceSet,
+  });
   const economy = calculateOrderEconomy({
     totalSale: relation.order.amount,
     commercialAdjustments: relation.order.commercialAdjustments,
     payments: relation.order.payments,
     partnerId: relation.partnerId,
     partnerAgreed: metrics.partnerAccrued,
-    partnerAgreedAt: relation.startsAt,
+    partnerAgreedAt: productionPriceSet
+      ? relation.order.partnerAgreedAt ?? relation.startsAt
+      : null,
     partnerAgreedBy: relation.createdBy.name,
     partnerDueAt: relation.order.partnerPlannedReadyAt,
     clientDueAt: relation.order.promisedAt,
@@ -170,6 +190,7 @@ function relationView(relation: LoadedRelation) {
     operations: relation.operations,
     metrics,
     economy,
+    allocation,
   };
 }
 
@@ -184,6 +205,9 @@ export async function setPartnerAgreedCost(
   if (!relation) throw new PartnerManagementError("RELATION_NOT_FOUND");
   const agreed = positiveMoney(amount);
   const before = calculateLoadedPartnerRelation(relation);
+  if (agreed.lt(before.companyPaidPartner))
+    throw new PartnerManagementError("PRODUCTION_PRICE_BELOW_PAID");
+  const agreedAt = new Date();
   await prisma.$transaction([
     prisma.partnerOrderRelation.update({
       where: { id: relation.id },
@@ -192,8 +216,18 @@ export async function setPartnerAgreedCost(
         rewardPercent: null,
         fixedAmount: null,
         manualAmount: agreed,
-        startsAt: new Date(),
+        startsAt: agreedAt,
         comment: comment.trim().slice(0, 2000) || relation.comment,
+      },
+    }),
+    prisma.order.update({
+      where: { id: relation.orderId },
+      data: {
+        partnerId: relation.partnerId,
+        partnerPrice: agreed,
+        partnerAgreedAt: agreedAt,
+        partnerBalance: agreed.sub(before.companyPaidPartner),
+        companyProfit: relation.order.amount.sub(agreed),
       },
     }),
     prisma.partnerAuditEvent.create({
@@ -906,11 +940,21 @@ export async function getPartnerManagementReadModel(filters: {
     companyDebt: sum.companyDebt.add(item.metrics.companyDebt),
     partnerDebt: sum.partnerDebt.add(item.metrics.partnerDebt),
     profit: sum.profit.add(item.economy.profit.netProfit ?? 0),
+    ordersWithoutProductionCost: sum.ordersWithoutProductionCost + (item.allocation.dataComplete ? 0 : 1),
+    plannedCompanyIncome: sum.plannedCompanyIncome.add(item.allocation.plannedCompanyIncome ?? 0),
+    companyIncomeRetained: sum.companyIncomeRetained.add(item.allocation.companyIncomeRetained ?? 0),
+    productionFunded: sum.productionFunded.add(item.allocation.productionFunded ?? 0),
+    readyToPayWorkshop: sum.readyToPayWorkshop.add(item.allocation.readyToPayWorkshop ?? 0),
+    awaitingClientForWorkshop: sum.awaitingClientForWorkshop.add(item.allocation.awaitingClientForWorkshop ?? 0),
+    workshopAdvance: sum.workshopAdvance.add(item.allocation.workshopAdvance ?? 0),
   }), {
-    orders: 0,
+    orders: 0, ordersWithoutProductionCost: 0,
     orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0),
     companyAmount: new Prisma.Decimal(0), partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0),
     companyDebt: new Prisma.Decimal(0), partnerDebt: new Prisma.Decimal(0), profit: new Prisma.Decimal(0),
+    plannedCompanyIncome: new Prisma.Decimal(0), companyIncomeRetained: new Prisma.Decimal(0),
+    productionFunded: new Prisma.Decimal(0), readyToPayWorkshop: new Prisma.Decimal(0),
+    awaitingClientForWorkshop: new Prisma.Decimal(0), workshopAdvance: new Prisma.Decimal(0),
   });
   const monthMap = new Map<string, { month: string; orders: number; sales: Prisma.Decimal; received: Prisma.Decimal }>();
   const partnerMap = new Map<number, { partnerId: number; name: string; orders: number; sales: Prisma.Decimal; profit: Prisma.Decimal; debt: Prisma.Decimal }>();
@@ -931,7 +975,18 @@ export async function getPartnerManagementReadModel(filters: {
         clientRemaining: sum.clientRemaining.add(item.metrics.clientRemaining), partnerAccrued: sum.partnerAccrued.add(item.metrics.partnerAccrued),
         partnerPaid: sum.partnerPaid.add(item.metrics.companyPaidPartner), balance: sum.balance.add(item.metrics.partnerBalance),
         profit: sum.profit.add(item.economy.profit.netProfit ?? 0),
-      }), { orders: 0, orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0), partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0), balance: new Prisma.Decimal(0), profit: new Prisma.Decimal(0) }),
+        plannedCompanyIncome: sum.plannedCompanyIncome.add(item.allocation.plannedCompanyIncome ?? 0),
+        companyIncomeRetained: sum.companyIncomeRetained.add(item.allocation.companyIncomeRetained ?? 0),
+        readyToPayWorkshop: sum.readyToPayWorkshop.add(item.allocation.readyToPayWorkshop ?? 0),
+        awaitingClientForWorkshop: sum.awaitingClientForWorkshop.add(item.allocation.awaitingClientForWorkshop ?? 0),
+      }), {
+        orders: 0,
+        orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0),
+        partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0), balance: new Prisma.Decimal(0),
+        profit: new Prisma.Decimal(0), plannedCompanyIncome: new Prisma.Decimal(0),
+        companyIncomeRetained: new Prisma.Decimal(0), readyToPayWorkshop: new Prisma.Decimal(0),
+        awaitingClientForWorkshop: new Prisma.Decimal(0),
+      }),
     };
   });
   return {

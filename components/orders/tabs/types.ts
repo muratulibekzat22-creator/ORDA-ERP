@@ -55,6 +55,14 @@ export type OrderTabData = {
     client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
     partner?: {
       partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; remaining: number; overpayment: number; status: string;
+      allocation?: {
+        dataComplete: boolean; totalSale: number; productionCost: number; plannedCompanyIncome: number | null;
+        plannedLoss: number | null; clientReceived: number; clientRemaining: number;
+        companyIncomeRetained: number | null; companyIncomeRemaining: number | null;
+        productionFunded: number | null; workshopReceived: number; readyToPayWorkshop: number | null;
+        workshopRemaining: number | null; awaitingClientForWorkshop: number | null; workshopAdvance: number | null;
+        companyCashHeld: number; directWorkshopHeld: number;
+      };
       payouts: Array<{ id: number; amount: number; type: string; purpose: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
     };

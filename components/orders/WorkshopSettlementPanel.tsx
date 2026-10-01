@@ -47,6 +47,7 @@ export default function WorkshopSettlementPanel({
   const director = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR";
   const canManageWorkshop = !readOnly && (director || role === "MANAGER");
   const partnerSettlement = order.settlement?.partner;
+  const clientSettlement = order.settlement?.client;
   const [productionPrice, setProductionPrice] = useState(
     order.productionPrice == null ? "" : String(order.productionPrice),
   );
@@ -98,6 +99,7 @@ export default function WorkshopSettlementPanel({
       ),
     [payouts],
   );
+  const allocation = partnerSettlement?.allocation;
 
   async function request(
     url: string,
@@ -201,12 +203,20 @@ export default function WorkshopSettlementPanel({
         <Metric label="Цех" value={order.partner?.name ?? "Не назначен"} />
         {(director || role === "ACCOUNTANT") && partnerSettlement ? (
           <>
-            <Metric label="Поддержка и авансы" value={money(supportPaid)} />
             <Metric label="Всего выплачено" value={money(partnerSettlement.paid)} />
             <Metric label="Осталось выплатить" value={money(partnerSettlement.remaining)} accent />
           </>
         ) : null}
       </div>
+
+      {(director || role === "ACCOUNTANT") && allocation && clientSettlement ? (
+        <div className="mt-4 rounded-xl border border-cyan-400/15 bg-cyan-400/[0.04] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-300">План и факт</p><p className="mt-1 text-sm text-slate-400">Сначала удерживается доход компании, затем поступления финансируют цех.</p></div><span className="rounded-full bg-slate-950 px-3 py-1 text-xs text-slate-300">Клиент оплатил {money(allocation.clientReceived)}</span></div>
+          <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-5"><Metric label={Number(allocation.plannedCompanyIncome) < 0 ? "Плановый убыток" : "Наш доход по плану"} value={money(Number(allocation.plannedCompanyIncome) < 0 ? allocation.plannedLoss : allocation.plannedCompanyIncome)}/><Metric label="Наш доход удержан" value={money(allocation.companyIncomeRetained)}/><Metric label="Цех обеспечен оплатами" value={money(allocation.productionFunded)}/><Metric label="Можно выплатить сейчас" value={money(allocation.readyToPayWorkshop)} accent/><Metric label="После оплаты клиента" value={money(allocation.awaitingClientForWorkshop)}/></div>
+          {Number(allocation.workshopAdvance) > 0 ? <p className="mt-3 text-sm text-violet-200">Аванс цеху сверх обеспеченной суммы: {money(allocation.workshopAdvance)}.</p> : null}
+          {supportPaid > 0 ? <p className="mt-2 text-xs text-slate-500">В составе выплат поддержка и авансы: {money(supportPaid)}.</p> : null}
+        </div>
+      ) : null}
 
       {canManageWorkshop ? (
         <form onSubmit={assignPartner} className="mt-4 grid gap-3 rounded-xl border border-cyan-800/60 bg-cyan-950/10 p-3 sm:grid-cols-[minmax(0,280px)_minmax(0,220px)_auto] sm:items-end sm:justify-start">
@@ -233,6 +243,7 @@ export default function WorkshopSettlementPanel({
           <label className="text-sm text-slate-300">Способ<select value={method} onChange={(event) => setMethod(event.target.value)} className={`${control} mt-1`}><option value="bank_transfer">Банковский перевод</option><option value="kaspi">Kaspi</option><option value="cash">Наличные</option><option value="other">Другое</option></select></label>
           <label className="text-sm text-slate-300">Комментарий<input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Необязательно" className={`${control} mt-1`} /></label>
           <button type="submit" disabled={busy || !Number(payoutAmount)} className="min-h-11 rounded-xl bg-amber-600 px-4 font-semibold text-white disabled:opacity-50">Записать выплату</button>
+          {allocation && Number(payoutAmount) > Number(allocation.readyToPayWorkshop) ? <p className="text-xs text-violet-200 md:col-span-2 xl:col-span-6">Сумма выше доступной из оплат клиента на {money(Number(payoutAmount) - Number(allocation.readyToPayWorkshop))}. Это будет отмечено как аванс цеху.</p> : null}
         </form>
       ) : null}
 

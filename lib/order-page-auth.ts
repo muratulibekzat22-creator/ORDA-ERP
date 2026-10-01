@@ -56,7 +56,7 @@ export async function getAuthorizedOrder(id: number) {
   }
   const source = await getOrder(id);
   if (!source) return null;
-  const { _count, ...sourceOrder } = source;
+  const { _count, partnerRelation, ...sourceOrder } = source;
   const order = {
     ...sourceOrder,
     productionPrice: hasProductionPrice(source.partnerPrice, source.partnerAgreedAt) ? source.partnerPrice : null,
@@ -67,7 +67,7 @@ export async function getAuthorizedOrder(id: number) {
         _count.financeAuditEvents > 0 ||
         _count.payrollAccruals > 0,
     },
-    settlement: buildOrderSettlement(source),
+    settlement: buildOrderSettlement({ ...sourceOrder, partnerRelation }),
     economy: calculateOrderEconomy({
       totalSale: source.amount,
       commercialAdjustments: source.commercialAdjustments,

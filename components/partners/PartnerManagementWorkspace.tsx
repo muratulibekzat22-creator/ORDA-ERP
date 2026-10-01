@@ -11,6 +11,16 @@ type Metrics = {
   companyDebt: DecimalLike; partnerDebt: DecimalLike; companyClientReceived: DecimalLike; clientPaidToPartner: DecimalLike;
   partnerTransferred: DecimalLike;
 };
+type Allocation = {
+  dataComplete: boolean; totalSale: DecimalLike; productionCost: DecimalLike;
+  plannedCompanyIncome: DecimalLike | null; plannedLoss: DecimalLike | null;
+  clientReceived: DecimalLike; clientRemaining: DecimalLike;
+  companyIncomeRetained: DecimalLike | null; companyIncomeRemaining: DecimalLike | null;
+  productionFunded: DecimalLike | null; workshopReceived: DecimalLike;
+  readyToPayWorkshop: DecimalLike | null; workshopRemaining: DecimalLike | null;
+  awaitingClientForWorkshop: DecimalLike | null; workshopAdvance: DecimalLike | null;
+  companyCashHeld: DecimalLike; directWorkshopHeld: DecimalLike;
+};
 type Partner = {
   id: number; name: string; kind: string; phone?: string | null; secondaryPhone?: string | null; email?: string | null;
   city?: string | null; address?: string | null; contactPerson?: string | null; businessStatus: string; comment?: string | null;
@@ -20,7 +30,7 @@ type Partner = {
 };
 type PartnerOrder = {
   id: number; partnerId: number; settlementStatus: string; rewardRule: string; rewardPercent?: DecimalLike | null; fixedAmount?: DecimalLike | null;
-  partner: Partner; metrics: Metrics; operations: Operation[];
+  partner: Partner; metrics: Metrics; operations: Operation[]; allocation: Allocation;
   order: { id: number; number: string; createdAt: string; orderReceivedAt: string; lifecycle: string; client: { id: number; name: string; phone: string; city: string }; manager: { id: number | null; name: string }; address: string; staircase: string; material: string; amount: DecimalLike; companyProfit: DecimalLike; status: string; contract?: { number?: string | null } | null };
   economy: {
     client: { totalSale: DecimalLike; netReceived: DecimalLike; remaining: DecimalLike };
@@ -32,7 +42,7 @@ type Operation = { id: number; relationId: number; type: string; status: string;
 type Payload = {
   partners: Partner[]; orders: PartnerOrder[]; operations: Operation[]; audits: Array<{ id: number; action: string; createdAt: string; comment?: string | null; actor?: { name: string } }>;
   managers: Array<{ id: number; name: string }>;
-  totals: { activePartners: number; activeOrders: number; allOrders: number; unassignedOrders: number; orders: number; orderAmount: DecimalLike; received: DecimalLike; clientRemaining: DecimalLike; companyAmount: DecimalLike; partnerAccrued: DecimalLike; partnerPaid: DecimalLike; companyDebt: DecimalLike; partnerDebt: DecimalLike; averageOrder: DecimalLike; profit: DecimalLike };
+  totals: { activePartners: number; activeOrders: number; allOrders: number; unassignedOrders: number; orders: number; ordersWithoutProductionCost: number; orderAmount: DecimalLike; received: DecimalLike; clientRemaining: DecimalLike; companyAmount: DecimalLike; partnerAccrued: DecimalLike; partnerPaid: DecimalLike; companyDebt: DecimalLike; partnerDebt: DecimalLike; averageOrder: DecimalLike; profit: DecimalLike; plannedCompanyIncome: DecimalLike; companyIncomeRetained: DecimalLike; productionFunded: DecimalLike; readyToPayWorkshop: DecimalLike; awaitingClientForWorkshop: DecimalLike; workshopAdvance: DecimalLike };
   charts: { monthly: Array<{ month: string; orders: number; sales: DecimalLike; received: DecimalLike }>; partners: Array<{ partnerId: number; name: string; orders: number; sales: DecimalLike; profit: DecimalLike; debt: DecimalLike }> };
 };
 type SearchOrder = { id: number; number: string; amount: DecimalLike; status: string; address: string; staircase: string; material: string; client: { name: string; phone: string }; documents: Array<{ number: string }>; partnerRelation?: { id: number; partner: { name: string } } | null };
@@ -48,6 +58,7 @@ const panel = "rounded-2xl border border-white/10 bg-[#0b1220] p-4 sm:p-5";
 const friendlyError = (value: string) => ({
   INVALID_PARTNER_CONFIGURATION: "Проверьте название и данные цеха.",
   INVALID_FIXED_REWARD: "Укажите корректную стоимость.",
+  PRODUCTION_PRICE_BELOW_PAID: "Цена производства не может быть меньше уже выплаченной цеху суммы.",
   PARTNER_NOT_FOUND: "Цех не найден или находится в архиве.",
   ORDER_ALREADY_LINKED: "Этот заказ уже привязан к другому цеху.",
   ORDER_ALREADY_HAS_PRIMARY_PARTNER: "В заказе уже выбран другой цех.",
@@ -91,7 +102,7 @@ export default function PartnerManagementWorkspace() {
     <header className="relative overflow-hidden rounded-[28px] border border-amber-300/20 bg-[#0b1220] p-5 sm:p-7">
       <div className="absolute inset-x-0 top-0 h-px bg-amber-300/70"/>
       <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div><p className="text-xs font-bold uppercase tracking-[0.25em] text-amber-300">Производство и расчёты</p><h1 className="mt-2 text-3xl font-semibold text-white">Цехи</h1><p className="mt-2 text-sm text-slate-400">Цехи, их заказы, выплаты и остатки в одном месте</p></div>
+        <div><p className="text-xs font-bold uppercase tracking-[0.25em] text-amber-300">Производство</p><h1 className="mt-2 text-3xl font-semibold text-white">Цехи и расчёты</h1><p className="mt-2 text-sm text-slate-400">План и факт по каждому заказу: поступления клиента, наш доход и выплаты цеху</p></div>
         <button type="button" onClick={() => void load()} disabled={loading} className={secondary}><RefreshCw size={17} className={loading ? "animate-spin" : ""}/>Обновить</button>
       </div>
     </header>
@@ -110,18 +121,22 @@ export default function PartnerManagementWorkspace() {
 }
 
 function Overview({ data }: { data: Payload }) {
-  const cards: Array<[string, DecimalLike, "money" | "count"]> = [
-    ["Активные цехи", data.totals.activePartners, "count"], ["Активные заказы цехов", data.totals.activeOrders, "count"],
-    ["Всего заказов цехов", data.totals.orders, "count"], ["Без выбранного цеха", data.totals.unassignedOrders, "count"],
-    ["Все неотменённые заказы", data.totals.allOrders, "count"],
-    ["Сумма заказов", data.totals.orderAmount, "money"], ["Получено от клиентов", data.totals.received, "money"],
-    ["Остаток клиентов", data.totals.clientRemaining, "money"],
-    ["Согласовано с цехами", data.totals.partnerAccrued, "money"], ["Выплачено цехам", data.totals.partnerPaid, "money"],
-    ["Осталось выплатить цехам", data.totals.companyDebt, "money"], ["Цехи должны компании", data.totals.partnerDebt, "money"],
-    ["Средний заказ", data.totals.averageOrder, "money"], ["Прибыль", data.totals.profit, "money"],
+  const cards: Array<[string, DecimalLike, string]> = [
+    ["Продажи", data.totals.orderAmount, `${data.totals.orders} заказов`],
+    ["Получено от клиентов", data.totals.received, "Фактические поступления"],
+    ["Осталось получить", data.totals.clientRemaining, "Долг клиентов"],
+    ["Наш доход по плану", data.totals.plannedCompanyIncome, "Продажа минус производство"],
+    ["Наш доход уже удержан", data.totals.companyIncomeRetained, "По правилу: сначала маржа"],
+    ["Цена производства", data.totals.partnerAccrued, "Согласовано по заказам"],
+    ["Можно выплатить цехам сейчас", data.totals.readyToPayWorkshop, "Из уже полученных денег"],
+    ["После оплат клиентов", data.totals.awaitingClientForWorkshop, "Будущая часть расчёта"],
   ];
   const max = Math.max(1, ...data.charts.partners.map((item) => Number(item.sales)));
-  return <div className="space-y-5"><section className="grid grid-cols-2 gap-3 lg:grid-cols-4">{cards.map(([label, value, kind]) => <div key={label} className={panel}><p className="text-xs text-slate-400 sm:text-sm">{label}</p><p className="mt-2 break-words text-lg font-bold text-white sm:text-2xl">{kind === "money" ? money(value) : value}</p></div>)}</section>
+  return <div className="space-y-5">
+    <p className="text-sm text-slate-400">Активные цехи: {data.totals.activePartners} · Активные заказы: {data.totals.activeOrders} · Без выбранного цеха: {data.totals.unassignedOrders}</p>
+    {data.totals.ordersWithoutProductionCost > 0 && <div className="rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4 text-sm text-amber-100"><b>{data.totals.ordersWithoutProductionCost} заказов</b> без подтверждённой цены производства. По ним наш доход и график выплаты цеху пока не рассчитываются.</div>}
+    <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">{cards.map(([label, value, hint]) => <div key={label} className={panel}><p className="text-xs text-slate-400 sm:text-sm">{label}</p><p className="mt-2 break-words text-lg font-bold text-white sm:text-2xl">{money(value)}</p><p className="mt-1 text-xs text-slate-500">{hint}</p></div>)}</section>
+    <section className="rounded-2xl border border-emerald-400/15 bg-gradient-to-br from-emerald-400/[0.06] to-transparent p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-300">Распределение поступлений</p><h2 className="mt-2 text-xl font-bold text-white">Сначала доход компании, затем производство</h2><p className="mt-1 max-w-2xl text-sm text-slate-400">Система отдельно показывает, сколько уже обеспечено клиентскими оплатами, сколько реально выплачено и какая часть появится только после следующего платежа клиента.</p></div><div className="grid grid-cols-2 gap-2 sm:grid-cols-3"><Mini label="Цех обеспечен" value={money(data.totals.productionFunded)}/><Mini label="Цеху выплачено" value={money(data.totals.partnerPaid)}/><Mini label="Аванс сверх поступлений" value={money(data.totals.workshopAdvance)}/></div></div></section>
     <section className="grid gap-5 xl:grid-cols-2"><div className={panel}><h2 className="text-lg font-bold">Продажи по цехам</h2><div className="mt-5 space-y-4">{data.charts.partners.slice(0, 8).map((item) => <div key={item.partnerId}><div className="flex justify-between gap-3 text-sm"><span className="truncate">{item.name}</span><span>{money(item.sales)}</span></div><div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-amber-300" style={{ width: `${Math.max(2, Number(item.sales) / max * 100)}%` }}/></div></div>)}{!data.charts.partners.length && <Empty/>}</div></div>
       <div className={panel}><h2 className="text-lg font-bold">Продажи по месяцам</h2><div className="mt-5 space-y-3">{data.charts.monthly.slice(-8).map((item) => <div key={item.month} className="grid grid-cols-[5rem_1fr] gap-3 rounded-xl bg-slate-900 p-3 text-sm"><span>{item.month}</span><span className="text-right">{item.orders} заказов · {money(item.sales)} · получено {money(item.received)}</span></div>)}{!data.charts.monthly.length && <Empty/>}</div></div></section>
   </div>;
@@ -164,12 +179,81 @@ function Orders({ data, busy, mutate, query, setQuery }: { data: Payload; busy: 
       {order.initialConfirmed && <><Input label="Сумма оплаты" type="number" value={order.initialAmount} onChange={(value) => setOrder({ ...order, initialAmount: value })}/><Input label="Дата оплаты" type="date" value={order.initialDate} onChange={(value) => setOrder({ ...order, initialDate: value })}/><Input label="Кто получил" value={order.initialReceivedBy} onChange={(value) => setOrder({ ...order, initialReceivedBy: value })}/><Input label="Касса / банковский счёт" value={order.initialAccount} onChange={(value) => setOrder({ ...order, initialAccount: value })}/><Input label="Способ оплаты" value={order.initialMethod} onChange={(value) => setOrder({ ...order, initialMethod: value })}/><Input label="Комментарий к оплате" value={order.initialComment} onChange={(value) => setOrder({ ...order, initialComment: value })}/></>}
       <div className="flex items-end gap-2"><button disabled={busy} className={primary}>Создать заказ</button><button type="button" onClick={() => setMode(null)} className={secondary}>Отмена</button></div>
     </form>}
-    <OrderCards orders={data.orders} actions={(item) => <><a href={`/orders/${item.order.id}`} className={secondary}>Открыть заказ</a><button type="button" disabled={busy} className={secondary} onClick={() => { const amount = window.prompt("Согласованная цена производства"); if (!amount) return; const comment = window.prompt("Комментарий к согласованию") ?? ""; void mutate({ action: "set-agreed-cost", relationId: item.id, amount, comment }); }}>Указать согласованную стоимость</button></>}/>
+    <OrderCards orders={data.orders} actions={(item) => <><a href={`/orders/${item.order.id}`} className={secondary}>Открыть заказ</a><AgreedCostEditor item={item} busy={busy} mutate={mutate}/></>}/>
   </div>;
 }
 
 function OrderCards({ orders, actions }: { orders: PartnerOrder[]; actions?: (item: PartnerOrder) => React.ReactNode }) {
-  return <div className="grid gap-4">{orders.map((item) => <article key={item.id} className={panel}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="font-bold text-white">{item.order.number} · {item.partner.name}</h3><p className="mt-1 break-words text-sm text-slate-400">{item.order.client.name.trim() || "Клиент не указан"} · {item.order.client.phone} · {item.order.client.city || "город не указан"}</p><p className="text-sm text-slate-500">{date(item.order.orderReceivedAt)} · {item.order.address}</p></div><div className="flex flex-wrap gap-2"><Status value={item.order.lifecycle}/><Status value={item.settlementStatus}/></div></div><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5"><Mini label="Сумма продажи" value={money(item.economy.client.totalSale)}/><Mini label="Получено от клиента" value={money(item.economy.client.netReceived)}/><Mini label="Остаток клиента" value={money(item.economy.client.remaining)}/><Mini label="Согласованная стоимость" value={money(item.economy.partner.agreed)}/><Mini label="Начислено партнёру" value={money(item.economy.partner.accrued)}/><Mini label="Выплачено партнёру" value={money(item.economy.partner.paid)}/><Mini label="Осталось партнёру" value={money(item.economy.partner.remaining)}/><Mini label="Маржа до зарплаты" value={money(item.economy.profit.marginBeforePayroll)}/><Mini label="Зарплата по заказу" value={money(item.economy.profit.payrollAccrued)}/><Mini label="Чистая прибыль" value={`${money(item.economy.profit.netProfit)} · ${Number(item.economy.profit.netMarginPercent).toLocaleString("ru-RU")}%`}/></div><details className="mt-4 rounded-xl bg-slate-950 p-3"><summary className="cursor-pointer font-semibold">Полные денежные показатели</summary><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3"><Mini label="Компания получила" value={money(item.metrics.companyClientReceived)}/><Mini label="Партнёр получил" value={money(item.metrics.clientPaidToPartner)}/><Mini label="Партнёр передал" value={money(item.metrics.partnerTransferred)}/><Mini label="Компания должна" value={money(item.metrics.companyDebt)}/><Mini label="Партнёр должен" value={money(item.metrics.partnerDebt)}/><Mini label="План партнёра" value={money(item.metrics.partnerPlanned)}/></div></details>{actions && <div className="mt-4 flex flex-wrap gap-2">{actions(item)}</div>}</article>)}{!orders.length && <Empty/>}</div>;
+  return (
+    <div className="grid gap-4">
+      {orders.map((item) => {
+        const allocation = item.allocation;
+        const receivedPercent = Math.min(
+          100,
+          Number(allocation.totalSale) > 0
+            ? Number(allocation.clientReceived) / Number(allocation.totalSale) * 100
+            : 0,
+        );
+        const plannedIncome = allocation.plannedCompanyIncome === null
+          ? null
+          : Number(allocation.plannedCompanyIncome);
+        return (
+          <article key={item.id} className="overflow-hidden rounded-2xl border border-white/10 bg-[#0b1220]">
+            <div className="p-4 sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="font-bold text-white">{item.order.number} · {item.partner.name}</h3>
+                  <p className="mt-1 break-words text-sm text-slate-400">{item.order.client.name.trim() || "Клиент не указан"} · {item.order.client.phone} · {item.order.client.city || "город не указан"}</p>
+                  <p className="text-sm text-slate-500">{date(item.order.orderReceivedAt)} · {item.order.address}</p>
+                </div>
+                <div className="flex flex-wrap gap-2"><Status value={item.order.lifecycle}/><Status value={item.settlementStatus}/></div>
+              </div>
+              {!allocation.dataComplete ? (
+                <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-400/5 p-4">
+                  <p className="font-semibold text-amber-200">Цена производства не подтверждена</p>
+                  <p className="mt-1 text-sm text-slate-400">Укажите согласованную сумму с цехом — после этого система рассчитает наш доход и график выплаты.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between text-xs text-slate-500"><span>Оплачено клиентом</span><span>{receivedPercent.toLocaleString("ru-RU", { maximumFractionDigits: 0 })}%</span></div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${receivedPercent}%` }}/></div>
+                  </div>
+                  <div className="mt-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500">План договора</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"><Mini label="Продажа" value={money(allocation.totalSale)}/><Mini label="Цена производства" value={money(allocation.productionCost)}/><Mini label={plannedIncome !== null && plannedIncome < 0 ? "Плановый убыток" : "Наш доход"} value={money(plannedIncome !== null && plannedIncome < 0 ? allocation.plannedLoss : allocation.plannedCompanyIncome)}/></div>
+                  </div>
+                  <div className="mt-5">
+                    <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500">Факт на сегодня</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-4"><Mini label="Клиент оплатил" value={money(allocation.clientReceived)}/><Mini label="Наш доход удержан" value={money(allocation.companyIncomeRetained)}/><Mini label="Цех обеспечен оплатами" value={money(allocation.productionFunded)}/><Mini label="Клиент ещё должен" value={money(allocation.clientRemaining)}/></div>
+                  </div>
+                  <div className="mt-5 grid gap-2 rounded-xl border border-cyan-400/15 bg-cyan-400/[0.04] p-3 sm:grid-cols-3"><Mini label="Цеху уже выплачено" value={money(allocation.workshopReceived)}/><Mini label="Можно выплатить сейчас" value={money(allocation.readyToPayWorkshop)}/><Mini label="После следующих оплат клиента" value={money(allocation.awaitingClientForWorkshop)}/></div>
+                  {Number(allocation.workshopAdvance) > 0 ? <p className="mt-3 rounded-xl border border-violet-400/20 bg-violet-400/5 p-3 text-sm text-violet-200">Цеху авансировано сверх обеспеченной клиентскими оплатами суммы: {money(allocation.workshopAdvance)}.</p> : null}
+                </>
+              )}
+              {actions ? <div className="mt-4 flex flex-wrap gap-2">{actions(item)}</div> : null}
+            </div>
+            <details className="border-t border-white/10 bg-slate-950/50 px-4 py-3 sm:px-5">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-300">Детали и контрольные цифры</summary>
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"><Mini label="Остаток цеху всего" value={money(allocation.workshopRemaining)}/><Mini label="Доход ещё не удержан" value={money(allocation.companyIncomeRemaining)}/><Mini label="Деньги компании сейчас" value={money(allocation.companyCashHeld)}/><Mini label="Клиент платил цеху" value={money(item.metrics.clientPaidToPartner)}/><Mini label="Цех передал компании" value={money(item.metrics.partnerTransferred)}/><Mini label="Расчётный баланс цеха" value={money(item.metrics.partnerBalance)}/></div>
+            </details>
+          </article>
+        );
+      })}
+      {!orders.length ? <Empty/> : null}
+    </div>
+  );
+}
+
+function AgreedCostEditor({ item, busy, mutate }: { item: PartnerOrder; busy: boolean; mutate: (body: Record<string, unknown>, idem?: boolean) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(item.allocation.dataComplete ? String(item.allocation.productionCost) : "");
+  const [comment, setComment] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (await mutate({ action: "set-agreed-cost", relationId: item.id, amount, comment })) setOpen(false);
+  };
+  return <>{!open ? <button type="button" disabled={busy} className={secondary} onClick={() => setOpen(true)}>{item.allocation.dataComplete ? "Изменить цену производства" : "Указать цену производства"}</button> : <form onSubmit={submit} className="grid w-full gap-2 rounded-xl border border-amber-300/20 bg-amber-300/5 p-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)_auto_auto] sm:items-end"><Input label="Согласованная цена, ₸" type="number" required value={amount} onChange={setAmount}/><Input label="Комментарий" value={comment} onChange={setComment}/><button className={primary} disabled={busy || Number(amount) < 2}>Сохранить</button><button type="button" className={secondary} onClick={() => setOpen(false)}>Отмена</button></form>}</>;
 }
 
 function Settlements({ orders, busy, mutate }: { orders: PartnerOrder[]; busy: boolean; mutate: (body: Record<string, unknown>, idem?: boolean) => Promise<boolean> }) {
@@ -178,8 +262,9 @@ function Settlements({ orders, busy, mutate }: { orders: PartnerOrder[]; busy: b
 
 function Operations({ data, busy, mutate }: { data: Payload; busy: boolean; mutate: (body: Record<string, unknown>, idem?: boolean) => Promise<boolean> }) {
   const [form, setForm] = useState({ relationId: "", type: "CLIENT_TO_COMPANY", amount: "", adjustmentEffect: "", operationDate: new Date().toISOString().slice(0, 10), method: "bank", account: "", comment: "" });
+  const selectedOrder = data.orders.find((item) => item.id === Number(form.relationId));
   const submit = async (event: FormEvent) => { event.preventDefault(); if (await mutate({ action: "operation", ...form, relationId: Number(form.relationId) }, true)) setForm({ ...form, amount: "", adjustmentEffect: "", comment: "" }); };
-  return <div className="space-y-5"><form onSubmit={submit} className={`${panel} grid gap-3 md:grid-cols-2 xl:grid-cols-3`}><FormTitle>Зафиксировать операцию</FormTitle><Select label="Заказ" value={form.relationId} onChange={(value) => setForm({ ...form, relationId: value })} options={data.orders.map((item) => [String(item.id), `${item.order.number} · ${item.partner.name} · ${item.order.client.name}`])}/><Select label="Направление" value={form.type} onChange={(value) => setForm({ ...form, type: value })} options={operationTypes}/><Input label="Сумма" type="number" value={form.amount} onChange={(value) => setForm({ ...form, amount: value })}/>{form.type === "ADJUSTMENT" && <Input label="Влияние на баланс (+/−)" type="number" value={form.adjustmentEffect} onChange={(value) => setForm({ ...form, adjustmentEffect: value })}/>}<Input label="Дата" type="date" value={form.operationDate} onChange={(value) => setForm({ ...form, operationDate: value })}/><Input label="Способ" value={form.method} onChange={(value) => setForm({ ...form, method: value })}/><Input label="Касса / счёт" value={form.account} onChange={(value) => setForm({ ...form, account: value })}/><Input label="Комментарий" value={form.comment} onChange={(value) => setForm({ ...form, comment: value })}/><div className="flex items-end"><button disabled={busy} className={`${primary} w-full`}><HandCoins size={17}/>Провести</button></div></form><section className={panel}><h2 className="text-lg font-bold">Журнал операций</h2><div className="mt-4 space-y-3">{data.operations.map((item) => <div key={item.id} className="flex flex-col gap-3 rounded-xl bg-slate-950 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="font-semibold">{operationLabel(item.type)} · {money(item.amount)}</p><p className="break-words text-sm text-slate-400">{date(item.operationDate)} · {item.orderNumber} · {item.partnerName} · {item.createdBy?.name ?? "Система"}{item.comment ? ` · ${item.comment}` : ""}</p></div><div className="flex items-center gap-2"><Status value={item.status}/>{item.status === "POSTED" && item.type !== "REVERSAL" && <button type="button" disabled={busy} className={secondary} onClick={() => { const reason = window.prompt("Причина сторно"); if (reason) void mutate({ action: "reverse-operation", operationId: item.id, reason }, true); }}><RotateCcw size={16}/>Сторно</button>}</div></div>)}{!data.operations.length && <Empty/>}</div></section></div>;
+  return <div className="space-y-5"><form onSubmit={submit} className={`${panel} grid gap-3 md:grid-cols-2 xl:grid-cols-3`}><FormTitle>Зафиксировать операцию</FormTitle><Select label="Заказ" value={form.relationId} onChange={(value) => setForm({ ...form, relationId: value })} options={data.orders.map((item) => [String(item.id), `${item.order.number} · ${item.partner.name} · ${item.order.client.name}`])}/><Select label="Направление" value={form.type} onChange={(value) => setForm({ ...form, type: value })} options={operationTypes}/><Input label="Сумма" type="number" value={form.amount} onChange={(value) => setForm({ ...form, amount: value })}/>{selectedOrder && <div className="grid grid-cols-2 gap-2 rounded-xl border border-cyan-400/15 bg-cyan-400/[0.04] p-3 md:col-span-2 xl:col-span-3 sm:grid-cols-4"><Mini label="Клиент оплатил" value={money(selectedOrder.allocation.clientReceived)}/><Mini label="Наш доход удержан" value={money(selectedOrder.allocation.companyIncomeRetained)}/><Mini label="Можно цеху сейчас" value={money(selectedOrder.allocation.readyToPayWorkshop)}/><Mini label="Цеху осталось всего" value={money(selectedOrder.allocation.workshopRemaining)}/></div>}{form.type === "ADJUSTMENT" && <Input label="Влияние на баланс (+/−)" type="number" value={form.adjustmentEffect} onChange={(value) => setForm({ ...form, adjustmentEffect: value })}/>}<Input label="Дата" type="date" value={form.operationDate} onChange={(value) => setForm({ ...form, operationDate: value })}/><Input label="Способ" value={form.method} onChange={(value) => setForm({ ...form, method: value })}/><Input label="Касса / счёт" value={form.account} onChange={(value) => setForm({ ...form, account: value })}/><Input label="Комментарий" value={form.comment} onChange={(value) => setForm({ ...form, comment: value })}/><div className="flex items-end"><button disabled={busy} className={`${primary} w-full`}><HandCoins size={17}/>Провести</button></div></form><section className={panel}><h2 className="text-lg font-bold">Журнал операций</h2><div className="mt-4 space-y-3">{data.operations.map((item) => <div key={item.id} className="flex flex-col gap-3 rounded-xl bg-slate-950 p-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="font-semibold">{operationLabel(item.type)} · {money(item.amount)}</p><p className="break-words text-sm text-slate-400">{date(item.operationDate)} · {item.orderNumber} · {item.partnerName} · {item.createdBy?.name ?? "Система"}{item.comment ? ` · ${item.comment}` : ""}</p></div><div className="flex items-center gap-2"><Status value={item.status}/>{item.status === "POSTED" && item.type !== "REVERSAL" && <button type="button" disabled={busy} className={secondary} onClick={() => { const reason = window.prompt("Причина сторно"); if (reason) void mutate({ action: "reverse-operation", operationId: item.id, reason }, true); }}><RotateCcw size={16}/>Сторно</button>}</div></div>)}{!data.operations.length && <Empty/>}</div></section></div>;
 }
 
 function Reports({ data }: { data: Payload }) {
