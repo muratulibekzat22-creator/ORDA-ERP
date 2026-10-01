@@ -53,6 +53,12 @@ type Journal = {
   totals: { income: number; expense: number; cashResult: number };
   incomeByCategory: { code: string; name: string; amount: number }[];
   expenseByCategory: { code: string; name: string; amount: number }[];
+  expenseGroups: {
+    key: "FIXED" | "ONE_TIME" | "PRODUCTION" | "PAYROLL";
+    name: string;
+    description: string;
+    amount: number;
+  }[];
   timeline: { date: string; income: number; expense: number }[];
   categories: Category[];
   options: {
@@ -82,6 +88,7 @@ const emptyJournal: Journal = {
   totals: { income: 0, expense: 0, cashResult: 0 },
   incomeByCategory: [],
   expenseByCategory: [],
+  expenseGroups: [],
   timeline: [],
   categories: [],
   options: { orders: [], clients: [], partners: [], employees: [] },
@@ -110,6 +117,45 @@ const money = (value: number) =>
     currency: "KZT",
     maximumFractionDigits: 0,
   }).format(value || 0);
+const businessDate = (date = new Date()) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Almaty",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+const fullMonthRange = (month: string) => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return {
+    from: `${month}-01`,
+    to: `${month}-${String(lastDay).padStart(2, "0")}`,
+  };
+};
+const monthName = (month: string) =>
+  new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(
+    new Date(`${month}-01T00:00:00+05:00`),
+  );
+const periodCaption = (period: string, from: string, to: string) => {
+  const today = businessDate();
+  if (period === "today")
+    return `Факт на ${new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Almaty" }).format(new Date())}`;
+  if (period === "month")
+    return `Факт за ${monthName(today.slice(0, 7))}: с 1-го по ${Number(today.slice(8, 10))}-е число`;
+  if (period === "previous_month") {
+    const previous = new Date(`${today.slice(0, 7)}-01T00:00:00+05:00`);
+    previous.setUTCDate(0);
+    const key = businessDate(previous).slice(0, 7);
+    return `Полный итог за ${monthName(key)}`;
+  }
+  if (period === "week") return "Последние 7 календарных дней";
+  if (period === "year") return `С начала ${today.slice(0, 4)} года`;
+  if (period === "custom" && from && to) {
+    if (from.slice(0, 7) === to.slice(0, 7)) return `Итог за ${monthName(from.slice(0, 7))}`;
+    return `${new Date(`${from}T00:00:00+05:00`).toLocaleDateString("ru-RU")} — ${new Date(`${to}T00:00:00+05:00`).toLocaleDateString("ru-RU")}`;
+  }
+  return "Выбранный период";
+};
 const sourceLabels: Record<string, string> = {
   MANUAL: "Ручная",
   BANK_STATEMENT: "Выписка Kaspi",
@@ -130,7 +176,8 @@ const methodLabels: Record<string, string> = {
 
 export default function FinanceJournalPage() {
   const { data: session } = useSession();
-  const isDirector = session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR";
+  const accountRole = session?.user.accountRole || session?.user.role;
+  const isDirector = accountRole === "DIRECTOR" || accountRole === "OPERATIONS_DIRECTOR";
   const [journal, setJournal] = useState(emptyJournal);
   const [period, setPeriod] = useState("month");
   const [tab, setTab] = useState("all");
@@ -147,6 +194,22 @@ export default function FinanceJournalPage() {
   const [page, setPage] = useState(1);
   const [manageCategories, setManageCategories] = useState(false);
   const { getKey, reset } = useIdempotencyKey();
+  const caption = useMemo(
+    () => periodCaption(period, from, to),
+    [from, period, to],
+  );
+  const monthPickerValue = useMemo(() => {
+    if (period === "custom" && from && from.slice(0, 7) === to.slice(0, 7))
+      return from.slice(0, 7);
+    const today = businessDate();
+    if (period === "month") return today.slice(0, 7);
+    if (period === "previous_month") {
+      const first = new Date(`${today.slice(0, 7)}-01T00:00:00+05:00`);
+      first.setUTCDate(0);
+      return businessDate(first).slice(0, 7);
+    }
+    return "";
+  }, [from, period, to]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,9 +222,9 @@ export default function FinanceJournalPage() {
     if (tab === "income") params.set("direction", "INCOME");
     if (tab === "expense") params.set("direction", "EXPENSE");
     if (period === "custom" && from)
-      params.set("from", `${from}T00:00:00`);
+      params.set("from", `${from}T00:00:00+05:00`);
     if (period === "custom" && to)
-      params.set("to", `${to}T23:59:59.999`);
+      params.set("to", `${to}T23:59:59.999+05:00`);
     if (debouncedSearch) params.set("search", debouncedSearch);
     try {
       const response = await fetch(`/api/finance?${params}`, {
@@ -212,6 +275,14 @@ export default function FinanceJournalPage() {
     setEditing(null);
     setForm(blank(direction));
     setMessage("");
+  };
+  const selectMonth = (month: string) => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return;
+    const range = fullMonthRange(month);
+    setPage(1);
+    setFrom(range.from);
+    setTo(range.to);
+    setPeriod("custom");
   };
   const openEdit = (item: Operation) => {
     setEditing(item.sourceId);
@@ -332,13 +403,12 @@ export default function FinanceJournalPage() {
 
   return (
     <section className="space-y-5 p-4 sm:p-6 md:p-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <header className="flex flex-col gap-4 rounded-3xl border border-slate-700 bg-gradient-to-br from-[#121d30] to-[#0b1220] p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6">
         <div>
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">
-            Доходы и расходы
-          </h1>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">Финансы компании</p>
+          <h1 className="mt-2 text-2xl font-bold text-white sm:text-3xl">Деньги за период</h1>
           <p className="mt-1 text-sm text-slate-400">
-            Единый журнал фактического движения денег
+            {caption}. Только реальные поступления и фактические расходы.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -359,24 +429,38 @@ export default function FinanceJournalPage() {
         </div>
       </header>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {[
-          ["today", "Сегодня"],
-          ["week", "7 дней"],
-          ["month", "Текущий месяц"],
-          ["previous_month", "Прошлый месяц"],
-          ["year", "Год"],
-          ["custom", "Период"],
-        ].map(([value, label]) => (
-          <button
-            type="button"
-            key={value}
-            onClick={() => { setPage(1); setPeriod(value); }}
-            className={`min-h-10 shrink-0 rounded-xl px-4 text-sm ${period === value ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="rounded-2xl border border-slate-700 bg-[#101827] p-3 sm:p-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex gap-2 overflow-x-auto pb-1 xl:pb-0">
+            {[
+              ["month", "Текущий месяц"],
+              ["previous_month", "Прошлый месяц"],
+              ["today", "Сегодня"],
+              ["week", "7 дней"],
+              ["year", "Год"],
+              ["custom", "Другой период"],
+            ].map(([value, label]) => (
+              <button
+                type="button"
+                key={value}
+                onClick={() => { setPage(1); setPeriod(value); }}
+                className={`min-h-10 shrink-0 rounded-xl px-4 text-sm font-medium ${period === value ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-300 hover:text-white"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <label className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-slate-300">
+            <span>Выбрать месяц</span>
+            <input
+              aria-label="Выбрать финансовый месяц"
+              type="month"
+              value={monthPickerValue}
+              onChange={(event) => selectMonth(event.target.value)}
+              className="bg-transparent font-semibold text-white outline-none"
+            />
+          </label>
+        </div>
       </div>
       {period === "custom" && (
         <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:grid-cols-2">
@@ -401,27 +485,41 @@ export default function FinanceJournalPage() {
 
       <div className="grid gap-3 sm:grid-cols-3">
         <Metric
-          label="Доходы"
+          label="Поступило денег"
           value={journal.totals.income}
           color="text-emerald-300"
+          hint="Оплаты клиентов и другие поступления"
         />
         <Metric
-          label="Расходы"
+          label="Потрачено денег"
           value={journal.totals.expense}
           color="text-rose-300"
+          hint="Все фактически учтённые расходы"
         />
         <Metric
-          label="Разница доходов и расходов"
+          label="Чистый денежный поток"
           value={journal.totals.cashResult}
           color={
             journal.totals.cashResult >= 0 ? "text-blue-300" : "text-rose-300"
           }
+          hint="Поступления минус расходы — это не бухгалтерская прибыль"
         />
       </div>
 
+      <CashFlowStatus journal={journal} caption={caption} />
+
+      <ExpenseOverview journal={journal} />
+
       <RecurringExpensesPanel journalMonth={recurringJournalMonth(period, from, to)} onChanged={() => void load()} />
 
-      <BankStatementPanel onChanged={() => void load()} />
+      <details className="rounded-2xl border border-slate-700 bg-[#101827]">
+        <summary className="cursor-pointer list-none p-4 font-semibold text-white sm:p-5">
+          Импорт банковской выписки <span className="ml-2 text-sm font-normal text-slate-400">для быстрой сверки Kaspi и банка</span>
+        </summary>
+        <div className="border-t border-slate-800 p-3 sm:p-4">
+          <BankStatementPanel onChanged={() => void load()} />
+        </div>
+      </details>
 
       {form && (
         <form
@@ -593,19 +691,9 @@ export default function FinanceJournalPage() {
         >
           Расходы
         </button>
-        <button
-          type="button"
-          onClick={() => { setPage(1); setTab("analysis"); }}
-          className={tabClass(tab === "analysis")}
-        >
-          Аналитика
-        </button>
       </div>
 
-      {tab === "analysis" ? (
-        <Analysis journal={journal} />
-      ) : (
-        <>
+      <>
           <input
             aria-label="Поиск операций"
             value={search}
@@ -709,8 +797,7 @@ export default function FinanceJournalPage() {
               )}
             </div>
           )}
-        </>
-      )}
+      </>
 
       {isDirector && (
         <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
@@ -825,10 +912,12 @@ function Metric({
   label,
   value,
   color,
+  hint,
 }: {
   label: string;
   value: number;
   color: string;
+  hint: string;
 }) {
   return (
     <div className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
@@ -836,6 +925,7 @@ function Metric({
       <p className={`mt-2 break-words text-xl font-bold ${color}`}>
         {money(value)}
       </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{hint}</p>
     </div>
   );
 }
@@ -844,75 +934,112 @@ function tabClass(active: boolean) {
   return `min-h-10 shrink-0 rounded-xl px-4 text-sm ${active ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`;
 }
 
-function Analysis({ journal }: { journal: Journal }) {
+function CashFlowStatus({ journal, caption }: { journal: Journal; caption: string }) {
+  const { income, expense, cashResult } = journal.totals;
+  const spentPerThousand = income > 0 ? Math.round((expense / income) * 1000) : null;
+  const healthy = cashResult >= 0;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Breakdown
-        title="Доходы по категориям"
-        rows={journal.incomeByCategory}
-        color="text-emerald-300"
-      />
-      <Breakdown
-        title="Расходы по категориям"
-        rows={journal.expenseByCategory}
-        color="text-rose-300"
-      />
-      <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 lg:col-span-2">
-        <h2 className="font-semibold text-white">Динамика</h2>
-        {journal.timeline.length === 0 ? (
-          <p className="mt-3 text-sm text-slate-500">Нет данных.</p>
-        ) : (
-          <div className="mt-3 space-y-2">
-            {journal.timeline.map((item) => (
-              <div
-                key={item.date}
-                className="grid grid-cols-[5.5rem_1fr_1fr] gap-2 text-sm"
-              >
-                <span className="text-slate-400">
-                  {new Date(`${item.date}T00:00:00`).toLocaleDateString("ru-RU")}
-                </span>
-                <span className="truncate text-emerald-300">
-                  +{money(item.income)}
-                </span>
-                <span className="truncate text-rose-300">
-                  −{money(item.expense)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function Breakdown({
-  title,
-  rows,
-  color,
-}: {
-  title: string;
-  rows: { code: string; name: string; amount: number }[];
-  color: string;
-}) {
-  return (
-    <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4">
-      <h2 className="font-semibold text-white">{title}</h2>
-      <div className="mt-3 space-y-2">
-        {rows.length === 0 ? (
-          <p className="text-sm text-slate-500">Нет данных.</p>
-        ) : (
-          rows.map((item) => (
-            <div
-              key={item.code}
-              className="flex justify-between gap-3 text-sm"
-            >
-              <span className="text-slate-300">{item.name}</span>
-              <b className={color}>{money(item.amount)}</b>
-            </div>
-          ))
+    <section className={`rounded-2xl border p-4 sm:p-5 ${healthy ? "border-emerald-800/70 bg-emerald-950/20" : "border-rose-800/70 bg-rose-950/20"}`}>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className={`text-sm font-semibold ${healthy ? "text-emerald-300" : "text-rose-300"}`}>
+            {income === 0 && expense === 0
+              ? "За период ещё нет финансовых операций"
+              : healthy
+                ? `Денежный поток положительный: +${money(cashResult)}`
+                : `Расходы превышают поступления на ${money(Math.abs(cashResult))}`}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">{caption}</p>
+        </div>
+        {spentPerThousand !== null && (
+          <p className="rounded-xl bg-slate-950/50 px-3 py-2 text-sm text-slate-300">
+            На каждые 1 000 ₸ поступлений потрачено <b className="text-white">{spentPerThousand.toLocaleString("ru-RU")} ₸</b>
+          </p>
         )}
       </div>
     </section>
+  );
+}
+
+function ExpenseOverview({ journal }: { journal: Journal }) {
+  const total = journal.totals.expense;
+  return (
+    <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:p-5">
+      <div>
+        <h2 className="text-lg font-semibold text-white">Куда ушли деньги</h2>
+        <p className="mt-1 text-sm text-slate-400">Расходы разделены по смыслу, чтобы сразу видеть постоянную нагрузку и разовые траты.</p>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {journal.expenseGroups.map((group) => {
+          const share = total > 0 ? (group.amount / total) * 100 : 0;
+          return (
+            <article key={group.key} className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="font-semibold text-white">{group.name}</h3>
+                <span className="text-xs text-slate-500">{share.toLocaleString("ru-RU", { maximumFractionDigits: 0 })}%</span>
+              </div>
+              <p className="mt-2 text-lg font-bold text-rose-300">{money(group.amount)}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500">{group.description}</p>
+            </article>
+          );
+        })}
+      </div>
+      <div className="mt-5 grid gap-4 border-t border-slate-800 pt-4 lg:grid-cols-2">
+        <CategoryBars
+          title="Откуда пришли деньги"
+          empty="За выбранный период поступлений пока нет."
+          rows={journal.incomeByCategory}
+          total={journal.totals.income}
+          bar="bg-emerald-500"
+        />
+        <CategoryBars
+          title="На что потратили"
+          empty="За выбранный период расходов пока нет."
+          rows={journal.expenseByCategory}
+          total={journal.totals.expense}
+          bar="bg-rose-500"
+        />
+      </div>
+    </section>
+  );
+}
+
+function CategoryBars({
+  title,
+  empty,
+  rows,
+  total,
+  bar,
+}: {
+  title: string;
+  empty: string;
+  rows: { code: string; name: string; amount: number }[];
+  total: number;
+  bar: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/30 p-4">
+      <h3 className="font-semibold text-white">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">{empty}</p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {rows.map((item) => {
+            const share = total > 0 ? (item.amount / total) * 100 : 0;
+            return (
+              <div key={item.code}>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-slate-300">{item.name}</span>
+                  <b className="whitespace-nowrap text-white">{money(item.amount)}</b>
+                </div>
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                  <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, share)}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

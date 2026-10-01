@@ -51,6 +51,7 @@
     "test:partner-management": "npm run test:partner-management:unit && tsx scripts/test-partner-management.ts",
     "test": "npm run test:partner-management",
     "test:finance-journal": "tsx scripts/test-finance-journal.ts",
+    "test:finance-journal-summary": "tsx scripts/test-finance-journal-summary.ts",
     "test:bank-statement": "tsx scripts/test-bank-statement.ts",
     "test:finance-go-live": "tsx scripts/test-finance-go-live.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
