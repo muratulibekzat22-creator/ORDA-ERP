@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { runWithSystemAccess, runWithTenant } from "@/lib/tenant-context";
 import { getFounderControl, runFounderControl } from "@/lib/services/founder-control.service";
 import { getDashboardSummary } from "@/lib/services/dashboard.service";
-import { toBekzatSnapshot } from "@/lib/control/bekzat-snapshot";
+import { toBekzatFinance, toBekzatSnapshot } from "@/lib/control/bekzat-snapshot";
 
 export const maxDuration = 60;
 export async function POST(request: Request) {
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     const result = body.action === "assign" ? await runFounderControl(founders[0].id, body.keys) : undefined;
     const control = await getFounderControl();
     const dashboard = await getDashboardSummary({ role: "DIRECTOR", userId: founders[0].id, month: body.month });
-    const finance = "finance" in dashboard ? { netProfit: dashboard.finance.netProfit, dataComplete: dashboard.finance.dataComplete } : null;
-    return Response.json({ ...toBekzatSnapshot(control), result, finance, month: "month" in dashboard ? dashboard.month : body.month, company: company.name }, { headers: { "Cache-Control": "private, no-store" } });
+    const finance = toBekzatFinance("finance" in dashboard ? dashboard.finance : null);
+    return Response.json({ ...toBekzatSnapshot(control), result, ...finance, month: "month" in dashboard ? dashboard.month : body.month, company: company.name }, { headers: { "Cache-Control": "private, no-store" } });
   });
 }
