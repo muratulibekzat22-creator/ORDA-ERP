@@ -129,6 +129,13 @@ const uniquenessMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const externalReferenceMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261002140000_payroll_payment_external_reference/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /FOUNDER_CONFIRMATION_REQUIRED/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
@@ -145,5 +152,7 @@ assert.match(
   uniquenessMigrationSource,
   /DROP INDEX IF EXISTS "PayrollAccrual_one_order_bonus"/,
 );
+assert.match(externalReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS "externalReference"/);
+assert.match(externalReferenceMigrationSource, /PayrollPayment_externalReference_key/);
 
 console.log("Payroll policy tests passed");
