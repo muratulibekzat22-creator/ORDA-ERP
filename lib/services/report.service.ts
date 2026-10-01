@@ -42,6 +42,8 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
   const internalFinance = leadership(actor.role) || actor.role === Role.ACCOUNTANT;
+  const payrollPeriodFrom = Number(period.dateFrom.slice(0, 7).replace("-", ""));
+  const payrollPeriodTo = Number(period.dateTo.slice(0, 7).replace("-", ""));
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
   const [customerBalance, partnerBalance, payrollTotals, expenseEntries] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
@@ -49,11 +51,12 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     internalFinance ? prisma.$queryRaw<PayrollTotalsRow[]>`
       SELECT 'accrual'::text AS kind,
         COALESCE(SUM(CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END), 0) AS total,
-        COALESCE(SUM(CASE WHEN accrual."createdAt" >= ${period.start} AND accrual."createdAt" <= ${period.end} THEN CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END ELSE 0 END), 0) AS period_total
+        COALESCE(SUM(CASE WHEN (payroll_period.year * 100 + payroll_period.month) BETWEEN ${payrollPeriodFrom} AND ${payrollPeriodTo} THEN CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END ELSE 0 END), 0) AS period_total
       FROM "PayrollAccrual" accrual
+      JOIN "PayrollPeriod" payroll_period ON payroll_period.id = accrual."periodId"
       JOIN "EmployeePayrollProfile" employee ON employee.id = accrual."employeeId"
       JOIN "User" account ON account.id = employee."userId"
-      WHERE employee."companyId" = ${companyId} AND employee.active = true AND employee."payrollEnabled" = true AND account.active = true
+      WHERE employee."companyId" = ${companyId} AND payroll_period."companyId" = ${companyId} AND employee.active = true AND employee."payrollEnabled" = true AND account.active = true
       UNION ALL
       SELECT 'payment'::text AS kind,
         COALESCE(SUM(CASE WHEN payment.type = 'EMPLOYEE_REFUND'::"PayrollPaymentType" THEN -payment.amount ELSE payment.amount END), 0) AS total,

@@ -49,6 +49,9 @@ assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| p
 assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
+assert.match(service, /JOIN "PayrollPeriod" payroll_period ON payroll_period\.id = accrual\."periodId"/, "payroll accruals must follow their accounting period");
+assert.match(service, /payroll_period\.year \* 100 \+ payroll_period\.month/, "report payroll period must match the selected business months");
+assert.doesNotMatch(service, /accrual\."createdAt" >=/, "late-entered payroll must not move into the wrong reporting month");
 const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", import.meta.url), "utf8");
 assert.match(reportPage, /Заказы \/ заявки периода/);
 assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: 2 \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");
