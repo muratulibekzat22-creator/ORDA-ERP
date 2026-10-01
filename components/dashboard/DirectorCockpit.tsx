@@ -26,6 +26,7 @@ import {
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
 import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
+import SalesPlanCard from "@/components/sales-plan/SalesPlanCard";
 
 type ManagementPayload = {
   role: "DIRECTOR" | "ACCOUNTANT";
@@ -267,6 +268,7 @@ export default function DirectorCockpit({ founder = false }: { founder?: boolean
         </p>
       )}
       {loading && !data ? <DashboardSkeleton /> : null}
+      {data && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} /> : null}
       {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
         founder ? <FounderDashboard data={data} /> : (
           <ManagementDashboard
@@ -316,7 +318,6 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   ] as const;
   return (
     <>
-      <FounderDirectorAccess />
       <section>
         <div className="mb-3">
           <h2 className="text-xl font-bold text-white">Итог компании</h2>
@@ -364,8 +365,11 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         ) : null}
       </section>
 
-      <MarketingAndTeam data={data} founder />
-
+      <details className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <summary className="cursor-pointer font-semibold text-white">Подробная аналитика и настройки</summary>
+        <div className="mt-5 space-y-5">
+          <FounderDirectorAccess />
+          <MarketingAndTeam data={data} founder />
       <section>
         <div className="mb-3"><h2 className="text-xl font-bold text-white">Итоговые отчёты</h2><p className="text-sm text-slate-400">Операционные разделы ведёт директор; здесь остаётся контроль результата.</p></div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -378,6 +382,8 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
           ))}
         </div>
       </section>
+        </div>
+      </details>
     </>
   );
 }

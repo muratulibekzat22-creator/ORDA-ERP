@@ -477,7 +477,7 @@ export async function finalizePurchaseBatch(
         const consumes = await tx.materialMovement.findMany({
           where: {
             purchaseBatchLineId: line.id,
-            type: { in: ["consume", "outgoing"] },
+            type: { in: ["consume", "outgoing", "sale", "writeoff", "workshop_issue"] },
           },
           include: { cogsEntry: true },
         });

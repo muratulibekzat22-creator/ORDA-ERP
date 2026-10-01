@@ -50,6 +50,7 @@ export const TENANT_MODELS = new Set([
   "ManagementMarketingTask",
   "ManagementMarketingMetric",
   "RecruitmentVacancy",
+  "SalesPlan",
 ]);
 
 const WHERE_OPERATIONS = new Set([

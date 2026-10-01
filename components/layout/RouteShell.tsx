@@ -21,6 +21,7 @@ import {
   Warehouse,
   BarChart3,
   Megaphone,
+  TrendingUp,
   X,
 } from "lucide-react";
 import Header from "@/components/Header";
@@ -31,7 +32,7 @@ import { type Role } from "@/lib/roles";
 
 const sections = [
   { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
-  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/measurements", "Замеры", Ruler], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/sales-plan", "План продаж", TrendingUp], ["/measurements", "Замеры", Ruler], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
   { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
@@ -64,13 +65,15 @@ export default function RouteShell({
     "/payroll": "payroll",
     "/settings": "settings",
     "/marketing": "marketing",
+    "/sales-plan": "reports",
   };
   const visible = (href: string) => {
+    if (href === "/documents" && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(accountRole ?? "")) return false;
     if (founder) return true;
     if (role === "MEASURER")
       return ["/", "/measurements", "/calendar", "/training", "/payroll"].includes(href);
     if (role === "MANAGER")
-      return ["/", "/clients", "/orders", "/measurements", "/calendar", "/production", "/documents", "/payroll"].includes(href);
+      return ["/", "/clients", "/orders", "/sales-plan", "/measurements", "/calendar", "/production", "/payroll"].includes(href);
     if (role === "MARKETER") return ["/", "/marketing", "/calendar", "/payroll"].includes(href);
     if (accountRole === "OPERATIONS_DIRECTOR")
       return href === "/" || Boolean(permissionByHref[href] && (
@@ -108,13 +111,13 @@ export default function RouteShell({
       clients: "clients", orders: "orders", calculator: "orders", measurements: "measurements",
       calendar: "calendar", documents: "documents", production: "production", warehouse: "warehouse",
       finance: "finance", "company-finance": "finance", "personal-finance": "finance",
-      partners: "partners", "partner-management": "partners", reports: "reports", analytics: "reports",
+      partners: "partners", "partner-management": "partners", reports: "reports", analytics: "reports", "sales-plan": "reports",
       employees: "employees", payroll: "payroll", settings: "settings", "calculator-config": "settings",
       marketing: "marketing",
     };
     const permission = required[first];
-    if (permission && !grantedPermissions.includes(permission)) router.replace("/");
-  }, [accountRole, founder, grantedPermissions, pathname, router]);
+    if (permission && !(first === "sales-plan" && role === "MANAGER") && !grantedPermissions.includes(permission)) router.replace("/");
+  }, [accountRole, founder, grantedPermissions, pathname, role, router]);
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) =>
