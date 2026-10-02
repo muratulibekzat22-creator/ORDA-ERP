@@ -135,12 +135,13 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
     setWorking(true);
     try {
       const client = await onSave({ name: name.trim(), phone, city: normalizedCity, managerUserId, sourceCode });
-      const options = await Promise.all(materials.map(async (material) => {
+      const options: Option[] = [];
+      for (const material of materials) {
         const response = await fetch(`/api/clients/${client.id}/calculations`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...calculationInput, material }) });
         const payload = await response.json() as Option & { error?: string };
         if (!response.ok) throw new Error(payload.error ?? `Не удалось рассчитать вариант «${material}»`);
-        return payload;
-      }));
+        options.push(payload);
+      }
       const response = await fetch(`/api/clients/${client.id}/proposals`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ calculationIds: options.map((option) => option.id) }) });
       const created = await response.json() as { id?: number; number?: string; error?: string };
       if (!response.ok || !created.id || !created.number) throw new Error(created.error ?? "Не удалось сформировать КП");

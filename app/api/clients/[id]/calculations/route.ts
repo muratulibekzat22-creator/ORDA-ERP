@@ -4,6 +4,7 @@ import { calculateStair, type CalculationLineInput, type DeliveryOption, type St
 import { getCalculatorTariffs, MATERIAL_CODES, tariffMap } from "@/lib/calculator/tariffs";
 import { calculationProgress, hasRequiredProposalMaterials, REQUIRED_PROPOSAL_MATERIALS } from "@/lib/leads/automatic-stage";
 import { prisma } from "@/lib/prisma";
+import { isPrismaTransactionWriteConflict, withPrismaTransactionRetry } from "@/lib/prisma-transaction-retry";
 import { requirePermission } from "@/lib/server-auth";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 
@@ -42,29 +43,37 @@ export async function POST(request: Request, context: Context) {
     const snapshot = JSON.parse(JSON.stringify(calculated));
     const actorId = Number(auth.session!.user.id);
     const actorName = auth.session!.user.name ?? "Система";
-    const saved = await prisma.$transaction(async (tx) => {
-      const current = await tx.client.findUnique({
-        where: { id },
-        select: { id: true, managerUserId: true, stage: true, status: true },
-      });
-      if (!current || (role === Role.MANAGER && current.managerUserId !== actorId))
-        throw new Error("LEAD_NOT_FOUND");
-      const created = await tx.leadCalculation.create({ data: { clientId: id, material: calculated.material, baseClientPrice: calculated.baseClientPrice, clientPrice: calculated.clientPrice, internalCost: calculated.totalCost, snapshot, comment: typeof body.comment === "string" ? body.comment.slice(0, 1000) : null, authorId: actorId, authorName: actorName, ...(calculated.clientPrice !== calculated.baseClientPrice ? { adjustments: { create: { originalPrice: calculated.baseClientPrice, newPrice: calculated.clientPrice, authorId: actorId, authorName: actorName, comment: typeof body.adjustmentComment === "string" ? body.adjustmentComment.slice(0, 500) : null } } } : {}) }, include: { adjustments: true } });
-      const variants = await tx.leadCalculation.findMany({
-        where: { clientId: id, material: { in: [...REQUIRED_PROPOSAL_MATERIALS] } },
-        select: { material: true },
-        distinct: ["material"],
-      });
-      const progress = calculationProgress(
-        current.stage,
-        current.status,
-        hasRequiredProposalMaterials(variants.map((item) => item.material)),
-      );
-      await tx.client.update({ where: { id }, data: { estimatedAmount: calculated.clientPrice, amount: String(calculated.clientPrice), stage: progress.stage, status: progress.status } });
-      if (progress.stage !== current.stage || progress.status !== current.status)
-        await tx.leadStatusHistory.create({ data: { clientId: id, fromStatus: current.status, toStatus: progress.status, fromStage: current.stage, toStage: progress.stage, authorId: actorId, authorName: actorName, comment: "Сохранён предварительный расчёт" } });
-      return created;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    const saved = await withPrismaTransactionRetry(() =>
+      prisma.$transaction(async (tx) => {
+        const current = await tx.client.findUnique({
+          where: { id },
+          select: { id: true, managerUserId: true, stage: true, status: true },
+        });
+        if (!current || (role === Role.MANAGER && current.managerUserId !== actorId))
+          throw new Error("LEAD_NOT_FOUND");
+        const created = await tx.leadCalculation.create({ data: { clientId: id, material: calculated.material, baseClientPrice: calculated.baseClientPrice, clientPrice: calculated.clientPrice, internalCost: calculated.totalCost, snapshot, comment: typeof body.comment === "string" ? body.comment.slice(0, 1000) : null, authorId: actorId, authorName: actorName, ...(calculated.clientPrice !== calculated.baseClientPrice ? { adjustments: { create: { originalPrice: calculated.baseClientPrice, newPrice: calculated.clientPrice, authorId: actorId, authorName: actorName, comment: typeof body.adjustmentComment === "string" ? body.adjustmentComment.slice(0, 500) : null } } } : {}) }, include: { adjustments: true } });
+        const variants = await tx.leadCalculation.findMany({
+          where: { clientId: id, material: { in: [...REQUIRED_PROPOSAL_MATERIALS] } },
+          select: { material: true },
+          distinct: ["material"],
+        });
+        const progress = calculationProgress(
+          current.stage,
+          current.status,
+          hasRequiredProposalMaterials(variants.map((item) => item.material)),
+        );
+        await tx.client.update({ where: { id }, data: { estimatedAmount: calculated.clientPrice, amount: String(calculated.clientPrice), stage: progress.stage, status: progress.status } });
+        if (progress.stage !== current.stage || progress.status !== current.status)
+          await tx.leadStatusHistory.create({ data: { clientId: id, fromStatus: current.status, toStatus: progress.status, fromStage: current.stage, toStage: progress.stage, authorId: actorId, authorName: actorName, comment: "Сохранён предварительный расчёт" } });
+        return created;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }),
+    );
     return NextResponse.json(redacted(saved as unknown as Record<string, unknown>, role), { status: 201 });
-  } catch (error) { return NextResponse.json({ error: error instanceof Error && error.message === "LEAD_NOT_FOUND" ? "Заявка не найдена" : error instanceof Error ? error.message : "Некорректный расчёт" }, { status: error instanceof Error && error.message === "LEAD_NOT_FOUND" ? 404 : 400 }); }
+  } catch (error) {
+    if (error instanceof Error && error.message === "LEAD_NOT_FOUND")
+      return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+    if (isPrismaTransactionWriteConflict(error))
+      return NextResponse.json({ error: "Заявка одновременно обновляется. Повторите сохранение." }, { status: 409 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Некорректный расчёт" }, { status: 400 });
+  }
 }
