@@ -170,6 +170,10 @@ assert.match(serviceSource, /managerPayrollPolicyState/);
 assert.match(serviceSource, /SALARY_ALREADY_ACCRUED/);
 assert.match(serviceSource, /const approvedAccrued = accrued/);
 assert.match(
+  serviceSource,
+  /input\.type === PayrollAccrualType\.BASE_SALARY[\s\S]*actor\.role !== Role\.DIRECTOR[\s\S]*actor\.role !== Role\.OPERATIONS_DIRECTOR/,
+);
+assert.match(
   payrollRouteSource,
   /session\.user\.accountRole\s*\|\|\s*session\.user\.role/,
 );

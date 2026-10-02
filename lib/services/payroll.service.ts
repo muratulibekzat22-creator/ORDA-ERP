@@ -372,7 +372,13 @@ type AccrualInput = {
 };
 
 export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
-  director(actor);
+  if (input.type === PayrollAccrualType.BASE_SALARY) {
+    if (
+      actor.role !== Role.DIRECTOR &&
+      actor.role !== Role.OPERATIONS_DIRECTOR
+    )
+      throw new PayrollError("FORBIDDEN");
+  } else director(actor);
   return createAccrualInternal(input, actor);
 }
 

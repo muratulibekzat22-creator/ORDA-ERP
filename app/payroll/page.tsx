@@ -270,6 +270,7 @@ export default function PayrollPage() {
     founder = roleAccess.founder,
     director = roleAccess.administrator,
     accountant = roleAccess.accountant,
+    canAccrueSalary = founder || director,
     adminView = founder || director || accountant,
     managerSelfService = role === "MANAGER" && !adminView,
     closed = data.period?.status === "CLOSED",
@@ -554,7 +555,7 @@ export default function PayrollPage() {
                 {labels[data.period.status]}
               </span>
             )}
-            {director && data.period && !locked && (
+            {canAccrueSalary && data.period && !locked && (
               <button
                 onClick={() => openOperation("salaryAccrual")}
                 disabled={!data.rows.length}
@@ -602,11 +603,11 @@ export default function PayrollPage() {
             </button>
           </div>
         )}
-        {director && (
+        {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
-            <h2 className="font-bold text-white">Порядок директора по зарплате</h2>
-            <p className="mt-2 leading-6">ORDA только сверяет оклад и бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Автоматических начислений нет: директор начисляет оклад за завершённый месяц, менеджер сам регистрирует бонусы по своим заказам.</p>
-            <p className="mt-2 leading-6">Директор проверяет замечания по заказам и замерам, разбирает только исключения, затем регистрирует фактическую выплату с референсом Kaspi. Основатель в ежедневном расчёте и выплате не участвует.</p>
+            <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
+            <p className="mt-2 leading-6">ORDA только сверяет оклад и бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Автоматических начислений нет: руководитель начисляет оклад за завершённый месяц, менеджер сам регистрирует бонусы по своим заказам.</p>
+            <p className="mt-2 leading-6">После начисления операционный директор проверяет замечания по заказам и замерам, затем регистрирует фактическую выплату с референсом Kaspi. Право выплаты остаётся отдельно от права начислить оклад.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
         )}
@@ -748,6 +749,7 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
+          canAccrueSalary={canAccrueSalary}
           canPay={director}
           closed={locked}
           onClose={() => setDetails(null)}
@@ -888,6 +890,7 @@ function Action({ label, onClick }: { label: string; onClick: () => void }) {
 function EmployeeDrawer({
   row,
   director,
+  canAccrueSalary,
   canPay,
   closed,
   onClose,
@@ -897,6 +900,7 @@ function EmployeeDrawer({
 }: {
   row: PayrollRow;
   director: boolean;
+  canAccrueSalary: boolean;
   canPay: boolean;
   closed: boolean;
   onClose: () => void;
@@ -1076,12 +1080,12 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {director && !closed && (
+        {(canAccrueSalary || canPay) && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2">
-              {director && (
-                <Action label="Начислить" onClick={() => onOperation("salaryAccrual", row)} />
+              {canAccrueSalary && (
+                <Action label="Начислить оклад" onClick={() => onOperation("salaryAccrual", row)} />
               )}
               {canPay && <Action label="Выплатить" onClick={() => onOperation("payment", row)} />}
             </div>
