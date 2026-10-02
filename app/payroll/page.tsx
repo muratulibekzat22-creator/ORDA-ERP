@@ -1087,6 +1087,12 @@ function EmployeeDrawer({
       reason: item.comment ?? "",
     })),
   ].sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  const salaryHistory = row.salaryRates.filter(
+    (rate) =>
+      !rate.effectiveTo ||
+      new Date(rate.effectiveTo).getTime() >
+        new Date(rate.effectiveFrom).getTime(),
+  );
   const canAccrueThisSalary =
     canAccrueSalary &&
     row.currentSalary > 0 &&
@@ -1397,11 +1403,11 @@ function EmployeeDrawer({
             )}
           </div>
         </section>
-        {row.salaryRates.length > 0 && (
+        {salaryHistory.length > 0 && (
           <section className="mt-5">
             <h3 className="font-semibold">История оклада</h3>
             <div className="mt-2 space-y-2">
-              {row.salaryRates.map((rate) => (
+              {salaryHistory.map((rate) => (
                 <div
                   key={rate.id}
                   className="flex justify-between rounded-xl bg-slate-900 p-3 text-sm"
