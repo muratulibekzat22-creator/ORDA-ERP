@@ -83,6 +83,44 @@ export const payrollRoleAccess = (accountRole: string) => ({
   accountant: accountRole === "ACCOUNTANT",
 });
 
+const money = (value: number) => Math.round(value * 100) / 100;
+
+export const personalPayrollCalculation = (input: {
+  salary: number;
+  bonuses: number;
+  premiums: number;
+  deductions: number;
+  advances: number;
+  otherPayments: number;
+  pendingAdvances: number;
+  accrued: number;
+  expectedTotalOverride?: number;
+}) => {
+  const totalToAccrue = money(
+    input.expectedTotalOverride ??
+      input.salary + input.bonuses + input.premiums - input.deductions,
+  );
+  const amountToPay = money(
+    totalToAccrue - input.advances - input.otherPayments,
+  );
+  return {
+    salary: money(input.salary),
+    bonuses: money(input.bonuses),
+    premiums: money(input.premiums),
+    deductions: money(input.deductions),
+    advances: money(input.advances),
+    otherPayments: money(input.otherPayments),
+    pendingAdvances: money(input.pendingAdvances),
+    accrued: money(input.accrued),
+    totalToAccrue,
+    remainingToAccrue: money(totalToAccrue - input.accrued),
+    amountToPay,
+    amountToPayAfterPendingAdvances: money(
+      amountToPay - input.pendingAdvances,
+    ),
+  };
+};
+
 export const payrollPaymentReference = (
   year: number,
   month: number,

@@ -12,6 +12,7 @@ import {
   payrollPaymentPurpose,
   payrollPaymentReference,
   payrollRoleAccess,
+  personalPayrollCalculation,
 } from "../lib/payroll-policy";
 
 assert.equal(managerOrderBonus(616_000), 30_000);
@@ -87,6 +88,32 @@ assert.deepEqual(payrollRoleAccess("OPERATIONS_DIRECTOR"), {
   administrator: true,
   accountant: false,
 });
+assert.deepEqual(
+  personalPayrollCalculation({
+    salary: 400_000,
+    bonuses: 20_000,
+    premiums: 10_000,
+    deductions: 5_000,
+    advances: 100_000,
+    otherPayments: 0,
+    pendingAdvances: 50_000,
+    accrued: 0,
+  }),
+  {
+    salary: 400_000,
+    bonuses: 20_000,
+    premiums: 10_000,
+    deductions: 5_000,
+    advances: 100_000,
+    otherPayments: 0,
+    pendingAdvances: 50_000,
+    accrued: 0,
+    totalToAccrue: 425_000,
+    remainingToAccrue: 425_000,
+    amountToPay: 325_000,
+    amountToPayAfterPendingAdvances: 275_000,
+  },
+);
 
 const gulsimOrders = [
   6_000_000,
@@ -165,6 +192,13 @@ assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCur
 assert.doesNotMatch(payrollRouteSource, /reconcile-manager-payroll/);
 assert.match(payrollSelfRouteSource, /createSelfAccrual/);
 assert.match(payrollSelfRouteSource, /PayrollAccrualType\.ORDER_BONUS/);
+assert.match(payrollSelfRouteSource, /report-advance/);
+assert.match(payrollSelfRouteSource, /PayrollPaymentType\.ADVANCE/);
+assert.match(payrollSelfRouteSource, /payrollSummary\(period\.id, actor\(auth\.session!\), undefined, true\)/);
+assert.match(payrollRouteSource, /identity\.role === Role\.OPERATIONS_DIRECTOR[\s\S]*FORBIDDEN/);
+assert.match(payrollPageSource, /adminView = founder \|\| accountant/);
+assert.match(payrollPageSource, /Сумма к начислению/);
+assert.match(payrollPageSource, /К выплате после авансов/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_WORK_INCOMPLETE/);

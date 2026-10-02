@@ -1,4 +1,4 @@
-import { PayrollAccrualType, Role } from "@prisma/client";
+import { PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -11,6 +11,7 @@ import {
   ensurePeriod,
   payrollSummary,
   PayrollError,
+  requestPaymentConfirmation,
 } from "@/lib/services/payroll.service";
 
 async function authSelf() {
@@ -34,10 +35,10 @@ async function authSelf() {
       };
 }
 const actor = (session: {
-  user: { id: string; role: string; name?: string | null };
+  user: { id: string; role: string; accountRole?: string | null; name?: string | null };
 }) => ({
   userId: Number(session.user.id),
-  role: session.user.role as Role,
+  role: (session.user.accountRole || session.user.role) as Role,
   name: session.user.name ?? "",
 });
 const fail = (error: unknown) =>
@@ -85,7 +86,7 @@ export async function GET(request: Request) {
       });
     return NextResponse.json({
       period,
-      ...(await payrollSummary(period.id, actor(auth.session!))),
+      ...(await payrollSummary(period.id, actor(auth.session!), undefined, true)),
     });
   } catch (error) {
     return fail(error);
@@ -100,6 +101,27 @@ export async function POST(request: Request) {
   try {
     await ensureUserEmployeeProfiles();
     const body = (await request.json()) as Record<string, unknown>;
+    if (body.action === "report-advance") {
+      return NextResponse.json(
+        await requestPaymentConfirmation(
+          {
+            periodId: Number(body.periodId),
+            amount: Number(body.amount),
+            type: PayrollPaymentType.ADVANCE,
+            claimedPaymentDate: new Date(
+              String(body.claimedPaymentDate ?? new Date().toISOString()),
+            ),
+            method:
+              typeof body.method === "string" ? body.method : undefined,
+            comment:
+              typeof body.comment === "string" ? body.comment : undefined,
+            key: key.key,
+            requestHash: createRequestHash(body),
+          },
+          actor(auth.session!),
+        ),
+      );
+    }
     if (body.action === "accrual") {
       const type = body.type === PayrollAccrualType.DEDUCTION
         ? PayrollAccrualType.DEDUCTION

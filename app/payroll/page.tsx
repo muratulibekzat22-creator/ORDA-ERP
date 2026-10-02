@@ -47,6 +47,17 @@ type Payment = {
   confirmationNumber?: string;
   paymentPurpose?: string;
 };
+type PaymentConfirmation = {
+  id: number;
+  amount: string;
+  type: string;
+  claimedPaymentDate: string;
+  method?: string | null;
+  comment?: string | null;
+  status: "PENDING" | "CONFIRMED" | "REJECTED";
+  reviewComment?: string | null;
+  createdAt: string;
+};
 type PayrollAuditOrder = {
   accrualId: number;
   orderId: number;
@@ -111,8 +122,23 @@ type PayrollRow = {
   salaryEffectiveFrom: string;
   accruals: Accrual[];
   payments: Payment[];
+  paymentConfirmations: PaymentConfirmation[];
   totals: { accrued: number; paid: number; pending: number; payable: number };
   breakdown: { salaryAccrued: number; bonusesAccrued: number; premiumsAccrued: number; advancesPaid: number; totalAccrued: number; totalPaid: number; payable: number };
+  calculation: {
+    salary: number;
+    bonuses: number;
+    premiums: number;
+    deductions: number;
+    advances: number;
+    otherPayments: number;
+    pendingAdvances: number;
+    accrued: number;
+    totalToAccrue: number;
+    remainingToAccrue: number;
+    amountToPay: number;
+    amountToPayAfterPendingAdvances: number;
+  };
   bonusAccruals: Array<{ id: number; orderId?: number | null; order?: OrderOption | null; measurementId?: number | null; type: string; amount: number; accruedAt: string; paid: number; payable: number; status: "ACCRUED" | "PARTIALLY_PAID" | "PAID" }>;
   payrollAudit?: PayrollAudit | null;
 };
@@ -125,7 +151,7 @@ type Payload = {
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
-  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "reversal";
+  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advanceReport" | "reversal";
 type OrderOption = {
   id: number;
   number: string;
@@ -271,11 +297,14 @@ export default function PayrollPage() {
   const role = session?.user.accountRole || session?.user.role || "",
     roleAccess = payrollRoleAccess(role),
     founder = roleAccess.founder,
-    director = roleAccess.administrator,
+    operationsDirector = roleAccess.administrator,
     accountant = roleAccess.accountant,
-    canAccrueSalary = founder || director,
-    adminView = founder || director || accountant,
+    adminView = founder || accountant,
+    salaryManager = founder,
+    director = operationsDirector && adminView,
+    canAccrueSalary = founder,
     managerSelfService = role === "MANAGER" && !adminView,
+    advanceSelfService = !adminView && role !== "PARTNER",
     closed = data.period?.status === "CLOSED",
     locked = Boolean(data.period && data.period.status !== "OPEN"),
     completedMonth = isCompanyMonthComplete(selected.year, selected.month);
@@ -381,6 +410,12 @@ export default function PayrollPage() {
     setTarget(employee);
     setForm(next === "salaryAccrual" && employee
       ? { ...emptyForm(), amount: String(employee.currentSalary), reason: "Оклад за расчётный период" }
+      : next === "advanceReport"
+        ? {
+            ...emptyForm(),
+            type: "ADVANCE",
+            reason: `Получен аванс за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+          }
       : next === "payment" && employee
         ? {
             ...emptyForm(),
@@ -394,7 +429,16 @@ export default function PayrollPage() {
     if (!target || !operation || !data.period) return;
     const amount = Number(form.amount);
     let body: Record<string, unknown>;
-    if (operation === "salary")
+    if (operation === "advanceReport")
+      body = {
+        action: "report-advance",
+        periodId: data.period.id,
+        amount,
+        claimedPaymentDate: form.date,
+        method: form.method,
+        comment: form.reason,
+      };
+    else if (operation === "salary")
       body = {
         action: "salary",
         employeeId: target.id,
@@ -456,7 +500,9 @@ export default function PayrollPage() {
               : "ORDER_BONUS",
         orderId: form.orderId ? Number(form.orderId) : undefined,
       };
-    const saved = managerSelfService && (operation === "bonus" || operation === "deduction")
+    const saved = operation === "advanceReport"
+      ? await runSelf(body, "Аванс зарегистрирован и ожидает подтверждения")
+      : managerSelfService && (operation === "bonus" || operation === "deduction")
       ? await runSelf(body, operation === "bonus" ? "Бонус за заказ добавлен" : "Штраф добавлен")
       : await run(body);
     if (saved) {
@@ -498,6 +544,24 @@ export default function PayrollPage() {
       "Ручной расчёт подтверждён директором",
     );
   };
+  const reviewPaymentReport = async (
+    item: PaymentConfirmation,
+    decision: "CONFIRM" | "REJECT",
+  ) => {
+    const comment = decision === "REJECT"
+      ? window.prompt("Причина отклонения сообщения об авансе", "Сумма или дата не подтверждены")?.trim()
+      : "Аванс подтверждён учредителем";
+    if (decision === "REJECT" && !comment) return;
+    await run(
+      {
+        action: "review-payment-confirmation",
+        id: item.id,
+        decision,
+        comment,
+      },
+      decision === "CONFIRM" ? "Аванс подтверждён и учтён в расчёте" : "Сообщение об авансе отклонено",
+    );
+  };
   const configureEmployee = async (user: { id: number; name: string }) => {
     const value = window.prompt(`Укажите оклад для ${user.name}`, "0");
     if (value === null) return;
@@ -515,7 +579,7 @@ export default function PayrollPage() {
     );
   };
   const expectedAccrualTotal = data.rows.reduce(
-    (sum, row) => sum + (row.payrollAudit?.auditedAccrued ?? row.totals.accrued),
+    (sum, row) => sum + row.calculation.totalToAccrue,
     0,
   );
   const stats: Array<[string, number, LucideIcon, string]> = [
@@ -590,7 +654,7 @@ export default function PayrollPage() {
             )}
           </div>
         </header>
-        {director && (
+        {salaryManager && (
           <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
             <summary className="cursor-pointer text-sm font-semibold text-slate-300">Действия с месяцем</summary>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -643,23 +707,12 @@ export default function PayrollPage() {
           ))}
         </section>
         {!adminView && data.rows[0] && (
-          <section className="mt-5 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="font-semibold">Мой расчёт за месяц</h2>
-                <p className="mt-1 text-sm text-slate-300">
-                  Оклад по профилю: <b>{currency(data.rows[0].currentSalary)}</b> · начисленные бонусы: <b>{currency(data.rows[0].breakdown.bonusesAccrued)}</b> · штрафы: <b>{currency(data.rows[0].accruals.filter((item) => item.type === "DEDUCTION").reduce((sum, item) => sum + Number(item.amount), 0))}</b> · авансы: <b>{currency(data.rows[0].breakdown.advancesPaid)}</b>
-                </p>
-                <p className="mt-1 text-xs text-blue-200/80">До начисления зарплаты зарегистрируйте бонус по каждому своему заказу за выбранный месяц.</p>
-              </div>
-              {managerSelfService && data.period && !locked && (
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={() => openOperation("bonus", data.rows[0])} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
-                  <button onClick={() => openOperation("deduction", data.rows[0])} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-200">+ Штраф</button>
-                </div>
-              )}
-            </div>
-          </section>
+          <PersonalPayrollReport
+            row={data.rows[0]}
+            managerSelfService={managerSelfService}
+            canReportAdvance={advanceSelfService && Boolean(data.period) && !locked}
+            onOperation={openOperation}
+          />
         )}
         {adminView && Boolean(data.unconfigured?.length) && (
           <section className="mt-5 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
@@ -668,7 +721,7 @@ export default function PayrollPage() {
               {data.unconfigured!.map((user) => (
                 <div key={user.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-900 p-3">
                   <span><b>{user.name}</b><small className="block text-slate-400">{roleNames[user.role] ?? user.role}</small></span>
-                  {director && <button onClick={() => void configureEmployee(user)} className="min-h-10 rounded-lg bg-blue-600 px-3 font-semibold">Настроить</button>}
+                  {salaryManager && <button onClick={() => void configureEmployee(user)} className="min-h-10 rounded-lg bg-blue-600 px-3 font-semibold">Настроить</button>}
                 </div>
               ))}
             </div>
@@ -680,7 +733,7 @@ export default function PayrollPage() {
           ) : !data.period ? (
             <Empty
               text={
-                director
+                salaryManager
                   ? "Период ещё не открыт. Откройте месяц, чтобы начать работу."
                   : "За выбранный месяц расчётный период ещё не открыт."
               }
@@ -764,12 +817,15 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
+          canManageSalary={salaryManager}
+          canReviewPayments={founder}
           canAccrueSalary={canAccrueSalary && completedMonth}
           canPay={director}
           closed={locked}
           onClose={() => setDetails(null)}
           onOperation={openOperation}
           onReversePayment={reversePayrollPayment}
+          onReviewPayment={reviewPaymentReport}
           onApproveManual={approveManualPayroll}
         />
       )}{" "}
@@ -782,6 +838,12 @@ export default function PayrollPage() {
             setTarget(row);
             setForm(operation === "salaryAccrual"
               ? { ...emptyForm(), amount: String(row.currentSalary), reason: "Оклад за расчётный период" }
+              : operation === "advanceReport"
+                ? {
+                    ...emptyForm(),
+                    type: "ADVANCE",
+                    reason: `Получен аванс за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+                  }
               : operation === "payment"
                 ? {
                     ...emptyForm(),
@@ -883,6 +945,79 @@ function Metric({
     </div>
   );
 }
+function PersonalPayrollReport({
+  row,
+  managerSelfService,
+  canReportAdvance,
+  onOperation,
+}: {
+  row: PayrollRow;
+  managerSelfService: boolean;
+  canReportAdvance: boolean;
+  onOperation: (operation: Operation, row: PayrollRow) => void;
+}) {
+  const calculation = row.calculation;
+  return (
+    <section className="mt-5 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
+          <h2 className="font-semibold">Мой расчёт за месяц</h2>
+          <p className="mt-1 text-sm text-slate-300">
+            Оклад + бонусы и премии − удержания − подтверждённые авансы и выплаты.
+          </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <Metric label="Оклад" value={calculation.salary} />
+            <Metric label="Бонусы и премии" value={calculation.bonuses + calculation.premiums} />
+            <Metric label="Удержания" value={calculation.deductions} />
+            <Metric label="Подтверждённые авансы" value={calculation.advances} />
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl bg-slate-950 p-3">
+              <p className="text-xs text-slate-500">Сумма к начислению</p>
+              <p className="mt-1 text-lg font-bold text-white">{currency(calculation.totalToAccrue)}</p>
+            </div>
+            <div className="rounded-xl bg-slate-950 p-3">
+              <p className="text-xs text-slate-500">Уже начислено</p>
+              <p className="mt-1 text-lg font-bold text-blue-200">{currency(calculation.accrued)}</p>
+            </div>
+            <div className="rounded-xl bg-emerald-500/10 p-3">
+              <p className="text-xs text-emerald-200/75">К выплате после авансов</p>
+              <p className="mt-1 text-lg font-bold text-emerald-200">{currency(calculation.amountToPay)}</p>
+            </div>
+          </div>
+          {calculation.remainingToAccrue > 0.01 && (
+            <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+              Осталось начислить за месяц: <b>{currency(calculation.remainingToAccrue)}</b>.
+            </p>
+          )}
+          {calculation.pendingAdvances > 0 && (
+            <p className="mt-3 rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-100">
+              Авансы на подтверждении: <b>{currency(calculation.pendingAdvances)}</b>. После подтверждения останется к выплате <b>{currency(calculation.amountToPayAfterPendingAdvances)}</b>.
+            </p>
+          )}
+          {managerSelfService && (
+            <p className="mt-3 text-xs text-blue-200/80">
+              До начисления зарплаты зарегистрируйте бонус по каждому своему заказу за выбранный месяц.
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2 xl:max-w-sm xl:justify-end">
+          {canReportAdvance && (
+            <button onClick={() => onOperation("advanceReport", row)} className="min-h-11 rounded-xl bg-emerald-600 px-4 font-semibold">
+              + Зарегистрировать аванс
+            </button>
+          )}
+          {managerSelfService && (
+            <>
+              <button onClick={() => onOperation("bonus", row)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
+              <button onClick={() => onOperation("deduction", row)} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-200">+ Штраф</button>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 function Empty({ text }: { text: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 p-12 text-center text-slate-400">
@@ -905,22 +1040,28 @@ function Action({ label, onClick }: { label: string; onClick: () => void }) {
 function EmployeeDrawer({
   row,
   director,
+  canManageSalary,
+  canReviewPayments,
   canAccrueSalary,
   canPay,
   closed,
   onClose,
   onOperation,
   onReversePayment,
+  onReviewPayment,
   onApproveManual,
 }: {
   row: PayrollRow;
   director: boolean;
+  canManageSalary: boolean;
+  canReviewPayments: boolean;
   canAccrueSalary: boolean;
   canPay: boolean;
   closed: boolean;
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
   onReversePayment: (item: Payment) => Promise<unknown>;
+  onReviewPayment: (item: PaymentConfirmation, decision: "CONFIRM" | "REJECT") => Promise<unknown>;
   onApproveManual: (row: PayrollRow) => Promise<unknown>;
 }) {
   const accrualTotal = (types: string[]) =>
@@ -1105,7 +1246,7 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {(canAccrueThisSalary || canPay) && !closed && (
+        {(canAccrueThisSalary || canPay || canManageSalary) && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2">
@@ -1113,6 +1254,8 @@ function EmployeeDrawer({
                 <Action label="Начислить оклад" onClick={() => onOperation("salaryAccrual", row)} />
               )}
               {canPay && <Action label="Выплатить" onClick={() => onOperation("payment", row)} />}
+              {canManageSalary && <Action label="Изменить оклад" onClick={() => onOperation("salary", row)} />}
+              {canManageSalary && <Action label="Гарантированный бонус" onClick={() => onOperation("allowance", row)} />}
             </div>
             {director && (
               <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
@@ -1145,6 +1288,33 @@ function EmployeeDrawer({
                 </div>
               </details>
             )}
+          </section>
+        )}
+        {row.paymentConfirmations.length > 0 && (
+          <section className="mt-5">
+            <h3 className="font-semibold">Сообщения сотрудника о выплатах</h3>
+            <div className="mt-2 space-y-2">
+              {row.paymentConfirmations.map((item) => (
+                <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3 text-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium">{labels[item.type] ?? item.type} · {labels[item.status] ?? item.status}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {dateLabel(item.claimedPaymentDate)}{item.method ? ` · ${methodLabels[item.method] ?? item.method}` : ""}{item.comment ? ` · ${item.comment}` : ""}
+                      </p>
+                    </div>
+                    <b className="text-blue-200">{currency(item.amount)}</b>
+                  </div>
+                  {item.reviewComment && <p className="mt-2 text-xs text-slate-400">Решение: {item.reviewComment}</p>}
+                  {canReviewPayments && !closed && item.status === "PENDING" && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button onClick={() => void onReviewPayment(item, "CONFIRM")} className="min-h-10 rounded-lg bg-emerald-600 px-3 font-semibold">Подтвердить аванс</button>
+                      <button onClick={() => void onReviewPayment(item, "REJECT")} className="min-h-10 rounded-lg border border-red-500/40 px-3 font-semibold text-red-200">Отклонить</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           </section>
         )}
         {row.bonusAccruals.length > 0 && (
@@ -1283,6 +1453,7 @@ function OperationModal({
       premium: "Назначить премию",
       deduction: "Добавить штраф / удержание",
       payment: "Зарегистрировать выплату",
+      advanceReport: "Зарегистрировать полученный аванс",
       reversal: "Сторнировать начисление",
     },
     reversible = row.accruals.filter(
@@ -1422,13 +1593,13 @@ function OperationModal({
               </select>
             </Field>
           )}
-          {operation === "payment" && (
+          {(operation === "payment" || operation === "advanceReport") && (
             <Field label="Способ выплаты">
-              <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control" disabled={form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT"}>
+              <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control" disabled={operation === "payment" && (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT")}>
                 <option value="kaspi">Kaspi</option>
-                {form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT" && <option value="cash">Наличные</option>}
-                {form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT" && <option value="bank_transfer">Банковский перевод</option>}
-                {form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT" && <option value="other">Другое</option>}
+                {(operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="cash">Наличные</option>}
+                {(operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="bank_transfer">Банковский перевод</option>}
+                {(operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="other">Другое</option>}
               </select>
             </Field>
           )}
@@ -1449,6 +1620,11 @@ function OperationModal({
               <p className="mt-1 text-xs text-blue-200/80">
                 Назначение: {form.reason || `Заработная плата за ${months[period.month - 1].toLowerCase()} ${period.year}`}. После сохранения система присвоит неизменяемый номер документа ЗП-{period.year}{String(period.month).padStart(2, "0")}-XXXXXX.
               </p>
+            </div>
+          )}
+          {operation === "advanceReport" && (
+            <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 p-3 text-sm text-blue-100">
+              Аванс появится в расчёте как ожидающий подтверждения. После подтверждения учредителем система автоматически уменьшит сумму к выплате.
             </div>
           )}
           {operation === "payment" && row.bonusAccruals.some((item) => item.payable > 0) && (
@@ -1499,10 +1675,14 @@ function OperationModal({
               </div>
             </Field>
           )}
-          {(operation === "salary" || operation === "payment") && (
+          {(operation === "salary" || operation === "payment" || operation === "advanceReport") && (
             <Field
               label={
-                operation === "salary" ? "Дата начала действия" : "Дата выплаты"
+                operation === "salary"
+                  ? "Дата начала действия"
+                  : operation === "advanceReport"
+                    ? "Дата получения"
+                    : "Дата выплаты"
               }
             >
               <input

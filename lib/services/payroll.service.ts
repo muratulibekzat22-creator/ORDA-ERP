@@ -30,6 +30,7 @@ import {
   MANAGER_ORDER_BONUS_THRESHOLD,
   PAYROLL_POLICY_ADJUSTMENT_PREFIX,
   PAYROLL_SALARY_ADJUSTMENT_PREFIX,
+  personalPayrollCalculation,
   payrollPaymentPurpose,
   payrollPaymentReference,
 } from "@/lib/payroll-policy";
@@ -58,6 +59,13 @@ const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => 
 };
 const director = (actor: PayrollActor) => {
   if (actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new PayrollError("FORBIDDEN");
+};
+const salaryManager = (actor: PayrollActor) => {
+  if (
+    actor.role !== Role.DIRECTOR &&
+    actor.role !== Role.OPERATIONS_DIRECTOR
+  )
     throw new PayrollError("FORBIDDEN");
 };
 const payrollOperator = (actor: PayrollActor) => {
@@ -199,7 +207,7 @@ export async function upsertPayrollProfile(
   },
   actor: PayrollActor,
 ) {
-  director(actor);
+  salaryManager(actor);
   const salary = nonNegativeMoney(input.baseSalary);
   const guaranteed = nonNegativeMoney(input.defaultGuaranteedBonus ?? 20000);
   return prisma.$transaction(async (tx) => {
@@ -280,7 +288,7 @@ export async function changeSalary(
   comment: string | undefined,
   actor: PayrollActor,
 ) {
-  director(actor);
+  salaryManager(actor);
   const salary = money(amount);
   const reason = requiredReason(comment);
   if (Number.isNaN(effectiveFrom.getTime())) throw new PayrollError("INVALID_DATE");
@@ -337,7 +345,7 @@ export async function changeAllowance(
   comment: string | undefined,
   actor: PayrollActor,
 ) {
-  director(actor);
+  salaryManager(actor);
   const allowance = nonNegativeMoney(amount);
   return prisma.$transaction(async (tx) => {
     const profile = await tx.employeePayrollProfile.findUnique({ where: { id: employeeId } });
@@ -1066,7 +1074,7 @@ export async function reviewPaymentConfirmation(
   },
   actor: PayrollActor,
 ) {
-  director(actor);
+  salaryManager(actor);
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${20_000_000 + id})`;
     const confirmation = await tx.payrollPaymentConfirmation.findUnique({ where: { id } });
@@ -1343,7 +1351,7 @@ export async function transitionPeriod(
   key: string,
   actor: PayrollActor,
 ) {
-  director(actor);
+  salaryManager(actor);
   return prisma.$transaction(async (tx) => {
     const replay = await tx.payrollAuditEvent.findUnique({ where: { idempotencyKey: key } });
     if (replay?.periodId === periodId)
@@ -1392,8 +1400,9 @@ export async function payrollSummary(
   periodId: number,
   actor: PayrollActor,
   requestedEmployeeId?: number,
+  forceSelf = false,
 ) {
-  const selfOnly = !(
+  const selfOnly = forceSelf || !(
     actor.role === Role.DIRECTOR ||
     actor.role === Role.OPERATIONS_DIRECTOR ||
     actor.role === Role.ACCOUNTANT
@@ -1525,6 +1534,13 @@ export async function payrollSummary(
     );
     const pending = employee.paymentConfirmations
       .filter((row) => row.status === PayrollConfirmationStatus.PENDING)
+      .reduce((sum, row) => sum + Number(row.amount), 0);
+    const pendingAdvances = employee.paymentConfirmations
+      .filter(
+        (row) =>
+          row.status === PayrollConfirmationStatus.PENDING &&
+          row.type === PayrollPaymentType.ADVANCE,
+      )
       .reduce((sum, row) => sum + Number(row.amount), 0);
     const increase = (types: PayrollAccrualType[]) => activeAccruals
       .filter((row) => row.direction === PayrollDirection.INCREASE && types.includes(row.type))
@@ -1751,6 +1767,25 @@ export async function payrollSummary(
     // the manager.
     const approvedAccrued = accrued;
     const approvedPayable = approvedAccrued - paid;
+    const personalCalculation = personalPayrollCalculation({
+      salary: currentSalary,
+      bonuses: increase([
+        PayrollAccrualType.GUARANTEED_ORDER_BONUS,
+        PayrollAccrualType.ORDER_BONUS,
+        PayrollAccrualType.MEASUREMENT_BONUS,
+        PayrollAccrualType.EXTRA_BONUS,
+        PayrollAccrualType.ADJUSTMENT_INCREASE,
+      ]),
+      premiums: increase([PayrollAccrualType.PREMIUM]),
+      deductions: activeAccruals
+        .filter((row) => row.direction === PayrollDirection.DECREASE)
+        .reduce((sum, row) => sum + Number(row.amount), 0),
+      advances: advancesPaid,
+      otherPayments: paid - advancesPaid,
+      pendingAdvances,
+      accrued,
+      expectedTotalOverride: managerPolicyApplies ? auditedAccrued : undefined,
+    });
     const payments = employee.payments.map((payment) => ({
       ...payment,
       confirmationNumber: payrollPaymentReference(
@@ -1787,6 +1822,7 @@ export async function payrollSummary(
         payable: accrued - paid,
       },
       bonusAccruals,
+      calculation: personalCalculation,
       payrollAudit: managerPolicyApplies
         ? {
             policy: {

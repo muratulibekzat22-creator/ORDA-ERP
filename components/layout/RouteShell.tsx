@@ -213,7 +213,7 @@ export default function RouteShell({
                   className={`flex min-h-12 items-center gap-3 rounded-xl px-4 py-3 ${active(href) ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}
                 >
                   <Icon size={20} />
-                  {href === "/payroll" && accountRole !== "DIRECTOR" && accountRole !== "OPERATIONS_DIRECTOR" && role !== "ACCOUNTANT"
+                  {href === "/payroll" && accountRole !== "DIRECTOR" && role !== "ACCOUNTANT"
                     ? "Моя зарплата"
                     : href === "/training" && founder
                       ? "Обучение сотрудников"
