@@ -23,7 +23,6 @@ import {
   payAdvance,
   payrollSummary,
   PayrollError,
-  reconcileManagerPayroll,
   reviewPaymentConfirmation,
   reviewAdvance,
   reverseAccrual,
@@ -193,18 +192,6 @@ export async function POST(request: Request) {
               body.relatedAccrualId == null
                 ? undefined
                 : Number(body.relatedAccrualId),
-            key: keyResult.key,
-            requestHash: hash,
-          },
-          identity,
-        ),
-      );
-    if (action === "reconcile-manager-payroll")
-      return NextResponse.json(
-        await reconcileManagerPayroll(
-          {
-            employeeId: Number(body.employeeId),
-            periodId: Number(body.periodId),
             key: keyResult.key,
             requestHash: hash,
           },

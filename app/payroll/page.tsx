@@ -215,13 +215,15 @@ const errorLabels: Record<string, string> = {
   ORDER_NOT_FOUND: "Заказ не найден",
   ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
+  SALARY_ALREADY_ACCRUED: "Оклад за этот месяц уже начислен",
+  ACCRUAL_ALREADY_REVERSED: "Это начисление уже сторнировано",
   DIRECTOR_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает директор",
   PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
   PAYMENT_EXCEEDS_PAYABLE: "Сумма выплаты превышает подтверждённый остаток к выплате",
   KASPI_METHOD_REQUIRED: "Финальная зарплата выплачивается через Kaspi",
   KASPI_REFERENCE_REQUIRED: "Укажите реальный номер или референс перевода Kaspi",
   KASPI_REFERENCE_ALREADY_USED: "Этот референс Kaspi уже использован в другой выплате",
-  PAYROLL_RECONCILIATION_REQUIRED: "Сначала примените проверку системы: оклад или бонусы по заказам ещё не сверены",
+  PAYROLL_RECONCILIATION_REQUIRED: "Сначала директор начисляет оклад, а менеджер регистрирует все бонусы по заказам",
   PAYROLL_WORK_INCOMPLETE: "Выплата заблокирована: сначала закройте замечания по заказам, просроченные замеры и контрольные задачи",
   INVALID_ACTION: "Операция не поддерживается",
 };
@@ -463,26 +465,6 @@ export default function PayrollPage() {
     if (!reason) return;
     await run({ action: "reverse-payment", id: item.id, reason }, "Выплата сторнирована");
   };
-  const reconcilePayroll = async (row: PayrollRow) => {
-    if (!data.period || !row.payrollAudit) return;
-    const audit = row.payrollAudit;
-    const approved = window.confirm(
-      `Применить расчёт системы для ${row.user.name}?\n\n` +
-        `Оклад: ${currency(audit.salaryRequired)}\n` +
-        `Бонусы по ${audit.linkedOrders} заказам: ${currency(audit.requiredOrderBonus)}\n` +
-        `Корректировка учёта: ${audit.ledgerDifference >= 0 ? "+" : "−"}${currency(Math.abs(audit.ledgerDifference))}\n` +
-        `После проверки к выплате: ${currency(audit.auditedPayable)}`,
-    );
-    if (!approved) return;
-    await run(
-      {
-        action: "reconcile-manager-payroll",
-        employeeId: row.id,
-        periodId: data.period.id,
-      },
-      "Расчёт системы применён, исходные записи сохранены в истории",
-    );
-  };
   const approveManualPayroll = async (row: PayrollRow) => {
     if (!data.period || !row.payrollAudit) return;
     const reason = window.prompt(
@@ -516,14 +498,14 @@ export default function PayrollPage() {
       "Зарплатный профиль настроен",
     );
   };
-  const auditedPayableTotal = data.rows.reduce(
-    (sum, row) => sum + (row.payrollAudit?.approvedPayable ?? row.totals.payable),
+  const expectedAccrualTotal = data.rows.reduce(
+    (sum, row) => sum + (row.payrollAudit?.auditedAccrued ?? row.totals.accrued),
     0,
   );
   const stats: Array<[string, number, LucideIcon, string]> = [
     ["Начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
     ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
-    ["К выплате по проверке", auditedPayableTotal, Banknote, "text-amber-300"],
+    ["По правилам к начислению", expectedAccrualTotal, Banknote, "text-amber-300"],
   ];
 
   if (sessionStatus === "loading")
@@ -578,7 +560,7 @@ export default function PayrollPage() {
                 disabled={!data.rows.length}
                 className="flex min-h-11 items-center gap-2 rounded-xl border border-blue-500/50 bg-blue-500/10 px-4 font-semibold text-blue-100 disabled:opacity-40"
               >
-                <Plus size={18} /> Начислить
+                <Plus size={18} /> Начислить оклад
               </button>
             )}
             {director && data.period && !locked && (
@@ -623,7 +605,7 @@ export default function PayrollPage() {
         {director && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок директора по зарплате</h2>
-            <p className="mt-2 leading-6">ORDA ежедневно сверяет оклад и бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Премии, удержания и авансы показываются отдельными строками и не меняют исходную историю.</p>
+            <p className="mt-2 leading-6">ORDA только сверяет оклад и бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Автоматических начислений нет: директор начисляет оклад за завершённый месяц, менеджер сам регистрирует бонусы по своим заказам.</p>
             <p className="mt-2 leading-6">Директор проверяет замечания по заказам и замерам, разбирает только исключения, затем регистрирует фактическую выплату с референсом Kaspi. Основатель в ежедневном расчёте и выплате не участвует.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
@@ -650,8 +632,9 @@ export default function PayrollPage() {
               <div>
                 <h2 className="font-semibold">Мой расчёт за месяц</h2>
                 <p className="mt-1 text-sm text-slate-300">
-                  Оклад: <b>{currency(data.rows[0].currentSalary)}</b> · бонусы: <b>{currency(data.rows[0].breakdown.bonusesAccrued)}</b> · штрафы: <b>{currency(data.rows[0].accruals.filter((item) => item.type === "DEDUCTION").reduce((sum, item) => sum + Number(item.amount), 0))}</b> · авансы: <b>{currency(data.rows[0].breakdown.advancesPaid)}</b>
+                  Оклад по профилю: <b>{currency(data.rows[0].currentSalary)}</b> · начисленные бонусы: <b>{currency(data.rows[0].breakdown.bonusesAccrued)}</b> · штрафы: <b>{currency(data.rows[0].accruals.filter((item) => item.type === "DEDUCTION").reduce((sum, item) => sum + Number(item.amount), 0))}</b> · авансы: <b>{currency(data.rows[0].breakdown.advancesPaid)}</b>
                 </p>
+                <p className="mt-1 text-xs text-blue-200/80">До начисления зарплаты зарегистрируйте бонус по каждому своему заказу за выбранный месяц.</p>
               </div>
               {managerSelfService && data.period && !locked && (
                 <div className="flex flex-wrap gap-2">
@@ -697,7 +680,7 @@ export default function PayrollPage() {
                       {[
                         "Сотрудник",
                         "Начислено",
-                        "Расчёт системы",
+                        "Должно быть",
                         "Выплачено",
                         "К выплате",
                         "Статус",
@@ -734,16 +717,17 @@ export default function PayrollPage() {
                         </p>
                       </div>
                       <Status
-                        payable={row.payrollAudit?.approvedPayable ?? row.totals.payable}
+                        payable={row.totals.payable}
                         paid={row.totals.paid}
+                        calculationReady={row.payrollAudit?.calculationReady ?? true}
                       />
                     </div>
                     <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                       <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Расчёт системы" value={row.payrollAudit?.auditedAccrued ?? row.totals.accrued} />
+                      <Metric label="Должно быть" value={row.payrollAudit?.auditedAccrued ?? row.totals.accrued} />
                       <Metric
-                        label="Точно к выплате"
-                        value={row.payrollAudit?.approvedPayable ?? row.totals.payable}
+                        label="К выплате"
+                        value={row.totals.payable}
                         accent
                       />
                     </div>
@@ -769,7 +753,6 @@ export default function PayrollPage() {
           onClose={() => setDetails(null)}
           onOperation={openOperation}
           onReversePayment={reversePayrollPayment}
-          onReconcile={reconcilePayroll}
           onApproveManual={approveManualPayroll}
         />
       )}{" "}
@@ -824,10 +807,10 @@ function PayrollTableRow({
       </td>
       <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
       <td className="px-4 py-4">
-        <b>{currency(row.payrollAudit?.approvedAccrued ?? row.totals.accrued)}</b>
+        <b>{currency(row.payrollAudit?.auditedAccrued ?? row.totals.accrued)}</b>
         {row.payrollAudit && row.payrollAudit.ledgerDifference !== 0 && (
           <span className="mt-0.5 block text-xs text-amber-300">
-            учесть {row.payrollAudit.ledgerDifference > 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}
+            {row.payrollAudit.ledgerDifference > 0 ? "не начислено " : "начислено лишнее "}{currency(Math.abs(row.payrollAudit.ledgerDifference))}
           </span>
         )}
       </td>
@@ -835,10 +818,10 @@ function PayrollTableRow({
         {currency(row.totals.paid)}
       </td>
       <td className="px-4 py-4 font-bold text-amber-300">
-        {currency(row.payrollAudit?.approvedPayable ?? row.totals.payable)}
+        {currency(row.totals.payable)}
       </td>
       <td className="px-4 py-4">
-        <Status payable={row.payrollAudit?.approvedPayable ?? row.totals.payable} paid={row.totals.paid} />
+        <Status payable={row.totals.payable} paid={row.totals.paid} calculationReady={row.payrollAudit?.calculationReady ?? true} />
       </td>
       <td className="px-4 py-4">
         <button
@@ -852,12 +835,12 @@ function PayrollTableRow({
     </tr>
   );
 }
-function Status({ payable, paid }: { payable: number; paid: number }) {
+function Status({ payable, paid, calculationReady }: { payable: number; paid: number; calculationReady: boolean }) {
   const value =
-    payable <= 0 ? "Выплачено" : paid > 0 ? "Частично" : "К выплате";
+    !calculationReady ? "Не всё начислено" : payable <= 0 ? "Выплачено" : paid > 0 ? "Частично" : "К выплате";
   return (
     <span
-      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${payable <= 0 ? "bg-emerald-500/15 text-emerald-300" : paid > 0 ? "bg-amber-500/15 text-amber-300" : "bg-blue-500/15 text-blue-300"}`}
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${!calculationReady ? "bg-amber-500/15 text-amber-200" : payable <= 0 ? "bg-emerald-500/15 text-emerald-300" : paid > 0 ? "bg-amber-500/15 text-amber-300" : "bg-blue-500/15 text-blue-300"}`}
     >
       {value}
     </span>
@@ -910,7 +893,6 @@ function EmployeeDrawer({
   onClose,
   onOperation,
   onReversePayment,
-  onReconcile,
   onApproveManual,
 }: {
   row: PayrollRow;
@@ -920,12 +902,11 @@ function EmployeeDrawer({
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
   onReversePayment: (item: Payment) => Promise<unknown>;
-  onReconcile: (row: PayrollRow) => Promise<unknown>;
   onApproveManual: (row: PayrollRow) => Promise<unknown>;
 }) {
   const accrualTotal = (types: string[]) =>
     row.accruals
-      .filter((x) => types.includes(x.type))
+      .filter((x) => !x.reversalOfId && !x.reversedBy && types.includes(x.type))
       .reduce(
         (s, x) => s + Number(x.amount) * (x.direction === "DECREASE" ? -1 : 1),
         0,
@@ -987,7 +968,7 @@ function EmployeeDrawer({
         <div className="mt-5 grid grid-cols-3 gap-2">
           <Metric label="Начислено" value={row.totals.accrued} />
           <Metric label="Выплачено" value={row.totals.paid} />
-          <Metric label="Точно к выплате" value={row.payrollAudit?.approvedPayable ?? row.totals.payable} accent />
+          <Metric label="К выплате" value={row.totals.payable} accent />
         </div>
         {row.payrollAudit && (
           <section className="mt-5 rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4">
@@ -999,7 +980,7 @@ function EmployeeDrawer({
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
-                {row.payrollAudit.readyToPay ? (row.payrollAudit.manualApproved ? "Ручной расчёт подтверждён" : "Проверено системой") : row.payrollAudit.calculationReady ? "Работа не закрыта" : "Нужно выбрать расчёт"}
+                {row.payrollAudit.readyToPay ? (row.payrollAudit.manualApproved ? "Исключение подтверждено" : "Начисления сверены") : row.payrollAudit.calculationReady ? "Работа не закрыта" : "Не всё начислено"}
               </span>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1011,12 +992,12 @@ function EmployeeDrawer({
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {[
                 ["Оклад по профилю", row.payrollAudit.salaryRequired],
-                ["Гарантированные бонусы", row.payrollAudit.requiredOrderBonus],
+                ["Бонусы по правилам", row.payrollAudit.requiredOrderBonus],
                 ["Дополнительная премия", row.payrollAudit.premiums],
                 ["Штрафы / удержания", -row.payrollAudit.deductions],
                 ["Авансы", -row.payrollAudit.advances],
                 ["Другие выплаты", -(row.payrollAudit.alreadyPaid - row.payrollAudit.advances)],
-                [row.payrollAudit.manualApproved ? "К выплате по ручному расчёту" : "Точно к выплате", row.payrollAudit.approvedPayable],
+                ["По правилам к начислению", row.payrollAudit.auditedAccrued],
               ].map(([label, amount], index) => (
                 <div key={String(label)} className={`flex justify-between rounded-xl px-3 py-2 text-sm ${index === 6 ? "bg-emerald-500/10 text-emerald-200" : "bg-slate-950"}`}>
                   <span>{String(label)}</span>
@@ -1026,7 +1007,7 @@ function EmployeeDrawer({
             </div>
             {!row.payrollAudit.calculationReady && (
               <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-                Система ещё не успела применить корректировку по {row.payrollAudit.unreconciledOrders} заказам: {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}. Ежедневная автоматическая сверка исправит расчёт; директор может запустить её сразу либо оформить исключение с обязательной причиной.
+                Не все записи внесены: директор вручную начисляет оклад после окончания месяца, менеджер регистрирует бонус по каждому своему заказу. Осталось учесть {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}.
               </div>
             )}
             {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100"><b>Расчётный лист и выплата заблокированы до завершения работы.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
@@ -1054,7 +1035,7 @@ function EmployeeDrawer({
                 );
               })}
             </div>
-            {director && !closed && !row.payrollAudit.calculationReady && <div className="mt-4 grid gap-2 sm:grid-cols-2"><button onClick={() => void onReconcile(row)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">Применить расчёт системы</button><button onClick={() => void onApproveManual(row)} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Оставить ручной расчёт</button></div>}
+            {director && !closed && !row.payrollAudit.calculationReady && <div className="mt-4"><button onClick={() => void onApproveManual(row)} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Подтвердить исключение вручную</button></div>}
           </section>
         )}
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">

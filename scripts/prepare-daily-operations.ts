@@ -2,7 +2,6 @@ import "dotenv/config";
 
 import { prisma } from "@/lib/prisma";
 import { ensureDailyManagerOperations } from "@/lib/services/daily-operations.service";
-import { reconcileCurrentManagerPayroll } from "@/lib/services/payroll.service";
 import { runWithSystemAccess, runWithTenant } from "@/lib/tenant-context";
 
 async function main() {
@@ -20,10 +19,7 @@ async function main() {
   const result = await runWithTenant({ companyId: company.id, companySlug: company.slug, companyName: company.name, isDemo: false }, async () => {
     const directors = await prisma.user.findMany({ where: { active: true, role: "OPERATIONS_DIRECTOR" }, select: { id: true, name: true, role: true } });
     if (directors.length !== 1) throw new Error(`Expected one operations director, found ${directors.length}`);
-    return {
-      operations: await ensureDailyManagerOperations(directors[0].id),
-      payroll: await reconcileCurrentManagerPayroll({ userId: directors[0].id, name: directors[0].name, role: directors[0].role }),
-    };
+    return { operations: await ensureDailyManagerOperations(directors[0].id) };
   });
   console.log(`Daily manager operations prepared: ${JSON.stringify(result)}`);
 }

@@ -115,6 +115,18 @@ const payrollRouteSource = readFileSync(
   new URL("../app/api/payroll/route.ts", import.meta.url),
   "utf8",
 );
+const payrollSelfRouteSource = readFileSync(
+  new URL("../app/api/payroll/self/route.ts", import.meta.url),
+  "utf8",
+);
+const dailyOperationsRouteSource = readFileSync(
+  new URL("../app/api/cron/daily-operations/route.ts", import.meta.url),
+  "utf8",
+);
+const dailyOperationsReleaseSource = readFileSync(
+  new URL("./prepare-daily-operations.ts", import.meta.url),
+  "utf8",
+);
 const migrationSource = readFileSync(
   new URL(
     "../prisma/migrations/20261002120000_manager_order_bonus_uniqueness/migration.sql",
@@ -137,19 +149,23 @@ const externalReferenceMigrationSource = readFileSync(
   "utf8",
 );
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
-assert.match(serviceSource, /reconcileCurrentManagerPayroll/);
-assert.match(serviceSource, /const periodCoordinates = \[\{ year, month \}, previous\]/);
+assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
+assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
+assert.doesNotMatch(payrollRouteSource, /reconcile-manager-payroll/);
+assert.match(payrollSelfRouteSource, /createSelfAccrual/);
+assert.match(payrollSelfRouteSource, /PayrollAccrualType\.ORDER_BONUS/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_WORK_INCOMPLETE/);
 assert.match(serviceSource, /MANAGER_PAYROLL_MANUAL_APPROVED/);
 assert.match(payrollRouteSource, /approve-manager-payroll-manual/);
 assert.match(serviceSource, /managerPayrollPolicyState/);
+assert.match(serviceSource, /SALARY_ALREADY_ACCRUED/);
+assert.match(serviceSource, /const approvedAccrued = accrued/);
 assert.match(
   payrollRouteSource,
   /session\.user\.accountRole\s*\|\|\s*session\.user\.role/,
 );
-assert.match(serviceSource, /payroll-policy:v1:/);
 assert.match(migrationSource, /PayrollPayment_externalReference_key/);
 assert.match(migrationSource, /PayrollAccrual_one_order_bonus/);
 assert.match(uniquenessMigrationSource, /orderBonusUniquenessKey/);

@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { metaAdsIntegrationStatus, syncMetaAdsMonth } from "@/lib/integrations/meta-ads";
 import { ensureDailyManagerOperations } from "@/lib/services/daily-operations.service";
-import { reconcileCurrentManagerPayroll } from "@/lib/services/payroll.service";
 import { runWithSystemAccess, runWithTenant } from "@/lib/tenant-context";
 
 export const maxDuration = 60;
@@ -28,10 +27,9 @@ export async function GET(request: Request) {
     if (directors.length !== 1) return NextResponse.json({ error: "A unique operations director is required" }, { status: 409 });
     const director = await prisma.user.findUniqueOrThrow({ where: { id: directors[0].id }, select: { id: true, name: true, role: true } });
     const result = await ensureDailyManagerOperations(director.id);
-    const payroll = await reconcileCurrentManagerPayroll({ userId: director.id, name: director.name, role: director.role });
     const meta = metaAdsIntegrationStatus().configured
       ? await syncMetaAdsMonth({ actorId: director.id }).catch((error: unknown) => ({ error: error instanceof Error ? error.message : "META_SYNC_FAILED" }))
       : { skipped: "META_NOT_CONFIGURED" };
-    return NextResponse.json({ result, payroll, meta }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ result, meta }, { headers: { "Cache-Control": "no-store" } });
   });
 }
