@@ -33,7 +33,7 @@ import { type Role } from "@/lib/roles";
 
 const sections = [
   { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
-  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/sales-plan", "План продаж", TrendingUp], ["/measurements", "Замеры", Ruler], ["/catalog", "Каталог лестниц", Images], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/sales-plan", "План продаж", TrendingUp], ["/measurements", "Замеры", Ruler], ["/catalog", "Каталог изделий", Images], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
   { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },

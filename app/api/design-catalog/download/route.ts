@@ -4,7 +4,7 @@ import path from "node:path";
 import JSZip from "jszip";
 import { NextResponse } from "next/server";
 
-import { STAIR_CATALOG_REFERENCES } from "@/lib/design-catalog";
+import { PRODUCT_CATALOG_REFERENCES } from "@/lib/design-catalog";
 import { requirePermission } from "@/lib/server-auth";
 import {
   getDesignCatalogContent,
@@ -56,7 +56,7 @@ export async function GET() {
   }
 
   const zip = new JSZip();
-  const folder = zip.folder("ALTYN SAPA - каталог лестниц");
+  const folder = zip.folder("ALTYN SAPA - каталоги изделий");
   if (!folder)
     return NextResponse.json(
       { error: "Не удалось подготовить архив" },
@@ -64,15 +64,9 @@ export async function GET() {
     );
 
   const used = new Set<string>();
-  for (const [index, reference] of STAIR_CATALOG_REFERENCES.entries()) {
+  for (const [index, reference] of PRODUCT_CATALOG_REFERENCES.entries()) {
     const referenceBytes = await readFile(
-      path.join(
-        process.cwd(),
-        "public",
-        "catalog",
-        "stairs",
-        reference.fileName,
-      ),
+      path.join(process.cwd(), "public", ...reference.publicUrl.split("/").filter(Boolean)),
     );
     const prefix = reference.isReal ? "реальный-проект" : "пример-дизайна";
     folder.file(
@@ -101,14 +95,15 @@ export async function GET() {
   folder.file(
     "КАК ИСПОЛЬЗОВАТЬ.txt",
     [
-      "ALTYN SAPA — каталог лестниц для работы с клиентом",
+      "ALTYN SAPA — каталоги изделий для работы с клиентом",
       "",
       "1. Откройте фотографии на телефоне или планшете и уточните, какой стиль нравится клиенту.",
       "2. Не обещайте точное повторение до замера и расчёта.",
       "3. Файл с пометкой «пример дизайна» является визуальным ориентиром, а не выполненным объектом.",
-      `4. Подготовленных фотографий реальных проектов ALTYN SAPA: ${STAIR_CATALOG_REFERENCES.filter((item) => item.isReal).length}.`,
+      `4. Подготовленных фотографий из утверждённых каталогов ALTYN SAPA: ${PRODUCT_CATALOG_REFERENCES.filter((item) => item.isReal).length}.`,
       `5. Дополнительных фотографий из заказов ORDA ERP: ${added}.`,
-      "6. После выбора сохраните пожелания клиента в замере ORDA ERP.",
+      "6. Внутри ORDA фотографии разделены на лестницы, двери и мебель.",
+      "7. После выбора сохраните пожелания клиента в замере ORDA ERP.",
     ].join("\r\n"),
   );
 
@@ -123,7 +118,7 @@ export async function GET() {
   return new Response(bytes, {
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="ALTYN-SAPA-stair-catalog-${date}.zip"`,
+      "Content-Disposition": `attachment; filename="ALTYN-SAPA-product-catalog-${date}.zip"`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     },

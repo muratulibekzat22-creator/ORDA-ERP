@@ -139,6 +139,9 @@ const externalReferenceMigrationSource = readFileSync(
 assert.match(serviceSource, /FOUNDER_CONFIRMATION_REQUIRED/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
+assert.match(serviceSource, /PAYROLL_WORK_INCOMPLETE/);
+assert.match(serviceSource, /MANAGER_PAYROLL_MANUAL_APPROVED/);
+assert.match(payrollRouteSource, /approve-manager-payroll-manual/);
 assert.match(serviceSource, /managerPayrollPolicyState/);
 assert.match(
   payrollRouteSource,

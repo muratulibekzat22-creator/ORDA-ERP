@@ -894,7 +894,7 @@ export async function getPartnerManagementReadModel(filters: {
       { partner: { name: { contains: filters.query, mode: "insensitive" } } },
     ] } : {}),
   };
-  const [partners, relations, managers, audits, allOrders, unassignedOrders] = await Promise.all([
+  const [partners, relations, managers, audits, allOrders, unassignedOrders, activeOrderStats] = await Promise.all([
     prisma.partner.findMany({
       where: {
         companyId: tenant, isTest: false,
@@ -923,6 +923,19 @@ export async function getPartnerManagementReadModel(filters: {
     prisma.order.count({
       where: { companyId: tenant, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, partnerId: null },
     }),
+    Promise.all([
+      prisma.order.count({
+        where: { companyId: tenant, deletedAt: null, lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+      }),
+      prisma.order.count({
+        where: {
+          companyId: tenant,
+          deletedAt: null,
+          lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+          OR: [{ partnerAgreedAt: null }, { partnerPrice: { lte: 1 } }],
+        },
+      }),
+    ]).then(([active, missingProductionCost]) => ({ active, missingProductionCost })),
   ]);
   let orderRows = relations.map(relationView);
   if (filters.settlementStatus) orderRows = orderRows.filter((item) => item.settlementStatus === filters.settlementStatus);
@@ -999,6 +1012,8 @@ export async function getPartnerManagementReadModel(filters: {
       ...totals,
       activePartners: partners.filter((partner) => partner.businessStatus === PartnerBusinessStatus.ACTIVE && partner.active && !partner.archived).length,
       activeOrders: orderRows.filter((item) => item.order.lifecycle !== OrderLifecycle.COMPLETED && item.order.lifecycle !== OrderLifecycle.CANCELLED).length,
+      activeOrdaOrders: activeOrderStats.active,
+      activeOrdersWithoutProductionCost: activeOrderStats.missingProductionCost,
       allOrders,
       unassignedOrders,
       averageOrder: totals.orders ? totals.orderAmount.div(totals.orders).toDecimalPlaces(2) : new Prisma.Decimal(0),

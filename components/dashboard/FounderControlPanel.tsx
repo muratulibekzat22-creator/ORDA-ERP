@@ -13,6 +13,7 @@ export default function FounderControlPanel() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   async function load(keys?: string[]) {
     setBusy(true); setError("");
@@ -28,13 +29,13 @@ export default function FounderControlPanel() {
   useEffect(() => { const timer = setTimeout(() => void load(), 0); return () => clearTimeout(timer); }, []);
   const issues = data?.issues ?? [];
   const shown = expanded ? issues : issues.slice(0, 5);
-  return <section className="space-y-4 rounded-2xl border border-amber-700/40 bg-[#101827] p-5">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-bold">Контроль исполнения</h2><p className="text-sm text-slate-400">Важные отклонения → поручение сотруднику → проверенный результат</p></div>
-      <button disabled={busy} onClick={() => void load()} className="rounded-xl border border-slate-600 px-4 py-2">Проверить ORDA</button></div>
+  return <section className="space-y-3 rounded-2xl border border-amber-700/30 bg-[#101827] p-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">Контроль исполнения</h2><p className="text-xs text-slate-400">Только отклонения, которые требуют внимания</p></div>
+      <button type="button" onClick={() => setOpen((value) => !value)} className="rounded-xl border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-200">{open ? "Свернуть" : "Открыть контроль"}</button></div>
     {error && <p role="alert" className="text-red-300">{error}</p>}
     {message && <p role="status" className="text-emerald-300">{message}</p>}
-    {data && <><p className="text-sm text-slate-400">Проверено заявок: {data.coverage.leads}; заказов: {data.coverage.orders}. {new Date(data.checkedAt).toLocaleString("ru-RU")}</p>
-      <p className="text-sm">Срочно: {data.summary.urgent} · Ждут ознакомления: {data.summary.unacknowledged} · Просрочено: {data.summary.overdue} · Исправлено: {data.summary.verified}</p>
+    {data && <><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-red-500/10 px-3 py-1.5 text-red-200">Срочно: {data.summary.urgent}</span><span className="rounded-full bg-amber-500/10 px-3 py-1.5 text-amber-200">Ждут ознакомления: {data.summary.unacknowledged}</span><span className="rounded-full bg-slate-900 px-3 py-1.5 text-slate-300">Просрочено: {data.summary.overdue}</span><span className="rounded-full bg-emerald-500/10 px-3 py-1.5 text-emerald-200">Исправлено: {data.summary.verified}</span></div>
+      {open && <><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">Проверено заявок: {data.coverage.leads}; заказов: {data.coverage.orders}. {new Date(data.checkedAt).toLocaleString("ru-RU")}</p><button disabled={busy} onClick={() => void load()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs">Обновить проверку</button></div>
       {data.summary.needsOwner > 0 && <p className="text-amber-300">Нужно ваше решение: назначить ответственного по {data.summary.needsOwner} замечаниям.</p>}
       {shown.map(issue => <article key={issue.key} className="space-y-2 rounded-xl bg-slate-950 p-4">
         <div className="flex flex-wrap justify-between gap-2"><Link href={issue.href} className="font-semibold text-sky-300">{issue.title}</Link><span className="text-sm text-slate-400">{issue.assignee}</span></div>
@@ -45,6 +46,7 @@ export default function FounderControlPanel() {
       {!issues.length && <p className="text-emerald-300">По проверяемым правилам отклонений нет.</p>}
       {issues.length > 5 && <button onClick={() => setExpanded(!expanded)} className="text-sm text-sky-300">{expanded ? "Показать только 5 важных" : `Все отклонения (${issues.length})`}</button>}
       {issues.some(i => !i.task && i.assigneeId) && <button disabled={busy} onClick={() => void load(issues.filter(i => !i.task && i.assigneeId).slice(0, 500).map(i => i.key))} className="block rounded-xl bg-blue-600 px-4 py-3 font-semibold disabled:opacity-40">Назначить все новые замечания</button>}
+      </>}
     </>}
   </section>;
 }

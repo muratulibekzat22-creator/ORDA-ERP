@@ -22,23 +22,13 @@ import {
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
 
-type Tab = "applications" | "board" | "all" | "completed";
-type Application = {
-  id: number;
-  name: string;
-  phone: string;
-  city: string;
-  stage: string;
-  manager: string;
-  updatedAt: string;
-};
+type Tab = "board" | "all" | "completed";
 type Pagination = { page: number; total: number; totalPages?: number; pages?: number };
 
 const tabs: Array<[Tab, string]> = [
   ["board", "Активные заказы"],
   ["all", "Все заказы"],
-  ["completed", "Закрытые заказы"],
-  ["applications", "Заявки"],
+  ["completed", "Завершённые заказы"],
 ];
 
 const normalizeTab = (value: string): Tab =>
@@ -67,7 +57,6 @@ export default function OrdersPage({
       : "",
   );
   const [orders, setOrders] = useState<OrderListItem[]>([]);
-  const [applications, setApplications] = useState<Application[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, total: 0, totalPages: 1 });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -77,8 +66,8 @@ export default function OrdersPage({
   const updateUrl = useCallback((nextTab: Tab, nextStatus: string, nextAttention = "") => {
     const params = new URLSearchParams();
     params.set("tab", nextTab);
-    if (nextStatus !== "all" && nextTab !== "applications") params.set("status", nextStatus);
-    if (nextAttention && nextTab !== "applications") params.set("attention", nextAttention);
+    if (nextStatus !== "all") params.set("status", nextStatus);
+    if (nextAttention) params.set("attention", nextAttention);
     window.history.replaceState(null, "", `/orders?${params.toString()}`);
   }, []);
 
@@ -87,31 +76,21 @@ export default function OrdersPage({
     setError("");
     try {
       const params = new URLSearchParams({ page: String(page), limit: tab === "board" ? "100" : "30" });
-      if (deferredQuery.trim())
-        params.set(tab === "applications" ? "search" : "query", deferredQuery.trim());
-      if (tab === "applications") params.set("compact", "true");
-      else {
-        params.set("tab", tab);
-        if (status !== "all") params.set("status", status);
-        if (attention) params.set("attention", attention);
-      }
+      if (deferredQuery.trim()) params.set("query", deferredQuery.trim());
+      params.set("tab", tab);
+      if (status !== "all") params.set("status", status);
+      if (attention) params.set("attention", attention);
       const response = await fetch(
-        `${tab === "applications" ? "/api/clients" : "/api/orders"}?${params}`,
+        `/api/orders?${params}`,
         { cache: "no-store" },
       );
       const body = (await response.json()) as {
-        data?: OrderListItem[] | Application[];
+        data?: OrderListItem[];
         pagination?: Pagination;
         error?: string;
       };
       if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить список");
-      if (tab === "applications") {
-        setApplications((body.data ?? []) as Application[]);
-        setOrders([]);
-      } else {
-        setOrders((body.data ?? []) as OrderListItem[]);
-        setApplications([]);
-      }
+      setOrders(body.data ?? []);
       setPagination(body.pagination ?? { page: 1, total: 0, totalPages: 1 });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось загрузить список");
@@ -192,14 +171,14 @@ export default function OrdersPage({
         <div>
           <p className="text-sm font-semibold uppercase tracking-widest text-blue-400">Продажи</p>
           <h1 className="mt-1 text-3xl font-bold">Заказы</h1>
-          <p className="mt-1 text-sm text-slate-400">Активные заказы — в работе. Завершённые и отменённые сохранены в разделе «Закрытые заказы» вместе с документами и историей.</p>
+          <p className="mt-1 text-sm text-slate-400">Активные заказы — в работе. Завершённые и отменённые сохранены в разделе «Завершённые заказы» вместе с документами и историей.</p>
         </div>
         <Link href="/orders/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold hover:bg-blue-500">
           <Plus size={18} /> Новый заказ
         </Link>
       </header>
 
-      <div className="grid grid-cols-2 gap-1 rounded-2xl border border-slate-800 bg-[#101827] p-1 sm:grid-cols-4">
+      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-slate-800 bg-[#101827] p-1">
         {tabs.map(([value, label]) => (
           <button key={value} type="button" aria-pressed={tab === value} onClick={() => changeTab(value)} className={`min-h-11 rounded-xl px-2 text-sm font-semibold transition sm:px-4 ${tab === value ? "bg-blue-600 text-white" : "text-slate-400 hover:bg-slate-800"}`}>
             {label}
@@ -215,7 +194,7 @@ export default function OrdersPage({
           <Search className="pointer-events-none absolute left-3 top-3 text-slate-500" size={18} />
           <input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Номер, клиент или телефон" className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-3 text-white outline-none focus:border-blue-500" />
         </label>
-        <label className={tab === "applications" ? "hidden" : "block"}>
+        <label className="block">
           <span className="sr-only">Укрупнённый статус</span>
           <select value={status} onChange={(event) => changeStatus(event.target.value as "all" | UserOrderStatus)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
             <option value="all">Все статусы</option>
@@ -226,7 +205,7 @@ export default function OrdersPage({
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
           </select>
         </label>
-        <label className={tab === "applications" || tab === "completed" ? "hidden" : "block"}>
+        <label className={tab === "completed" ? "hidden" : "block"}>
           <span className="sr-only">Контроль данных</span>
           <select value={attention} onChange={(event) => changeAttention(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
             <option value="">Все данные</option>
@@ -237,7 +216,7 @@ export default function OrdersPage({
       </section>
 
       {error && <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</p>}
-      {loading ? <div className="h-56 animate-pulse rounded-2xl bg-slate-900" /> : tab === "applications" ? <ApplicationsList applications={applications} /> : orders.length ? tab === "board" ? <OrderKanban orders={orders} movingIds={movingIds} onMove={moveOrder} /> : <OrderTable orders={orders} /> : <Empty tab={tab} />}
+      {loading ? <div className="h-56 animate-pulse rounded-2xl bg-slate-900" /> : orders.length ? tab === "board" ? <OrderKanban orders={orders} movingIds={movingIds} onMove={moveOrder} /> : <OrderTable orders={orders} /> : <Empty tab={tab} />}
 
       {!loading && pagination.total > 0 && (
         <footer className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
@@ -253,11 +232,6 @@ export default function OrdersPage({
   );
 }
 
-function ApplicationsList({ applications }: { applications: Application[] }) {
-  if (!applications.length) return <Empty tab="applications" />;
-  return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{applications.map((application) => <Link key={application.id} href={`/clients/${application.id}`} className="min-w-0 rounded-2xl border border-slate-800 bg-[#101827] p-4 hover:border-blue-500/50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate">{application.name}</strong><p className="truncate text-sm text-slate-400">{application.phone} · {application.city}</p></div><span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">Заявка</span></div><p className="mt-3 text-sm text-slate-400">Ответственный: <span className="text-slate-200">{application.manager || "—"}</span></p></Link>)}</div>;
-}
-
 function Empty({ tab }: { tab: Tab }) {
-  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "applications" ? "Заявок по выбранному фильтру нет" : tab === "completed" ? "Закрытых заказов по выбранному фильтру нет" : "Заказов по выбранному фильтру нет"}</div>;
+  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "completed" ? "Завершённых или отменённых заказов по выбранному фильтру нет" : "Заказов по выбранному фильтру нет"}</div>;
 }

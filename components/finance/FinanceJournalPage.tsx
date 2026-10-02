@@ -491,10 +491,10 @@ export default function FinanceJournalPage() {
           hint="Оплаты клиентов и другие поступления"
         />
         <Metric
-          label="Потрачено денег"
+          label="Фактически выплачено"
           value={journal.totals.expense}
           color="text-rose-300"
-          hint="Все фактически учтённые расходы"
+          hint="Движение денег: операционные траты, зарплата и выплаты цехам"
         />
         <Metric
           label="Чистый денежный поток"
@@ -966,8 +966,8 @@ function ExpenseOverview({ journal }: { journal: Journal }) {
   return (
     <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:p-5">
       <div>
-        <h2 className="text-lg font-semibold text-white">Куда ушли деньги</h2>
-        <p className="mt-1 text-sm text-slate-400">Расходы разделены по смыслу, чтобы сразу видеть постоянную нагрузку и разовые траты.</p>
+        <h2 className="text-lg font-semibold text-white">Фактические выплаты за период</h2>
+        <p className="mt-1 text-sm text-slate-400">Здесь показано движение денег. Цена производства относится к прямой себестоимости заказа, а не к постоянным или разовым расходам компании.</p>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {journal.expenseGroups.map((group) => {
@@ -993,7 +993,7 @@ function ExpenseOverview({ journal }: { journal: Journal }) {
           bar="bg-emerald-500"
         />
         <CategoryBars
-          title="На что потратили"
+          title="Кому и за что выплатили"
           empty="За выбранный период расходов пока нет."
           rows={journal.expenseByCategory}
           total={journal.totals.expense}

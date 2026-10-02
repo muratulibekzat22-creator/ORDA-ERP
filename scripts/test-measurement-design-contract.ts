@@ -64,8 +64,10 @@ assert(catalog.includes("CATALOG_REFERENCE_SELECTED"));
 assert(catalog.includes('purpose: { in: CATALOG_PURPOSES }'));
 assert(catalogDownloadRoute.includes('requirePermission("measurements")'));
 assert(catalogDownloadRoute.includes("application/zip"));
-assert(catalogPage.includes("Скачать весь каталог ZIP"));
-assert(catalogPage.includes("Открыть крупно"));
+assert(catalogPage.includes("Скачать каталоги"));
+assert(catalogPage.includes("Каталог изделий ALTYN SAPA"));
+for (const section of ["Лестницы", "Двери", "Мебель"])
+  assert(catalogPage.includes(section));
 assert(STAIR_CATALOG_REFERENCES.filter((item) => item.isReal).length >= 3);
 for (const item of STAIR_CATALOG_REFERENCES) {
   assert(

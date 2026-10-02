@@ -62,7 +62,7 @@ for (const lifecycle of [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED]) {
 }
 
 const ordersPage = readFileSync("components/pages/OrdersPage.tsx", "utf8");
-for (const tab of ["Заявки", "Активные заказы", "Все заказы", "Закрытые заказы"])
+for (const tab of ["Активные заказы", "Все заказы", "Завершённые заказы"])
   assert(ordersPage.includes(tab), `Orders page is missing the ${tab} tab`);
 for (const removed of ["without-partner", "partner-payable", "overdue-client"])
   assert(!ordersPage.includes(removed), `Legacy settlement filter remains: ${removed}`);

@@ -5,7 +5,8 @@ const orders = readFileSync("components/pages/OrdersPage.tsx", "utf8");
 assert.match(orders, /useDeferredValue/);
 assert.match(orders, /OrderTable/);
 assert.match(orders, /USER_ORDER_STATUSES/);
-assert.match(orders, /compact/);
+assert.doesNotMatch(orders, /\/api\/clients/);
+assert.match(orders, /type Tab = "board" \| "all" \| "completed"/);
 
 const documents = readFileSync("components/pages/DocumentsPage.tsx", "utf8");
 assert.match(documents, /useDeferredValue/);

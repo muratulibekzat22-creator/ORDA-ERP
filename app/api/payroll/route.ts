@@ -15,6 +15,7 @@ import { ensureUserEmployeeProfiles } from "@/lib/services/employee.service";
 import {
   changeAllowance,
   changeSalary,
+  approveManagerPayrollManual,
   closePeriod,
   createAccrual,
   createPayment,
@@ -205,6 +206,18 @@ export async function POST(request: Request) {
             periodId: Number(body.periodId),
             key: keyResult.key,
             requestHash: hash,
+          },
+          identity,
+        ),
+      );
+    if (action === "approve-manager-payroll-manual")
+      return NextResponse.json(
+        await approveManagerPayrollManual(
+          {
+            employeeId: Number(body.employeeId),
+            periodId: Number(body.periodId),
+            reason: String(body.reason ?? ""),
+            key: keyResult.key,
           },
           identity,
         ),

@@ -7,6 +7,9 @@ export type SalesPlanActor = { userId: number; role: Role };
 
 const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
 
+const localDateKey = (value: Date) =>
+  new Date(value.getTime() + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
+
 function monthRange(key?: string) {
   const now = new Date();
   const local = new Date(now.getTime() + ALMATY_OFFSET_MS);
@@ -223,7 +226,7 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
 export async function getSalesPlan(month: string | undefined, actor: SalesPlanActor) {
   const period = monthRange(month);
   const companyId = requireTenantIdentity().companyId;
-  const [plan, actual, suggested, managers, applications, marketingMetrics] = await Promise.all([
+  const [plan, actual, suggested, managers, applications, marketingMetrics, ledgerOrders] = await Promise.all([
     ensurePlan(actor, period.year, period.month),
     orderMetrics(period.start, period.end),
     recommendation(period.year, period.month),
@@ -247,6 +250,24 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       },
       select: { spend: true, leads: true },
     }),
+    prisma.order.findMany({
+      where: {
+        companyId,
+        deletedAt: null,
+        lifecycle: { not: OrderLifecycle.CANCELLED },
+        orderReceivedAt: { gte: period.start, lt: period.end },
+      },
+      select: {
+        id: true,
+        number: true,
+        amount: true,
+        orderReceivedAt: true,
+        manager: true,
+        managerUser: { select: { name: true } },
+        client: { select: { name: true } },
+      },
+      orderBy: [{ orderReceivedAt: "desc" }, { id: "desc" }],
+    }),
   ]);
   const now = new Date();
   const localNow = new Date(now.getTime() + ALMATY_OFFSET_MS);
@@ -258,6 +279,31 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
   const projectedRevenue = elapsedDays > 0
     ? Math.round((actual.revenue / elapsedDays) * daysInMonth)
     : 0;
+  const ledgerByDay = new Map<string, {
+    date: string;
+    revenue: number;
+    orders: number;
+    items: Array<{ id: number; number: string; client: string; manager: string; amount: number }>;
+  }>();
+  for (const order of ledgerOrders) {
+    const key = localDateKey(order.orderReceivedAt);
+    const row = ledgerByDay.get(key) ?? { date: key, revenue: 0, orders: 0, items: [] };
+    row.revenue += Number(order.amount);
+    row.orders += 1;
+    row.items.push({
+      id: order.id,
+      number: order.number,
+      client: order.client.name,
+      manager: order.managerUser?.name ?? order.manager ?? "Не назначен",
+      amount: Number(order.amount),
+    });
+    ledgerByDay.set(key, row);
+  }
+  const todayKey = localDateKey(now);
+  if (isCurrent && !ledgerByDay.has(todayKey))
+    ledgerByDay.set(todayKey, { date: todayKey, revenue: 0, orders: 0, items: [] });
+  const dailySales = [...ledgerByDay.values()].sort((a, b) => b.date.localeCompare(a.date));
+  const todaySales = ledgerByDay.get(todayKey) ?? { date: todayKey, revenue: 0, orders: 0, items: [] };
   const canEdit = ([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] as Role[]).includes(actor.role);
   const minimumMarginPercent = Number(plan?.minimumMarginPercent ?? 25);
   const requiredCostCoveragePercent = Number(
@@ -442,6 +488,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       progressPercent,
       gap: Math.max(0, revenueTarget - actual.revenue),
       projectedRevenue,
+      projectionDays: elapsedDays,
       marginCoveragePercent: actual.marginCoveragePercent,
       pricedOrders: actual.pricedOrders,
       pricedRevenue: actual.pricedRevenue,
@@ -470,6 +517,11 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     },
     history: suggested.history,
     managers: managerProgress,
+    ledger: {
+      source: "Дата принятия заказа в ORDA (orderReceivedAt), без переноса из другого месяца",
+      today: { date: todaySales.date, revenue: todaySales.revenue, orders: todaySales.orders },
+      days: dailySales,
+    },
     dailyFunnel,
   };
 }

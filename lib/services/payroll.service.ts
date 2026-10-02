@@ -1,6 +1,10 @@
 import {
   AdvanceRequestStatus,
   BonusPaymentMode,
+  CalendarTaskStatus,
+  CalendarTaskWorkflow,
+  MeasurementStatus,
+  OrderLifecycle,
   PayrollConfirmationStatus,
   PayrollAccrualType,
   PayrollDirection,
@@ -9,6 +13,7 @@ import {
   Prisma,
   Role,
 } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { compareRequestHash } from "@/lib/idempotency";
 import { companyMonthRange } from "@/lib/company-calendar";
 import {
@@ -29,6 +34,7 @@ import {
   payrollPaymentReference,
 } from "@/lib/payroll-policy";
 import { prisma } from "@/lib/prisma";
+import { orderDataGaps } from "@/lib/orders/completeness";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export type PayrollActor = { userId: number; role: Role; name: string };
@@ -63,6 +69,72 @@ const payrollOperator = (actor: PayrollActor) => {
     throw new PayrollError("FORBIDDEN");
 };
 const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
+
+function payrollPolicyStateSignature(
+  salaryDelta: number,
+  orderDeltas: Array<{ orderId: number; delta: number }>,
+) {
+  const value = {
+    salaryDelta: Math.round(salaryDelta * 100),
+    orderDeltas: orderDeltas
+      .map((row) => ({ orderId: row.orderId, delta: Math.round(row.delta * 100) }))
+      .sort((a, b) => a.orderId - b.orderId),
+  };
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function managerWorkReadiness(
+  tx: Prisma.TransactionClient,
+  employee: { userId: number | null; position: string; user?: { role: Role } | null },
+) {
+  const applies = employee.user?.role === Role.MANAGER || employee.position === Role.MANAGER;
+  if (!applies || !employee.userId)
+    return { ready: true, orderIssues: 0, measurementsToClose: 0, openTasks: 0 };
+  const companyId = requireTenantIdentity().companyId;
+  const [orders, measurementsToClose, openTasks] = await Promise.all([
+    tx.order.findMany({
+      where: {
+        companyId,
+        deletedAt: null,
+        lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+        managerUserId: employee.userId,
+      },
+      select: {
+        managerUserId: true,
+        partnerId: true,
+        partnerPrice: true,
+        partnerAgreedAt: true,
+        promisedAt: true,
+        productionDeadline: true,
+        client: { select: { phone: true, city: true } },
+        installation: { select: { scheduledAt: true } },
+      },
+    }),
+    tx.measurement.count({
+      where: {
+        companyId,
+        visitDate: { lt: new Date() },
+        status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] },
+        client: { managerUserId: employee.userId },
+      },
+    }),
+    tx.calendarTask.count({
+      where: {
+        companyId,
+        assigneeId: employee.userId,
+        workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
+        status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
+      },
+    }),
+  ]);
+  const orderIssues = orders.filter((order) => orderDataGaps(order).length > 0).length;
+  return {
+    ready: orderIssues === 0 && measurementsToClose === 0 && openTasks === 0,
+    orderIssues,
+    measurementsToClose,
+    openTasks,
+  };
+}
 
 export async function ensurePeriod(year: number, month: number) {
   if (
@@ -540,6 +612,8 @@ async function managerPayrollPolicyState(
       orderBonusDelta: 0,
       orderDeltas: [],
       reconciled: true,
+      manualApproved: false,
+      signature: "",
     };
 
   const range = companyMonthRange(period.year, period.month);
@@ -615,6 +689,18 @@ async function managerPayrollPolicyState(
     (sum, row) => sum + row.delta,
     0,
   );
+  const signature = payrollPolicyStateSignature(salaryDelta, orderDeltas);
+  const approval = await tx.payrollAuditEvent.findFirst({
+    where: {
+      periodId: period.id,
+      employeeId,
+      action: "MANAGER_PAYROLL_MANUAL_APPROVED",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { after: true },
+  });
+  const approvalAfter = approval?.after as { signature?: string } | null;
+  const manualApproved = approvalAfter?.signature === signature;
   return {
     applies: true,
     delta: salaryDelta + orderBonusDelta,
@@ -624,7 +710,9 @@ async function managerPayrollPolicyState(
     reconciled: isPayrollPolicyReady(
       salaryDelta,
       orderDeltas.map((row) => row.delta),
-    ),
+    ) || manualApproved,
+    manualApproved,
+    signature,
   };
 }
 
@@ -655,7 +743,10 @@ async function createPaymentTx(
     return existing;
   }
   const period = await openPeriod(tx, input.periodId);
-  const employee = await tx.employeePayrollProfile.findUnique({ where: { id: input.employeeId } });
+  const employee = await tx.employeePayrollProfile.findUnique({
+    where: { id: input.employeeId },
+    include: { user: { select: { role: true } } },
+  });
   if (!employee?.payrollEnabled || !employee.active)
     throw new PayrollError("EMPLOYEE_NOT_FOUND");
   if (finalSalaryPayment) {
@@ -666,6 +757,9 @@ async function createPaymentTx(
     );
     if (reconciliation.applies && !reconciliation.reconciled)
       throw new PayrollError("PAYROLL_RECONCILIATION_REQUIRED");
+    const workReadiness = await managerWorkReadiness(tx, employee);
+    if (!workReadiness.ready)
+      throw new PayrollError("PAYROLL_WORK_INCOMPLETE");
   }
   if (
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
@@ -1089,6 +1183,40 @@ export async function reconcileManagerPayroll(
   }
 }
 
+export async function approveManagerPayrollManual(
+  input: { employeeId: number; periodId: number; reason: string; key: string },
+  actor: PayrollActor,
+) {
+  director(actor);
+  const reason = requiredReason(input.reason);
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.payrollAuditEvent.findUnique({ where: { idempotencyKey: input.key } });
+    if (existing) return { approved: true, replay: true };
+    const period = await openPeriod(tx, input.periodId);
+    const state = await managerPayrollPolicyState(tx, input.employeeId, period);
+    if (!state.applies) throw new PayrollError("PAYROLL_POLICY_NOT_APPLICABLE");
+    await tx.payrollAuditEvent.create({
+      data: {
+        action: "MANAGER_PAYROLL_MANUAL_APPROVED",
+        actorId: actor.userId,
+        periodId: period.id,
+        employeeId: input.employeeId,
+        before: {
+          salaryDelta: state.salaryDelta,
+          orderBonusDelta: state.orderBonusDelta,
+        },
+        after: {
+          signature: state.signature,
+          mode: "MANUAL",
+        },
+        reason,
+        idempotencyKey: input.key,
+      },
+    });
+    return { approved: true, replay: false };
+  }, transactionOptions);
+}
+
 export async function requestPaymentConfirmation(
   input: {
     periodId: number;
@@ -1502,7 +1630,7 @@ export async function payrollSummary(
     select: { year: true, month: true },
   });
   const periodRange = companyMonthRange(period.year, period.month);
-  const [employees, settings, periodOrders] = await Promise.all([prisma.employeePayrollProfile.findMany({
+  const [employees, settings, periodOrders, readinessOrders, readinessMeasurements, readinessTasks, manualApprovals] = await Promise.all([prisma.employeePayrollProfile.findMany({
     where: {
       ...(employeeId ? { id: employeeId } : {}),
       payrollEnabled: true,
@@ -1560,6 +1688,42 @@ export async function payrollSummary(
       client: { select: { name: true, phone: true } },
     },
     orderBy: [{ orderReceivedAt: "asc" }, { id: "asc" }],
+  }), prisma.order.findMany({
+    where: {
+      companyId: requireTenantIdentity().companyId,
+      deletedAt: null,
+      lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+      managerUserId: { not: null },
+    },
+    select: {
+      managerUserId: true,
+      partnerId: true,
+      partnerPrice: true,
+      partnerAgreedAt: true,
+      promisedAt: true,
+      productionDeadline: true,
+      client: { select: { phone: true, city: true } },
+      installation: { select: { scheduledAt: true } },
+    },
+  }), prisma.measurement.findMany({
+    where: {
+      companyId: requireTenantIdentity().companyId,
+      visitDate: { lt: new Date() },
+      status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] },
+      client: { managerUserId: { not: null } },
+    },
+    select: { client: { select: { managerUserId: true } } },
+  }), prisma.calendarTask.findMany({
+    where: {
+      companyId: requireTenantIdentity().companyId,
+      workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
+      status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
+    },
+    select: { assigneeId: true },
+  }), prisma.payrollAuditEvent.findMany({
+    where: { periodId, action: "MANAGER_PAYROLL_MANUAL_APPROVED", employeeId: { not: null } },
+    select: { employeeId: true, after: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
   })]);
   const rows = employees.map((employee) => {
     const accrued = employee.accruals.reduce(
@@ -1771,7 +1935,33 @@ export async function payrollSummary(
       (sum, row) => sum + row.ledgerDifference,
       0,
     );
+    const policyReady = isPayrollPolicyReady(
+      salaryDifference,
+      allOrderBonusAudit.map((row) => row.ledgerDifference),
+    );
+    const policySignature = payrollPolicyStateSignature(
+      salaryDifference,
+      allOrderBonusAudit.map((row) => ({ orderId: row.orderId, delta: row.ledgerDifference })),
+    );
+    const latestApproval = manualApprovals.find((row) => row.employeeId === employee.id);
+    const approvalAfter = latestApproval?.after as { signature?: string } | null;
+    const manualApproved = !policyReady && approvalAfter?.signature === policySignature;
+    const workReadiness = managerPolicyApplies && identity.id
+      ? {
+          orderIssues: readinessOrders.filter(
+            (order) => order.managerUserId === identity.id && orderDataGaps(order).length > 0,
+          ).length,
+          measurementsToClose: readinessMeasurements.filter(
+            (measurement) => measurement.client.managerUserId === identity.id,
+          ).length,
+          openTasks: readinessTasks.filter((task) => task.assigneeId === identity.id).length,
+          ready: false,
+        }
+      : { orderIssues: 0, measurementsToClose: 0, openTasks: 0, ready: true };
+    workReadiness.ready = workReadiness.orderIssues === 0 && workReadiness.measurementsToClose === 0 && workReadiness.openTasks === 0;
     const auditedAccrued = accrued + salaryDifference + bonusLedgerDifference;
+    const approvedAccrued = manualApproved ? accrued : auditedAccrued;
+    const approvedPayable = approvedAccrued - paid;
     const payments = employee.payments.map((payment) => ({
       ...payment,
       confirmationNumber: payrollPaymentReference(
@@ -1844,13 +2034,15 @@ export async function payrollSummary(
             ledgerDifference: salaryDifference + bonusLedgerDifference,
             auditedAccrued,
             auditedPayable: auditedAccrued - paid,
+            approvedAccrued,
+            approvedPayable,
             unreconciledOrders: allOrderBonusAudit.filter(
               (row) => !row.reconciled,
             ).length,
-            readyToPay: isPayrollPolicyReady(
-              salaryDifference,
-              allOrderBonusAudit.map((row) => row.ledgerDifference),
-            ),
+            calculationReady: policyReady || manualApproved,
+            manualApproved,
+            workReadiness,
+            readyToPay: (policyReady || manualApproved) && workReadiness.ready,
             mismatches: allOrderBonusAudit,
           }
         : null,
