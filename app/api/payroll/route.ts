@@ -58,19 +58,20 @@ export async function GET(request: Request) {
   const auth = await requirePermission("payroll");
   if (auth.response) return auth.response;
   try {
-    await ensureUserEmployeeProfiles();
     const params = new URL(request.url).searchParams;
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
     const identity = actor(auth.session!);
+    if (identity.role === Role.OPERATIONS_DIRECTOR)
+      await ensureUserEmployeeProfiles();
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
     if (!period && identity.role === Role.OPERATIONS_DIRECTOR)
       period = await ensurePeriod(year, month);
-    const settings = await prisma.systemSettings.upsert({
-      where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
-    });
+    const settings = await prisma.systemSettings.findUnique({
+      where: { companyId: requireTenantIdentity().companyId }, select: { paydayDayOfMonth: true },
+    }) ?? { paydayDayOfMonth: 1 };
     const unconfigured = identity.role === Role.OPERATIONS_DIRECTOR
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
       : [];

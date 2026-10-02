@@ -1,6 +1,7 @@
 import { OrderLifecycle, Prisma, Role } from "@prisma/client";
 
 import { hasProductionPrice } from "@/lib/orders/production-price";
+import { effectiveMarketingMetrics } from "@/lib/marketing";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -250,7 +251,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
         companyId,
         metricMonth: { gte: period.start, lt: period.end },
       },
-      select: { spend: true, leads: true },
+      select: { channel: true, note: true, spend: true, leads: true },
     }),
     prisma.order.findMany({
       where: {
@@ -373,7 +374,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       };
     }),
   );
-  const marketingActual = marketingMetrics.reduce(
+  const marketingActual = effectiveMarketingMetrics(marketingMetrics).reduce(
     (total, metric) => ({
       spend: total.spend + Number(metric.spend),
       inquiries: total.inquiries + metric.leads,

@@ -1725,7 +1725,7 @@ export async function payrollSummary(
       advanceRequests: { where: { periodId }, orderBy: { createdAt: "desc" } },
     },
     orderBy: { name: "asc" },
-  }), prisma.systemSettings.upsert({ where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true } }), prisma.order.findMany({
+  }), prisma.systemSettings.findUnique({ where: { companyId: requireTenantIdentity().companyId }, select: { paydayDayOfMonth: true } }), prisma.order.findMany({
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
@@ -2120,7 +2120,7 @@ export async function payrollSummary(
   }), { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 });
   return {
     rows,
-    settings,
+    settings: settings ?? { paydayDayOfMonth: 1 },
     breakdown,
     totals: rows.reduce(
       (sum, row) => ({
