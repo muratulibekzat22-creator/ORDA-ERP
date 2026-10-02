@@ -171,7 +171,7 @@ export default function OrdersPage({
         <div>
           <p className="text-sm font-semibold uppercase tracking-widest text-blue-400">Продажи</p>
           <h1 className="mt-1 text-3xl font-bold">Заказы</h1>
-          <p className="mt-1 text-sm text-slate-400">Активные заказы — в работе. Завершённые и отменённые сохранены в разделе «Завершённые заказы» вместе с документами и историей.</p>
+          <p className="mt-1 text-sm text-slate-400">Активные заказы — в работе. В разделе «Завершённые заказы» показываются только полностью завершённые работы; отменённые записи остаются доступными во вкладке «Все заказы».</p>
         </div>
         <Link href="/orders/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 font-semibold hover:bg-blue-500">
           <Plus size={18} /> Новый заказ
@@ -200,7 +200,7 @@ export default function OrdersPage({
             <option value="all">Все статусы</option>
             {USER_ORDER_STATUSES.filter((value) =>
               tab === "completed"
-                ? value === "COMPLETED" || value === "CANCELLED"
+                ? value === "COMPLETED"
                 : tab === "all" || (value !== "COMPLETED" && value !== "CANCELLED"),
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
           </select>
@@ -233,5 +233,5 @@ export default function OrdersPage({
 }
 
 function Empty({ tab }: { tab: Tab }) {
-  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "completed" ? "Завершённых или отменённых заказов по выбранному фильтру нет" : "Заказов по выбранному фильтру нет"}</div>;
+  return <div className="rounded-2xl border border-dashed border-slate-700 p-12 text-center text-slate-400">{tab === "completed" ? "Завершённых заказов по выбранному фильтру нет" : "Заказов по выбранному фильтру нет"}</div>;
 }

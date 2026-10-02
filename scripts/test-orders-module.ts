@@ -67,7 +67,7 @@ for (const tab of ["Активные заказы", "Все заказы", "За
 for (const removed of ["without-partner", "partner-payable", "overdue-client"])
   assert(!ordersPage.includes(removed), `Legacy settlement filter remains: ${removed}`);
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
-assert(ordersApi.includes("[OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED]"), "completed tab must retain cancelled orders");
+assert.match(ordersApi, /tab === "completed"\s*\? \{ lifecycle: OrderLifecycle\.COMPLETED \}/, "completed tab must contain only completed orders");
 assert.match(ordersApi, /tab === "active" \|\| tab === "board"\s*\? \{ lifecycle: \{ notIn: \[OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED\]/);
 assert(ordersApi.includes('mode: "insensitive"'), "legacy manager order fallback must ignore name casing");
 const ownershipMigration = readFileSync(
