@@ -78,7 +78,8 @@ export async function POST(request: Request) {
     const managerUserId = role === Role.MANAGER ? Number(auth.session!.user.id) : Number(body.managerUserId ?? auth.session!.user.id);
     const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] } }, select: { id: true, name: true } });
     if (!managerUser) return NextResponse.json({ error: "Некорректный ответственный менеджер" }, { status: 400 });
-    const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source) ?? LeadSource.WHATSAPP;
+    const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source);
+    if (!sourceCode) return NextResponse.json({ error: "Выберите источник заявки" }, { status: 400 });
     const client = await prisma.$transaction(async (tx) => {
       const created = await tx.client.create({ data: { name, phone: normalized, whatsapp: normalized, city, address: text(body.address) ?? "", iin: text(body.iin) ?? "", manager: managerUser.name, managerUserId: managerUser.id, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? requestText, source: text(body.source) ?? sourceCode, sourceCode, comment: requestText, stage: LeadStage.NEW, status: LeadStage.NEW } });
       await tx.leadStatusHistory.create({ data: { clientId: created.id, toStatus: LeadStage.NEW, toStage: LeadStage.NEW, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? managerUser.name, comment: "Обращение создано" } });

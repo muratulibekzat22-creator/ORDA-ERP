@@ -7,8 +7,10 @@ const schema = read("prisma/schema.prisma");
 const service = read("lib/services/daily-operations.service.ts");
 const mandatory = read("lib/services/mandatory-task.service.ts");
 const cron = read("app/api/cron/daily-operations/route.ts");
+const buildScript = read("scripts/vercel-build.mjs");
 const vercel = JSON.parse(read("vercel.json")) as { crons?: Array<{ path: string; schedule: string }> };
 const dashboard = read("components/dashboard/DirectorCockpit.tsx");
+const founderControl = read("components/dashboard/FounderControlPanel.tsx");
 const marketing = read("components/marketing/MarketingManagementPage.tsx");
 const legacyCrm = read("app/crm/page.tsx");
 
@@ -36,7 +38,10 @@ assert.match(mandatory.replace(/\s+/g, " "), /\{ workflow: null \}, \{ dueAt: \{
 assert.match(cron, /timingSafeEqual/, "cron must use constant-time secret comparison");
 assert.match(cron, /company\.isDemo/, "cron must reject demo tenants");
 assert(vercel.crons?.some((item) => item.path === "/api/cron/daily-operations" && item.schedule === "0 5 * * *"), "10:00 Almaty daily cron is missing");
+assert.match(buildScript, /RUN_RELEASE_PREPARATION === "true"/, "ordinary deployments must not mutate staff tasks or payroll");
 assert.match(dashboard, /Ежедневный CRM-контроль/, "manager/director CRM summary is missing");
+assert.match(founderControl, /Сводных групп:/, "founder control must show consolidated groups");
+assert.doesNotMatch(founderControl, /Отклонений:.*summary\.total/, "founder control must not lead with hundreds of raw exceptions");
 assert.match(marketing, /CRM за предыдущий день/, "marketing CRM summary is missing");
 assert.match(legacyCrm, /redirect\("\/clients"\)/, "legacy demo CRM route must redirect to the live clients workspace");
 assert.doesNotMatch(legacyCrm, /\+7 777 123 45 67/, "legacy demo client data must not remain reachable");

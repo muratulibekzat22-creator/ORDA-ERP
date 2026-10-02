@@ -79,17 +79,20 @@ for (const field of [
   "Имя клиента",
   "WhatsApp / телефон",
   "Город",
+  "Источник заявки",
   "Ответственный менеджер",
 ])
   if (!modal.includes(field))
     throw new Error(`Minimal application field missing: ${field}`);
 if (!clientApi.includes("Укажите имя клиента") || !modal.includes("if (!name.trim())"))
   throw new Error("Client name must be enforced by UI and API");
-for (const forbidden of ["Предварительная сумма", "Источник заявки", "Статус"])
+for (const forbidden of ["Предварительная сумма", "Статус"])
   if (modal.includes(forbidden))
     throw new Error(
       `Technical field leaked into minimal application form: ${forbidden}`,
     );
+if (!modal.includes("sourceCode") || !clientApi.includes("Выберите источник заявки"))
+  throw new Error("Every manually created application must record its source");
 if (
   !managersApi.includes("active: true") ||
   !managersApi.includes("Role.MANAGER")

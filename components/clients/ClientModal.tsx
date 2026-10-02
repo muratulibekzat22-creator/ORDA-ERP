@@ -4,7 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, LoaderCircle, X } from "lucide-react";
 import CityCombobox from "@/components/clients/CityCombobox";
 
-export type ClientDraft = { name: string; phone: string; city: string; managerUserId: string };
+type LeadSourceCode = "WHATSAPP" | "INSTAGRAM" | "CALL" | "WEBSITE" | "REFERRAL" | "OFFICE" | "REPEAT" | "OTHER";
+export type ClientDraft = { name: string; phone: string; city: string; managerUserId: string; sourceCode: LeadSourceCode };
 type CreatedClient = { id: number; name: string; phone: string; city: string };
 type Manager = { id: number; name: string };
 type Tariff = { code: string; uiName: string; kind: string; salePrice: number; defaultQuantity: number; unit: string };
@@ -22,6 +23,7 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
   const [phone, setPhone] = useState("+7");
   const [city, setCity] = useState("Алматы");
   const [managerUserId, setManagerUserId] = useState("");
+  const [sourceCode, setSourceCode] = useState<LeadSourceCode | "">("");
   const [managers, setManagers] = useState<Manager[]>([]);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [deliveryPrices, setDeliveryPrices] = useState<Record<DeliveryOption, number>>({ NONE: 0, OPTION_1: 0, OPTION_2: 0 });
@@ -125,13 +127,14 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
     setError("");
     if (phone.replace(/\D/g, "").length < 10) return setError("Укажите корректный номер WhatsApp");
     if (!managerUserId) return setError("Выберите ответственного менеджера");
+    if (!sourceCode) return setError("Выберите источник заявки — это нужно для точного отчёта по рекламе");
     const normalizedCity = city.trim();
     if (!name.trim()) return setError("Укажите имя клиента");
     if (!normalizedCity) return setError("Укажите город");
     if (preview.length !== 3) return setError("Дождитесь расчёта трёх вариантов");
     setWorking(true);
     try {
-      const client = await onSave({ name: name.trim(), phone, city: normalizedCity, managerUserId });
+      const client = await onSave({ name: name.trim(), phone, city: normalizedCity, managerUserId, sourceCode });
       const options = await Promise.all(materials.map(async (material) => {
         const response = await fetch(`/api/clients/${client.id}/calculations`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...calculationInput, material }) });
         const payload = await response.json() as Option & { error?: string };
@@ -155,7 +158,7 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
       <div className="flex items-start justify-between gap-3"><div><h2 id="new-lead-title" className="text-2xl font-bold text-white">Новая заявка</h2><p className="mt-1 text-sm text-slate-400">Клиент, расчёт трёх вариантов и КП — в одном окне</p></div><button type="button" onClick={onClose} disabled={working} className="grid size-11 shrink-0 place-items-center rounded-xl text-slate-300" aria-label="Закрыть"><X /></button></div>
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-950/50 p-3 text-sm text-red-300">{error}</p>}
       {proposal ? <Success proposal={proposal} onClose={onClose} /> : <form onSubmit={submit}>
-        <section className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Имя клиента"><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field><Field label="WhatsApp / телефон"><input required type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className={input} /></Field><Field label="Город"><CityCombobox value={city} onChange={setCity} className={input}/></Field><Field label="Ответственный менеджер"><select required value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)} className={input}><option value="">Выберите менеджера</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field></section>
+        <section className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Имя клиента"><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field><Field label="WhatsApp / телефон"><input required type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className={input} /></Field><Field label="Город"><CityCombobox value={city} onChange={setCity} className={input}/></Field><Field label="Источник заявки"><select required value={sourceCode} onChange={(event) => setSourceCode(event.target.value as LeadSourceCode | "")} className={input}><option value="">Выберите источник</option><option value="INSTAGRAM">Instagram / Meta-реклама</option><option value="WHATSAPP">WhatsApp</option><option value="CALL">Звонок</option><option value="WEBSITE">Сайт</option><option value="REFERRAL">Рекомендация</option><option value="OFFICE">Офис</option><option value="REPEAT">Повторный клиент</option><option value="OTHER">Другое</option></select></Field><Field label="Ответственный менеджер"><select required value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)} className={input}><option value="">Выберите менеджера</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field></section>
 
         <section className="mt-6 rounded-xl border border-slate-700 p-4"><h3 className="font-semibold text-white">Калькулятор лестницы</h3><div className="mt-4 grid gap-3 sm:grid-cols-2"><Counter label="Количество ступеней" value={steps} min={0} onChange={setSteps} /><Counter label="Количество площадок" value={platforms} min={0} onChange={setPlatforms} /><NumberField label="Ограждение, м" value={railingMeters} onChange={setRailingMeters} /><Toggle label="Подступенки" value={risers} onChange={setRisers} /></div><div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><Toggle label="Монтаж" value={installation} onChange={setInstallation} /><Toggle label="Замер" value={measurement} onChange={setMeasurement} />{city.trim().toLocaleLowerCase("ru") === "алматы" && <Toggle label="Доставка по Алматы" value={almatyDelivery} onChange={setAlmatyDelivery} />}</div>
 

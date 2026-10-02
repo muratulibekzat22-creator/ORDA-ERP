@@ -21,12 +21,14 @@ if (process.env.DATABASE_URL?.trim()) {
 
 run("prisma:generate");
 
-if (process.env.DATABASE_URL?.trim()) {
+if (process.env.DATABASE_URL?.trim() && process.env.RUN_RELEASE_PREPARATION === "true") {
   run("seed:training");
   run("prepare:director:release");
   run("prepare:whatsapp-partners:release");
   run("prepare:sales-plan:release");
   run("prepare:daily-operations:release");
+} else if (process.env.DATABASE_URL?.trim()) {
+  console.log("Release preparation is disabled for this build; scheduled operations continue through cron jobs.");
 } else {
   console.log("DATABASE_URL is not configured; skipping database preparation for this preview build.");
 }

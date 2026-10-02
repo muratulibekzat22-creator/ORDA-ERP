@@ -208,7 +208,7 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
     });
     if (supersededMetrics.length)
       await tx.companyLedgerEntry.updateMany({
-        where: { idempotencyKey: { in: supersededMetrics.map((item) => `marketing-metric:${item.id}`) }, voidedAt: null },
+        where: { companyId, idempotencyKey: { in: supersededMetrics.map((item) => `marketing-metric:${item.id}`) }, voidedAt: null },
         data: { voidedAt: now, voidReason: `Заменено автоматической синхронизацией Meta · показатель ${metric.id}` },
       });
     await tx.companyLedgerEntry.upsert({
