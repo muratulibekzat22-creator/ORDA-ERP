@@ -139,6 +139,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     staircase: order.staircase,
     manager: order.manager,
     orderReceivedAt: dateInput(order.orderReceivedAt),
+    promisedAt: order.promisedAt ? dateInput(order.promisedAt) : "",
     amount: String(order.amount ?? ""),
     paymentMethod: order.paymentMethod || "KASPI_TRANSFER",
   });
@@ -374,6 +375,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             <h2 className="text-xl font-bold text-white">Редактировать заказ</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="text-sm text-slate-300">Фактическая дата заказа<input required type="date" max={todayForInput()} value={form.orderReceivedAt} onChange={(event) => setForm((value) => ({ ...value, orderReceivedAt: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"/><span className="mt-1 block text-xs leading-5 text-slate-500">Дата договора или фактического оформления, а не дата ввода в ORDA.</span></label>
+              <label className="text-sm text-slate-300">Срок заказа (обещанный клиенту)<input required type="date" min={form.orderReceivedAt || undefined} value={form.promisedAt} onChange={(event) => setForm((value) => ({ ...value, promisedAt: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"/><span className="mt-1 block text-xs leading-5 text-slate-500">Дата, к которой заказ обещан клиенту. После сохранения предупреждение «Срок заказа» исчезнет.</span></label>
               {([
                 ["clientName", "Имя клиента"],
                 ["address", "Адрес"],
@@ -389,7 +391,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}
             <div className="mt-5 grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setEditing(false)} disabled={saving} className="min-h-11 rounded-xl bg-slate-800 px-4">Отмена</button>
-              <button type="button" onClick={() => void saveEdit()} disabled={saving || !form.orderReceivedAt || !form.clientName.trim() || !form.address.trim() || !Number(form.amount)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">{saving ? "Сохранение…" : order.orderDateNeedsReview ? "Подтвердить дату и сохранить" : "Сохранить"}</button>
+              <button type="button" onClick={() => void saveEdit()} disabled={saving || !form.orderReceivedAt || !form.promisedAt || !form.clientName.trim() || !form.address.trim() || !Number(form.amount)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">{saving ? "Сохранение…" : order.orderDateNeedsReview ? "Подтвердить дату и сохранить" : "Сохранить"}</button>
             </div>
           </div>
         </div>

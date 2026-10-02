@@ -475,6 +475,30 @@ export async function PATCH(request: Request, { params }: Context) {
         { error: "Укажите фактическую дату заказа, не позднее сегодняшнего дня" },
         { status: 400 },
       );
+    const changesPromisedAt = Object.hasOwn(body, "promisedAt");
+    if (changesPromisedAt && !isDirector(role) && role !== Role.MANAGER)
+      return NextResponse.json(
+        { error: "Срок заказа указывает менеджер или директор" },
+        { status: 403 },
+      );
+    const nextPromisedAt = changesPromisedAt
+      ? dateValue(body.promisedAt)
+      : null;
+    if (!nextPromisedAt && changesPromisedAt)
+      return NextResponse.json(
+        { error: "Укажите обещанный срок заказа" },
+        { status: 400 },
+      );
+    if (
+      nextPromisedAt &&
+      nextOrderDate &&
+      nextPromisedAt.toISOString().slice(0, 10) <
+        nextOrderDate.toISOString().slice(0, 10)
+    )
+      return NextResponse.json(
+        { error: "Срок заказа не может быть раньше даты заказа" },
+        { status: 400 },
+      );
 
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
@@ -494,6 +518,7 @@ export async function PATCH(request: Request, { params }: Context) {
       designStyle: body.designStyle ?? null,
       designNotes: body.designNotes ?? null,
       orderReceivedAt: nextOrderDate?.toISOString() ?? null,
+      promisedAt: nextPromisedAt?.toISOString() ?? null,
     };
     const requestHash = createRequestHash(payload);
     const historyKey =
@@ -507,6 +532,9 @@ export async function PATCH(request: Request, { params }: Context) {
     const orderDateKey = changesOrderDate
       ? `order-date:${id}:${idempotency.key}`
       : null;
+    const promisedAtKey = changesPromisedAt
+      ? `order-promised-at:${id}:${idempotency.key}`
+      : null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
@@ -519,6 +547,8 @@ export async function PATCH(request: Request, { params }: Context) {
           balance: true,
           partnerPrice: true,
           companyProfit: true,
+          orderReceivedAt: true,
+          promisedAt: true,
         },
       });
       if (!current) return null;
@@ -547,6 +577,17 @@ export async function PATCH(request: Request, { params }: Context) {
       if (orderDateKey) {
         const existing = await tx.orderEvent.findUnique({
           where: { idempotencyKey: orderDateKey },
+          select: { requestHash: true },
+        });
+        if (existing) {
+          if (existing.requestHash !== requestHash)
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return tx.order.findUnique({ where: { id }, include });
+        }
+      }
+      if (promisedAtKey) {
+        const existing = await tx.orderEvent.findUnique({
+          where: { idempotencyKey: promisedAtKey },
           select: { requestHash: true },
         });
         if (existing) {
@@ -591,6 +632,15 @@ export async function PATCH(request: Request, { params }: Context) {
       if (role !== Role.PARTNER && changesOrderDate && nextOrderDate) {
         data.orderReceivedAt = nextOrderDate;
         data.orderDateNeedsReview = false;
+      }
+      if (role !== Role.PARTNER && changesPromisedAt && nextPromisedAt) {
+        const effectiveOrderDate = nextOrderDate ?? current.orderReceivedAt;
+        if (
+          nextPromisedAt.toISOString().slice(0, 10) <
+          effectiveOrderDate.toISOString().slice(0, 10)
+        )
+          throw new Error("ORDER_DEADLINE_BEFORE_ORDER_DATE");
+        data.promisedAt = nextPromisedAt;
       }
       if (role !== Role.PARTNER && "amount" in body) {
         const amount = Number(body.amount);
@@ -684,6 +734,22 @@ export async function PATCH(request: Request, { params }: Context) {
           },
         });
       }
+      if (promisedAtKey && nextPromisedAt) {
+        const format = (value: Date) =>
+          new Intl.DateTimeFormat("ru-RU", {
+            timeZone: "Asia/Almaty",
+          }).format(value);
+        await tx.orderEvent.create({
+          data: {
+            orderId: id,
+            title: "Обещанный срок заказа указан",
+            description: `${current.promisedAt ? `${format(current.promisedAt)} → ` : ""}${format(nextPromisedAt)}. Контроль срока заказа обновлён.`,
+            user: auth.session!.user.name ?? "Сотрудник",
+            idempotencyKey: promisedAtKey,
+            requestHash,
+          },
+        });
+      }
       if (status === ORDER_STATUSES[ORDER_STATUSES.length - 1]) {
         const activeReservations = await tx.materialReservation.findMany({
           where: { orderId: id, status: "ACTIVE", quantity: { gt: 0 } },
@@ -772,6 +838,14 @@ export async function PATCH(request: Request, { params }: Context) {
       return NextResponse.json(
         { error: "Переход статуса запрещён" },
         { status: 409 },
+      );
+    if (
+      error instanceof Error &&
+      error.message === "ORDER_DEADLINE_BEFORE_ORDER_DATE"
+    )
+      return NextResponse.json(
+        { error: "Срок заказа не может быть раньше даты заказа" },
+        { status: 400 },
       );
     if (
       error instanceof Error &&

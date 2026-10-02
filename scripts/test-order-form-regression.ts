@@ -23,6 +23,8 @@ class MemoryStorage {
 async function main() {
   const gateSource = readFileSync("components/clients/ManagerFollowUpGate.tsx", "utf8");
   const formSource = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
+  const workspaceSource = readFileSync("components/orders/OrderWorkspace.tsx", "utf8");
+  const orderRouteSource = readFileSync("app/api/orders/[id]/route.ts", "utf8");
   assert.doesNotMatch(gateSource, /loading\s*&&\s*items\.length\s*===\s*0/);
   assert.match(gateSource, /runSingleFlight\(inFlight/);
   assert.match(gateSource, /\{children\}[\s\S]*mode === "overlay"/);
@@ -37,6 +39,13 @@ async function main() {
   assert.match(formSource, /Клиент доплатит позже/);
   assert.match(formSource, /existingOrderId/);
   assert.match(formSource, /Открыть существующий заказ/);
+  assert.match(formSource, /Срок заказа \(обещанный клиенту\)/);
+  assert.match(workspaceSource, /promisedAt: order\.promisedAt \? dateInput\(order\.promisedAt\) : ""/);
+  assert.match(workspaceSource, /Срок заказа \(обещанный клиенту\)/);
+  assert.match(workspaceSource, /!form\.promisedAt/);
+  assert.match(orderRouteSource, /const changesPromisedAt = Object\.hasOwn\(body, "promisedAt"\)/);
+  assert.match(orderRouteSource, /data\.promisedAt = nextPromisedAt/);
+  assert.match(orderRouteSource, /Срок заказа указывает менеджер или директор/);
 
   assert.equal(
     followUpGateMode({ sessionLoading: false, manager: true, checked: false, itemCount: 0 }),
