@@ -148,6 +148,13 @@ const externalReferenceMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const manualAccrualMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261002190000_manual_payroll_accrual_workflow/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -175,5 +182,10 @@ assert.match(
 );
 assert.match(externalReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS "externalReference"/);
 assert.match(externalReferenceMigrationSource, /PayrollPayment_externalReference_key/);
+assert.match(manualAccrualMigrationSource, /company\."slug" = 'altyn-sapa-company'/);
+assert.match(manualAccrualMigrationSource, /period\."month" IN \(9, 10\)/);
+assert.match(manualAccrualMigrationSource, /accrual\."reason" LIKE 'Автопроверка оклада:%'/);
+assert.match(manualAccrualMigrationSource, /NOT EXISTS \([\s\S]*FROM "PayrollPayment"/);
+assert.match(manualAccrualMigrationSource, /'BONUS_REVERSAL'/);
 
 console.log("Payroll policy tests passed");
