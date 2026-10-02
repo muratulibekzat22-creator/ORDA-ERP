@@ -48,7 +48,7 @@ const founderSections = [
 
 const founderSecondary = [
   ["/measurements", "Замеры", Ruler],
-  ["/catalog", "Каталог лестниц", Images],
+  ["/catalog", "Каталог изделий", Images],
   ["/calendar", "Календарь", CalendarDays],
   ["/production", "Производство", Factory],
   ["/warehouse", "Склад", Warehouse],

@@ -240,7 +240,7 @@ export default function MeasurerHome() {
           className="flex min-h-14 items-center justify-center gap-2 rounded-xl bg-violet-700 font-semibold"
         >
           <Images size={18} />
-          Каталог лестниц
+          Каталог изделий
         </Link>
         <Link
           href="/calendar"
