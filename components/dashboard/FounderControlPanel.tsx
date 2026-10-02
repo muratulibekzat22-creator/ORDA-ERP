@@ -29,13 +29,15 @@ export default function FounderControlPanel() {
   useEffect(() => { const timer = setTimeout(() => void load(), 0); return () => clearTimeout(timer); }, []);
   const issues = data?.issues ?? [];
   const shown = expanded ? issues : issues.slice(0, 5);
-  return <section className="space-y-3 rounded-2xl border border-amber-700/30 bg-[#101827] p-4">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-bold">Контроль исполнения</h2><p className="text-xs text-slate-400">Только отклонения, которые требуют внимания</p></div>
+  return <section className="space-y-2 rounded-2xl border border-amber-700/30 bg-[#101827] p-3">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-bold">Контроль исполнения</h2><p className="text-xs text-slate-400">Только отклонения, которые требуют внимания</p></div>
       <button type="button" onClick={() => setOpen((value) => !value)} className="rounded-xl border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-200">{open ? "Свернуть" : "Открыть контроль"}</button></div>
     {error && <p role="alert" className="text-red-300">{error}</p>}
     {message && <p role="status" className="text-emerald-300">{message}</p>}
-    {data && <><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-red-500/10 px-3 py-1.5 text-red-200">Срочно: {data.summary.urgent}</span><span className="rounded-full bg-amber-500/10 px-3 py-1.5 text-amber-200">Ждут ознакомления: {data.summary.unacknowledged}</span><span className="rounded-full bg-slate-900 px-3 py-1.5 text-slate-300">Просрочено: {data.summary.overdue}</span><span className="rounded-full bg-emerald-500/10 px-3 py-1.5 text-emerald-200">Исправлено: {data.summary.verified}</span></div>
-      {open && <><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">Проверено заявок: {data.coverage.leads}; заказов: {data.coverage.orders}. {new Date(data.checkedAt).toLocaleString("ru-RU")}</p><button disabled={busy} onClick={() => void load()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs">Обновить проверку</button></div>
+    {data && <>
+      {!open && <p className="text-xs text-slate-400">Требуют проверки: <span className="font-semibold text-amber-200">{issues.length}</span> · ждут ознакомления: {data.summary.unacknowledged}</p>}
+      {open && <><div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-red-500/10 px-3 py-1.5 text-red-200">Срочно: {data.summary.urgent}</span><span className="rounded-full bg-amber-500/10 px-3 py-1.5 text-amber-200">Ждут ознакомления: {data.summary.unacknowledged}</span><span className="rounded-full bg-slate-900 px-3 py-1.5 text-slate-300">Просрочено: {data.summary.overdue}</span><span className="rounded-full bg-emerald-500/10 px-3 py-1.5 text-emerald-200">Исправлено: {data.summary.verified}</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-500">Проверено заявок: {data.coverage.leads}; заказов: {data.coverage.orders}. {new Date(data.checkedAt).toLocaleString("ru-RU")}</p><button disabled={busy} onClick={() => void load()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs">Обновить проверку</button></div>
       {data.summary.needsOwner > 0 && <p className="text-amber-300">Нужно ваше решение: назначить ответственного по {data.summary.needsOwner} замечаниям.</p>}
       {shown.map(issue => <article key={issue.key} className="space-y-2 rounded-xl bg-slate-950 p-4">
         <div className="flex flex-wrap justify-between gap-2"><Link href={issue.href} className="font-semibold text-sky-300">{issue.title}</Link><span className="text-sm text-slate-400">{issue.assignee}</span></div>
