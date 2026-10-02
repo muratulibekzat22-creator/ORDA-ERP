@@ -7,7 +7,7 @@ assert.equal(detectControlIssues([{ ...lead, interactions: [{ createdAt: now }] 
 assert.equal(detectControlIssues([{ ...lead, nextActions: [{ nextActionAt: now, completedAt: now, resultComment: "Клиент ответил", nextActionType: "CALL" }] }], [], now).length, 0, "Recorded call results count as contact evidence");
 assert.match(detectControlIssues([{ ...lead, nextActions: [{ nextActionAt: new Date("2026-09-30") }] }], [], now)[0].reason, /Просрочено/);
 const order: ControlOrder = { id: 2, number: "ORDER-2", clientId: 1, managerUserId: 4, partnerId: null, partnerPrice: 0, partnerAgreedAt: null, promisedAt: new Date("2026-10-03"), productionDeadline: null, lifecycle: "CREATED", client: { phone: "70000000000", city: "Алматы" } };
-assert.equal(detectControlIssues([], [order], now).length, 0, "A draft must not require production price");
-assert.match(detectControlIssues([], [{ ...order, lifecycle: "IN_PRODUCTION" }], now)[0].reason, /цена производства/);
-assert.equal(detectControlIssues([], [{ ...order, promisedAt: new Date("2026-10-01") }], now)[0].priority, "URGENT");
-console.log("Founder control evidence and stage rules passed");
+assert.match(detectControlIssues([], [order], now)[0].reason, /цех.*цена производства/, "every active order must expose the workshop and production-price gaps");
+assert.equal(detectControlIssues([], [{ ...order, partnerId: 1, partnerPrice: 9_999, partnerAgreedAt: now }], now)[0].reason.includes("цена производства"), true, "placeholder production prices must not pass control");
+assert.equal(detectControlIssues([], [{ ...order, promisedAt: new Date("2026-10-01") }], now).some((issue) => issue.priority === "URGENT"), true);
+console.log("Founder control evidence and mandatory workshop-price rules passed");
