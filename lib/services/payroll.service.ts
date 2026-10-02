@@ -302,6 +302,55 @@ export async function changeSalary(
       orderBy: { effectiveFrom: "desc" },
     });
     let startsAt = effectiveFrom;
+    if (
+      current &&
+      startsAt < current.effectiveFrom &&
+      Number(current.amount) === Number(salary)
+    ) {
+      const previous = await tx.employeeSalaryRate.findFirst({
+        where: {
+          employeeId,
+          id: { not: current.id },
+          effectiveFrom: { lt: current.effectiveFrom },
+        },
+        orderBy: { effectiveFrom: "desc" },
+      });
+      if (!previous) throw new PayrollError("INVALID_EFFECTIVE_DATE");
+      if (startsAt <= previous.effectiveFrom) {
+        const sameCalendarDay =
+          startsAt.toISOString().slice(0, 10) ===
+          previous.effectiveFrom.toISOString().slice(0, 10);
+        if (!sameCalendarDay) throw new PayrollError("INVALID_EFFECTIVE_DATE");
+        startsAt = new Date(previous.effectiveFrom.getTime() + 1);
+      }
+      await tx.employeeSalaryRate.update({
+        where: { id: previous.id },
+        data: { effectiveTo: startsAt },
+      });
+      const corrected = await tx.employeeSalaryRate.update({
+        where: { id: current.id },
+        data: {
+          effectiveFrom: startsAt,
+          approvedById: actor.userId,
+          comment: reason,
+        },
+      });
+      await audit(tx, {
+        action: "SALARY_EFFECTIVE_DATE_CORRECTED",
+        actor,
+        employeeId,
+        before: {
+          amount: Number(current.amount),
+          effectiveFrom: current.effectiveFrom.toISOString(),
+        },
+        after: {
+          amount: Number(salary),
+          effectiveFrom: startsAt.toISOString(),
+        },
+        reason,
+      });
+      return corrected;
+    }
     if (current && startsAt <= current.effectiveFrom) {
       const sameCalendarDay =
         startsAt.toISOString().slice(0, 10) ===

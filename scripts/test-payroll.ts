@@ -134,6 +134,18 @@ async function main() {
     );
     await changeSalary(profile.id, 210000, new Date("2026-06-01"), "Индексация", directorActor);
     await changeSalary(profile.id, 200000, new Date("2026-07-01"), "Тестовая ставка", directorActor);
+    const correctedRate = await changeSalary(
+      profile.id,
+      200000,
+      new Date("2026-06-15"),
+      "Исправление даты ставки",
+      directorActor,
+    );
+    assert.equal(
+      correctedRate.effectiveFrom.toISOString(),
+      new Date("2026-06-15").toISOString(),
+      "same-amount salary rate can be safely backdated without adding history",
+    );
     await changeAllowance(profile.id, 20000, "Гарантированный бонус", directorActor);
     assert.equal((await prisma.employeeSalaryRate.count({ where: { employeeId: profile.id } })), 3, "salary history preserved");
     await upsertPayrollProfile(
