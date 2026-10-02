@@ -224,6 +224,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           </div>
           <div className="flex flex-col gap-3 lg:items-end">
             <OrderProcess
+              key={`${order.id}:${order.lifecycle}:${order.partner?.id ?? "none"}:${order.productionPrice ?? "none"}`}
               orderId={order.id}
               lifecycle={order.lifecycle}
               version={order.version}
@@ -308,7 +309,11 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
       {director ? <OrderEconomy order={order} /> : null}
 
       {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role) ? (
-        <WorkshopSettlementPanel order={order} readOnly={archived} />
+        <WorkshopSettlementPanel
+          key={`${order.id}:${order.partner?.id ?? "none"}:${order.productionPrice ?? "none"}`}
+          order={order}
+          readOnly={archived}
+        />
       ) : null}
 
       <section className={panel}>
