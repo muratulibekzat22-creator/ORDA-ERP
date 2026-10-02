@@ -46,7 +46,7 @@ assert.match(service, /recordedExpenses/, "report must include recorded expenses
 assert.match(service, /const pricedOrders = orders\.filter/, "margin must use only orders with complete sale and production prices");
 assert.match(service, /const grossMargin = pricedSales - productionCost/, "gross margin must remain available for complete orders");
 assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| pricedOrders.length !== orders.length \? null : netProfit/, "incomplete totals must not be exposed as company net profit");
-assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows business order date, not data-entry date");
+assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows a confirmed business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
 assert.match(service, /JOIN "PayrollPeriod" payroll_period ON payroll_period\.id = accrual\."periodId"/, "payroll accruals must follow their accounting period");
@@ -55,7 +55,7 @@ assert.doesNotMatch(service, /accrual\."createdAt" >=/, "late-entered payroll mu
 const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", import.meta.url), "utf8");
 assert.match(reportPage, /Заказы \/ заявки периода/);
 assert.match(reportPage, /Зарплата к выплате по проведённым начислениям/);
-assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: 2 \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");
+assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: MIN_PRODUCTION_PRICE \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");
 assert.match(route, /report\.sales\.grossMargin === undefined/, "export must redact gross margin");
 console.log("Reports math, period boundaries, refunds, zero denominators and RBAC contracts: OK");

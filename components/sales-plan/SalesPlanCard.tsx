@@ -10,7 +10,7 @@ type PlanCardPayload = {
     orders: number;
     progressPercent: number;
     gap: number;
-    projectedRevenue: number;
+    projectedRevenue: number | null;
     marginCoveragePercent: number;
     grossMarginPercent: number;
     bonusEligible: boolean;
@@ -83,7 +83,7 @@ export default function SalesPlanCard({ month, compact = false }: { month: strin
             <div><p className="text-sm text-slate-400">Факт / план</p><p className="mt-1 text-2xl font-bold text-white">{money(data.actual.revenue)} <span className="text-base font-medium text-slate-500">из {money(data.plan.revenueTarget)}</span></p></div>
             <div><p className="text-sm text-slate-400">Выполнение</p><p className="mt-1 text-2xl font-bold text-blue-200">{data.actual.progressPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%</p></div>
             <div><p className="text-sm text-slate-400">Заказы</p><p className="mt-1 text-xl font-bold text-white">{data.actual.orders} / {data.plan.orderTarget}</p></div>
-            <div><p className="text-sm text-slate-400">Прогноз</p><p className="mt-1 text-xl font-bold text-white">{money(data.actual.projectedRevenue)}</p></div>
+            <div><p className="text-sm text-slate-400">Прогноз</p><p className="mt-1 text-xl font-bold text-white">{data.actual.projectedRevenue === null ? "После 7 дней" : money(data.actual.projectedRevenue)}</p></div>
           </div>
           <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-blue-500" style={{ width: `${width}%` }}/></div>
           <p className="mt-3 text-sm text-slate-400">

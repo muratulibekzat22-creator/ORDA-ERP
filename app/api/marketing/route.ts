@@ -6,7 +6,8 @@ import {
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/prisma";
-import { marketingMonthRange } from "@/lib/marketing";
+import { MetaAdsSyncError, metaAdsIntegrationStatus, syncMetaAdsMonth } from "@/lib/integrations/meta-ads";
+import { effectiveMarketingMetrics, marketingMonthRange } from "@/lib/marketing";
 import { requirePermission } from "@/lib/server-auth";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 
@@ -55,7 +56,8 @@ export async function GET(request: Request) {
     }),
     getDailyCrmSnapshot(),
   ]);
-  const totals = metrics.reduce(
+  const effectiveMetrics = effectiveMarketingMetrics(metrics);
+  const totals = effectiveMetrics.reduce(
     (sum, item) => ({
       spend: sum.spend + Number(item.spend),
       leads: sum.leads + item.leads,
@@ -68,10 +70,19 @@ export async function GET(request: Request) {
     role,
     month: month.key,
     tasks,
-    metrics,
+    metrics: effectiveMetrics,
     vacancies,
     assignees,
     dailyCrm,
+    integration: {
+      ...metaAdsIntegrationStatus(),
+      state: !metaAdsIntegrationStatus().configured
+        ? "NEEDS_SETUP"
+        : metrics.some((metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"))
+          ? "ACTIVE"
+          : "READY",
+      lastSyncedAt: metrics.find((metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"))?.updatedAt ?? null,
+    },
     summary: {
       ...totals,
       cpl: totals.leads ? totals.spend / totals.leads : 0,
@@ -91,6 +102,12 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const action = text(body.action, 40);
+    if (action === "sync-meta") {
+      if (role !== Role.OPERATIONS_DIRECTOR && role !== Role.MARKETER)
+        return NextResponse.json({ error: "Синхронизацию Meta запускает директор" }, { status: 403 });
+      const month = text(body.month, 7);
+      return NextResponse.json(await syncMetaAdsMonth({ actorId: Number(auth.session!.user.id), month: month || undefined }));
+    }
     if (action === "task") {
       const title = text(body.title, 200);
       const priority = count(body.priority);
@@ -114,6 +131,8 @@ export async function POST(request: Request) {
     }
     if (action === "metric") {
       const channel = text(body.channel, 120);
+      if (/instagram|meta|facebook/i.test(channel))
+        return NextResponse.json({ error: "Показатели Meta загружаются автоматически; ручной ввод отключён" }, { status: 409 });
       const metricMonth = body.metricMonth
         ? new Date(`${String(body.metricMonth).slice(0, 7)}-01T00:00:00+05:00`)
         : new Date();
@@ -166,7 +185,15 @@ export async function POST(request: Request) {
       );
     }
     return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 });
-  } catch {
+  } catch (error) {
+    if (error instanceof MetaAdsSyncError) {
+      const messages: Record<string, string> = {
+        META_NOT_CONFIGURED: "Нужно один раз подключить служебный доступ Meta",
+        META_EXCHANGE_RATE_UNAVAILABLE: "Не удалось получить курс валюты НБК",
+        META_SYNC_FORBIDDEN: "Синхронизацию Meta запускает директор",
+      };
+      return NextResponse.json({ error: messages[error.message] ?? "Meta временно не отдала показатели" }, { status: error.message === "META_NOT_CONFIGURED" ? 503 : 502 });
+    }
     return NextResponse.json({ error: "Не удалось сохранить" }, { status: 500 });
   }
 }

@@ -16,7 +16,10 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
       client: { select: { phone: true, city: true } },
     } }),
     db.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
-    db.calendarTask.findMany({ where: { OR: [{ controlKey: { not: null } }, { workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION, status: { in: ["PLANNED", "IN_PROGRESS"] } }] }, select: {
+    db.calendarTask.findMany({ where: { OR: [
+      { controlKey: { not: null } },
+      { workflow: { in: [CalendarTaskWorkflow.PAYMENT_COLLECTION, CalendarTaskWorkflow.DAILY_CRM_REPORT, CalendarTaskWorkflow.ORDER_DATA_COMPLETION] }, status: { in: ["PLANNED", "IN_PROGRESS"] } },
+    ] }, select: {
       id: true, controlKey: true, workflow: true, expectedAmount: true, assigneeId: true, status: true, dueAt: true, acknowledgedAt: true,
       resultSubmittedAt: true, controlVerifiedAt: true, controlRemindedAt: true, createdAt: true,
       orderId: true, clientId: true, order: { select: { number: true, client: { select: { name: true } } } },
@@ -50,10 +53,50 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
 
 export async function getFounderControl() {
   const snapshot = await inspect();
-  return { ...snapshot, issues: snapshot.issues.map(issue => ({ ...issue,
-    assignee: snapshot.users.find(u => u.id === issue.assigneeId)?.name ?? "Требуется назначить ответственного",
-    task: snapshot.tasks.find(t => ("taskId" in issue && issue.taskId ? t.id === issue.taskId : t.controlKey === issue.key)) ?? null,
+  const issueGroups = [
+    {
+      key: "group:lead-follow-up",
+      rows: snapshot.issues.filter((issue) => issue.key.startsWith("lead:")),
+      title: "Заявки требуют следующего действия",
+      href: "/clients",
+      action: "Менеджеры получают ежедневный CRM-контроль; директор проверяет итог по рабочим кабинетам.",
+    },
+    {
+      key: "group:order-data",
+      rows: snapshot.issues.filter((issue) => issue.key.startsWith("order:") && issue.key.endsWith(":data")),
+      title: "Заказы нужно дополнить",
+      href: "/orders?attention=incomplete",
+      action: "Менеджеры заполняют подтверждённый срок, цех и цену производства в одном сводном задании.",
+    },
+    {
+      key: "group:order-deadline",
+      rows: snapshot.issues.filter((issue) => issue.key.startsWith("order:") && issue.key.endsWith(":deadline")),
+      title: "Просроченные сроки заказов",
+      href: "/orders?attention=overdue",
+      action: "Директор требует причину, согласованный новый срок и фактический этап; основатель не ведёт переписку.",
+    },
+    {
+      key: "group:payment-follow-up",
+      rows: snapshot.issues.filter((issue) => issue.key.startsWith("payment-follow-up:")),
+      title: "Просроченные обещанные доплаты",
+      href: "/orders",
+      action: "Ответственный менеджер связывается с клиентом и фиксирует реальное поступление в заказе.",
+    },
+  ].filter((group) => group.rows.length > 0);
+  const operationsDirector = snapshot.users.find((user) => user.role === Role.OPERATIONS_DIRECTOR);
+  return { ...snapshot, issues: issueGroups.map((group) => ({
+    key: group.key,
+    title: `${group.title}: ${group.rows.length}`,
+    reason: `${group.rows.filter((issue) => issue.priority === "URGENT").length} срочных из ${group.rows.length}.`,
+    action: group.action,
+    href: group.href,
+    assignee: operationsDirector ? `Контроль: ${operationsDirector.name}` : "Нужно назначить директора",
+    assigneeId: operationsDirector?.id ?? null,
+    priority: group.rows.some((issue) => issue.priority === "URGENT") ? "URGENT" : "IMPORTANT",
+    task: null,
   })), summary: {
+    total: snapshot.issues.length,
+    groups: issueGroups.length,
     urgent: snapshot.issues.filter(i => i.priority === "URGENT").length,
     needsOwner: snapshot.issues.filter(i => !i.assigneeId).length,
     unacknowledged: snapshot.tasks.filter(t => !t.acknowledgedAt && !["COMPLETED", "CANCELLED"].includes(t.status) && (t.workflow !== CalendarTaskWorkflow.PAYMENT_COLLECTION || t.dueAt <= new Date())).length,
@@ -67,53 +110,22 @@ export async function runFounderControl(actorId: number, keys?: string[], now = 
   return prisma.$transaction(async tx => {
     // Serialize manual and scheduled runs for this company; the unique key is an additional safeguard.
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${companyId}, 87241)::text`;
-    const actor = await tx.user.findFirst({ where: { id: actorId, active: true, role: Role.DIRECTOR } });
-    if (!actor) throw new Error("FOUNDER_REQUIRED");
-    const snapshot = await inspect(tx, now);
-    const currentKeys = new Set(snapshot.issues.map(i => i.key));
-    const result = { created: 0, reminded: 0, verified: 0, needsOwner: 0 };
-    for (const task of snapshot.tasks) {
-      if (!task.controlKey) continue;
-      if (!currentKeys.has(task.controlKey!) && !task.controlVerifiedAt && task.status !== "CANCELLED") {
-        await tx.calendarTask.update({ where: { id: task.id }, data: { controlVerifiedAt: now, status: "COMPLETED", completedAt: now } });
-        await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CONTROL_VERIFIED", actorId,
-          after: { checkedAt: now.toISOString() } } });
-        result.verified++;
-      }
-    }
-    for (const issue of snapshot.issues.filter(i => !keys || keys.includes(i.key))) {
-      if ("taskId" in issue && issue.taskId) continue;
-      if (!issue.assigneeId) { result.needsOwner++; continue; }
-      const existing = snapshot.tasks.find(t => t.controlKey === issue.key);
-      const description = `Автоконтроль ORDA по поручению основателя.\n\n${issue.reason}\n\n${issue.action}\n\nКарточка: ${issue.href}\nРезультат проверяется по данным ORDA. Если причина не устранена, задача остаётся на контроле.`;
-      if (!existing) {
-        const task = await tx.calendarTask.create({ data: { controlKey: issue.key, title: issue.title,
-          description, type: "TASK", priority: issue.priority, dueAt: new Date(now.getTime() + 86400000),
-          assigneeId: issue.assigneeId, creatorId: actorId, clientId: issue.clientId, orderId: issue.orderId,
-          acknowledgementRequired: true } });
-        await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CONTROL_ASSIGNED", actorId,
-          after: { key: issue.key, reason: issue.reason } } });
-        result.created++;
-        continue;
-      }
-      // Explicit cancellation is respected. Reminders never create extra tasks.
-      if (existing.status === "CANCELLED") continue;
-      const changedAssignee = existing.assigneeId !== issue.assigneeId;
-      const recurrence = Boolean(existing.controlVerifiedAt);
-      const reminderDue = existing.dueAt <= now && now.getTime() - (existing.controlRemindedAt ?? existing.createdAt).getTime() >= 86400000;
-      if (!changedAssignee && !recurrence && !reminderDue) continue;
-      await tx.calendarTask.update({ where: { id: existing.id }, data: {
-        description, title: issue.title, assigneeId: issue.assigneeId, priority: issue.priority,
-        status: "PLANNED", acknowledgedAt: null, acknowledgementComment: null,
-        controlVerifiedAt: null, completedAt: null, completedById: null,
-        resultSubmittedAt: null, resultText: null,
-        controlRemindedAt: now,
-        ...(recurrence || changedAssignee ? { dueAt: new Date(now.getTime() + 86400000), plannedCompletionAt: null } : {}),
+    const actor = await tx.user.findFirst({ where: { id: actorId, active: true, role: { in: [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] } } });
+    if (!actor) throw new Error("CONTROL_ACTOR_REQUIRED");
+    void keys;
+    const legacyTasks = await tx.calendarTask.findMany({
+      where: { companyId, controlKey: { not: null }, status: { in: ["PLANNED", "IN_PROGRESS"] } },
+      select: { id: true, controlKey: true },
+    });
+    for (const task of legacyTasks) {
+      await tx.calendarTask.update({ where: { id: task.id }, data: { status: "CANCELLED", cancelledAt: now } });
+      await tx.calendarTaskAudit.create({ data: {
+        taskId: task.id,
+        action: "CONTROL_CONSOLIDATED",
+        actorId,
+        after: { checkedAt: now.toISOString(), replacement: "DAILY_CRM_REPORT_AND_ORDER_DATA_COMPLETION" },
       } });
-      await tx.calendarTaskAudit.create({ data: { taskId: existing.id, action: recurrence ? "CONTROL_REOPENED" : "CONTROL_REMINDER", actorId,
-        after: { reason: issue.reason, previousResultSubmittedAt: existing.resultSubmittedAt?.toISOString() ?? null } } });
-      result.reminded++;
     }
-    return result;
+    return { created: 0, reminded: 0, verified: 0, needsOwner: 0, consolidated: legacyTasks.length };
   }, { timeout: 60000 });
 }

@@ -79,8 +79,7 @@ export const isPayrollPolicyReady = (
 
 export const payrollRoleAccess = (accountRole: string) => ({
   founder: accountRole === "DIRECTOR",
-  administrator:
-    accountRole === "DIRECTOR" || accountRole === "OPERATIONS_DIRECTOR",
+  administrator: accountRole === "OPERATIONS_DIRECTOR",
   accountant: accountRole === "ACCOUNTANT",
 });
 

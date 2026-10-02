@@ -1,5 +1,6 @@
 import { OrderLifecycle, Prisma, Role } from "@prisma/client";
 
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -77,6 +78,7 @@ async function orderMetrics(start: Date, end: Date, managerId?: number) {
       companyId,
       deletedAt: null,
       lifecycle: { not: OrderLifecycle.CANCELLED },
+      orderDateNeedsReview: false,
       orderReceivedAt: { gte: start, lt: end },
       ...(managerId
         ? {
@@ -98,7 +100,7 @@ async function orderMetrics(start: Date, end: Date, managerId?: number) {
   });
   const revenue = orders.reduce((sum, order) => sum + Number(order.amount), 0);
   const priced = orders.filter(
-    (order) => Number(order.partnerPrice) > 0 && Boolean(order.partnerAgreedAt),
+    (order) => hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
   );
   const pricedRevenue = priced.reduce(
     (sum, order) => sum + Number(order.amount),
@@ -226,7 +228,7 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
 export async function getSalesPlan(month: string | undefined, actor: SalesPlanActor) {
   const period = monthRange(month);
   const companyId = requireTenantIdentity().companyId;
-  const [plan, actual, suggested, managers, applications, marketingMetrics, ledgerOrders] = await Promise.all([
+  const [plan, actual, suggested, managers, applications, marketingMetrics, ledgerOrders, pendingOrderDates] = await Promise.all([
     ensurePlan(actor, period.year, period.month),
     orderMetrics(period.start, period.end),
     recommendation(period.year, period.month),
@@ -255,6 +257,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
         companyId,
         deletedAt: null,
         lifecycle: { not: OrderLifecycle.CANCELLED },
+        orderDateNeedsReview: false,
         orderReceivedAt: { gte: period.start, lt: period.end },
       },
       select: {
@@ -268,6 +271,14 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       },
       orderBy: [{ orderReceivedAt: "desc" }, { id: "desc" }],
     }),
+    prisma.order.count({
+      where: {
+        companyId,
+        deletedAt: null,
+        lifecycle: { not: OrderLifecycle.CANCELLED },
+        orderDateNeedsReview: true,
+      },
+    }),
   ]);
   const now = new Date();
   const localNow = new Date(now.getTime() + ALMATY_OFFSET_MS);
@@ -276,9 +287,9 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     localNow.getUTCMonth() + 1 === period.month;
   const daysInMonth = new Date(Date.UTC(period.year, period.month, 0)).getUTCDate();
   const elapsedDays = isCurrent ? Math.max(1, localNow.getUTCDate()) : now >= period.end ? daysInMonth : 0;
-  const projectedRevenue = elapsedDays > 0
+  const projectedRevenue = elapsedDays >= 7
     ? Math.round((actual.revenue / elapsedDays) * daysInMonth)
-    : 0;
+    : null;
   const ledgerByDay = new Map<string, {
     date: string;
     revenue: number;
@@ -496,6 +507,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       grossMarginPercent: actual.grossMarginPercent,
       bonusEligible: bonusBlockers.length === 0,
       bonusBlockers,
+      pendingOrderDates,
       achievedTier: achievedTier
         ? {
             thresholdPercent: achievedTier.thresholdPercent,
@@ -518,7 +530,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     history: suggested.history,
     managers: managerProgress,
     ledger: {
-      source: "Дата принятия заказа в ORDA (orderReceivedAt), без переноса из другого месяца",
+      source: "Только фактическая дата оформления заказа, подтверждённая менеджером",
       today: { date: todaySales.date, revenue: todaySales.revenue, orders: todaySales.orders },
       days: dailySales,
     },

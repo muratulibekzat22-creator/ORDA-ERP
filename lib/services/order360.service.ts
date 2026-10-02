@@ -134,6 +134,11 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
   if (target === OrderLifecycle.READY_FOR_PRODUCTION)
     checks = [
       {
+        code: "ORDER_DATE",
+        passed: !order.orderDateNeedsReview,
+        message: "Фактическая дата заказа не подтверждена",
+      },
+      {
         code: "CONTRACT",
         passed:
           !!order.contractConfirmedAt ||
@@ -149,6 +154,11 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
         code: "PRODUCTION_PRICE",
         passed: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
         message: "Цена производства не указана",
+      },
+      {
+        code: "DEADLINE",
+        passed: !!(order.promisedAt ?? order.productionDeadline),
+        message: "Срок заказа не указан",
       },
       noCritical,
     ];
@@ -346,10 +356,18 @@ export async function transitionLifecycle(
         throw new Order360Error("REASON_REQUIRED");
       const gate = await evaluateGate(input.orderId, input.to);
       if (!gate.passed) {
+        const hardWorkshopGateFailed =
+          input.to === OrderLifecycle.READY_FOR_PRODUCTION &&
+          gate.checks.some(
+            (check) =>
+              !check.passed &&
+              ["ORDER_DATE", "WORKSHOP", "PRODUCTION_PRICE", "DEADLINE"].includes(check.code),
+          );
         if (!(
           input.override &&
           isDirector(actor.role) &&
-          input.reason?.trim()
+          input.reason?.trim() &&
+          !hardWorkshopGateFailed
         ))
           throw new Order360Error("GATE_FAILED");
         await tx.orderGateOverride.create({

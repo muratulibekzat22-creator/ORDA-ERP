@@ -13,12 +13,13 @@ import {
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
-import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
+import { hasProductionPrice, isProductionPriceAmount, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { countOrders, createOrder, getOrders } from "@/lib/services/order.service";
 
 const MAX_MONEY = 9_999_999_999.99;
+const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
 const isDirector = (role: Role) =>
   role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 const paymentMethods = new Set<string>(PAYMENT_METHODS.map((item) => item.value));
@@ -37,9 +38,15 @@ const money = (value: unknown, fallback?: number) => {
 };
 const dateValue = (value: unknown) => {
   if (typeof value !== "string" || !value.trim()) return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  const normalized = value.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(normalized)) return null;
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized
+    ? null
+    : parsed;
 };
+const todayAtAlmaty = () =>
+  new Date(Date.now() + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
 
 function lifecycleWhere(status: UserOrderStatus): Prisma.OrderWhereInput {
   const values = (Object.entries(LIFECYCLE_USER_STATUS) as Array<
@@ -106,7 +113,7 @@ export async function GET(request: Request) {
           ? { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } }
           : {};
     const attention = params.get("attention") ?? "";
-    if (attention && !["overdue", "missing-production-price"].includes(attention))
+    if (attention && !["overdue", "incomplete", "missing-production-price", "order-date"].includes(attention))
       return NextResponse.json({ error: "Некорректный фильтр" }, { status: 400 });
     const attentionScope: Prisma.OrderWhereInput = attention === "overdue"
       ? {
@@ -120,8 +127,31 @@ export async function GET(request: Request) {
       : attention === "missing-production-price"
         ? {
             lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-            partnerPrice: { lt: 2 },
+            OR: [
+              { partnerAgreedAt: null },
+              { partnerPrice: { lt: MIN_PRODUCTION_PRICE } },
+            ],
           }
+      : attention === "incomplete"
+        ? {
+            lifecycle: { not: OrderLifecycle.CANCELLED },
+            OR: [
+              { orderDateNeedsReview: true },
+              { managerUserId: null },
+              { client: { phone: "" } },
+              { client: { city: "" } },
+              {
+                promisedAt: null,
+                productionDeadline: null,
+                installation: { is: null },
+              },
+              { partnerId: null },
+              { partnerAgreedAt: null },
+              { partnerPrice: { lt: MIN_PRODUCTION_PRICE } },
+            ],
+          }
+        : attention === "order-date"
+          ? { orderDateNeedsReview: true }
         : {};
     const where: Prisma.OrderWhereInput = {
       AND: [
@@ -241,7 +271,7 @@ export async function POST(request: Request) {
       : dateValue(body.paymentPromiseAt);
 
     if (
-      (body.orderReceivedAt !== undefined && (dateValue(body.orderReceivedAt) === null || orderReceivedAt.getTime() > Date.now())) ||
+      (body.orderReceivedAt !== undefined && (dateValue(body.orderReceivedAt) === null || orderReceivedAt.toISOString().slice(0, 10) > todayAtAlmaty())) ||
       (!clientId && (!clientName || !phone || !city)) ||
       !managerUserId ||
       amount === null ||
@@ -288,6 +318,7 @@ export async function POST(request: Request) {
       material: text(body.materialOther ?? body.material) ?? "Не указано",
       mapUrl: text(body.mapUrl) ?? "",
       orderReceivedAt,
+      orderDateNeedsReview: body.orderReceivedAt === undefined,
       promisedAt,
       frameComment: text(body.frameComment) ?? "",
       railingType: text(body.railingType) ?? "",
@@ -338,6 +369,16 @@ export async function POST(request: Request) {
       return idempotencyConflict();
     if (error instanceof Error && error.message === "ORDER_NUMBER_CONFLICT")
       return NextResponse.json({ error: "Не удалось создать номер заказа" }, { status: 409 });
+    if (error instanceof Error && error.message.startsWith("DUPLICATE_ORDER:")) {
+      const [, id, number] = error.message.split(":");
+      return NextResponse.json(
+        {
+          error: `Похожий заказ уже существует: ${number || `№${id}`}. Откройте его вместо повторного создания.`,
+          existingOrderId: Number(id),
+        },
+        { status: 409 },
+      );
+    }
     if (error instanceof Error && error.message === "CLIENT_NOT_FOUND")
       return NextResponse.json({ error: "Клиент не найден" }, { status: 404 });
     if (error instanceof Error && ["INVALID_PAYMENT_FOLLOW_UP", "INVALID_PAYMENT_FOLLOW_UP_AMOUNT", "INVALID_PAYMENT_FOLLOW_UP_DATE"].includes(error.message))

@@ -2,7 +2,7 @@ import { Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
 import { orderDataGaps } from "@/lib/orders/completeness";
-import { hasProductionPrice } from "@/lib/orders/production-price";
+import { hasProductionPrice, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 import { projectOrderStatus, USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
@@ -31,13 +31,13 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const [clients, previousClients, orders, previousOrders, measurements, previousMeasurements, payments, previousPayments, production, managerUsers, completed] = await Promise.all([
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.start, period.end) }, select: { id: true, managerUserId: true, stage: true } }),
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.previousStart, period.previousEnd) }, select: { id: true } }),
-    prisma.order.findMany({ where: { ...activeOrder, orderReceivedAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, orderReceivedAt: true, promisedAt: true, productionDeadline: true, installation: { select: { scheduledAt: true } }, client: { select: { name: true, phone: true, city: true } }, payments: { select: { amount: true, type: true } }, payrollAccruals: { select: { amount: true, direction: true } } }, orderBy: { orderReceivedAt: "desc" } }),
-    prisma.order.findMany({ where: { ...activeOrder, orderReceivedAt: range(period.previousStart, period.previousEnd) }, select: { amount: true } }),
+    prisma.order.findMany({ where: { ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, orderReceivedAt: true, orderDateNeedsReview: true, promisedAt: true, productionDeadline: true, installation: { select: { scheduledAt: true } }, client: { select: { name: true, phone: true, city: true } }, payments: { select: { amount: true, type: true } }, payrollAccruals: { select: { amount: true, direction: true } } }, orderBy: { orderReceivedAt: "desc" } }),
+    prisma.order.findMany({ where: { ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range(period.previousStart, period.previousEnd) }, select: { amount: true } }),
     prisma.measurement.findMany({ where: { visitDate: range(period.start, period.end), order: activeOrder }, select: { order: { select: { managerUserId: true } } } }),
     prisma.measurement.count({ where: { visitDate: range(period.previousStart, period.previousEnd), order: activeOrder } }),
     prisma.payment.findMany({ where: { operationDate: range(period.start, period.end), order: activeOrder }, select: { amount: true, type: true, operationDate: true, order: { select: { managerUserId: true } } } }),
     prisma.payment.findMany({ where: { operationDate: range(period.previousStart, period.previousEnd), order: activeOrder }, select: { amount: true, type: true } }),
-    prisma.production.groupBy({ by: ["stage"], where: { order: { ...orderScope, lifecycle: { not: "CANCELLED" }, orderReceivedAt: range(period.start, period.end) } }, _count: { _all: true }, orderBy: { stage: "asc" } }),
+    prisma.production.groupBy({ by: ["stage"], where: { order: { ...orderScope, lifecycle: { not: "CANCELLED" }, orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) } }, _count: { _all: true }, orderBy: { stage: "asc" } }),
     leadership(actor.role) || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
@@ -47,7 +47,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   type PayrollTotalsRow = { kind: "accrual" | "payment"; total: Prisma.Decimal; period_total: Prisma.Decimal };
   const [customerBalance, partnerBalance, payrollTotals, expenseEntries] = await Promise.all([
     prisma.order.aggregate({ where: activeOrder, _sum: { balance: true } }),
-    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null }, partnerPrice: { gte: 2 } }, _sum: { partnerBalance: true } }),
+    prisma.order.aggregate({ where: { ...activeOrder, partnerId: { not: null }, partnerAgreedAt: { not: null }, partnerPrice: { gte: MIN_PRODUCTION_PRICE } }, _sum: { partnerBalance: true } }),
     internalFinance ? prisma.$queryRaw<PayrollTotalsRow[]>`
       SELECT 'accrual'::text AS kind,
         COALESCE(SUM(CASE WHEN accrual.direction = 'INCREASE'::"PayrollDirection" THEN accrual.amount ELSE -accrual.amount END), 0) AS total,
@@ -84,7 +84,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const previousReceived = previousPayments.reduce((sum, item) => sum + paymentEffect(item.type, item.amount), 0);
   const salesAmount = orders.reduce((sum, item) => sum + money(item.amount), 0);
   const previousSales = previousOrders.reduce((sum, item) => sum + money(item.amount), 0);
-  const cancelled = await prisma.order.count({ where: { ...orderScope, lifecycle: "CANCELLED", orderReceivedAt: range(period.start, period.end) } });
+  const cancelled = await prisma.order.count({ where: { ...orderScope, lifecycle: "CANCELLED", orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) } });
   const managerMap = new Map(managerUsers.map((user) => [user.id, { id: user.id, name: user.name, leads: 0, measurements: 0, orders: 0, salesAmount: 0, received: 0, completed: 0, overdue: 0, conversion: null as number | null }]));
   clients.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) managerMap.get(item.managerUserId)!.leads += 1; });
   measurements.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.measurements += 1; });

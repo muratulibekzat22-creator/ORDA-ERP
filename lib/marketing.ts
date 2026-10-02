@@ -15,3 +15,17 @@ export function marketingMonthRange(value?: string | Date) {
     end: new Date(Date.UTC(year, month + 1, 1) - ALMATY_OFFSET_MS),
   };
 }
+
+export function effectiveMarketingMetrics<T extends { channel: string; note?: string | null }>(metrics: T[]) {
+  const automatic = metrics.find(
+    (metric) =>
+      metric.channel === "Instagram / Meta" &&
+      metric.note?.startsWith("Автосинхронизация Meta"),
+  );
+  if (!automatic) return metrics;
+  return metrics.filter(
+    (metric) =>
+      metric === automatic ||
+      !/instagram|facebook|meta|таргет/iu.test(metric.channel),
+  );
+}

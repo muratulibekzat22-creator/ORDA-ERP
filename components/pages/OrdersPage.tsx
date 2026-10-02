@@ -52,7 +52,7 @@ export default function OrdersPage({
       : "all",
   );
   const [attention, setAttention] = useState(
-    ["overdue", "missing-production-price"].includes(initialAttention)
+    ["overdue", "incomplete", "missing-production-price", "order-date"].includes(initialAttention)
       ? initialAttention
       : "",
   );
@@ -205,10 +205,12 @@ export default function OrdersPage({
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
           </select>
         </label>
-        <label className={tab === "completed" ? "hidden" : "block"}>
+        <label className="block">
           <span className="sr-only">Контроль данных</span>
           <select value={attention} onChange={(event) => changeAttention(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
             <option value="">Все данные</option>
+            <option value="incomplete">Все заказы с замечаниями</option>
+            <option value="order-date">Без подтверждённой даты заказа</option>
             <option value="missing-production-price">Без цены производства</option>
             <option value="overdue">Только просроченные</option>
           </select>

@@ -215,7 +215,7 @@ const errorLabels: Record<string, string> = {
   ORDER_NOT_FOUND: "Заказ не найден",
   ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
-  FOUNDER_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает только основатель",
+  DIRECTOR_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает директор",
   PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
   PAYMENT_EXCEEDS_PAYABLE: "Сумма выплаты превышает подтверждённый остаток к выплате",
   KASPI_METHOD_REQUIRED: "Финальная зарплата выплачивается через Kaspi",
@@ -268,7 +268,7 @@ export default function PayrollPage() {
     founder = roleAccess.founder,
     director = roleAccess.administrator,
     accountant = roleAccess.accountant,
-    adminView = director || accountant,
+    adminView = founder || director || accountant,
     managerSelfService = role === "MANAGER" && !adminView,
     closed = data.period?.status === "CLOSED",
     locked = Boolean(data.period && data.period.status !== "OPEN");
@@ -487,7 +487,7 @@ export default function PayrollPage() {
     if (!data.period || !row.payrollAudit) return;
     const reason = window.prompt(
       `Почему оставляем ручной расчёт ${row.user.name}?`,
-      "Подтверждено основателем после сверки заказов",
+      "Исключение подтверждено директором после сверки заказов",
     )?.trim();
     if (!reason) return;
     await run(
@@ -497,7 +497,7 @@ export default function PayrollPage() {
         periodId: data.period.id,
         reason,
       },
-      "Ручной расчёт подтверждён основателем",
+      "Ручной расчёт подтверждён директором",
     );
   };
   const configureEmployee = async (user: { id: number; name: string }) => {
@@ -581,7 +581,7 @@ export default function PayrollPage() {
                 <Plus size={18} /> Начислить
               </button>
             )}
-            {founder && data.period && !locked && (
+            {director && data.period && !locked && (
               <button
                 onClick={() => openOperation("payment")}
                 disabled={!data.rows.length}
@@ -619,6 +619,14 @@ export default function PayrollPage() {
               <X size={18} />
             </button>
           </div>
+        )}
+        {director && (
+          <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
+            <h2 className="font-bold text-white">Порядок директора по зарплате</h2>
+            <p className="mt-2 leading-6">ORDA ежедневно сверяет оклад и бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Премии, удержания и авансы показываются отдельными строками и не меняют исходную историю.</p>
+            <p className="mt-2 leading-6">Директор проверяет замечания по заказам и замерам, разбирает только исключения, затем регистрирует фактическую выплату с референсом Kaspi. Основатель в ежедневном расчёте и выплате не участвует.</p>
+            <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
+          </section>
         )}
         <section className="mt-5 grid gap-3 sm:grid-cols-3">
           {stats.map(([label, value, Icon, color]) => (
@@ -756,7 +764,7 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
-          canPay={founder}
+          canPay={director}
           closed={locked}
           onClose={() => setDetails(null)}
           onOperation={openOperation}
@@ -1018,10 +1026,10 @@ function EmployeeDrawer({
             </div>
             {!row.payrollAudit.calculationReady && (
               <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-                Нужно выбрать решение по {row.payrollAudit.unreconciledOrders} заказам. Система предлагает корректировку {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}. Основатель может применить расчёт системы либо оставить ручные суммы с обязательной причиной.
+                Система ещё не успела применить корректировку по {row.payrollAudit.unreconciledOrders} заказам: {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}. Ежедневная автоматическая сверка исправит расчёт; директор может запустить её сразу либо оформить исключение с обязательной причиной.
               </div>
             )}
-            {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100"><b>Расчётный лист и выплата заблокированы до завершения работы.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=missing-production-price" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
+            {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100"><b>Расчётный лист и выплата заблокированы до завершения работы.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
             <div className="mt-3 space-y-2">
               {row.payrollAudit.mismatches.map((item) => {
                 const difference = item.managerDifference;

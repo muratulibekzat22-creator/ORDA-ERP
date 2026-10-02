@@ -21,7 +21,8 @@ assert.equal(orderBoardColumn(OrderLifecycle.CANCELLED), null);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.CONTRACT, OrderLifecycle.PREPARATION);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.WORKSHOP, OrderLifecycle.READY_FOR_PRODUCTION);
 assert.equal(hasProductionPrice(1, new Date()), false, "legacy 1 ₸ placeholder entered profit calculations");
-assert.equal(hasProductionPrice(2, new Date()), true);
+assert.equal(hasProductionPrice(111, new Date()), false, "legacy 111 ₸ placeholder entered profit calculations");
+assert.equal(hasProductionPrice(10_000, new Date()), true);
 assert.deepEqual(
   Object.fromEntries(
     Object.entries(companyMonthRange(2026, 9)).map(([key, value]) => [key, value.toISOString()]),

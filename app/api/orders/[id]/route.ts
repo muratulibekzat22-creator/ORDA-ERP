@@ -32,16 +32,39 @@ import {
 type Context = { params: Promise<{ id: string }> };
 const include = {
   client: true,
-  partner: true,
+  partner: {
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      city: true,
+      active: true,
+    },
+  },
   deletedBy: { select: { id: true, name: true } },
-  managerUser: { include: { payrollProfile: { select: { id: true } } } },
+  managerUser: {
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      payrollProfile: { select: { id: true } },
+    },
+  },
   measurements: {
     include: {
-      measurerUser: { include: { payrollProfile: { select: { id: true } } } },
+      measurerUser: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          payrollProfile: { select: { id: true } },
+        },
+      },
     },
   },
   payments: {
-    include: { partner: true },
+    include: { partner: { select: { id: true, name: true } } },
     orderBy: [{ operationDate: "desc" as const }, { id: "desc" as const }],
   },
   partnerAssignmentHistory: {
@@ -74,9 +97,20 @@ const idOf = (value: string) => {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 };
+const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
 const paymentMethods = new Set<string>(PAYMENT_METHODS.map((item) => item.value));
 const text = (value: unknown, max = 1000) =>
   typeof value === "string" ? value.trim().slice(0, max) : null;
+const dateValue = (value: unknown) => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value))
+    return null;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value
+    ? null
+    : parsed;
+};
+const todayAtAlmaty = () =>
+  new Date(Date.now() + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
 const isDirector = (role: Role) =>
   role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 
@@ -316,7 +350,7 @@ export async function PATCH(request: Request, { params }: Context) {
       const amount = Number(body.productionPrice);
       if (!isProductionPriceAmount(amount))
         return NextResponse.json(
-          { error: "Укажите реальную цену производства (не 1 ₸)" },
+          { error: "Укажите реальную цену производства, не менее 10 000 ₸" },
           { status: 400 },
         );
       const idempotency = readIdempotencyKey(request);
@@ -424,6 +458,24 @@ export async function PATCH(request: Request, { params }: Context) {
           );
     }
 
+    const changesOrderDate = Object.hasOwn(body, "orderReceivedAt");
+    if (changesOrderDate && !isDirector(role) && role !== Role.MANAGER)
+      return NextResponse.json(
+        { error: "Фактическую дату заказа подтверждает менеджер или директор" },
+        { status: 403 },
+      );
+    const nextOrderDate = changesOrderDate
+      ? dateValue(body.orderReceivedAt)
+      : null;
+    if (
+      changesOrderDate &&
+      (!nextOrderDate || nextOrderDate.toISOString().slice(0, 10) > todayAtAlmaty())
+    )
+      return NextResponse.json(
+        { error: "Укажите фактическую дату заказа, не позднее сегодняшнего дня" },
+        { status: 400 },
+      );
+
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
     const status =
@@ -441,6 +493,7 @@ export async function PATCH(request: Request, { params }: Context) {
       installationCompleted: body.installationCompleted,
       designStyle: body.designStyle ?? null,
       designNotes: body.designNotes ?? null,
+      orderReceivedAt: nextOrderDate?.toISOString() ?? null,
     };
     const requestHash = createRequestHash(payload);
     const historyKey =
@@ -451,6 +504,9 @@ export async function PATCH(request: Request, { params }: Context) {
       !status && comment && idempotency.key
         ? `order-comment:${id}:${idempotency.key}`
         : null;
+    const orderDateKey = changesOrderDate
+      ? `order-date:${id}:${idempotency.key}`
+      : null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
@@ -480,6 +536,17 @@ export async function PATCH(request: Request, { params }: Context) {
       if (historyKey) {
         const existing = await tx.orderStatusHistory.findUnique({
           where: { idempotencyKey: historyKey },
+          select: { requestHash: true },
+        });
+        if (existing) {
+          if (existing.requestHash !== requestHash)
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return tx.order.findUnique({ where: { id }, include });
+        }
+      }
+      if (orderDateKey) {
+        const existing = await tx.orderEvent.findUnique({
+          where: { idempotencyKey: orderDateKey },
           select: { requestHash: true },
         });
         if (existing) {
@@ -521,6 +588,10 @@ export async function PATCH(request: Request, { params }: Context) {
         data.designStyle = text(body.designStyle, 120) ?? "";
       if (role !== Role.PARTNER && typeof body.designNotes === "string")
         data.designNotes = text(body.designNotes, 2000) ?? "";
+      if (role !== Role.PARTNER && changesOrderDate && nextOrderDate) {
+        data.orderReceivedAt = nextOrderDate;
+        data.orderDateNeedsReview = false;
+      }
       if (role !== Role.PARTNER && "amount" in body) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)
@@ -597,6 +668,22 @@ export async function PATCH(request: Request, { params }: Context) {
       if (typeof body.installationCompleted === "boolean")
         data.installationCompleted = body.installationCompleted;
       await tx.order.update({ where: { id }, data });
+      if (orderDateKey && nextOrderDate) {
+        const format = (value: Date) =>
+          new Intl.DateTimeFormat("ru-RU", {
+            timeZone: "Asia/Almaty",
+          }).format(value);
+        await tx.orderEvent.create({
+          data: {
+            orderId: id,
+            title: "Фактическая дата заказа подтверждена",
+            description: `Подтверждено: ${format(nextOrderDate)}. Отчёты продаж обновлены; бонус менеджера будет рассчитан в фактическом месяце заказа.`,
+            user: auth.session!.user.name ?? "Сотрудник",
+            idempotencyKey: orderDateKey,
+            requestHash,
+          },
+        });
+      }
       if (status === ORDER_STATUSES[ORDER_STATUSES.length - 1]) {
         const activeReservations = await tx.materialReservation.findMany({
           where: { orderId: id, status: "ACTIVE", quantity: { gt: 0 } },

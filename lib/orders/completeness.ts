@@ -1,6 +1,7 @@
 import { hasProductionPrice } from "@/lib/orders/production-price";
 
 type OrderCompletenessSource = {
+  orderDateNeedsReview?: boolean | null;
   managerUserId?: number | null;
   partnerId?: number | null;
   partnerPrice?: unknown;
@@ -13,6 +14,8 @@ type OrderCompletenessSource = {
 
 export function orderDataGaps(order: OrderCompletenessSource) {
   const gaps: string[] = [];
+  if (order.orderDateNeedsReview)
+    gaps.push("Подтвердить фактическую дату заказа");
   if (!order.managerUserId) gaps.push("Назначить ответственного менеджера");
   if (!order.client?.phone?.trim()) gaps.push("Телефон клиента");
   if (!order.client?.city?.trim()) gaps.push("Город клиента");

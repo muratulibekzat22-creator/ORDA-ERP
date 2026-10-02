@@ -61,7 +61,7 @@ async function main() {
           name: `${tag}-director`,
           email: `${tag}-director@test.local`,
           password: "test",
-          role: Role.DIRECTOR,
+          role: Role.OPERATIONS_DIRECTOR,
         },
       }),
       prisma.user.create({
@@ -92,7 +92,7 @@ async function main() {
     ids.users.push(director.id, manager.id, accountant.id, partner.id);
     const directorActor = {
       userId: director.id,
-      role: Role.DIRECTOR,
+      role: Role.OPERATIONS_DIRECTOR,
       name: director.name,
     };
     const managerActor = {

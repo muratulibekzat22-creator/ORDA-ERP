@@ -18,22 +18,15 @@ export function toBekzatSnapshot(control: Control) {
       unacknowledged: control.summary.unacknowledged,
     },
     issues: control.issues.map(issue => {
-      const lead = issue.key.startsWith("lead:");
-      const deadline = issue.key.endsWith(":deadline");
       return {
         key: issue.key,
-        title: lead ? "Проверить работу с заявкой" : deadline ? "Проверить срок заказа" : "Заполнить данные заказа",
-        reason: "Автопроверка обнаружила незавершённое действие или недостаток данных в ORDA.",
-        action: "Откройте карточку ORDA для подробностей. Исполнение проверяется по исходным данным.",
-        href: lead ? `/clients/${issue.clientId}` : `/orders/${issue.orderId}`,
+        title: issue.title,
+        reason: issue.reason,
+        action: issue.action,
+        href: issue.href,
         assigneeId: issue.assigneeId,
         assignee: issue.assigneeId ? `Ответственный ORDA №${issue.assigneeId}` : "Требуется назначить ответственного",
-        task: issue.task ? {
-          status: issue.task.status,
-          dueAt: issue.task.dueAt,
-          acknowledgedAt: issue.task.acknowledgedAt,
-          resultSubmittedAt: issue.task.resultSubmittedAt,
-        } : null,
+        task: null,
       };
     }),
   };

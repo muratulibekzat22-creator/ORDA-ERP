@@ -28,6 +28,18 @@ import FounderControlPanel from "@/components/dashboard/FounderControlPanel";
 type ManagementPayload = {
   role: "DIRECTOR" | "ACCOUNTANT";
   month: string;
+  weekly: {
+    from: string;
+    to: string;
+    orders: number;
+    revenue: number;
+    received: number;
+    ordersWithProductionPrice: number;
+    activeOrders: number;
+    overdueOrders: number;
+    incompleteOrders: number;
+    overdueTeamTasks: number;
+  };
   finance: {
     revenue: number;
     received: number;
@@ -355,7 +367,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
     data.orders.overdue > 0 ? `${data.orders.overdue} просроченных заказов` : null,
     data.orders.missingProductionPrice > 0 ? `${data.orders.missingProductionPrice} заказов без цены производства` : null,
     data.orders.incompleteData > 0 ? `${data.orders.incompleteData} заказов нужно дополнить` : null,
-    data.marketing.leads === 0 ? "не заполнены показатели Meta" : null,
+    data.marketing.leads === 0 ? "нет синхронизированных обращений Meta" : null,
   ].filter((item): item is string => Boolean(item));
   const roleLabel: Record<string, string> = {
     OPERATIONS_DIRECTOR: "Директор",
@@ -364,6 +376,17 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   };
   return (
     <>
+      <section className="rounded-2xl border border-blue-500/25 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Недельный отчёт собственника</h2><p className="text-sm text-slate-400">Сформирован автоматически за последние 7 дней · без ручного ввода</p></div><span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{date(data.weekly.from)} — {date(data.weekly.to)}</span></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint={`${data.weekly.orders} заказов`} />
+          <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint="Фактические поступления минус возвраты" />
+          <FounderEfficiency label="Цена производства заполнена" value={`${data.weekly.ordersWithProductionPrice} / ${data.weekly.orders}`} hint="По новым заказам недели" />
+          <FounderEfficiency label="Исключения директору" value={String(data.weekly.overdueOrders + data.weekly.incompleteOrders + data.weekly.overdueTeamTasks)} hint={`${data.weekly.overdueOrders} заказов просрочено · ${data.weekly.incompleteOrders} нужно дополнить · ${data.weekly.overdueTeamTasks} задач просрочено`} />
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-400">Основатель утверждает только исключения выше согласованного лимита. Ежедневное исправление карточек, сроки и дисциплина команды — ответственность директора.</p>
+        <p className="mt-2 text-xs leading-5 text-slate-500">Отложено по решению основателя: полная доработка калькулятора и отдельное подключение бухгалтера. Эти пункты не блокируют текущую автоматизацию.</p>
+      </section>
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-xl font-bold text-white">Главная картина бизнеса</h2><p className="text-sm text-slate-400">Деньги и результат за выбранный месяц</p></div>
@@ -421,7 +444,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-lg font-bold text-white">Маркетинг и продажи</h2><p className="text-sm text-slate-400">Расход, результат и стоимость привлечения</p></div></div><Link href="/marketing" className="text-sm font-semibold text-fuchsia-300">Открыть маркетинг</Link></div>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"><FounderEfficiency label="Расход Meta" value={money(data.marketing.spend)} hint="Учитывается в расходах"/><FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Из рекламы"/><FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="Из рекламных лидов"/><FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / обращения"/><FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы"/><FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход"/></div>
-        {data.marketing.leads === 0 ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">За выбранный месяц маркетинговые показатели ещё не внесены.</p> : null}
+        {data.marketing.leads === 0 ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">За выбранный месяц Meta ещё не синхронизировала обращения. Проверьте статус подключения в разделе «Маркетинг».</p> : null}
       </section>
 
       <nav aria-label="Основные разделы собственника" className="flex flex-wrap gap-2">
@@ -489,7 +512,7 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
       <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-xl font-bold">Meta / таргет</h2><p className="text-sm text-slate-400">Фактические показатели выбранного месяца</p></div></div><Link href="/marketing" className="rounded-xl border border-fuchsia-500/30 px-3 py-2 text-sm font-semibold text-fuchsia-200">Открыть маркетинг</Link></div>
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
         <FounderEfficiency label="Расход" value={money(data.marketing.spend)} hint="Вычитается из прибыли" />
-        <FounderEfficiency label="Лиды" value={String(data.marketing.leads)} hint="Внесено маркетингом" />
+        <FounderEfficiency label="Лиды" value={String(data.marketing.leads)} hint="Синхронизировано из Meta" />
         <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="Из рекламных лидов" />
         <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="По рекламному каналу" />
         <FounderEfficiency label="Цена лида" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / лиды" />
@@ -497,7 +520,7 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
         <FounderEfficiency label="Конверсия" value={percent(data.marketing.qualifiedShare)} hint="Лид → заказ" />
         <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход" />
       </div>
-      {data.marketing.leads === 0 && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Показатели Meta за этот месяц не заполнены. Директору нужно внести расход, лиды, заказы и выручку.</p>}
+      {data.marketing.leads === 0 && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Показатели Meta за этот месяц ещё не синхронизированы. Директору достаточно проверить статус подключения; ручной перенос цифр не требуется.</p>}
       <div className="mt-4 rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300"><b className="text-white">3D после КП:</b> сделано {data.salesTools.designDone}, не использовано {data.salesTools.designSkipped}, заказов после 3D {data.salesTools.designConverted}. Фактическая конверсия: {percent(data.salesTools.designConversion)}.</div>
     </section>
     <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">

@@ -63,6 +63,15 @@ function date(value?: Date | string | null, withTime = false) {
   }).format(parsed);
 }
 
+function dateInput(value: Date | string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+}
+
+function todayForInput() {
+  return new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function Field({ title, value }: { title: string; value?: ReactNode }) {
   return (
     <div className="min-w-0 rounded-xl bg-slate-950/55 p-3">
@@ -129,6 +138,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     material: order.material,
     staircase: order.staircase,
     manager: order.manager,
+    orderReceivedAt: dateInput(order.orderReceivedAt),
     amount: String(order.amount ?? ""),
     paymentMethod: order.paymentMethod || "KASPI_TRANSFER",
   });
@@ -207,6 +217,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               <a className="flex items-center gap-2 text-blue-200 hover:text-blue-100" href={`tel:${order.client.phone}`}><Phone size={16} /> {order.client.phone}</a>
               <span className="flex min-w-0 items-center gap-2"><MapPin size={16} /> {order.address || order.client.address}</span>
               <span>Срок: <strong className="text-white">{date(deadline)}</strong></span>
+              <span>Дата заказа: <strong className={order.orderDateNeedsReview ? "text-amber-200" : "text-white"}>{order.orderDateNeedsReview ? "Нужно подтвердить" : date(order.orderReceivedAt)}</strong></span>
               <span>Ответственный: <strong className="text-white">{order.manager}</strong></span>
             </div>
           </div>
@@ -261,6 +272,11 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
         {archived ? (
           <p className="mt-5 rounded-xl border border-amber-700/50 bg-amber-500/10 p-3 text-sm text-amber-100">
             Заказ в архиве. История, файлы и финансовые операции сохранены.
+          </p>
+        ) : null}
+        {order.orderDateNeedsReview ? (
+          <p className="mt-5 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm leading-6 text-amber-100">
+            Укажите фактическую дату оформления заказа по договору. Пока дата не подтверждена, заказ не входит в продажи месяца и расчёт бонуса менеджера. Не ставьте дату внесения карточки в ORDA.
           </p>
         ) : null}
         {notice || error ? (
@@ -357,6 +373,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-950 p-5 shadow-2xl">
             <h2 className="text-xl font-bold text-white">Редактировать заказ</h2>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="text-sm text-slate-300">Фактическая дата заказа<input required type="date" max={todayForInput()} value={form.orderReceivedAt} onChange={(event) => setForm((value) => ({ ...value, orderReceivedAt: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"/><span className="mt-1 block text-xs leading-5 text-slate-500">Дата договора или фактического оформления, а не дата ввода в ORDA.</span></label>
               {([
                 ["clientName", "Имя клиента"],
                 ["address", "Адрес"],
@@ -372,7 +389,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}
             <div className="mt-5 grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setEditing(false)} disabled={saving} className="min-h-11 rounded-xl bg-slate-800 px-4">Отмена</button>
-              <button type="button" onClick={() => void saveEdit()} disabled={saving || !form.clientName.trim() || !form.address.trim() || !Number(form.amount)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">{saving ? "Сохранение…" : "Сохранить"}</button>
+              <button type="button" onClick={() => void saveEdit()} disabled={saving || !form.orderReceivedAt || !form.clientName.trim() || !form.address.trim() || !Number(form.amount)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">{saving ? "Сохранение…" : order.orderDateNeedsReview ? "Подтвердить дату и сохранить" : "Сохранить"}</button>
             </div>
           </div>
         </div>

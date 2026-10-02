@@ -100,7 +100,7 @@ async function main() {
       version = Number(result.version);
     }
     assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, false, "missing production price did not block transfer to workshop");
-    await setProductionPrice({ orderId: order.id, amount: 600, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
+    await setProductionPrice({ orderId: order.id, amount: 10_000, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
     assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "valid workshop and production price did not unlock transfer");
     const preparation = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.PREPARATION, expectedVersion: version, key: key("preparation"), requestHash: hash("preparation") }, actors.manager);
     version = Number(preparation.version);
@@ -142,6 +142,9 @@ async function main() {
     const overrideOrder = await prisma.order.create({ data: { number: `O360-OVR-${Date.now()}`, clientId: client.id, address: "Override", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id } });
     orderIds.push(overrideOrder.id);
     await transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.PREPARATION, expectedVersion: 1, key: key("override-prep"), requestHash: hash("override-prep") }, actors.director);
+    await code(() => transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: 2, override: true, reason: "Director accepted documented risk", key: key("hard-gate-override"), requestHash: hash("hard-gate-override") }, actors.director), "GATE_FAILED");
+    await prisma.order.update({ where: { id: overrideOrder.id }, data: { partnerId: partner.id, partnerPrice: 10_000, partnerAgreedAt: new Date(), promisedAt: new Date("2026-09-01") } });
+    await openBlocker({ orderId: overrideOrder.id, type: "MATERIAL", severity: OrderBlockerSeverity.CRITICAL, title: "Documented director exception", key: key("override-blocker"), requestHash: hash("override-blocker") }, actors.director);
     const overridden = await transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: 2, override: true, reason: "Director accepted documented risk", key: key("override-ready"), requestHash: hash("override-ready") }, actors.director);
     assert.equal(overridden.created, true);
     assert.equal(await prisma.orderGateOverride.count({ where: { orderId: overrideOrder.id } }), 1);
@@ -149,7 +152,7 @@ async function main() {
     const returned = await transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.PREPARATION, expectedVersion: 3, reason: "Возврат на уточнение", key: key("back-with-reason"), requestHash: hash("back-with-reason") }, actors.director);
     assert.equal(returned.created, true, "director backward transition with reason");
 
-    const raceOrder = await prisma.order.create({ data: { number: `O360-RACE-${Date.now()}`, clientId: client.id, address: "Race", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id, lifecycle: OrderLifecycle.PREPARATION, version: 2 } });
+    const raceOrder = await prisma.order.create({ data: { number: `O360-RACE-${Date.now()}`, clientId: client.id, address: "Race", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id, lifecycle: OrderLifecycle.PREPARATION, version: 2, contractConfirmedAt: new Date(), partnerId: partner.id, partnerPrice: 10_000, partnerAgreedAt: new Date(), promisedAt: new Date("2026-09-01") } });
     orderIds.push(raceOrder.id);
     const race = await Promise.allSettled(["a", "b"].map((suffix) => transitionLifecycle({ orderId: raceOrder.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: 2, override: true, reason: "Concurrent director override", key: key(`race-${suffix}`), requestHash: hash(`race-${suffix}`) }, actors.director)));
     assert.equal(race.filter((x) => x.status === "fulfilled").length, 1, "concurrent transition committed more than once");

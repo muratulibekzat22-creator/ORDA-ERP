@@ -1,3 +1,5 @@
+import { hasProductionPrice } from "@/lib/orders/production-price";
+
 export type ControlIssue = {
   key: string; title: string; reason: string; action: string; href: string;
   assigneeId: number | null; clientId: number; orderId?: number;
@@ -38,11 +40,8 @@ export function detectControlIssues(leads: ControlLead[], orders: ControlOrder[]
     if (!order.client.city.trim()) gaps.push("город клиента");
     const deadline = order.promisedAt ?? order.productionDeadline;
     if (!deadline) gaps.push("срок заказа");
-    // Production pricing is mandatory once preparation has finished, not for a fresh draft.
-    if (!["CREATED", "PREPARATION"].includes(order.lifecycle)) {
-      if (!order.partnerId) gaps.push("цех");
-      if (!(Number(order.partnerPrice) >= 2) || !order.partnerAgreedAt) gaps.push("подтверждённая цена производства для расчёта маржи");
-    }
+    if (!order.partnerId) gaps.push("цех");
+    if (!hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)) gaps.push("подтверждённая цена производства для расчёта маржи");
     if (gaps.length) issues.push({ key: `order:${order.id}:data`, clientId: order.clientId, orderId: order.id,
       assigneeId: order.managerUserId, title: `${order.number}: заполнить данные`, reason: `Не заполнены: ${gaps.join(", ")}.`,
       action: "Заполните недостающие поля подтверждёнными данными. Если требуется решение директора, укажите конкретный вопрос и срок.",

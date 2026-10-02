@@ -32,9 +32,7 @@ type RegistrationOptions = {
 const control = "mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white outline-none focus:border-blue-500";
 
 function todayForInput() {
-  const now = new Date();
-  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 10);
+  return new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 function minimumPromiseTime() {
@@ -50,6 +48,7 @@ export default function NewOrderForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [duplicateOrderId, setDuplicateOrderId] = useState<number | null>(null);
   const [existingClient, setExistingClient] = useState<RegistrationOptions["existingClient"]>(null);
   const [form, setForm] = useState<NewOrderFormValues>(EMPTY_NEW_ORDER_FORM);
   const [draftReady, setDraftReady] = useState(false);
@@ -123,6 +122,7 @@ export default function NewOrderForm() {
     event.preventDefault();
     if (submitting.current) return;
     setError("");
+    setDuplicateOrderId(null);
     if (Number(form.initialPayment) > Number(form.amount))
       return setError("Полученная сумма не может превышать цену заказа");
     const hasPaymentPromise = Boolean(form.paymentPromiseAmount || form.paymentPromiseAt);
@@ -163,7 +163,8 @@ export default function NewOrderForm() {
         headers: { "Content-Type": "application/json", "Idempotency-Key": nextSubmission.key },
         body: payloadText,
       });
-      const body = (await response.json()) as { id?: number; error?: string };
+      const body = (await response.json()) as { id?: number; error?: string; existingOrderId?: number };
+      if (!response.ok && body.existingOrderId) setDuplicateOrderId(body.existingOrderId);
       if (!response.ok || !body.id) throw new Error(body.error ?? "Не удалось создать заказ");
       if (options) {
         draftCleared.current = true;
@@ -199,8 +200,8 @@ export default function NewOrderForm() {
           <Field label="Ответственный" required><select required disabled={options.role === "MANAGER"} value={form.managerUserId} onChange={(event) => set("managerUserId", event.target.value)} className={control}>{options.managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field>
           <Field label="Цена клиенту" required><input required type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(event) => set("amount", event.target.value)} className={control} /></Field>
           <Field label="Полученная оплата"><input type="number" min="0" step="0.01" inputMode="decimal" value={form.initialPayment} onChange={(event) => set("initialPayment", event.target.value)} className={control} /></Field>
-          <Field label="Способ оплаты" required><select required value={form.paymentMethod} onChange={(event) => set("paymentMethod", event.target.value)} className={control}>{options.paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></Field>
-          <Field label="Дата заказа" required><input required type="date" max={todayForInput()} value={form.orderReceivedAt} onChange={(event) => set("orderReceivedAt", event.target.value)} className={control} /><span className="mt-1 block text-xs text-slate-500">Можно указать прошлую дату для регистрации старого заказа.</span></Field>
+          <Field label="Способ оплаты" required><select required value={form.paymentMethod} onChange={(event) => set("paymentMethod", event.target.value)} className={control}>{options.paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select><span className="mt-1 block text-xs text-emerald-300">Указанная полученная сумма сразу попадёт в финансы и получит квитанцию — повторно подтверждать поступление не нужно.</span></Field>
+          <Field label="Фактическая дата оформления заказа" required><input required type="date" max={todayForInput()} value={form.orderReceivedAt} onChange={(event) => set("orderReceivedAt", event.target.value)} className={control} /><span className="mt-1 block text-xs text-slate-500">Укажите дату договора или фактического оформления. Для старого заказа не ставьте дату внесения карточки в ORDA.</span></Field>
           <Field label="Срок"><input type="date" value={form.readinessDate} onChange={(event) => set("readinessDate", event.target.value)} className={control} /></Field>
           <Field label="Комментарий"><textarea rows={3} value={form.comment} onChange={(event) => set("comment", event.target.value)} className={`${control} py-3`} /></Field>
         </div>
@@ -228,7 +229,7 @@ export default function NewOrderForm() {
         </div>
       </details>
 
-      {error && <p role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200">{error}</p>}
+      {error && <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200"><p>{error}</p>{duplicateOrderId && <Link href={`/orders/${duplicateOrderId}`} className="mt-2 inline-flex font-semibold text-blue-300 underline">Открыть существующий заказ</Link>}</div>}
       <div className="sticky bottom-3 flex rounded-2xl border border-slate-700 bg-[#101827]/95 p-3 shadow-2xl backdrop-blur sm:justify-end"><button disabled={saving} className="min-h-12 w-full rounded-xl bg-blue-600 px-6 font-semibold text-white disabled:opacity-50 sm:w-auto">{saving ? "Сохранение…" : "Создать заказ"}</button></div>
     </form>
   );

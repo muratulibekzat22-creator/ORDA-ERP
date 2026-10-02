@@ -57,12 +57,11 @@ const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => 
   return reason;
 };
 const director = (actor: PayrollActor) => {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new PayrollError("FORBIDDEN");
 };
 const payrollOperator = (actor: PayrollActor) => {
   if (
-    actor.role !== Role.DIRECTOR &&
     actor.role !== Role.OPERATIONS_DIRECTOR &&
     actor.role !== Role.ACCOUNTANT
   )
@@ -96,10 +95,14 @@ async function managerWorkReadiness(
       where: {
         companyId,
         deletedAt: null,
-        lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
         managerUserId: employee.userId,
+        OR: [
+          { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+          { orderDateNeedsReview: true, lifecycle: { not: OrderLifecycle.CANCELLED } },
+        ],
       },
       select: {
+        orderDateNeedsReview: true,
         managerUserId: true,
         partnerId: true,
         partnerPrice: true,
@@ -434,6 +437,7 @@ async function createAccrualInternal(
           where: {
             id: input.orderId,
             deletedAt: null,
+            orderDateNeedsReview: false,
             orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
             ...(orderScope
               ? {
@@ -639,6 +643,7 @@ async function managerPayrollPolicyState(
   const orders = await tx.order.findMany({
     where: {
       companyId: requireTenantIdentity().companyId,
+      orderDateNeedsReview: false,
       orderReceivedAt: { gte: range.start, lt: range.end },
       OR: [
         ...(employee.userId ? [{ managerUserId: employee.userId }] : []),
@@ -725,8 +730,8 @@ async function createPaymentTx(
   const finalSalaryPayment =
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
     input.type === PayrollPaymentType.FINAL_SETTLEMENT;
-  if (finalSalaryPayment && actor.role !== Role.DIRECTOR)
-    throw new PayrollError("FOUNDER_CONFIRMATION_REQUIRED");
+  if (finalSalaryPayment && actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new PayrollError("DIRECTOR_CONFIRMATION_REQUIRED");
   if (finalSalaryPayment && input.method !== "kaspi")
     throw new PayrollError("KASPI_METHOD_REQUIRED");
   if (
@@ -858,9 +863,9 @@ export async function createPayment(input: PaymentInput, actor: PayrollActor) {
   if (
     (input.type === PayrollPaymentType.SALARY_PAYMENT ||
       input.type === PayrollPaymentType.FINAL_SETTLEMENT) &&
-    actor.role !== Role.DIRECTOR
+    actor.role !== Role.OPERATIONS_DIRECTOR
   )
-    throw new PayrollError("FOUNDER_CONFIRMATION_REQUIRED");
+    throw new PayrollError("DIRECTOR_CONFIRMATION_REQUIRED");
   const finalSalaryPayment =
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
     input.type === PayrollPaymentType.FINAL_SETTLEMENT;
@@ -973,6 +978,7 @@ export async function reconcileManagerPayroll(
     const periodOrders = await tx.order.findMany({
       where: {
         companyId: requireTenantIdentity().companyId,
+        orderDateNeedsReview: false,
         orderReceivedAt: { gte: range.start, lt: range.end },
         OR: [
           ...(employee.userId ? [{ managerUserId: employee.userId }] : []),
@@ -1181,6 +1187,55 @@ export async function reconcileManagerPayroll(
       return { created: false, adjustmentCount: 0, concurrent: true };
     throw error;
   }
+}
+
+export async function reconcileCurrentManagerPayroll(
+  actor: PayrollActor,
+  now = new Date(),
+) {
+  director(actor);
+  const local = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + 1;
+  const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(local.getUTCDate()).padStart(2, "0")}`;
+  const profiles = await prisma.employeePayrollProfile.findMany({
+    where: { active: true, payrollEnabled: true },
+    include: { user: { select: { active: true, role: true } } },
+    orderBy: { id: "asc" },
+  });
+  const managers = profiles.filter(
+    (profile) =>
+      profile.position === Role.MANAGER ||
+      (profile.user?.active && profile.user.role === Role.MANAGER),
+  );
+  const previous = month === 1
+    ? { year: year - 1, month: 12 }
+    : { year, month: month - 1 };
+  const periodCoordinates = [{ year, month }, previous];
+  let adjustments = 0;
+  let processed = 0;
+  const periods: Array<{ periodId: number; year: number; month: number; processed: number; adjustments: number; skipped?: "PERIOD_NOT_OPEN" }> = [];
+  for (const coordinate of periodCoordinates) {
+    const period = await ensurePeriod(coordinate.year, coordinate.month);
+    if (period.status !== PayrollPeriodStatus.OPEN) {
+      periods.push({ periodId: period.id, ...coordinate, processed: 0, adjustments: 0, skipped: "PERIOD_NOT_OPEN" });
+      continue;
+    }
+    let periodAdjustments = 0;
+    for (const employee of managers) {
+      const key = `payroll-auto:v2:${period.id}:${employee.id}:${dateKey}`;
+      const requestHash = createHash("sha256").update(key).digest("hex");
+      const result = await reconcileManagerPayroll(
+        { employeeId: employee.id, periodId: period.id, key, requestHash },
+        actor,
+      );
+      periodAdjustments += result.adjustmentCount;
+      processed++;
+    }
+    adjustments += periodAdjustments;
+    periods.push({ periodId: period.id, ...coordinate, processed: managers.length, adjustments: periodAdjustments });
+  }
+  return { periods, processed, adjustments };
 }
 
 export async function approveManagerPayrollManual(
@@ -1673,6 +1728,7 @@ export async function payrollSummary(
   }), prisma.systemSettings.upsert({ where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true } }), prisma.order.findMany({
     where: {
       companyId: requireTenantIdentity().companyId,
+      orderDateNeedsReview: false,
       orderReceivedAt: { gte: periodRange.start, lt: periodRange.end },
     },
     select: {
@@ -1692,10 +1748,14 @@ export async function payrollSummary(
     where: {
       companyId: requireTenantIdentity().companyId,
       deletedAt: null,
-      lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
       managerUserId: { not: null },
+      OR: [
+        { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+        { orderDateNeedsReview: true, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      ],
     },
     select: {
+      orderDateNeedsReview: true,
       managerUserId: true,
       partnerId: true,
       partnerPrice: true,

@@ -8,6 +8,7 @@ export type OrderTabData = {
   version: number;
   createdAt: Date | string;
   orderReceivedAt: Date | string;
+  orderDateNeedsReview: boolean;
   promisedAt: Date | string | null;
   address: string;
   mapUrl: string;

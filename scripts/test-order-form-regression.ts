@@ -29,12 +29,14 @@ async function main() {
   assert.match(formSource, /resolveOrderSubmission\(submission, payloadText/);
   assert.match(formSource, /clearNewOrderDraft\(window\.localStorage/);
   assert.match(formSource, /if \(submitting\.current\) return/);
-  assert.match(formSource, /Дата заказа/);
+  assert.match(formSource, /Фактическая дата оформления заказа/);
   assert.match(formSource, /orderReceivedAt/);
   assert.match(formSource, /paymentDate: Number\(form\.initialPayment\) > 0 \? form\.orderReceivedAt/);
   assert.match(formSource, /paymentPromiseAmount/);
   assert.match(formSource, /paymentPromiseAt/);
   assert.match(formSource, /Клиент доплатит позже/);
+  assert.match(formSource, /existingOrderId/);
+  assert.match(formSource, /Открыть существующий заказ/);
 
   assert.equal(
     followUpGateMode({ sessionLoading: false, manager: true, checked: false, itemCount: 0 }),

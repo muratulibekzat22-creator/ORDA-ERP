@@ -1,5 +1,6 @@
-// 1 ₸ is the legacy placeholder used by old forms, not an agreed workshop price.
-export const MIN_PRODUCTION_PRICE = 2;
+// Tiny amounts (1 ₸, 111 ₸ and similar) are legacy/test placeholders, not an
+// agreed workshop price for an Altyn Sapa production order.
+export const MIN_PRODUCTION_PRICE = 10_000;
 
 export function isProductionPriceAmount(value: unknown) {
   const amount = Number(value);

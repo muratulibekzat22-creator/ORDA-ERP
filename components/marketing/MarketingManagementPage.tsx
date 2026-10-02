@@ -14,6 +14,7 @@ type Data = {
   metrics: Metric[];
   vacancies: Vacancy[];
   assignees: Array<{ id: number; name: string; role: string }>;
+  integration: { configured: boolean; account: string | null; graphVersion: string; automatic: boolean; state: "NEEDS_SETUP" | "READY" | "ACTIVE"; lastSyncedAt: string | null };
   summary: { spend: number; leads: number; orders: number; revenue: number; cpl: number; cac: number; roas: number; conversion: number };
   dailyCrm: {
     dateLabel: string;
@@ -32,9 +33,9 @@ export default function MarketingManagementPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [task, setTask] = useState({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" });
-  const [metric, setMetric] = useState({ metricMonth: new Date().toISOString().slice(0, 7), channel: "Instagram / Meta", spend: "", leads: "", orders: "", revenue: "", note: "" });
+  const [metricMonth, setMetricMonth] = useState(new Date().toISOString().slice(0, 7));
   const [vacancy, setVacancy] = useState({ title: "", note: "" });
-  const selectedMonth = metric.metricMonth;
+  const selectedMonth = metricMonth;
   const load = useCallback(async () => {
     setLoading(true); setError("");
     const response = await fetch(`/api/marketing?month=${encodeURIComponent(selectedMonth)}`, { cache: "no-store" });
@@ -55,11 +56,10 @@ export default function MarketingManagementPage() {
     await load(); return true;
   }
   async function addTask(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "task", ...task })) setTask({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" }); }
-  async function addMetric(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "metric", ...metric })) setMetric((value) => ({ ...value, spend: "", leads: "", orders: "", revenue: "", note: "" })); }
   async function addVacancy(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "vacancy", ...vacancy })) setVacancy({ title: "", note: "" }); }
 
   return <main className="min-w-0 space-y-5 p-4 sm:p-6 xl:p-8">
-    <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-semibold uppercase tracking-[.18em] text-fuchsia-300">Director workspace</p><h1 className="mt-1 text-3xl font-bold">Маркетинг и вакансии</h1><p className="mt-1 max-w-3xl text-sm text-slate-400">Директор заполняет фактический расход Meta/таргета, лиды, заказы и выручку. Расход автоматически вычитается из прибыли основателя и отчётов.</p></div><div className="flex flex-wrap gap-2"><input aria-label="Месяц маркетинга" type="month" value={selectedMonth} onChange={(event)=>setMetric((value)=>({...value,metricMonth:event.target.value}))} className={field}/><a href="/reports" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold"><BarChart3 size={17}/>KPI менеджеров</a><a href="/finance" className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-semibold">Финансовые операции</a></div></header>
+    <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-semibold uppercase tracking-[.18em] text-fuchsia-300">Director workspace</p><h1 className="mt-1 text-3xl font-bold">Маркетинг и вакансии</h1><p className="mt-1 max-w-3xl text-sm text-slate-400">Расход и обращения Meta загружаются автоматически; заказы и выручка считаются по рекламным заявкам в ORDA. Директор контролирует отклонения, а не переписывает цифры вручную.</p></div><div className="flex flex-wrap gap-2"><input aria-label="Месяц маркетинга" type="month" value={selectedMonth} onChange={(event)=>setMetricMonth(event.target.value)} className={field}/><a href="/reports" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold"><BarChart3 size={17}/>KPI менеджеров</a><a href="/finance" className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-semibold">Финансовые операции</a></div></header>
     {error && <p role="alert" className="rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-200">{error}</p>}
     {loading && !data ? <div className="grid place-items-center rounded-2xl border border-slate-800 p-16 text-slate-400"><RefreshCw className="animate-spin"/></div> : null}
     {data ? <>
@@ -68,14 +68,19 @@ export default function MarketingManagementPage() {
       </section>
 
       <section className="rounded-2xl border border-cyan-500/20 bg-[#101827] p-4">
-        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">CRM за предыдущий день</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Показывает фактическую обработку лидов менеджерами; рекламные расходы Meta заполняются отдельно выше.</p></div>
+        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">CRM за предыдущий день</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Показывает фактическую обработку лидов менеджерами; расход Meta синхронизируется системой отдельно.</p></div>
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7"><Stat label="Новые заявки" value={data.dailyCrm.totals.leadsReceived}/><Stat label="Есть контакт" value={data.dailyCrm.totals.contacted}/><Stat label="Заинтересованы" value={data.dailyCrm.totals.interested}/><Stat label="Замеры назначены" value={data.dailyCrm.totals.measurementsScheduled}/><Stat label="Замеры завершены" value={data.dailyCrm.totals.measurementsCompleted}/><Stat label="Заказы" value={data.dailyCrm.totals.ordersCreated}/><Stat label="Продажи" value={money(data.dailyCrm.totals.revenue)}/></div>
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[800px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер","Заявки","Контакт","Интерес","Замеры","Заказы","Продажи","Отчёт"].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{data.dailyCrm.managers.map(row=><tr key={row.managerId}><td className="px-3 py-3 font-semibold text-white">{row.manager}</td><td className="px-3 py-3">{row.leadsReceived}</td><td className="px-3 py-3">{row.contacted}</td><td className="px-3 py-3">{row.interested}</td><td className="px-3 py-3">{row.measurementsScheduled} / {row.measurementsCompleted}</td><td className="px-3 py-3">{row.ordersCreated}</td><td className="px-3 py-3">{money(row.revenue)}</td><td className={`px-3 py-3 font-semibold ${row.reportStatus==="SENT"?"text-emerald-300":row.reportStatus==="ACKNOWLEDGED"?"text-blue-300":"text-amber-300"}`}>{row.reportStatus==="SENT"?"Отправлен":row.reportStatus==="ACKNOWLEDGED"?"Ознакомлен":"Ждёт отчёта"}</td></tr>)}</tbody></table></div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <FormPanel title="Показатели месяца" subtitle="Один канал можно обновлять повторно">
-          <form onSubmit={addMetric} className="grid gap-3 sm:grid-cols-2"><Input label="Месяц" type="month" value={metric.metricMonth} onChange={(value)=>setMetric({...metric,metricMonth:value})}/><Input label="Канал" value={metric.channel} onChange={(value)=>setMetric({...metric,channel:value})}/><Input label="Расход" type="number" value={metric.spend} onChange={(value)=>setMetric({...metric,spend:value})}/><Input label="Лиды" type="number" value={metric.leads} onChange={(value)=>setMetric({...metric,leads:value})}/><Input label="Заказы" type="number" value={metric.orders} onChange={(value)=>setMetric({...metric,orders:value})}/><Input label="Выручка" type="number" value={metric.revenue} onChange={(value)=>setMetric({...metric,revenue:value})}/><button className="min-h-11 rounded-xl bg-fuchsia-700 px-4 font-semibold sm:col-span-2"><Plus size={16} className="mr-2 inline"/>Сохранить показатели</button></form>
+        <FormPanel title="Meta Ads — автоматически" subtitle="Без ручного переноса цифр директором">
+          <div className={`rounded-xl border p-3 text-sm ${data.integration.state === "ACTIVE" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-amber-500/30 bg-amber-500/10 text-amber-100"}`}>
+            <p className="font-semibold">{data.integration.state === "ACTIVE" ? "Синхронизация работает" : data.integration.state === "READY" ? "Подключено, ждём первую синхронизацию" : "Нужно один раз подключить служебный доступ Meta"}</p>
+            <p className="mt-1 text-xs opacity-80">Аккаунт: {data.integration.account ?? "не задан"} · API {data.integration.graphVersion}{data.integration.lastSyncedAt ? ` · обновлено ${new Date(data.integration.lastSyncedAt).toLocaleString("ru-RU")}` : ""}</p>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-400">Каждое утро ORDA получает расход и начатые переписки из рекламного кабинета. Курс валюты берётся у Национального Банка Казахстана, а заказы и выручка — из CRM.</p>
+          <button type="button" disabled={!data.integration.configured || loading} onClick={() => void send("POST", { action: "sync-meta", month: selectedMonth })} className="mt-3 min-h-11 w-full rounded-xl bg-fuchsia-700 px-4 font-semibold disabled:cursor-not-allowed disabled:opacity-40">{loading ? "Обновляем…" : "Обновить сейчас"}</button>
         </FormPanel>
         <FormPanel title="Новая задача" subtitle="Попадёт в маркетинговый Kanban">
           <form onSubmit={addTask} className="grid gap-3"><Input label="Что сделать" value={task.title} onChange={(value)=>setTask({...task,title:value})}/><div className="grid gap-3 sm:grid-cols-2"><Input label="Срок" type="date" value={task.dueAt} onChange={(value)=>setTask({...task,dueAt:value})}/><label className="text-sm text-slate-300">Ответственный<select className={`${field} mt-1`} value={task.assigneeId} onChange={(e)=>setTask({...task,assigneeId:e.target.value})}><option value="">Не назначен</option>{data.assignees.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div><button className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold"><Plus size={16} className="mr-2 inline"/>Добавить задачу</button></form>

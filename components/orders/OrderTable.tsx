@@ -13,6 +13,7 @@ export type OrderListItem = {
   manager: string;
   deadline: string | null;
   orderReceivedAt?: string;
+  orderDateNeedsReview?: boolean;
   amount?: number;
   received?: number;
   balance?: number;
@@ -55,7 +56,7 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
               <Value label="Ответственный" value={order.manager || "—"} />
-              {order.orderReceivedAt ? <Value label="Дата заказа" value={date(order.orderReceivedAt)} /> : null}
+              <Value label="Дата заказа" value={order.orderDateNeedsReview ? "Нужно подтвердить" : date(order.orderReceivedAt ?? null)} />
               <Value label="Срок" value={date(order.deadline)} />
               {order.amount !== undefined && <Value label="Цена" value={money(order.amount)} />}
               {order.productionPrice !== undefined && (
@@ -115,7 +116,7 @@ export default function OrderTable({ orders }: { orders: OrderListItem[] }) {
                 <td className="px-4 py-4"><p className="font-medium text-white">{order.client.name || "—"}</p><p className="text-xs text-slate-500">{order.client.phone}</p></td>
                 <td className="px-4 py-4"><span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">{orderBoardLabel(order.lifecycle)}</span></td>
                 <td className="px-4 py-4">{order.manager || "—"}</td>
-                <td className="px-4 py-4">{date(order.orderReceivedAt ?? null)}</td>
+                <td className={`px-4 py-4 ${order.orderDateNeedsReview ? "font-semibold text-amber-300" : ""}`}>{order.orderDateNeedsReview ? "Нужно подтвердить" : date(order.orderReceivedAt ?? null)}</td>
                 <td className="px-4 py-4">{date(order.deadline)}</td>
                 <td className="px-4 py-4">{money(order.amount)}</td>
                 {showProductionPrice ? (

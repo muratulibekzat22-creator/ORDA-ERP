@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   try {
     const payload = await getDashboardSummary({ role, userId: Number(session.user.id), period, month });
     if (role === Role.OPERATIONS_DIRECTOR && "finance" in payload) {
-      const operational = { ...payload, finance: undefined, expenses: undefined };
+      const operational = { ...payload, finance: undefined, expenses: undefined, weekly: undefined };
       return NextResponse.json({
         ...operational,
         attention: operational.attention.map((order) => ({

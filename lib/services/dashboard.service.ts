@@ -19,6 +19,7 @@ import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
+import { effectiveMarketingMetrics } from "@/lib/marketing";
 
 type DashboardScope = {
   role: Role;
@@ -71,6 +72,7 @@ const orderEconomySelect = {
   productionDeadline: true,
   lifecycle: true,
   orderReceivedAt: true,
+  orderDateNeedsReview: true,
   manager: true,
   managerUserId: true,
   client: { select: { name: true, phone: true, city: true } },
@@ -146,6 +148,7 @@ async function managementProjection(scope: DashboardScope) {
   const companyId = requireTenantIdentity().companyId;
   const period = dashboardMonthRange(scope.month ?? scope.period);
   const now = new Date();
+  const week = dashboardPeriodRange("week", now);
   const activeLifecycles: Prisma.EnumOrderLifecycleFilter = {
     notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED],
   };
@@ -154,7 +157,7 @@ async function managementProjection(scope: DashboardScope) {
     select: typeof orderEconomySelect;
   }>;
 
-  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm] = await Promise.all([
+  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm, weeklyOrders, weeklyPayments] = await Promise.all([
     prisma.order.findMany({
       where: {
         companyId,
@@ -162,7 +165,10 @@ async function managementProjection(scope: DashboardScope) {
         lifecycle: { not: OrderLifecycle.CANCELLED },
         OR: [
           { lifecycle: activeLifecycles },
-          { orderReceivedAt: { gte: period.start, lt: period.end } },
+          {
+            orderDateNeedsReview: false,
+            orderReceivedAt: { gte: period.start, lt: period.end },
+          },
         ],
       },
       select: orderEconomySelect,
@@ -222,7 +228,7 @@ async function managementProjection(scope: DashboardScope) {
     }),
     prisma.managementMarketingMetric.findMany({
       where: { companyId, metricMonth: { gte: period.start, lt: period.end } },
-      select: { spend: true, leads: true, orders: true, revenue: true },
+      select: { channel: true, note: true, spend: true, leads: true, orders: true, revenue: true },
     }),
     prisma.user.findMany({
       where: { companyId, active: true, role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER, Role.MANAGER] } },
@@ -245,7 +251,7 @@ async function managementProjection(scope: DashboardScope) {
     }),
     prisma.order.groupBy({
       by: ["managerUserId"],
-      where: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, orderReceivedAt: { gte: period.start, lt: period.end }, managerUserId: { not: null } },
+      where: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, orderDateNeedsReview: false, orderReceivedAt: { gte: period.start, lt: period.end }, managerUserId: { not: null } },
       _count: { _all: true },
     }),
     prisma.calendarTask.groupBy({
@@ -277,6 +283,25 @@ async function managementProjection(scope: DashboardScope) {
       },
     }),
     getDailyCrmSnapshot({ now }),
+    prisma.order.findMany({
+      where: {
+        companyId,
+        deletedAt: null,
+        lifecycle: { not: OrderLifecycle.CANCELLED },
+        orderDateNeedsReview: false,
+        orderReceivedAt: { gte: week.start, lt: week.end },
+      },
+      select: { amount: true, partnerPrice: true, partnerAgreedAt: true },
+    }),
+    prisma.payment.groupBy({
+      by: ["type"],
+      where: {
+        operationDate: { gte: week.start, lt: week.end },
+        type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] },
+        order: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
+      },
+      _sum: { amount: true },
+    }),
   ]);
 
   const [payrollAccruals, payrollPayments] = await Promise.all([
@@ -304,7 +329,10 @@ async function managementProjection(scope: DashboardScope) {
   ]);
 
   const periodOrders = orders.filter(
-    (order) => order.orderReceivedAt >= period.start && order.orderReceivedAt < period.end,
+    (order) =>
+      !order.orderDateNeedsReview &&
+      order.orderReceivedAt >= period.start &&
+      order.orderReceivedAt < period.end,
   );
   const activeOrders = orders.filter(
     (order) =>
@@ -359,7 +387,7 @@ async function managementProjection(scope: DashboardScope) {
   const businessProfitability = totalCosts > 0
     ? Math.round((netProfit / totalCosts) * 10_000) / 100
     : null;
-  const marketing = marketingMetrics.reduce(
+  const marketing = effectiveMarketingMetrics(marketingMetrics).reduce(
     (summary, item) => ({
       spend: summary.spend + Number(item.spend),
       leads: summary.leads + item.leads,
@@ -413,6 +441,12 @@ async function managementProjection(scope: DashboardScope) {
   const incompleteData = activeOrders.filter(
     (order) => orderDataGaps(order).length > 0,
   ).length;
+  const weeklyRevenue = weeklyOrders.reduce((sum, order) => sum + Number(order.amount), 0);
+  const weeklyReceived = weeklyPayments.reduce((sum, row) => {
+    const amount = Number(row._sum.amount ?? 0);
+    return sum + (row.type === "REFUND" ? -amount : amount);
+  }, 0);
+  const weeklyPricedOrders = weeklyOrders.filter((order) => hasProductionPrice(order.partnerPrice, order.partnerAgreedAt));
 
   const attention = activeOrders
     .map((order) => {
@@ -458,6 +492,18 @@ async function managementProjection(scope: DashboardScope) {
   return {
     role: scope.role,
     month: period.key,
+    weekly: {
+      from: week.start,
+      to: week.end,
+      orders: weeklyOrders.length,
+      revenue: weeklyRevenue,
+      received: weeklyReceived,
+      ordersWithProductionPrice: weeklyPricedOrders.length,
+      activeOrders: activeOrders.length,
+      overdueOrders: overdue,
+      incompleteOrders: incompleteData,
+      overdueTeamTasks: overdueTasks.reduce((sum, row) => sum + row._count._all, 0),
+    },
     finance: {
       revenue,
       received,
@@ -541,6 +587,7 @@ async function managerProjection(scope: DashboardScope) {
         lifecycle: true,
         promisedAt: true,
         productionDeadline: true,
+        orderDateNeedsReview: true,
         balance: true,
         partnerPrice: true,
         partnerAgreedAt: true,

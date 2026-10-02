@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { OrderLifecycle, Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { companyMonthRange } from "@/lib/company-calendar";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
@@ -35,6 +35,7 @@ export async function getOrders(
       productionDeadline: true,
       promisedAt: true,
       orderReceivedAt: true,
+      orderDateNeedsReview: true,
       createdAt: true,
       updatedAt: true,
       client: { select: { id: true, name: true, phone: true, city: true } },
@@ -109,6 +110,7 @@ export async function getOrders(
       managerUserId: order.managerUserId,
       deadline: orderDeadline(order),
       orderReceivedAt: order.orderReceivedAt,
+      orderDateNeedsReview: order.orderDateNeedsReview,
       amount: Number(order.amount),
       received: Number(economy.client.netReceived),
       balance: Number(economy.client.remaining),
@@ -167,7 +169,10 @@ export async function searchOrderOptions(
     where: {
       deletedAt: null,
       lifecycle: { not: "CANCELLED" },
-      ...(monthRange ? { orderReceivedAt: { gte: monthRange.start, lt: monthRange.end } } : {}),
+      ...(monthRange ? {
+        orderDateNeedsReview: false,
+        orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
+      } : {}),
       AND: [roleScope, searchWhere],
     },
     select: { id: true, number: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
@@ -187,18 +192,39 @@ export async function getOrder(id: number) {
     },
     include: {
       client: true,
-      partner: true,
+      partner: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+          city: true,
+          active: true,
+        },
+      },
       deletedBy: { select: { id: true, name: true } },
-      managerUser: { include: { payrollProfile: { select: { id: true } } } },
+      managerUser: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          payrollProfile: { select: { id: true } },
+        },
+      },
       measurements: {
         include: {
           measurerUser: {
-            include: { payrollProfile: { select: { id: true } } },
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              payrollProfile: { select: { id: true } },
+            },
           },
         },
       },
       payments: {
-        include: { partner: true },
+        include: { partner: { select: { id: true, name: true } } },
         orderBy: [{ operationDate: "desc" }, { id: "desc" }],
       },
       partnerAssignmentHistory: {
@@ -316,6 +342,7 @@ type CreateOrderInput = {
   material: string;
   mapUrl?: string;
   orderReceivedAt?: Date;
+  orderDateNeedsReview?: boolean;
   promisedAt?: Date | null;
   frameComment?: string;
   railingType?: string;
@@ -384,6 +411,7 @@ export async function createOrder(data: CreateOrderInput) {
   const balance = data.amount - data.prepayment;
   const partnerBalance = data.partnerPrice - data.partnerPaid;
   const companyProfit = data.amount - data.partnerPrice;
+  const orderReceivedAt = data.orderReceivedAt ?? new Date();
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -504,6 +532,28 @@ export async function createOrder(data: CreateOrderInput) {
               },
             });
 
+          if (data.enforceClientOwnership) {
+            const receivedDayStart = new Date(orderReceivedAt);
+            receivedDayStart.setUTCHours(0, 0, 0, 0);
+            const receivedDayEnd = new Date(receivedDayStart);
+            receivedDayEnd.setUTCDate(receivedDayEnd.getUTCDate() + 1);
+            const duplicate = await tx.order.findFirst({
+              where: {
+                clientId,
+                managerUserId: data.managerUserId,
+                deletedAt: null,
+                lifecycle: { not: OrderLifecycle.CANCELLED },
+                amount: money(data.amount),
+                prepayment: money(data.prepayment),
+                orderReceivedAt: { gte: receivedDayStart, lt: receivedDayEnd },
+              },
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              select: { id: true, number: true },
+            });
+            if (duplicate)
+              throw new Error(`DUPLICATE_ORDER:${duplicate.id}:${duplicate.number}`);
+          }
+
           const order = await tx.order.create({
             data: {
               number: orderNumber(),
@@ -513,7 +563,9 @@ export async function createOrder(data: CreateOrderInput) {
               staircase: data.staircase,
               material: data.material,
               mapUrl: data.mapUrl ?? "",
-              orderReceivedAt: data.orderReceivedAt ?? new Date(),
+              orderReceivedAt,
+              orderDateNeedsReview:
+                data.orderDateNeedsReview ?? !data.orderReceivedAt,
               promisedAt: data.promisedAt,
               frameComment: data.frameComment ?? "",
               railingType: data.railingType ?? "",

@@ -160,6 +160,7 @@ const sourceLabels: Record<string, string> = {
   MANUAL: "Ручная",
   BANK_STATEMENT: "Выписка Kaspi",
   RECURRING_EXPENSE: "Постоянная",
+  META_ADS: "Meta Ads",
   CLIENT_PAYMENT: "Оплата клиента",
   PARTNER_PAYOUT: "Выплата цеху",
   PAYROLL_PAYMENT: "Зарплата",
@@ -191,6 +192,7 @@ export default function FinanceJournalPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [page, setPage] = useState(1);
   const [manageCategories, setManageCategories] = useState(false);
   const { getKey, reset } = useIdempotencyKey();
@@ -237,6 +239,7 @@ export default function FinanceJournalPage() {
       if (!response.ok)
         throw new Error(body.error || "Не удалось загрузить финансы");
       setJournal(body.journal ?? emptyJournal);
+      setHasLoaded(true);
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Не удалось загрузить финансы",
@@ -483,32 +486,40 @@ export default function FinanceJournalPage() {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Metric
-          label="Поступило денег"
-          value={journal.totals.income}
-          color="text-emerald-300"
-          hint="Оплаты клиентов и другие поступления"
-        />
-        <Metric
-          label="Фактически выплачено"
-          value={journal.totals.expense}
-          color="text-rose-300"
-          hint="Движение денег: операционные траты, зарплата и выплаты цехам"
-        />
-        <Metric
-          label="Чистый денежный поток"
-          value={journal.totals.cashResult}
-          color={
-            journal.totals.cashResult >= 0 ? "text-blue-300" : "text-rose-300"
-          }
-          hint="Поступления минус расходы — это не бухгалтерская прибыль"
-        />
-      </div>
+      {!hasLoaded ? (
+        <div aria-live="polite" className="grid min-h-40 place-items-center rounded-2xl border border-slate-700 bg-[#101827] p-6 text-center text-slate-300">
+          <div><p className="font-semibold text-white">{loading ? "Загружаем реальные операции…" : "Финансовые данные не загружены"}</p><p className="mt-1 text-sm text-slate-400">Нулевые суммы не показываются, пока сервер не подтвердит фактические поступления и расходы.</p></div>
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Metric
+              label="Поступило денег"
+              value={journal.totals.income}
+              color="text-emerald-300"
+              hint="Автоматически: оплаты из оформленных заказов и другие подтверждённые поступления"
+            />
+            <Metric
+              label="Фактически выплачено"
+              value={journal.totals.expense}
+              color="text-rose-300"
+              hint="Движение денег: операционные траты, зарплата и выплаты цехам"
+            />
+            <Metric
+              label="Чистый денежный поток"
+              value={journal.totals.cashResult}
+              color={
+                journal.totals.cashResult >= 0 ? "text-blue-300" : "text-rose-300"
+              }
+              hint="Поступления минус расходы — это не бухгалтерская прибыль"
+            />
+          </div>
 
-      <CashFlowStatus journal={journal} caption={caption} />
+          <CashFlowStatus journal={journal} caption={caption} />
 
-      <ExpenseOverview journal={journal} />
+          <ExpenseOverview journal={journal} />
+        </>
+      )}
 
       <RecurringExpensesPanel journalMonth={recurringJournalMonth(period, from, to)} onChanged={() => void load()} />
 

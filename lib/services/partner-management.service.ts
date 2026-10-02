@@ -15,7 +15,7 @@ import {
 import { compareRequestHash } from "@/lib/idempotency";
 import { normalizePhone } from "@/lib/leads/domain";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
-import { hasProductionPrice } from "@/lib/orders/production-price";
+import { hasProductionPrice, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 import { calculateProfitFirstAllocation } from "@/lib/partners/profit-first";
 import { calculatePartnerSettlement } from "@/lib/partners/settlement";
 import { prisma } from "@/lib/prisma";
@@ -125,7 +125,7 @@ function relationView(relation: LoadedRelation) {
   const metrics = calculateLoadedPartnerRelation(relation);
   const productionPriceSet = hasProductionPrice(
     metrics.partnerAccrued,
-    relation.order.partnerAgreedAt ?? (metrics.partnerAccrued.gte(2) ? relation.startsAt : null),
+    relation.order.partnerAgreedAt ?? (metrics.partnerAccrued.gte(MIN_PRODUCTION_PRICE) ? relation.startsAt : null),
   );
   const allocation = calculateProfitFirstAllocation({
     totalSale: metrics.orderAmount,
@@ -175,6 +175,7 @@ function relationView(relation: LoadedRelation) {
       number: relation.order.number,
       createdAt: relation.order.createdAt,
       orderReceivedAt: relation.order.orderReceivedAt,
+      orderDateNeedsReview: relation.order.orderDateNeedsReview,
       promisedAt: relation.order.promisedAt,
       client: relation.order.client,
       manager: relation.order.managerUser ?? { id: null, name: relation.order.manager },
@@ -932,7 +933,7 @@ export async function getPartnerManagementReadModel(filters: {
           companyId: tenant,
           deletedAt: null,
           lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-          OR: [{ partnerAgreedAt: null }, { partnerPrice: { lte: 1 } }],
+          OR: [{ partnerAgreedAt: null }, { partnerPrice: { lt: MIN_PRODUCTION_PRICE } }],
         },
       }),
     ]).then(([active, missingProductionCost]) => ({ active, missingProductionCost })),
@@ -972,9 +973,11 @@ export async function getPartnerManagementReadModel(filters: {
   const monthMap = new Map<string, { month: string; orders: number; sales: Prisma.Decimal; received: Prisma.Decimal }>();
   const partnerMap = new Map<number, { partnerId: number; name: string; orders: number; sales: Prisma.Decimal; profit: Prisma.Decimal; debt: Prisma.Decimal }>();
   for (const item of orderRows) {
-    const month = item.order.orderReceivedAt.toISOString().slice(0, 7);
-    const trend = monthMap.get(month) ?? { month, orders: 0, sales: new Prisma.Decimal(0), received: new Prisma.Decimal(0) };
-    trend.orders += 1; trend.sales = trend.sales.add(item.metrics.orderAmount); trend.received = trend.received.add(item.metrics.received); monthMap.set(month, trend);
+    if (!item.order.orderDateNeedsReview) {
+      const month = item.order.orderReceivedAt.toISOString().slice(0, 7);
+      const trend = monthMap.get(month) ?? { month, orders: 0, sales: new Prisma.Decimal(0), received: new Prisma.Decimal(0) };
+      trend.orders += 1; trend.sales = trend.sales.add(item.metrics.orderAmount); trend.received = trend.received.add(item.metrics.received); monthMap.set(month, trend);
+    }
     const byPartner = partnerMap.get(item.partnerId) ?? { partnerId: item.partnerId, name: item.partner.name, orders: 0, sales: new Prisma.Decimal(0), profit: new Prisma.Decimal(0), debt: new Prisma.Decimal(0) };
     byPartner.orders += 1; byPartner.sales = byPartner.sales.add(item.metrics.orderAmount); byPartner.profit = byPartner.profit.add(item.economy.profit.netProfit ?? 0); byPartner.debt = byPartner.debt.add(item.metrics.partnerBalance); partnerMap.set(item.partnerId, byPartner);
   }

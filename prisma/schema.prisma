@@ -957,6 +957,7 @@ model Order {
   material          String
   mapUrl            String   @default("")
   orderReceivedAt   DateTime @default(now())
+  orderDateNeedsReview Boolean @default(false)
   frameComment      String   @default("")
   railingType       String   @default("")
   supportType       String   @default("")
@@ -1045,6 +1046,7 @@ model Order {
   @@index([deletedAt, managerUserId])
   @@index([deletedAt, lifecycle])
   @@index([orderReceivedAt])
+  @@index([orderDateNeedsReview, orderReceivedAt])
   @@index([partnerId, partnerAgreedAt])
   @@index([deletedAt, createdAt, id])
   @@index([managerUserId, deletedAt, createdAt])

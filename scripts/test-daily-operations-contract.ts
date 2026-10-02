@@ -28,6 +28,10 @@ assert.match(service, /ORDER_READINESS_REFRESHED/, "existing readiness tasks mus
 assert.match(service, /status: \{ in: \["ASSIGNED", "IN_PROGRESS"\] \}/, "overdue active measurements must be included in manager readiness");
 assert.match(service, /Замерщик не выбран/, "unassigned measurers must be explicit in the task");
 assert.match(service, /role: Role\.MANAGER/, "daily rows must be limited to active managers");
+assert.match(service, /role: Role\.OPERATIONS_DIRECTOR/, "daily tasks must be owned by the operations director, not the founder");
+assert.match(service, /readinessDueAt/, "readiness tasks must receive a clear next-day deadline");
+assert.match(service, /dueAtForBusinessDate\(todayKey, 18\)/, "daily CRM reports must stay actionable until 18:00 Almaty");
+assert.doesNotMatch(cron, /role: "DIRECTOR"/, "daily operations cron must not depend on the founder");
 assert.match(mandatory.replace(/\s+/g, " "), /\{ workflow: null \}, \{ dueAt: \{ lte: now \} \}/, "scheduled workflow tasks must not block before their due time");
 assert.match(cron, /timingSafeEqual/, "cron must use constant-time secret comparison");
 assert.match(cron, /company\.isDemo/, "cron must reject demo tenants");

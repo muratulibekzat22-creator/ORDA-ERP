@@ -66,12 +66,12 @@ export async function GET(request: Request) {
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
-    if (!period && (identity.role === Role.DIRECTOR || identity.role === Role.OPERATIONS_DIRECTOR))
+    if (!period && identity.role === Role.OPERATIONS_DIRECTOR)
       period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.upsert({
       where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
     });
-    const unconfigured = identity.role === Role.DIRECTOR || identity.role === Role.OPERATIONS_DIRECTOR
+    const unconfigured = identity.role === Role.OPERATIONS_DIRECTOR
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
       : [];
     if (!period)
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
     const action = String(body.action ?? "");
     const hash = createRequestHash(body);
     if (action === "create-period") {
-      if (identity.role !== Role.DIRECTOR && identity.role !== Role.OPERATIONS_DIRECTOR) throw new PayrollError("FORBIDDEN");
+      if (identity.role !== Role.OPERATIONS_DIRECTOR) throw new PayrollError("FORBIDDEN");
       return NextResponse.json(
         await ensurePeriod(Number(body.year), Number(body.month)),
       );

@@ -79,7 +79,7 @@ assert.equal(isPayrollPolicyReady(0, [30_000, -30_000, 0]), false);
 assert.equal(isPayrollPolicyReady(200_000, [0]), false);
 assert.deepEqual(payrollRoleAccess("DIRECTOR"), {
   founder: true,
-  administrator: true,
+  administrator: false,
   accountant: false,
 });
 assert.deepEqual(payrollRoleAccess("OPERATIONS_DIRECTOR"), {
@@ -136,7 +136,9 @@ const externalReferenceMigrationSource = readFileSync(
   ),
   "utf8",
 );
-assert.match(serviceSource, /FOUNDER_CONFIRMATION_REQUIRED/);
+assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
+assert.match(serviceSource, /reconcileCurrentManagerPayroll/);
+assert.match(serviceSource, /const periodCoordinates = \[\{ year, month \}, previous\]/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_WORK_INCOMPLETE/);
