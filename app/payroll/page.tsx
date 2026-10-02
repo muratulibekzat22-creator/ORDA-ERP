@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { isCompanyMonthComplete } from "@/lib/company-calendar";
 import { payrollRoleAccess } from "@/lib/payroll-policy";
 
 type Accrual = {
@@ -216,6 +217,8 @@ const errorLabels: Record<string, string> = {
   ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
   SALARY_ALREADY_ACCRUED: "Оклад за этот месяц уже начислен",
+  SALARY_AMOUNT_MISMATCH: "Сумма оклада изменилась. Обновите ведомость и повторите начисление",
+  PAYROLL_PERIOD_NOT_FINISHED: "Оклад можно начислить только за завершённый месяц",
   ACCRUAL_ALREADY_REVERSED: "Это начисление уже сторнировано",
   DIRECTOR_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает директор",
   PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
@@ -274,7 +277,19 @@ export default function PayrollPage() {
     adminView = founder || director || accountant,
     managerSelfService = role === "MANAGER" && !adminView,
     closed = data.period?.status === "CLOSED",
-    locked = Boolean(data.period && data.period.status !== "OPEN");
+    locked = Boolean(data.period && data.period.status !== "OPEN"),
+    completedMonth = isCompanyMonthComplete(selected.year, selected.month);
+  const salaryCandidates = data.rows.filter(
+    (row) =>
+      row.currentSalary > 0 &&
+      !row.accruals.some(
+        (item) =>
+          item.type === "BASE_SALARY" &&
+          item.direction === "INCREASE" &&
+          !item.reversalOfId &&
+          !item.reversedBy,
+      ),
+  );
 
   const load = useCallback(async () => {
     if (sessionStatus !== "authenticated") return;
@@ -555,10 +570,10 @@ export default function PayrollPage() {
                 {labels[data.period.status]}
               </span>
             )}
-            {canAccrueSalary && data.period && !locked && (
+            {canAccrueSalary && data.period && !locked && completedMonth && (
               <button
-                onClick={() => openOperation("salaryAccrual")}
-                disabled={!data.rows.length}
+                onClick={() => openOperation("salaryAccrual", salaryCandidates[0])}
+                disabled={!salaryCandidates.length}
                 className="flex min-h-11 items-center gap-2 rounded-xl border border-blue-500/50 bg-blue-500/10 px-4 font-semibold text-blue-100 disabled:opacity-40"
               >
                 <Plus size={18} /> Начислить оклад
@@ -606,7 +621,7 @@ export default function PayrollPage() {
         {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
-            <p className="mt-2 leading-6">ORDA только сверяет оклад и бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Автоматических начислений нет: руководитель начисляет оклад за завершённый месяц, менеджер сам регистрирует бонусы по своим заказам.</p>
+            <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и сверяет бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Руководитель вручную подтверждает действие «Начислить» только за завершённый месяц; рассчитанную сумму в этом действии менять нельзя. Менеджер сам регистрирует бонусы по своим заказам.</p>
             <p className="mt-2 leading-6">После начисления операционный директор проверяет замечания по заказам и замерам, затем регистрирует фактическую выплату с референсом Kaspi. Право выплаты остаётся отдельно от права начислить оклад.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
@@ -749,7 +764,7 @@ export default function PayrollPage() {
         <EmployeeDrawer
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
-          canAccrueSalary={canAccrueSalary}
+          canAccrueSalary={canAccrueSalary && completedMonth}
           canPay={director}
           closed={locked}
           onClose={() => setDetails(null)}
@@ -762,7 +777,7 @@ export default function PayrollPage() {
         <OperationModal
           operation={operation}
           row={target}
-          rows={data.rows}
+          rows={operation === "salaryAccrual" ? salaryCandidates : data.rows}
           onRowChange={(row) => {
             setTarget(row);
             setForm(operation === "salaryAccrual"
@@ -931,6 +946,16 @@ function EmployeeDrawer({
       reason: item.comment ?? "",
     })),
   ].sort((a, b) => +new Date(b.date) - +new Date(a.date));
+  const canAccrueThisSalary =
+    canAccrueSalary &&
+    row.currentSalary > 0 &&
+    !row.accruals.some(
+      (item) =>
+        item.type === "BASE_SALARY" &&
+        item.direction === "INCREASE" &&
+        !item.reversalOfId &&
+        !item.reversedBy,
+    );
   return (
     <div
       className="fixed inset-0 z-[80] flex justify-end bg-black/70"
@@ -1080,11 +1105,11 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {(canAccrueSalary || canPay) && !closed && (
+        {(canAccrueThisSalary || canPay) && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2">
-              {canAccrueSalary && (
+              {canAccrueThisSalary && (
                 <Action label="Начислить оклад" onClick={() => onOperation("salaryAccrual", row)} />
               )}
               {canPay && <Action label="Выплатить" onClick={() => onOperation("payment", row)} />}
@@ -1252,7 +1277,7 @@ function OperationModal({
 }) {
   const titles: Record<Operation, string> = {
       salary: "Назначить новый оклад",
-      salaryAccrual: "Начислить оклад за период",
+      salaryAccrual: "Подтвердить начисление оклада",
       allowance: "Изменить гарантированный бонус",
       bonus: "Добавить бонус за заказ",
       premium: "Назначить премию",
@@ -1360,8 +1385,14 @@ function OperationModal({
                 min="1"
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                readOnly={operation === "salaryAccrual"}
                 className="control"
               />
+              {operation === "salaryAccrual" && (
+                <span className="mt-1.5 block text-xs text-blue-300">
+                  Сумма рассчитана автоматически по окладу сотрудника. Для изменения используйте действие «Изменить оклад».
+                </span>
+              )}
             </Field>
           )}
           {operation === "payment" && (
@@ -1521,7 +1552,7 @@ function OperationModal({
             }
             className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-40"
           >
-            Сохранить
+            {operation === "salaryAccrual" ? "Подтвердить начисление" : "Сохранить"}
           </button>
         </div>
       </div>

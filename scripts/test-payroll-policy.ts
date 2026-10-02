@@ -119,6 +119,10 @@ const payrollSelfRouteSource = readFileSync(
   new URL("../app/api/payroll/self/route.ts", import.meta.url),
   "utf8",
 );
+const payrollPageSource = readFileSync(
+  new URL("../app/payroll/page.tsx", import.meta.url),
+  "utf8",
+);
 const dailyOperationsRouteSource = readFileSync(
   new URL("../app/api/cron/daily-operations/route.ts", import.meta.url),
   "utf8",
@@ -168,6 +172,10 @@ assert.match(serviceSource, /MANAGER_PAYROLL_MANUAL_APPROVED/);
 assert.match(payrollRouteSource, /approve-manager-payroll-manual/);
 assert.match(serviceSource, /managerPayrollPolicyState/);
 assert.match(serviceSource, /SALARY_ALREADY_ACCRUED/);
+assert.match(serviceSource, /SALARY_AMOUNT_MISMATCH/);
+assert.match(payrollRouteSource, /PAYROLL_PERIOD_NOT_FINISHED/);
+assert.match(payrollPageSource, /readOnly=\{operation === "salaryAccrual"\}/);
+assert.match(payrollPageSource, /автоматически формирует ведомость/);
 assert.match(serviceSource, /const approvedAccrued = accrued/);
 assert.match(
   serviceSource,

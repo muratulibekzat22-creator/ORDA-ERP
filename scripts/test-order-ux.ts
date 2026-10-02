@@ -7,7 +7,12 @@ import { projectOrderStatus, USER_ORDER_STATUSES } from "../lib/orders/presentat
 import { orderDataGaps } from "../lib/orders/completeness";
 import { ORDER_BOARD_TARGET_LIFECYCLE, orderBoardColumn } from "../lib/orders/board";
 import { hasProductionPrice } from "../lib/orders/production-price";
-import { companyMonthRange } from "../lib/company-calendar";
+import {
+  companyMonthRange,
+  companyYearMonth,
+  isCompanyMonthComplete,
+  isCompanyMonthStarted,
+} from "../lib/company-calendar";
 
 assert.equal(USER_ORDER_STATUSES.length, 7);
 assert.equal(projectOrderStatus(OrderLifecycle.CREATED), "BEFORE_WORKSHOP");
@@ -32,6 +37,22 @@ assert.deepEqual(
     end: "2026-09-30T19:00:00.000Z",
   },
   "company month must use the Kazakhstan UTC+5 business boundary",
+);
+assert.deepEqual(
+  companyYearMonth(new Date("2026-09-30T19:00:00.000Z")),
+  { year: 2026, month: 10 },
+);
+assert.equal(
+  isCompanyMonthComplete(2026, 9, new Date("2026-09-30T19:00:00.000Z")),
+  true,
+);
+assert.equal(
+  isCompanyMonthComplete(2026, 10, new Date("2026-10-02T07:00:00.000Z")),
+  false,
+);
+assert.equal(
+  isCompanyMonthStarted(2026, 11, new Date("2026-10-02T07:00:00.000Z")),
+  false,
 );
 assert.deepEqual(
   orderDataGaps({

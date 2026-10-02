@@ -8,6 +8,10 @@ import {
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
+import {
+  isCompanyMonthComplete,
+  isCompanyMonthStarted,
+} from "@/lib/company-calendar";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { requireTenantIdentity } from "@/lib/tenant-context";
@@ -61,12 +65,15 @@ export async function GET(request: Request) {
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
     const identity = actor(auth.session!);
+    const canAccrueSalary =
+      identity.role === Role.DIRECTOR ||
+      identity.role === Role.OPERATIONS_DIRECTOR;
     if (identity.role === Role.OPERATIONS_DIRECTOR)
       await ensureUserEmployeeProfiles();
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
-    if (!period && identity.role === Role.OPERATIONS_DIRECTOR)
+    if (!period && canAccrueSalary && isCompanyMonthStarted(year, month))
       period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.findUnique({
       where: { companyId: requireTenantIdentity().companyId }, select: { paydayDayOfMonth: true },
@@ -149,7 +156,20 @@ export async function POST(request: Request) {
           identity,
         ),
       );
-    if (action === "accrual")
+    if (action === "accrual") {
+      const type = body.type as PayrollAccrualType;
+      if (type === PayrollAccrualType.BASE_SALARY) {
+        const period = await prisma.payrollPeriod.findFirst({
+          where: {
+            id: Number(body.periodId),
+            companyId: requireTenantIdentity().companyId,
+          },
+          select: { year: true, month: true },
+        });
+        if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
+        if (!isCompanyMonthComplete(period.year, period.month))
+          throw new PayrollError("PAYROLL_PERIOD_NOT_FINISHED");
+      }
       return NextResponse.json(
         await createAccrual(
           {
@@ -159,7 +179,7 @@ export async function POST(request: Request) {
               body.earnedPeriodId == null
                 ? undefined
                 : Number(body.earnedPeriodId),
-            type: body.type as PayrollAccrualType,
+            type,
             amount: Number(body.amount),
             orderId: body.orderId == null ? undefined : Number(body.orderId),
             reason: String(body.reason ?? ""),
@@ -170,6 +190,7 @@ export async function POST(request: Request) {
           identity,
         ),
       );
+    }
     if (action === "payment")
       return NextResponse.json(
         await createPayment(

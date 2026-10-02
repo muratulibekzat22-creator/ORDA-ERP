@@ -431,6 +431,19 @@ async function createAccrualInternal(
         if (!employee?.payrollEnabled || !employee.active)
           throw new PayrollError("EMPLOYEE_NOT_FOUND");
       if (input.type === PayrollAccrualType.BASE_SALARY) {
+        const range = companyMonthRange(period.year, period.month);
+        const salaryRates = await tx.employeeSalaryRate.findMany({
+          where: { employeeId: input.employeeId },
+          orderBy: { effectiveFrom: "desc" },
+        });
+        const activeRate = salaryRates.find(
+          (rate) =>
+            rate.effectiveFrom < range.end &&
+            (!rate.effectiveTo || rate.effectiveTo >= range.start),
+        ) ?? salaryRates[0];
+        const calculatedSalary = activeRate?.amount ?? employee.baseSalary;
+        if (!money(input.amount).equals(calculatedSalary))
+          throw new PayrollError("SALARY_AMOUNT_MISMATCH");
         const existingSalary = await tx.payrollAccrual.findFirst({
           where: {
             employeeId: input.employeeId,
