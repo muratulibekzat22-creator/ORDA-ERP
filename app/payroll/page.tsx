@@ -1688,6 +1688,12 @@ function OperationModal({
               <input
                 type="date"
                 value={form.date}
+                onInput={(e) =>
+                  setForm({
+                    ...form,
+                    date: e.currentTarget.value,
+                  })
+                }
                 onChange={(e) => setForm({ ...form, date: e.target.value })}
                 className="control"
               />

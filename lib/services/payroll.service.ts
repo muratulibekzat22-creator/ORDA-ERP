@@ -307,7 +307,7 @@ export async function changeSalary(
       startsAt < current.effectiveFrom &&
       Number(current.amount) === Number(salary)
     ) {
-      const previous = await tx.employeeSalaryRate.findFirst({
+      const earlierRates = await tx.employeeSalaryRate.findMany({
         where: {
           employeeId,
           id: { not: current.id },
@@ -315,6 +315,10 @@ export async function changeSalary(
         },
         orderBy: { effectiveFrom: "desc" },
       });
+      const previousIndex = earlierRates.findIndex(
+        (rate) => Number(rate.amount) !== Number(salary),
+      );
+      const previous = earlierRates[previousIndex];
       if (!previous) throw new PayrollError("INVALID_EFFECTIVE_DATE");
       if (startsAt <= previous.effectiveFrom) {
         const sameCalendarDay =
@@ -323,10 +327,18 @@ export async function changeSalary(
         if (!sameCalendarDay) throw new PayrollError("INVALID_EFFECTIVE_DATE");
         startsAt = new Date(previous.effectiveFrom.getTime() + 1);
       }
+      const redundantRates = earlierRates.slice(0, previousIndex);
       await tx.employeeSalaryRate.update({
         where: { id: previous.id },
         data: { effectiveTo: startsAt },
       });
+      if (redundantRates.length) {
+        await tx.employeeSalaryRate.updateMany({
+          where: { id: { in: redundantRates.map((rate) => rate.id) } },
+          data: { effectiveFrom: startsAt, effectiveTo: startsAt },
+        });
+        startsAt = new Date(startsAt.getTime() + 1);
+      }
       const corrected = await tx.employeeSalaryRate.update({
         where: { id: current.id },
         data: {
