@@ -1,6 +1,8 @@
 export const MANAGER_ORDER_BONUS_THRESHOLD = 3_000_000;
 export const MANAGER_ORDER_BONUS_STANDARD = 30_000;
 export const MANAGER_ORDER_BONUS_HIGH = 50_000;
+export const MANAGER_ORDER_BONUS_AUTOMATION_START = { year: 2026, month: 10 } as const;
+export const AUTOMATIC_ORDER_BONUS_REASON_PREFIX = "Автоматический бонус по сумме заказа";
 export const PAYROLL_POLICY_ADJUSTMENT_PREFIX = "Автопроверка бонуса за заказ";
 export const PAYROLL_SALARY_ADJUSTMENT_PREFIX = "Автопроверка оклада";
 export const MANAGER_ORDER_BONUS_EARNED_EVENT = "ORDER_RECEIVED";
@@ -10,11 +12,21 @@ export const managerOrderBonus = (orderAmount: number) =>
     ? MANAGER_ORDER_BONUS_HIGH
     : MANAGER_ORDER_BONUS_STANDARD;
 
+export const isManagerOrderBonusAutomaticPeriod = (
+  year: number,
+  month: number,
+) =>
+  year > MANAGER_ORDER_BONUS_AUTOMATION_START.year ||
+  (year === MANAGER_ORDER_BONUS_AUTOMATION_START.year &&
+    month >= MANAGER_ORDER_BONUS_AUTOMATION_START.month);
+
 export const isManagerOrderBonusEligible = (order: {
   status?: string | null;
+  lifecycle?: string | null;
   deletedAt?: Date | string | null;
 }) =>
   !order.deletedAt &&
+  order.lifecycle !== "CANCELLED" &&
   !/(отмен|возврат|cancel|refund|return)/i.test(order.status ?? "");
 
 export const isOrderAssignedToManager = (

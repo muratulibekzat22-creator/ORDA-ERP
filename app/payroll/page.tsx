@@ -12,13 +12,19 @@ import {
   ChevronRight,
   CircleDollarSign,
   History,
+  Pencil,
   Plus,
+  RotateCcw,
   UserRound,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { isCompanyMonthComplete } from "@/lib/company-calendar";
-import { payrollRoleAccess } from "@/lib/payroll-policy";
+import {
+  isManagerOrderBonusAutomaticPeriod,
+  managerOrderBonus,
+  payrollRoleAccess,
+} from "@/lib/payroll-policy";
 
 type Accrual = {
   id: number;
@@ -158,6 +164,25 @@ type OrderOption = {
   amount?: number | string;
   client: { id?: number; name: string; phone?: string | null };
 };
+type ManagedOrderBonus = {
+  id: number;
+  employeeId: number;
+  employeeName: string;
+  orderId?: number | null;
+  order?: OrderOption | null;
+  type: string;
+  amount: number;
+  policyAdjustment: number;
+  effectiveAmount: number;
+  paid: number;
+  createdAt: string;
+  editable: boolean;
+  blockedReason?: string | null;
+};
+type BonusCorrection = {
+  mode: "correct" | "cancel";
+  item: ManagedOrderBonus;
+};
 type Form = {
   amount: string;
   reason: string;
@@ -167,6 +192,7 @@ type Form = {
   accrualId: string;
   method: string;
   externalReference: string;
+  manualOverride: boolean;
 };
 
 const months = [
@@ -241,7 +267,13 @@ const errorLabels: Record<string, string> = {
   ORDER_REQUIRED: "Для бонуса за заказ укажите заказ",
   ORDER_NOT_FOUND: "Заказ не найден",
   ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
+  ORDER_NOT_ELIGIBLE_FOR_BONUS: "Отменённый заказ не участвует в расчёте бонуса",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
+  BONUS_NOT_FOUND: "Бонус не найден или уже отменён",
+  BONUS_PAYMENT_EXISTS: "Этот бонус уже выплачен. Сначала учредитель должен сторнировать выплату",
+  BONUS_POLICY_ADJUSTED: "Этот бонус уже пересчитан системой и не требует повторной отмены",
+  BONUS_OVERRIDE_REASON_REQUIRED: "Укажите причину ручного изменения суммы",
+  INVALID_PERIOD: "Выберите текущий или прошедший расчётный месяц",
   SALARY_ALREADY_ACCRUED: "Оклад за этот месяц уже начислен",
   SALARY_AMOUNT_MISMATCH: "Сумма оклада изменилась. Обновите ведомость и повторите начисление",
   PAYROLL_PERIOD_NOT_FINISHED: "Оклад можно начислить только за завершённый месяц",
@@ -271,6 +303,7 @@ const emptyForm = (): Form => ({
   accrualId: "",
   method: "kaspi",
   externalReference: "",
+  manualOverride: false,
 });
 
 export default function PayrollPage() {
@@ -293,6 +326,8 @@ export default function PayrollPage() {
   const [details, setDetails] = useState<PayrollRow | null>(null),
     [operation, setOperation] = useState<Operation | null>(null),
     [target, setTarget] = useState<PayrollRow | null>(null);
+  const [managedBonuses, setManagedBonuses] = useState<ManagedOrderBonus[]>([]);
+  const [bonusCorrection, setBonusCorrection] = useState<BonusCorrection | null>(null);
   const [form, setForm] = useState<Form>(emptyForm);
   const role = session?.user.accountRole || session?.user.role || "",
     roleAccess = payrollRoleAccess(role),
@@ -304,6 +339,8 @@ export default function PayrollPage() {
     director = operationsDirector && adminView,
     canAccrueSalary = founder,
     managerSelfService = role === "MANAGER" && !adminView,
+    canCorrectOrderBonuses =
+      role === "MANAGER" || role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
     advanceSelfService = !adminView && role !== "PARTNER",
     closed = data.period?.status === "CLOSED",
     locked = Boolean(data.period && data.period.status !== "OPEN"),
@@ -328,15 +365,56 @@ export default function PayrollPage() {
       year: String(selected.year),
       month: String(selected.month),
     });
-    const response = await fetch(
-        `${adminView ? "/api/payroll" : "/api/payroll/self"}?${query}`,
-      ),
-      body = await response.json().catch(() => ({}));
+    if (
+      canCorrectOrderBonuses &&
+      isManagerOrderBonusAutomaticPeriod(selected.year, selected.month)
+    ) {
+      const syncResponse = await fetch("/api/payroll/bonus-corrections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          action: "sync",
+          year: selected.year,
+          month: selected.month,
+        }),
+      });
+      if (!syncResponse.ok) {
+        const syncBody = await syncResponse.json().catch(() => ({}));
+        setError(
+          errorLabels[syncBody.error] ??
+            "Не удалось автоматически сформировать бонусы",
+        );
+      }
+    }
+    const [response, bonusResponse] = await Promise.all([
+      fetch(`${adminView ? "/api/payroll" : "/api/payroll/self"}?${query}`),
+      canCorrectOrderBonuses
+        ? fetch(`/api/payroll/bonus-corrections?${query}`)
+        : Promise.resolve(null),
+    ]);
+    const body = await response.json().catch(() => ({}));
     if (!response.ok)
       setError(errorLabels[body.error] ?? "Не удалось загрузить зарплату");
     else setData(body as Payload);
+    if (bonusResponse) {
+      const bonusBody = await bonusResponse.json().catch(() => ({}));
+      if (bonusResponse.ok)
+        setManagedBonuses(
+          Array.isArray(bonusBody.items) ? bonusBody.items : [],
+        );
+      else {
+        setManagedBonuses([]);
+        if (response.ok)
+          setError(
+            errorLabels[bonusBody.error] ?? "Не удалось загрузить бонусы",
+          );
+      }
+    } else setManagedBonuses([]);
     setLoading(false);
-  }, [adminView, selected.month, selected.year, sessionStatus]);
+  }, [adminView, canCorrectOrderBonuses, selected.month, selected.year, sessionStatus]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
@@ -394,6 +472,30 @@ export default function PayrollPage() {
       return false;
     }
     setNotice(success);
+    await load();
+    return true;
+  };
+  const runBonusCorrection = async (
+    body: Record<string, unknown>,
+    success: string,
+  ) => {
+    setError("");
+    setNotice("");
+    const response = await fetch("/api/payroll/bonus-corrections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify(body),
+      }),
+      result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setError(errorLabels[result.error] ?? "Не удалось исправить бонус");
+      return false;
+    }
+    setNotice(success);
+    setBonusCorrection(null);
     await load();
     return true;
   };
@@ -480,7 +582,9 @@ export default function PayrollPage() {
         periodId: data.period.id,
         amount,
         reason:
-          form.reason ||
+          operation === "bonus" && form.manualOverride
+            ? form.reason
+            : form.reason ||
           labels[
             operation === "salaryAccrual"
               ? "BASE_SALARY"
@@ -499,6 +603,7 @@ export default function PayrollPage() {
               ? "DEDUCTION"
               : "ORDER_BONUS",
         orderId: form.orderId ? Number(form.orderId) : undefined,
+        manualOverride: operation === "bonus" && form.manualOverride,
       };
     const saved = operation === "advanceReport"
       ? await runSelf(body, "Аванс зарегистрирован и ожидает подтверждения")
@@ -685,7 +790,7 @@ export default function PayrollPage() {
         {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
-            <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и сверяет бонусы менеджеров по оформленным заказам: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Руководитель вручную подтверждает действие «Начислить» только за завершённый месяц; рассчитанную сумму в этом действии менять нельзя. Менеджер сам регистрирует бонусы по своим заказам.</p>
+            <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и рассчитывает бонус по сумме заказа: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Начиная с октября 2026 года бонусы создаются автоматически по оформленным заказам; ручное изменение суммы требует причины. Ошибочный месяц или заказ исправляется со страницы без удаления истории.</p>
             <p className="mt-2 leading-6">После начисления операционный директор проверяет замечания по заказам и замерам, затем регистрирует фактическую выплату с референсом Kaspi. Право выплаты остаётся отдельно от права начислить оклад.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
@@ -710,8 +815,24 @@ export default function PayrollPage() {
           <PersonalPayrollReport
             row={data.rows[0]}
             managerSelfService={managerSelfService}
+            automaticBonusMode={isManagerOrderBonusAutomaticPeriod(
+              selected.year,
+              selected.month,
+            )}
             canReportAdvance={advanceSelfService && Boolean(data.period) && !locked}
             onOperation={openOperation}
+          />
+        )}
+        {canCorrectOrderBonuses && data.period && (
+          <OrderBonusCorrectionPanel
+            items={managedBonuses}
+            managerView={role === "MANAGER"}
+            onCorrect={(item) =>
+              setBonusCorrection({ mode: "correct", item })
+            }
+            onCancel={(item) =>
+              setBonusCorrection({ mode: "cancel", item })
+            }
           />
         )}
         {adminView && Boolean(data.unconfigured?.length) && (
@@ -860,6 +981,22 @@ export default function PayrollPage() {
           onSubmit={submitOperation}
         />
       )}
+      {bonusCorrection && (
+        <BonusCorrectionModal
+          key={`${bonusCorrection.mode}-${bonusCorrection.item.id}`}
+          correction={bonusCorrection}
+          selectedPeriod={selected}
+          onClose={() => setBonusCorrection(null)}
+          onSubmit={(body) =>
+            runBonusCorrection(
+              body,
+              bonusCorrection.mode === "cancel"
+                ? "Бонус отменён, история сохранена"
+                : "Бонус исправлен и пересчитан",
+            )
+          }
+        />
+      )}
     </main>
   );
 }
@@ -948,11 +1085,13 @@ function Metric({
 function PersonalPayrollReport({
   row,
   managerSelfService,
+  automaticBonusMode,
   canReportAdvance,
   onOperation,
 }: {
   row: PayrollRow;
   managerSelfService: boolean;
+  automaticBonusMode: boolean;
   canReportAdvance: boolean;
   onOperation: (operation: Operation, row: PayrollRow) => void;
 }) {
@@ -997,7 +1136,9 @@ function PersonalPayrollReport({
           )}
           {managerSelfService && (
             <p className="mt-3 text-xs text-blue-200/80">
-              До начисления зарплаты зарегистрируйте бонус по каждому своему заказу за выбранный месяц.
+              {automaticBonusMode
+                ? "Бонусы по заказам формируются автоматически. Ошибочную запись можно исправить или отменить ниже."
+                : "Выберите каждый свой заказ за месяц — сумму бонуса ORDA подставит автоматически. Ошибочную запись можно исправить или отменить ниже."}
             </p>
           )}
         </div>
@@ -1009,7 +1150,9 @@ function PersonalPayrollReport({
           )}
           {managerSelfService && (
             <>
-              <button onClick={() => onOperation("bonus", row)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
+              {!automaticBonusMode && (
+                <button onClick={() => onOperation("bonus", row)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
+              )}
               <button onClick={() => onOperation("deduction", row)} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-200">+ Штраф</button>
             </>
           )}
@@ -1018,6 +1161,111 @@ function PersonalPayrollReport({
     </section>
   );
 }
+
+function OrderBonusCorrectionPanel({
+  items,
+  managerView,
+  onCorrect,
+  onCancel,
+}: {
+  items: ManagedOrderBonus[];
+  managerView: boolean;
+  onCorrect: (item: ManagedOrderBonus) => void;
+  onCancel: (item: ManagedOrderBonus) => void;
+}) {
+  return (
+    <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="font-semibold">
+            {managerView ? "Мои бонусы за заказы" : "Бонусы менеджеров"}
+          </h2>
+          <p className="mt-1 text-sm text-slate-400">
+            Исправьте месяц или заказ одним действием. Система пересчитает сумму по заказу, а исходная запись останется в истории.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">
+          {items.length} {items.length === 1 ? "запись" : "записей"}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <p className="mt-4 rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+          В выбранном месяце зарегистрированных бонусов пока нет.
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {items.map((item) => (
+            <article
+              key={item.id}
+              className="rounded-xl border border-slate-800 bg-slate-950 p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-semibold">
+                    {item.order?.number ?? `Заказ ${item.orderId ?? "—"}`}
+                  </p>
+                  <p className="mt-0.5 text-sm text-slate-400">
+                    {item.employeeName}
+                    {item.order?.client.name ? ` · ${item.order.client.name}` : ""}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <b className="text-blue-200">
+                    {currency(item.effectiveAmount)}
+                  </b>
+                  {Math.abs(item.policyAdjustment) >= 0.01 && (
+                    <small className="block text-slate-500">
+                      исходно {currency(item.amount)}
+                    </small>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                {item.order?.amount != null && (
+                  <span>Сумма заказа {currency(item.order.amount)}</span>
+                )}
+                {Math.abs(item.policyAdjustment) >= 0.01 && (
+                  <span>
+                    Корректировка системы {item.policyAdjustment > 0 ? "+" : ""}
+                    {currency(item.policyAdjustment)}
+                  </span>
+                )}
+                <span>Внесён {dateLabel(item.createdAt)}</span>
+              </div>
+              {item.editable ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onCorrect(item)}
+                    className="flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-semibold"
+                  >
+                    <Pencil size={15} /> Исправить
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onCancel(item)}
+                    className="flex min-h-10 items-center gap-2 rounded-lg border border-red-500/40 px-3 text-sm font-semibold text-red-200"
+                  >
+                    <RotateCcw size={15} /> Отменить бонус
+                  </button>
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-amber-200">
+                  {item.blockedReason === "BONUS_PAYMENT_EXISTS"
+                    ? `Уже выплачено ${currency(item.paid)} — сначала нужно сторнировать выплату.`
+                    : item.blockedReason === "BONUS_POLICY_ADJUSTED"
+                      ? `Система уже пересчитала этот бонус: к начислению ${currency(item.effectiveAmount)}. Повторная отмена не нужна.`
+                      : "Расчётный месяц закрыт для изменений."}
+                </p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Empty({ text }: { text: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/50 p-12 text-center text-slate-400">
@@ -1448,6 +1696,304 @@ function EmployeeDrawer({
   );
 }
 
+function BonusCorrectionModal({
+  correction,
+  selectedPeriod,
+  onClose,
+  onSubmit,
+}: {
+  correction: BonusCorrection;
+  selectedPeriod: { year: number; month: number };
+  onClose: () => void;
+  onSubmit: (body: Record<string, unknown>) => Promise<boolean>;
+}) {
+  const { item, mode } = correction;
+  const initialMonth = `${selectedPeriod.year}-${String(selectedPeriod.month).padStart(2, "0")}`;
+  const initialAutomaticAmount =
+    item.order?.amount == null
+      ? item.amount
+      : managerOrderBonus(Number(item.order.amount));
+  const [targetMonth, setTargetMonth] = useState(initialMonth);
+  const [orderQuery, setOrderQuery] = useState("");
+  const [orders, setOrders] = useState<OrderOption[]>(
+    item.order ? [item.order] : [],
+  );
+  const [orderId, setOrderId] = useState(
+    item.orderId == null ? "" : String(item.orderId),
+  );
+  const [manualOverride, setManualOverride] = useState(false);
+  const [amount, setAmount] = useState(String(initialAutomaticAmount));
+  const [reason, setReason] = useState("");
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const selectedOrder = orders.find((order) => order.id === Number(orderId));
+  const automaticAmount =
+    selectedOrder?.amount == null
+      ? null
+      : managerOrderBonus(Number(selectedOrder.amount));
+  const now = new Date();
+  const latestMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  useEffect(() => {
+    if (mode !== "correct") return;
+    const [year, month] = targetMonth.split("-").map(Number);
+    if (!year || !month) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setOrdersLoading(true);
+      try {
+        const params = new URLSearchParams({
+          q: orderQuery,
+          limit: "50",
+          year: String(year),
+          month: String(month),
+        });
+        const response = await fetch(`/api/orders/search?${params}`, {
+          signal: controller.signal,
+        });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok) {
+          const loaded = Array.isArray(body.items)
+            ? (body.items as OrderOption[])
+            : [];
+          const originalMonth = targetMonth === initialMonth;
+          setOrders(
+            originalMonth &&
+              item.order &&
+              !loaded.some((order) => order.id === item.order!.id)
+              ? [item.order, ...loaded]
+              : loaded,
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) setOrdersLoading(false);
+      }
+    }, 250);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [initialMonth, item.order, mode, orderQuery, targetMonth]);
+
+  const chooseOrder = (value: string) => {
+    const order = orders.find((option) => option.id === Number(value));
+    const calculated =
+      order?.amount == null ? "" : String(managerOrderBonus(Number(order.amount)));
+    setOrderId(value);
+    setManualOverride(false);
+    setAmount(calculated);
+    setLocalError("");
+  };
+  const submit = async () => {
+    const cleanReason = reason.trim();
+    if (!cleanReason) {
+      setLocalError("Укажите причину — она будет сохранена в истории.");
+      return;
+    }
+    if (mode === "correct" && !orderId) {
+      setLocalError("Выберите правильный заказ.");
+      return;
+    }
+    if (mode === "correct" && (!Number.isFinite(Number(amount)) || Number(amount) <= 0)) {
+      setLocalError("Укажите корректную сумму бонуса.");
+      return;
+    }
+    setSaving(true);
+    const [targetYear, targetMonthNumber] = targetMonth.split("-").map(Number);
+    const saved = await onSubmit(
+      mode === "cancel"
+        ? {
+            action: "cancel",
+            accrualId: item.id,
+            reason: cleanReason,
+          }
+        : {
+            action: "correct",
+            accrualId: item.id,
+            targetYear,
+            targetMonth: targetMonthNumber,
+            targetOrderId: Number(orderId),
+            amount: Number(amount),
+            manualOverride,
+            reason: cleanReason,
+          },
+    );
+    if (!saved) setSaving(false);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[95] grid place-items-center overflow-y-auto bg-black/75 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bonus-correction-title"
+    >
+      <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-950 p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="bonus-correction-title" className="text-xl font-bold">
+              {mode === "cancel" ? "Отменить бонус" : "Исправить бонус"}
+            </h2>
+            <p className="mt-1 text-sm text-slate-400">
+              {item.employeeName} · {item.order?.number ?? `заказ ${item.orderId ?? "—"}`} · {currency(item.amount)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Закрыть"
+            className="grid size-11 place-items-center rounded-xl border border-slate-700"
+          >
+            <X />
+          </button>
+        </div>
+
+        {mode === "cancel" ? (
+          <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-100">
+            Сумма будет сторнирована, но исходная запись не исчезнет: ORDA сохранит автора, дату и причину отмены.
+          </div>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <Field label="1. Правильный расчётный месяц">
+              <input
+                type="month"
+                value={targetMonth}
+                max={latestMonth}
+                onChange={(event) => {
+                  setTargetMonth(event.target.value);
+                  setOrderQuery("");
+                  setOrderId("");
+                  setAmount("");
+                  setManualOverride(false);
+                  setLocalError("");
+                }}
+                className="control"
+              />
+            </Field>
+            <Field label="2. Правильный заказ">
+              <div className="space-y-2">
+                <input
+                  value={orderQuery}
+                  onChange={(event) => setOrderQuery(event.target.value)}
+                  placeholder="Номер заказа, клиент или телефон"
+                  className="control"
+                />
+                <select
+                  value={orderId}
+                  onChange={(event) => chooseOrder(event.target.value)}
+                  className="control"
+                >
+                  <option value="">
+                    {ordersLoading ? "Загрузка заказов…" : "Выберите заказ"}
+                  </option>
+                  {orders.map((order) => (
+                    <option key={order.id} value={order.id}>
+                      {order.number} · {order.client.name}
+                    </option>
+                  ))}
+                </select>
+                {!ordersLoading && orders.length === 0 && (
+                  <p className="text-sm text-slate-400">
+                    В выбранном месяце подходящих заказов не найдено.
+                  </p>
+                )}
+              </div>
+            </Field>
+            {selectedOrder && automaticAmount != null && (
+              <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 p-3">
+                <div className="flex flex-wrap justify-between gap-2 text-sm">
+                  <span className="text-slate-300">
+                    Заказ {currency(selectedOrder.amount ?? 0)}
+                  </span>
+                  <b className="text-blue-200">
+                    Бонус автоматически {currency(automaticAmount)}
+                  </b>
+                </div>
+                <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={manualOverride}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setManualOverride(checked);
+                      setAmount(String(automaticAmount));
+                    }}
+                    className="mt-1"
+                  />
+                  <span>Изменить сумму вручную</span>
+                </label>
+                {manualOverride && (
+                  <input
+                    autoFocus
+                    type="number"
+                    min="1"
+                    value={amount}
+                    onChange={(event) => setAmount(event.target.value)}
+                    className="control mt-3"
+                    aria-label="Сумма бонуса вручную"
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="mt-4">
+          <Field label={mode === "cancel" ? "Причина отмены" : "3. Причина исправления"}>
+            <textarea
+              rows={3}
+              value={reason}
+              onChange={(event) => {
+                setReason(event.target.value);
+                setLocalError("");
+              }}
+              placeholder={
+                mode === "cancel"
+                  ? "Например: бонус внесён ошибочно"
+                  : "Например: заказ относится к сентябрю"
+              }
+              className="control resize-none"
+            />
+          </Field>
+        </div>
+        {localError && (
+          <p role="alert" className="mt-3 text-sm text-red-300">
+            {localError}
+          </p>
+        )}
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="min-h-11 rounded-xl px-4 text-slate-300 disabled:opacity-40"
+          >
+            Закрыть
+          </button>
+          <button
+            type="button"
+            onClick={() => void submit()}
+            disabled={
+              saving ||
+              !reason.trim() ||
+              (mode === "correct" &&
+                (!orderId || !targetMonth || Number(amount) <= 0))
+            }
+            className={`min-h-11 rounded-xl px-5 font-semibold disabled:opacity-40 ${mode === "cancel" ? "bg-red-600" : "bg-blue-600"}`}
+          >
+            {saving
+              ? "Сохраняем…"
+              : mode === "cancel"
+                ? "Отменить бонус"
+                : "Сохранить исправление"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OperationModal({
   operation,
   row,
@@ -1490,6 +2036,13 @@ function OperationModal({
   const [orderQuery, setOrderQuery] = useState("");
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const selectedOrder = orders.find(
+    (item) => item.id === Number(form.orderId),
+  );
+  const automaticBonus =
+    selectedOrder?.amount == null
+      ? null
+      : managerOrderBonus(Number(selectedOrder.amount));
   useEffect(() => {
     if (!orderOperation) return;
     const controller = new AbortController();
@@ -1572,7 +2125,7 @@ function OperationModal({
                 ))}
               </select>
             </Field>
-          ) : (
+          ) : operation !== "bonus" ? (
             <Field label="Сумма, ₸">
               <input
                 autoFocus
@@ -1589,7 +2142,7 @@ function OperationModal({
                 </span>
               )}
             </Field>
-          )}
+          ) : null}
           {operation === "payment" && (
             <Field label="Тип выплаты">
               <select
@@ -1673,7 +2226,21 @@ function OperationModal({
                 />
                 <select
                   value={form.orderId}
-                  onChange={(e) => setForm({ ...form, orderId: e.target.value })}
+                  onChange={(e) => {
+                    const selected = orders.find(
+                      (item) => item.id === Number(e.target.value),
+                    );
+                    setForm({
+                      ...form,
+                      orderId: e.target.value,
+                      amount:
+                        operation === "bonus" && selected?.amount != null
+                          ? String(managerOrderBonus(Number(selected.amount)))
+                          : form.amount,
+                      manualOverride:
+                        operation === "bonus" ? false : form.manualOverride,
+                    });
+                  }}
                   className="control"
                 >
                   <option value="">{ordersLoading ? "Загрузка заказов…" : operation === "bonus" ? "Выберите заказ" : "Без привязки к заказу"}</option>
@@ -1695,6 +2262,45 @@ function OperationModal({
                       .
                     </p>
                   )
+                )}
+                {operation === "bonus" && selectedOrder && automaticBonus != null && (
+                  <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 p-3">
+                    <div className="flex flex-wrap justify-between gap-2 text-sm">
+                      <span className="text-slate-300">
+                        Заказ {currency(selectedOrder.amount ?? 0)}
+                      </span>
+                      <b className="text-blue-200">
+                        Бонус автоматически {currency(automaticBonus)}
+                      </b>
+                    </div>
+                    <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={form.manualOverride}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            manualOverride: event.target.checked,
+                            amount: String(automaticBonus),
+                          })
+                        }
+                        className="mt-1"
+                      />
+                      <span>Изменить сумму вручную</span>
+                    </label>
+                    {form.manualOverride && (
+                      <input
+                        type="number"
+                        min="1"
+                        value={form.amount}
+                        onChange={(event) =>
+                          setForm({ ...form, amount: event.target.value })
+                        }
+                        aria-label="Сумма бонуса вручную"
+                        className="control mt-3"
+                      />
+                    )}
+                  </div>
                 )}
               </div>
             </Field>
@@ -1727,14 +2333,22 @@ function OperationModal({
             label={
               operation === "reversal"
                 ? "Причина сторно"
-                : "Комментарий / основание"
+                : operation === "bonus" && form.manualOverride
+                  ? "Причина ручного изменения суммы"
+                  : "Комментарий / основание"
             }
           >
             <textarea
               rows={3}
               value={form.reason}
               onChange={(e) => setForm({ ...form, reason: e.target.value })}
-              placeholder={operation === "deduction" ? "Например: не выполнена работа или замечание по заказу" : undefined}
+              placeholder={
+                operation === "deduction"
+                  ? "Например: не выполнена работа или замечание по заказу"
+                  : operation === "bonus" && form.manualOverride
+                    ? "Почему сумма отличается от автоматического расчёта"
+                    : undefined
+              }
               className="control resize-none"
             />
           </Field>
@@ -1758,6 +2372,9 @@ function OperationModal({
                       (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") &&
                       (form.method !== "kaspi" || form.externalReference.trim().length < 3)) ||
                     (operation === "bonus" && !form.orderId) ||
+                    (operation === "bonus" &&
+                      form.manualOverride &&
+                      !form.reason.trim()) ||
                     (operation === "deduction" && !form.reason.trim())
             }
             className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-40"

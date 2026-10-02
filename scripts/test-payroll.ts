@@ -532,7 +532,7 @@ async function main() {
       },
     });
     ids.orders.push(selfOrder.id);
-    await createSelfAccrual(
+    const automaticSelfBonus = await createSelfAccrual(
       {
         periodId: bonusStatusPeriod.id,
         type: PayrollAccrualType.ORDER_BONUS,
@@ -543,6 +543,11 @@ async function main() {
         requestHash: "self-order-bonus",
       },
       managerActor,
+    );
+    assert.equal(
+      Number(automaticSelfBonus.accrual.amount),
+      30000,
+      "manager order bonus amount is calculated from the order",
     );
     await createSelfAccrual(
       {
@@ -702,34 +707,23 @@ async function main() {
       },
     });
     ids.orders.push(cancelledOrder.id);
-    const warning = await createAccrual(
-      {
-        employeeId: profile.id,
-        periodId: nextPeriod.id,
-        type: PayrollAccrualType.ORDER_BONUS,
-        amount: 1000,
-        orderId: cancelledOrder.id,
-        reason: "Решение директора",
-        key: key("cancelled-warning"),
-        requestHash: "cancelled-warning",
-      },
-      directorActor,
+    await expectCode(
+      () =>
+        createAccrual(
+          {
+            employeeId: profile.id,
+            periodId: nextPeriod.id,
+            type: PayrollAccrualType.ORDER_BONUS,
+            amount: 1000,
+            orderId: cancelledOrder.id,
+            reason: "Решение директора",
+            key: key("cancelled-warning"),
+            requestHash: "cancelled-warning",
+          },
+          directorActor,
+        ),
+      "ORDER_NOT_ELIGIBLE_FOR_BONUS",
     );
-    assert.equal(warning.cancelledOrderWarning, true);
-    const duplicate = await createAccrual(
-      {
-        employeeId: profile.id,
-        periodId: nextPeriod.id,
-        type: PayrollAccrualType.ORDER_BONUS,
-        amount: 1000,
-        orderId: order.id,
-        reason: "Решение директора",
-        key: key("cancelled-warning"),
-        requestHash: "cancelled-warning",
-      },
-      directorActor,
-    );
-    assert.equal(duplicate.created, false);
     await prisma.user.update({
       where: { id: manager.id },
       data: { active: false },

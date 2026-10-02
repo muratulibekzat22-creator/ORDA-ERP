@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   auditManagerOrderBonus,
   isDateInPayrollPeriod,
+  isManagerOrderBonusAutomaticPeriod,
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
   isPayrollReconciled,
@@ -19,9 +20,16 @@ assert.equal(managerOrderBonus(616_000), 30_000);
 assert.equal(managerOrderBonus(3_000_000), 30_000);
 assert.equal(managerOrderBonus(3_000_001), 50_000);
 assert.equal(managerOrderBonus(6_000_000), 50_000);
+assert.equal(isManagerOrderBonusAutomaticPeriod(2026, 9), false);
+assert.equal(isManagerOrderBonusAutomaticPeriod(2026, 10), true);
+assert.equal(isManagerOrderBonusAutomaticPeriod(2027, 1), true);
 assert.equal(isManagerOrderBonusEligible({ status: "Передан в цех" }), true);
 assert.equal(isManagerOrderBonusEligible({ status: "Отменён" }), false);
 assert.equal(isManagerOrderBonusEligible({ status: "Возврат" }), false);
+assert.equal(
+  isManagerOrderBonusEligible({ status: "Оформлен", lifecycle: "CANCELLED" }),
+  false,
+);
 assert.equal(
   isManagerOrderBonusEligible({ status: "Новый", deletedAt: new Date() }),
   false,
@@ -146,6 +154,13 @@ const payrollSelfRouteSource = readFileSync(
   new URL("../app/api/payroll/self/route.ts", import.meta.url),
   "utf8",
 );
+const bonusCorrectionRouteSource = readFileSync(
+  new URL(
+    "../app/api/payroll/bonus-corrections/route.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const payrollPageSource = readFileSync(
   new URL("../app/payroll/page.tsx", import.meta.url),
   "utf8",
@@ -195,6 +210,10 @@ assert.match(payrollSelfRouteSource, /PayrollAccrualType\.ORDER_BONUS/);
 assert.match(payrollSelfRouteSource, /report-advance/);
 assert.match(payrollSelfRouteSource, /PayrollPaymentType\.ADVANCE/);
 assert.match(payrollSelfRouteSource, /payrollSummary\(period\.id, actor\(auth\.session!\), undefined, true\)/);
+assert.match(bonusCorrectionRouteSource, /listOrderBonusesForCorrection/);
+assert.match(bonusCorrectionRouteSource, /correctOrderBonus/);
+assert.match(bonusCorrectionRouteSource, /syncAutomaticOrderBonuses/);
+assert.match(bonusCorrectionRouteSource, /action !== "correct" && action !== "cancel"/);
 assert.match(payrollRouteSource, /identity\.role === Role\.OPERATIONS_DIRECTOR[\s\S]*FORBIDDEN/);
 assert.match(payrollPageSource, /adminView = founder \|\| accountant/);
 assert.match(payrollPageSource, /Сумма к начислению/);
@@ -210,6 +229,20 @@ assert.match(serviceSource, /SALARY_AMOUNT_MISMATCH/);
 assert.match(payrollRouteSource, /PAYROLL_PERIOD_NOT_FINISHED/);
 assert.match(payrollPageSource, /readOnly=\{operation === "salaryAccrual"\}/);
 assert.match(payrollPageSource, /автоматически формирует ведомость/);
+assert.match(payrollPageSource, /Бонус автоматически/);
+assert.match(payrollPageSource, /Исправить бонус/);
+assert.match(payrollPageSource, /Отменить бонус/);
+assert.match(payrollPageSource, /manualOverride/);
+assert.match(serviceSource, /expectedOrderBonus = managerOrderBonus/);
+assert.match(serviceSource, /BONUS_PAYMENT_EXISTS/);
+assert.match(serviceSource, /ORDER_BONUS_CORRECTED/);
+assert.match(serviceSource, /ORDER_BONUS_CANCELLED/);
+assert.match(serviceSource, /automatic-order-bonus:\$\{order\.id\}/);
+assert.match(serviceSource, /priorBonuses/);
+assert.match(
+  serviceSource,
+  /actor\.role === Role\.MANAGER[\s\S]*original\.employee\.userId !== actor\.userId/,
+);
 assert.match(serviceSource, /const approvedAccrued = accrued/);
 assert.match(
   serviceSource,

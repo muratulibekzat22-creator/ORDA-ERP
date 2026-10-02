@@ -134,6 +134,7 @@ export async function POST(request: Request) {
             amount: Number(body.amount),
             orderId: body.orderId == null ? undefined : Number(body.orderId),
             reason: String(body.reason ?? ""),
+            manualOverride: body.manualOverride === true,
             key: key.key,
             requestHash: createRequestHash(body),
           },

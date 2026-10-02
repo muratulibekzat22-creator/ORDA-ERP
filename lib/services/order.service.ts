@@ -175,7 +175,7 @@ export async function searchOrderOptions(
       } : {}),
       AND: [roleScope, searchWhere],
     },
-    select: { id: true, number: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
+    select: { id: true, number: true, amount: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: Math.min(50, Math.max(1, Math.trunc(limit))),
   });
