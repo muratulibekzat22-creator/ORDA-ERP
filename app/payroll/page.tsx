@@ -1146,6 +1146,24 @@ function EmployeeDrawer({
           <Metric label="Выплачено" value={row.totals.paid} />
           <Metric label="К выплате" value={row.totals.payable} accent />
         </div>
+        <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
+          <h3 className="font-semibold">Расчёт к выплате</h3>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric label="За месяц" value={row.calculation.totalToAccrue} />
+            <Metric label="Подтверждённые авансы" value={row.calculation.advances} />
+            <Metric label="Авансы на подтверждении" value={row.calculation.pendingAdvances} />
+            <Metric
+              label="После подтверждения"
+              value={row.calculation.amountToPayAfterPendingAdvances}
+              accent
+            />
+          </div>
+          {row.calculation.pendingAdvances > 0 && (
+            <p className="mt-3 text-xs text-blue-200/80">
+              Авансы уменьшат сумму к выплате только после подтверждения учредителем.
+            </p>
+          )}
+        </section>
         {row.payrollAudit && (
           <section className="mt-5 rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
