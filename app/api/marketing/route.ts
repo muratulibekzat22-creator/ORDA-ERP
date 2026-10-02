@@ -10,6 +10,7 @@ import { MetaAdsSyncError, metaAdsIntegrationStatus, syncMetaAdsMonth } from "@/
 import { effectiveMarketingMetrics, marketingMonthRange } from "@/lib/marketing";
 import { requirePermission } from "@/lib/server-auth";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
+import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
 
 const canUseMarketing = (role: Role) =>
   role === Role.DIRECTOR ||
@@ -36,18 +37,24 @@ export async function GET(request: Request) {
   if (requestedMonth && !/^\d{4}-\d{2}$/.test(requestedMonth))
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   const month = marketingMonthRange(requestedMonth);
+  const companyId = Number(auth.session!.user.companyId);
   const [tasks, metrics, vacancies, assignees, dailyCrm] = await Promise.all([
     prisma.managementMarketingTask.findMany({
+      where: { companyId },
       include: { assignee: { select: { id: true, name: true } } },
       orderBy: [{ status: "asc" }, { priority: "desc" }, { dueAt: "asc" }],
     }),
     prisma.managementMarketingMetric.findMany({
-      where: { metricMonth: { gte: month.start, lt: month.end } },
+      where: { companyId, metricMonth: { gte: month.start, lt: month.end } },
       orderBy: [{ metricMonth: "desc" }, { channel: "asc" }],
     }),
-    prisma.recruitmentVacancy.findMany({ orderBy: { updatedAt: "desc" } }),
+    prisma.recruitmentVacancy.findMany({
+      where: { companyId },
+      orderBy: { updatedAt: "desc" },
+    }),
     prisma.user.findMany({
       where: {
+        companyId,
         active: true,
         role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER, Role.MANAGER] },
       },
@@ -57,15 +64,13 @@ export async function GET(request: Request) {
     getDailyCrmSnapshot(),
   ]);
   const effectiveMetrics = effectiveMarketingMetrics(metrics);
-  const totals = effectiveMetrics.reduce(
-    (sum, item) => ({
-      spend: sum.spend + Number(item.spend),
-      leads: sum.leads + item.leads,
-      orders: sum.orders + item.orders,
-      revenue: sum.revenue + Number(item.revenue),
-    }),
-    { spend: 0, leads: 0, orders: 0, revenue: 0 },
-  );
+  const summary = await getMarketingAnalytics({
+    companyId,
+    start: month.start,
+    end: month.end,
+    metrics,
+  });
+  const integrationStatus = metaAdsIntegrationStatus();
   return NextResponse.json({
     role,
     month: month.key,
@@ -75,8 +80,8 @@ export async function GET(request: Request) {
     assignees,
     dailyCrm,
     integration: {
-      ...metaAdsIntegrationStatus(),
-      state: !metaAdsIntegrationStatus().configured
+      ...integrationStatus,
+      state: !integrationStatus.configured
         ? "NEEDS_SETUP"
         : metrics.some((metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"))
           ? "ACTIVE"
@@ -84,11 +89,7 @@ export async function GET(request: Request) {
       lastSyncedAt: metrics.find((metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"))?.updatedAt ?? null,
     },
     summary: {
-      ...totals,
-      cpl: totals.leads ? totals.spend / totals.leads : 0,
-      cac: totals.orders ? totals.spend / totals.orders : 0,
-      roas: totals.spend ? totals.revenue / totals.spend : 0,
-      conversion: totals.leads ? (totals.orders / totals.leads) * 100 : 0,
+      ...summary,
     },
   });
 }

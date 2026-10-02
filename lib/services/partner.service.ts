@@ -529,7 +529,7 @@ export async function assignPartnerToOrder(data: {
       });
     }
     const production = await tx.production.findFirst({
-      where: { orderId: order.id },
+      where: { orderId: order.id, archivedAt: null },
       orderBy: { createdAt: "desc" },
     });
     if (!production)

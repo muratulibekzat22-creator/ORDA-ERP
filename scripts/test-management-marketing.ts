@@ -9,6 +9,7 @@ import {
 
 import { prisma } from "../lib/prisma";
 import { marketingMonthRange } from "../lib/marketing";
+import { getMarketingAnalytics } from "../lib/services/marketing-analytics.service";
 import { runWithTenant } from "../lib/tenant-context";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
@@ -68,6 +69,45 @@ async function main() {
       assert.equal(updatedVacancy.candidates, 3);
       assert.equal(Number(metric.revenue) / Number(metric.spend), 8, "ROAS input is inconsistent");
       assert.equal(Number(metric.spend) / metric.orders, 25_000, "CAC input is inconsistent");
+      const crmClient = await prisma.client.create({
+        data: {
+          name: `${tag}-client`,
+          phone: "77000000000",
+          city: "Test",
+          manager: director.name,
+          managerUserId: director.id,
+          amount: "350000",
+          status: "WON",
+          createdAt: new Date("2097-01-10T08:00:00+05:00"),
+        },
+      });
+      const crmOrder = await prisma.order.create({
+        data: {
+          number: `MKT-${Date.now()}`,
+          clientId: crmClient.id,
+          address: "Test",
+          staircase: "Test",
+          material: "Test",
+          amount: 350_000,
+          balance: 350_000,
+          manager: director.name,
+          managerUserId: director.id,
+        },
+      });
+      const january = marketingMonthRange("2097-01");
+      const analytics = await getMarketingAnalytics({
+        companyId: tenant.companyId,
+        start: january.start,
+        end: january.end,
+        metrics: [metric],
+      });
+      assert.equal(analytics.leads, 1, "CRM inquiries did not replace a stale imported lead count");
+      assert.equal(analytics.orders, 1, "CRM-attributed orders are missing");
+      assert.equal(analytics.revenue, 350_000, "CRM-attributed revenue is missing");
+      assert.equal(analytics.spend, 100_000, "recorded advertising spend is missing");
+      assert.equal(analytics.cpl, 100_000, "cost per inquiry is incorrect");
+      await prisma.order.delete({ where: { id: crmOrder.id } });
+      await prisma.client.delete({ where: { id: crmClient.id } });
       await prisma.managementMarketingTask.delete({ where: { id: task.id } });
       await prisma.managementMarketingMetric.delete({ where: { id: metric.id } });
       await prisma.recruitmentVacancy.delete({ where: { id: vacancy.id } });

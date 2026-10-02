@@ -55,6 +55,10 @@ type ManagementPayload = {
     dataComplete: boolean;
     ordersWithMargin: number;
     ordersWithoutMargin: number;
+    customerOutstanding: number;
+    activeProductionCost: number;
+    activeOrdersWithProductionPrice: number;
+    pendingOrderDates: number;
   };
   orders: {
     active: number;
@@ -97,6 +101,9 @@ type ManagementPayload = {
     cpl: number | null;
     cac: number | null;
     roas: number | null;
+    conversion: number | null;
+    spendTracked: boolean;
+    crmTracked: boolean;
   };
   team: Array<{
     id: number;
@@ -358,7 +365,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   const averageOrder = totalOrders > 0 ? data.finance.revenue / totalOrders : null;
   const collectionRate = data.finance.revenue > 0 ? data.finance.received / data.finance.revenue * 100 : null;
   const totalExpenses = data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued;
-  const outstanding = Math.max(0, data.finance.revenue - data.finance.received);
+  const outstanding = data.finance.customerOutstanding;
   const profitLabel = "Чистая прибыль";
   const activeEmployees = data.team.filter((employee) => employee.activeDays > 0).length;
   const completedTasks = data.team.reduce((sum, employee) => sum + employee.completedTasks, 0);
@@ -367,7 +374,9 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
     data.orders.overdue > 0 ? `${data.orders.overdue} просроченных заказов` : null,
     data.orders.missingProductionPrice > 0 ? `${data.orders.missingProductionPrice} заказов без цены производства` : null,
     data.orders.incompleteData > 0 ? `${data.orders.incompleteData} заказов нужно дополнить` : null,
-    data.marketing.leads === 0 ? "нет синхронизированных обращений Meta" : null,
+    data.finance.pendingOrderDates > 0 ? `${data.finance.pendingOrderDates} заказов ждут подтверждения фактической даты` : null,
+    !data.marketing.spendTracked ? "расход Meta ещё не подключён" : null,
+    data.marketing.leads === 0 ? "нет обращений в CRM за выбранный месяц" : null,
   ].filter((item): item is string => Boolean(item));
   const roleLabel: Record<string, string> = {
     OPERATIONS_DIRECTOR: "Директор",
@@ -405,20 +414,23 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
 
       <section className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
         <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
-          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Доходы и расходы</h2><p className="text-sm text-slate-400">Понятный финансовый итог без лишних графиков</p></div><Link href="/finance" className="text-sm font-semibold text-blue-300">Открыть финансы</Link></div>
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Доходы и расходы</h2><p className="text-sm text-slate-400">Итог выбранного месяца и текущие обязательства по активным заказам</p></div><Link href="/finance" className="text-sm font-semibold text-blue-300">Открыть финансы</Link></div>
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-800">
             <table className="w-full text-sm"><tbody>
               <FounderFinanceRow label="Оборот по заказам" value={data.finance.revenue} />
               <FounderFinanceRow label="Поступило от клиентов" value={data.finance.received} />
-              <FounderFinanceRow label="Осталось получить" value={outstanding} warning={outstanding > 0} />
+              <FounderFinanceRow label="Осталось получить по заказам" value={outstanding} warning={outstanding > 0} />
+              <FounderFinanceRow label="Цена производства активных заказов" value={data.finance.activeProductionCost} />
               <FounderFinanceRow label="Прочие доходы" value={data.finance.additionalIncome} />
-              <FounderFinanceRow label="Цена производства" value={data.finance.directExpenses} expense />
+              <FounderFinanceRow label="Цена производства заказов месяца" value={data.finance.directExpenses} expense />
               <FounderFinanceRow label="Операционные расходы" value={data.finance.operatingExpenses} expense />
               <FounderFinanceRow label="Начисленная зарплата" value={data.finance.payrollAccrued} expense />
               <FounderFinanceRow label="Итого учтённых расходов" value={totalExpenses} expense strong />
               {data.finance.dataComplete ? <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit /> : <tr className="border-t-2 border-slate-700"><td className="px-4 py-3">{profitLabel}</td><td className="px-4 py-3 text-right text-amber-200">Недостаточно данных</td></tr>}
             </tbody></table>
           </div>
+          {totalOrders === 0 ? <p className="mt-3 text-xs leading-5 text-slate-400">В выбранном месяце нет продаж по подтверждённой фактической дате. Поступления могут относиться к договорам прошлых месяцев; текущий долг клиентов и цена производства активных заказов показаны отдельно.</p> : null}
+          {data.finance.pendingOrderDates > 0 ? <p className="mt-3 text-xs leading-5 text-amber-200">Ещё {data.finance.pendingOrderDates} заказов не входят в отчёт месяца, пока менеджеры не подтвердят фактическую дату заказа.</p> : null}
           {!data.finance.dataComplete ? <p className="mt-3 text-xs leading-5 text-amber-200">Прибыль не рассчитана: цена производства заполнена по {data.finance.ordersWithMargin} из {totalOrders} заказов. Учтённые расходы показаны отдельно и не означают полноту данных.</p> : null}
         </article>
 
@@ -443,8 +455,8 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-lg font-bold text-white">Маркетинг и продажи</h2><p className="text-sm text-slate-400">Расход, результат и стоимость привлечения</p></div></div><Link href="/marketing" className="text-sm font-semibold text-fuchsia-300">Открыть маркетинг</Link></div>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"><FounderEfficiency label="Расход Meta" value={money(data.marketing.spend)} hint="Учитывается в расходах"/><FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Из рекламы"/><FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="Из рекламных лидов"/><FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / обращения"/><FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы"/><FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход"/></div>
-        {data.marketing.leads === 0 ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">За выбранный месяц Meta ещё не синхронизировала обращения. Проверьте статус подключения в разделе «Маркетинг».</p> : null}
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8"><FounderEfficiency label="Расход Meta" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint={data.marketing.spendTracked ? "Учитывается в расходах" : "Доступ Meta не подключён"}/><FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Новые заявки в CRM"/><FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По обращениям месяца"/><FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="По заказам из CRM"/><FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / обращения"/><FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы"/><FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход"/><FounderEfficiency label="Конверсия" value={percent(data.marketing.conversion)} hint="Заказы / обращения"/></div>
+        {!data.marketing.spendTracked ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка считаются из CRM. Расход, цена обращения, цена заказа и ROAS появятся после подключения служебного доступа Meta.</p> : data.marketing.leads === 0 ? <p className="mt-3 rounded-xl border border-slate-700 p-3 text-sm text-slate-300">За выбранный месяц в CRM пока нет новых обращений.</p> : null}
       </section>
 
       <nav aria-label="Основные разделы собственника" className="flex flex-wrap gap-2">

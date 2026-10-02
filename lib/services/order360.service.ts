@@ -292,9 +292,11 @@ export async function availableTransitions(
           ? OrderLifecycle.COMPLETED
           : undefined;
   const preferredNext =
-    isDirector(actor.role) || actor.role === Role.MANAGER
-      ? simpleNext
-      : LIFECYCLE[currentIndex + 1];
+    isDirector(actor.role)
+      ? LIFECYCLE[currentIndex + 1]
+      : actor.role === Role.MANAGER
+        ? simpleNext
+        : LIFECYCLE[currentIndex + 1];
   const preferred = [
     preferredNext,
     ...((isDirector(actor.role) || actor.role === Role.MANAGER) &&
@@ -347,14 +349,49 @@ export async function transitionLifecycle(
         throw new Order360Error("TRANSITION_FORBIDDEN");
       const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
       const targetIndex = LIFECYCLE.indexOf(input.to);
+      const backwardTransition = targetIndex >= 0 && targetIndex < currentIndex;
+      const returningToContract =
+        order.lifecycle === OrderLifecycle.READY_FOR_PRODUCTION &&
+        input.to === OrderLifecycle.PREPARATION;
       if (
         isDirector(actor.role) &&
-        targetIndex >= 0 &&
-        targetIndex < currentIndex &&
+        backwardTransition &&
         !input.reason?.trim()
       )
         throw new Order360Error("REASON_REQUIRED");
-      const gate = await evaluateGate(input.orderId, input.to);
+      const rollbackProductions = returningToContract
+        ? await tx.production.findMany({
+            where: { orderId: order.id, archivedAt: null },
+            select: {
+              id: true,
+              stage: true,
+              percent: true,
+              master: true,
+              masterUserId: true,
+              completedAt: true,
+              actualEndAt: true,
+              finishDate: true,
+            },
+          })
+        : [];
+      if (
+        returningToContract &&
+        (Number(order.partnerPaid) > 0 ||
+          rollbackProductions.some(
+            (production) =>
+              production.stage !== INITIAL_PRODUCTION_STAGE ||
+              production.percent > 0 ||
+              production.master.trim().length > 0 ||
+              production.masterUserId !== null ||
+              production.completedAt !== null ||
+              production.actualEndAt !== null ||
+              production.finishDate !== null,
+          ))
+      )
+        throw new Order360Error("ROLLBACK_BLOCKED");
+      const gate = backwardTransition
+        ? { target: input.to, passed: true, checks: [] as GateItem[] }
+        : await evaluateGate(input.orderId, input.to);
       if (!gate.passed) {
         const hardWorkshopGateFailed =
           input.to === OrderLifecycle.READY_FOR_PRODUCTION &&
@@ -396,6 +433,20 @@ export async function transitionLifecycle(
                 status: "Передан в цех",
               }
             : {}),
+          ...(returningToContract
+            ? {
+                status: "Договор",
+                workshopConfirmedAt: null,
+                partnerId: null,
+                partnerPrice: 0,
+                partnerAgreedAt: null,
+                partnerPaid: 0,
+                partnerBalance: 0,
+                companyProfit: 0,
+                partnerPlannedReadyAt: null,
+                readyForInstallation: false,
+              }
+            : {}),
           ...(input.to === OrderLifecycle.COMPLETED
             ? { status: "Заказ завершён" }
             : {}),
@@ -406,6 +457,51 @@ export async function transitionLifecycle(
         },
       });
       if (updated.count !== 1) throw new Order360Error("STALE_VERSION");
+      if (returningToContract) {
+        const reason = input.reason!.trim();
+        if (rollbackProductions.length)
+          await tx.production.updateMany({
+            where: { id: { in: rollbackProductions.map((item) => item.id) } },
+            data: {
+              archivedAt: new Date(),
+              archiveReason: `Заказ возвращён в договор: ${reason}`,
+            },
+          });
+        await tx.financeAuditEvent.create({
+          data: {
+            orderId: order.id,
+            action: "WORKSHOP_ASSIGNMENT_CLEARED",
+            entityType: "Order",
+            entityId: order.id,
+            before: {
+              partnerId: order.partnerId,
+              partnerPrice: order.partnerPrice.toString(),
+              partnerAgreedAt: order.partnerAgreedAt?.toISOString() ?? null,
+              partnerPaid: order.partnerPaid.toString(),
+              partnerBalance: order.partnerBalance.toString(),
+            },
+            after: {
+              partnerId: null,
+              partnerPrice: "0",
+              partnerAgreedAt: null,
+              partnerPaid: "0",
+              partnerBalance: "0",
+            },
+            reason,
+            authorId: actor.userId,
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: order.id,
+            title: "Заказ возвращён в договор",
+            description: reason,
+            user: actor.name,
+            idempotencyKey: `${input.key}:return-to-contract`,
+            requestHash: input.requestHash,
+          },
+        });
+      }
       const event = await tx.orderLifecycleEvent.create({
         data: {
           orderId: input.orderId,

@@ -19,7 +19,7 @@ import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
-import { effectiveMarketingMetrics } from "@/lib/marketing";
+import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
 
 type DashboardScope = {
   role: Role;
@@ -304,7 +304,7 @@ async function managementProjection(scope: DashboardScope) {
     }),
   ]);
 
-  const [payrollAccruals, payrollPayments] = await Promise.all([
+  const [payrollAccruals, payrollPayments, customerBalance] = await Promise.all([
     payrollPeriod
       ? prisma.payrollAccrual.findMany({
           where: { periodId: payrollPeriod.id, reversalOfId: null },
@@ -326,6 +326,15 @@ async function managementProjection(scope: DashboardScope) {
           select: { amount: true, type: true },
         })
       : Promise.resolve([]),
+    prisma.order.aggregate({
+      where: {
+        companyId,
+        deletedAt: null,
+        lifecycle: { not: OrderLifecycle.CANCELLED },
+        balance: { gt: 0 },
+      },
+      _sum: { balance: true },
+    }),
   ]);
 
   const periodOrders = orders.filter(
@@ -339,6 +348,17 @@ async function managementProjection(scope: DashboardScope) {
       order.lifecycle !== OrderLifecycle.COMPLETED &&
       order.lifecycle !== OrderLifecycle.CANCELLED,
   );
+  const customerOutstanding = Math.max(Number(customerBalance._sum.balance ?? 0), 0);
+  const activeOrdersWithProductionPrice = activeOrders.filter((order) =>
+    hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
+  );
+  const activeProductionCost = activeOrdersWithProductionPrice.reduce(
+    (sum, order) => sum + Number(order.partnerPrice),
+    0,
+  );
+  const pendingOrderDates = activeOrders.filter(
+    (order) => order.orderDateNeedsReview,
+  ).length;
   const periodEconomies = periodOrders.map((order) => ({
     order,
     economy: economyFor(order),
@@ -387,15 +407,12 @@ async function managementProjection(scope: DashboardScope) {
   const businessProfitability = totalCosts > 0
     ? Math.round((netProfit / totalCosts) * 10_000) / 100
     : null;
-  const marketing = effectiveMarketingMetrics(marketingMetrics).reduce(
-    (summary, item) => ({
-      spend: summary.spend + Number(item.spend),
-      leads: summary.leads + item.leads,
-      orders: summary.orders + item.orders,
-      revenue: summary.revenue + Number(item.revenue),
-    }),
-    { spend: 0, leads: 0, orders: 0, revenue: 0 },
-  );
+  const marketing = await getMarketingAnalytics({
+    companyId,
+    start: period.start,
+    end: period.end,
+    metrics: marketingMetrics,
+  });
   const loginDays = new Map<number, Set<string>>();
   for (const event of loginEvents) {
     if (!event.userId) continue;
@@ -519,6 +536,10 @@ async function managementProjection(scope: DashboardScope) {
       dataComplete,
       ordersWithMargin: pricedEconomies.length,
       ordersWithoutMargin,
+      customerOutstanding,
+      activeProductionCost,
+      activeOrdersWithProductionPrice: activeOrdersWithProductionPrice.length,
+      pendingOrderDates,
     },
     orders: {
       active: activeOrders.length,
@@ -534,9 +555,6 @@ async function managementProjection(scope: DashboardScope) {
     marketing: {
       ...marketing,
       qualifiedShare: marketing.leads > 0 ? Math.round((marketing.orders / marketing.leads) * 10_000) / 100 : null,
-      cpl: marketing.leads > 0 ? marketing.spend / marketing.leads : null,
-      cac: marketing.orders > 0 ? marketing.spend / marketing.orders : null,
-      roas: marketing.spend > 0 ? marketing.revenue / marketing.spend : null,
     },
     team,
     salesTools: {

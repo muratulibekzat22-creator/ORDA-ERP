@@ -10,7 +10,7 @@ if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.T
 const tag = `dashboard-${Date.now()}`;
 
 type ManagementProjection = {
-  finance: { revenue: number; received: number; directExpenses: number; netProfit: number; ordersWithMargin: number; ordersWithoutMargin: number };
+  finance: { revenue: number; received: number; directExpenses: number; netProfit: number; ordersWithMargin: number; ordersWithoutMargin: number; customerOutstanding: number; activeProductionCost: number };
   orders: { active: number; beforeWorkshop: number; incompleteData: number };
   attention: Array<{ id: number }>;
 };
@@ -65,6 +65,8 @@ async function main() {
     assert.equal(director.finance.netProfit - baseline.finance.netProfit, 500, "complete orders must keep contributing profit");
     assert.equal(director.finance.ordersWithMargin - baseline.finance.ordersWithMargin, 1, "priced order counter is wrong");
     assert.equal(director.finance.ordersWithoutMargin - baseline.finance.ordersWithoutMargin, 1, "incomplete order must be reported separately");
+    assert.equal(director.finance.customerOutstanding - baseline.finance.customerOutstanding, 2600, "client debt is mixed with selected-month cash receipts");
+    assert.equal(director.finance.activeProductionCost - baseline.finance.activeProductionCost, 500, "active production commitments are missing");
     assert.equal(director.orders.active - baseline.orders.active, 2, "cancelled order entered active order counters");
     assert.equal(director.orders.beforeWorkshop - baseline.orders.beforeWorkshop, 2);
     assert.equal(director.orders.incompleteData - baseline.orders.incompleteData, 2, "incomplete order counter is wrong");
