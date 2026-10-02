@@ -61,6 +61,8 @@
     "test:payroll-policy": "tsx scripts/test-payroll-policy.ts",
     "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",
     "test:order360": "tsx scripts/test-order360.ts",
+    "test:whatsapp-order-status": "tsx scripts/test-whatsapp-order-status.ts",
+    "prepare:whatsapp-partners:release": "tsx scripts/sync-whatsapp-partners.ts",
     "test:proposal-pipeline": "tsx scripts/test-proposal-pipeline.ts",
     "test:recurring-followup": "tsx scripts/test-recurring-followup.ts",
     "preview:proposal": "tsx scripts/generate-proposal-preview.ts",

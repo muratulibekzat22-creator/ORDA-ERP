@@ -24,6 +24,7 @@ run("prisma:generate");
 if (process.env.DATABASE_URL?.trim()) {
   run("seed:training");
   run("prepare:director:release");
+  run("prepare:whatsapp-partners:release");
   run("prepare:sales-plan:release");
   run("prepare:daily-operations:release");
 } else {
