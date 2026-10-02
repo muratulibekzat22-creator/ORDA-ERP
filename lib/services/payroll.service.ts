@@ -319,19 +319,29 @@ export async function changeSalary(
         (rate) => Number(rate.amount) !== Number(salary),
       );
       const previous = earlierRates[previousIndex];
-      if (!previous) throw new PayrollError("INVALID_EFFECTIVE_DATE");
-      if (startsAt <= previous.effectiveFrom) {
+      if (previous && startsAt <= previous.effectiveFrom) {
         const sameCalendarDay =
           startsAt.toISOString().slice(0, 10) ===
           previous.effectiveFrom.toISOString().slice(0, 10);
         if (!sameCalendarDay) throw new PayrollError("INVALID_EFFECTIVE_DATE");
         startsAt = new Date(previous.effectiveFrom.getTime() + 1);
       }
-      const redundantRates = earlierRates.slice(0, previousIndex);
-      await tx.employeeSalaryRate.update({
-        where: { id: previous.id },
-        data: { effectiveTo: startsAt },
-      });
+      if (!previous && startsAt < profile.hiredAt) {
+        const sameCalendarDay =
+          startsAt.toISOString().slice(0, 10) ===
+          profile.hiredAt.toISOString().slice(0, 10);
+        if (!sameCalendarDay) throw new PayrollError("INVALID_EFFECTIVE_DATE");
+        startsAt = profile.hiredAt;
+      }
+      const redundantRates = previous
+        ? earlierRates.slice(0, previousIndex)
+        : earlierRates;
+      if (previous) {
+        await tx.employeeSalaryRate.update({
+          where: { id: previous.id },
+          data: { effectiveTo: startsAt },
+        });
+      }
       if (redundantRates.length) {
         await tx.employeeSalaryRate.updateMany({
           where: { id: { in: redundantRates.map((rate) => rate.id) } },
