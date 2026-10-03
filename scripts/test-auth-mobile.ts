@@ -25,7 +25,7 @@ assert(payroll.includes("Зарегистрировать аванс") && payrol
 assert(payroll.includes('year: String(period.year)') && payroll.includes('month: String(period.month)') && payroll.includes("Сначала оформите заказ"), "payroll order bonus is not scoped to the selected month");
 assert(selfPayrollApi.includes('body.action === "report-advance"') && selfPayrollApi.includes("PayrollPaymentType.ADVANCE"), "advance self-registration is not constrained to advances");
 assert(selfPayrollApi.includes("undefined, true"), "self payroll API does not force personal data scope for privileged employee roles");
-assert(payroll.includes("adminView = founder || accountant") && payroll.includes('advanceSelfService = !adminView'), "operations director personal payroll scope is missing");
+assert(payroll.includes("adminView = founder || operationsDirector || accountant") && payroll.includes('advanceSelfService = !adminView'), "operations director payroll administration scope is missing");
 assert(passwordReset.includes("actorRole !== Role.DIRECTOR") && passwordReset.includes("existing.role === Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "protected founder password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");

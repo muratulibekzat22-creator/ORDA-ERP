@@ -17,6 +17,7 @@ import {
   changeAllowance,
   changeSalary,
   closePeriod,
+  correctPayrollAccrual,
   createAccrual,
   createSelfAccrual,
   createPayment,
@@ -206,7 +207,46 @@ async function main() {
     const formulaPeriod = await ensurePeriod(periodYear, 10);
     const confirmationPeriod = await ensurePeriod(periodYear, 11);
     const bonusStatusPeriod = await ensurePeriod(periodYear, 12);
-    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id, confirmationPeriod.id, bonusStatusPeriod.id);
+    const correctionPeriod = await ensurePeriod(periodYear + 1, 1);
+    ids.periods.push(period.id, nextPeriod.id, formulaPeriod.id, confirmationPeriod.id, bonusStatusPeriod.id, correctionPeriod.id);
+    const founderBonus = await createAccrual(
+      {
+        employeeId: profile.id,
+        periodId: correctionPeriod.id,
+        type: PayrollAccrualType.EXTRA_BONUS,
+        amount: 10_000,
+        reason: "Founder correction access",
+        key: key("founder-extra-bonus"),
+        requestHash: "founder-extra-bonus",
+      },
+      founderActor,
+    );
+    const correctedFounderBonus = await correctPayrollAccrual(
+      {
+        accrualId: founderBonus.accrual.id,
+        amount: 15_000,
+        reason: "Исправление суммы учредителем",
+        key: key("founder-extra-bonus-correction"),
+        requestHash: "founder-extra-bonus-correction",
+      },
+      founderActor,
+    );
+    assert.equal(Number(correctedFounderBonus.replacement?.amount), 15_000);
+    assert.equal(
+      (await payrollSummary(correctionPeriod.id, founderActor)).rows.find(
+        (row) => row.id === profile.id,
+      )?.calculation.bonuses,
+      15_000,
+      "founder can correct any employee accrual",
+    );
+    await reverseAccrual(
+      correctedFounderBonus.replacement!.id,
+      correctionPeriod.id,
+      "Проверка сторно учредителем",
+      key("founder-extra-bonus-reversal"),
+      "founder-extra-bonus-reversal",
+      founderActor,
+    );
     const client = await prisma.client.create({
       data: {
         name: tag,

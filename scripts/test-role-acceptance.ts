@@ -41,6 +41,7 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "reports",
     "production",
     "warehouse",
+    "payroll",
     "marketing",
   ],
   [Role.MARKETER]: ["marketing", "calendar", "payroll"],

@@ -15,6 +15,7 @@ import { requireTenantIdentity } from "@/lib/tenant-context";
 import {
   changeAllowance,
   changeSalary,
+  correctPayrollAccrual,
   approveManagerPayrollManual,
   closePeriod,
   createAccrual,
@@ -61,16 +62,18 @@ export async function GET(request: Request) {
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
     const identity = actor(auth.session!);
-    const canAccrueSalary = identity.role === Role.DIRECTOR;
+    const canManageAccruals =
+      identity.role === Role.DIRECTOR ||
+      identity.role === Role.OPERATIONS_DIRECTOR;
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
-    if (!period && canAccrueSalary && isCompanyMonthStarted(year, month))
+    if (!period && canManageAccruals && isCompanyMonthStarted(year, month))
       period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.findUnique({
       where: { companyId: requireTenantIdentity().companyId }, select: { paydayDayOfMonth: true },
     }) ?? { paydayDayOfMonth: 1 };
-    const unconfigured = identity.role === Role.DIRECTOR
+    const unconfigured = canManageAccruals
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
       : [];
     if (!period)
@@ -107,7 +110,11 @@ export async function POST(request: Request) {
     const action = String(body.action ?? "");
     const hash = createRequestHash(body);
     if (action === "create-period") {
-      if (identity.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
+      if (
+        identity.role !== Role.DIRECTOR &&
+        identity.role !== Role.OPERATIONS_DIRECTOR
+      )
+        throw new PayrollError("FORBIDDEN");
       return NextResponse.json(
         await ensurePeriod(Number(body.year), Number(body.month)),
       );
@@ -145,6 +152,19 @@ export async function POST(request: Request) {
           Number(body.employeeId),
           Number(body.amount),
           typeof body.comment === "string" ? body.comment : undefined,
+          identity,
+        ),
+      );
+    if (action === "correct-accrual")
+      return NextResponse.json(
+        await correctPayrollAccrual(
+          {
+            accrualId: Number(body.id),
+            amount: Number(body.amount),
+            reason: String(body.reason ?? ""),
+            key: keyResult.key,
+            requestHash: hash,
+          },
           identity,
         ),
       );

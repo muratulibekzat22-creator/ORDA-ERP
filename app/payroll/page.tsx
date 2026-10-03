@@ -160,7 +160,7 @@ type Payload = {
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
-  "salary" | "salaryAccrual" | "partialPayment" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advanceReport" | "reversal";
+  "salary" | "salaryAccrual" | "partialPayment" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advanceReport" | "editAccrual" | "reversal";
 type OrderOption = {
   id: number;
   number: string;
@@ -272,6 +272,34 @@ const activeSalaryAccrual = (row: PayrollRow) =>
       !item.reversalOfId &&
       !item.reversedBy,
   ) ?? null;
+const editablePayrollAccruals = (row: PayrollRow) =>
+  row.accruals.filter(
+    (item) =>
+      !item.reversalOfId &&
+      !item.reversedBy &&
+      item.type !== "BONUS_REVERSAL" &&
+      item.type !== "ORDER_BONUS" &&
+      item.type !== "GUARANTEED_ORDER_BONUS" &&
+      !row.payments.some(
+        (payment) =>
+          payment.relatedAccrualId === item.id &&
+          !payment.reversalOfId &&
+          !payment.reversedAt,
+      ),
+  );
+const reversiblePayrollAccruals = (row: PayrollRow) =>
+  row.accruals.filter(
+    (item) =>
+      !item.reversalOfId &&
+      !item.reversedBy &&
+      item.type !== "BONUS_REVERSAL" &&
+      !row.payments.some(
+        (payment) =>
+          payment.relatedAccrualId === item.id &&
+          !payment.reversalOfId &&
+          !payment.reversedAt,
+      ),
+  );
 const partialSalaryAvailable = (row: PayrollRow) => {
   const salaryAccrual = activeSalaryAccrual(row);
   if (!salaryAccrual) return 0;
@@ -299,6 +327,8 @@ const errorLabels: Record<string, string> = {
   PERIOD_CLOSED: "Закрытый месяц нельзя изменять",
   PERIOD_NOT_OPEN: "Период находится на проверке. Верните его в работу для изменений",
   REASON_REQUIRED: "Укажите обязательную причину",
+  INVALID_DATE: "Укажите корректную дату",
+  INVALID_EFFECTIVE_DATE: "Дата нового оклада пересекается с уже сохранённой историей ставок",
   INVALID_PERIOD_TRANSITION: "Этот переход статуса периода недоступен",
   INVALID_AMOUNT: "Введите сумму больше нуля",
   EMPLOYEE_NOT_FOUND: "Сотрудник не найден",
@@ -318,6 +348,9 @@ const errorLabels: Record<string, string> = {
   SALARY_AMOUNT_MISMATCH: "Сумма оклада изменилась. Обновите ведомость и повторите начисление",
   PAYROLL_PERIOD_NOT_STARTED: "Расчётный месяц ещё не начался",
   ACCRUAL_ALREADY_REVERSED: "Это начисление уже сторнировано",
+  ACCRUAL_NOT_FOUND: "Начисление не найдено",
+  ACCRUAL_NOT_EDITABLE: "Для этого начисления используйте отдельное исправление бонуса",
+  ACCRUAL_PAYMENT_EXISTS: "Начисление уже связано с выплатой. Сначала сторнируйте выплату",
   DIRECTOR_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает директор",
   PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
   PAYMENT_EXCEEDS_PAYABLE: "Сумма выплаты превышает подтверждённый остаток к выплате",
@@ -377,9 +410,10 @@ export default function PayrollPage() {
     operationsDirector = roleAccess.administrator,
     accountant = roleAccess.accountant,
     adminView = founder || operationsDirector || accountant,
-    salaryManager = founder,
+    payrollAdministrator = founder || operationsDirector,
+    salaryManager = payrollAdministrator,
     director = operationsDirector,
-    canAccrueSalary = founder,
+    canAccrueSalary = payrollAdministrator,
     managerSelfService = role === "MANAGER" && !adminView,
     canCorrectOrderBonuses =
       role === "MANAGER" || role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
@@ -400,6 +434,9 @@ export default function PayrollPage() {
   );
   const partialPaymentCandidates = data.rows.filter(
     (row) => partialSalaryAvailable(row) > 0,
+  );
+  const accrualCorrectionCandidates = data.rows.filter(
+    (row) => editablePayrollAccruals(row).length > 0,
   );
 
   const load = useCallback(async () => {
@@ -541,9 +578,16 @@ export default function PayrollPage() {
     await load();
     return true;
   };
-  const openOperation = (next: Operation, row?: PayrollRow) => {
+  const openOperation = (
+    next: Operation,
+    row?: PayrollRow,
+    accrual?: Accrual,
+  ) => {
     const employee = row ?? details ?? data.rows[0] ?? null;
     const salaryAccrual = employee ? activeSalaryAccrual(employee) : null;
+    const editableAccrual =
+      accrual ??
+      (employee ? editablePayrollAccruals(employee)[0] : undefined);
     if (next === "payment" && employee?.payrollAudit && !employee.payrollAudit.readyToPay) {
       setDetails(employee);
       setError(employee.payrollAudit.workReadiness.ready
@@ -553,7 +597,14 @@ export default function PayrollPage() {
     }
     setOperation(next);
     setTarget(employee);
-    setForm(next === "salaryAccrual" && employee
+    setForm(next === "salary" && employee
+      ? {
+          ...emptyForm(),
+          amount: String(employee.currentSalary),
+          date: `${selected.year}-${String(selected.month).padStart(2, "0")}-01`,
+          reason: "Изменение оклада",
+        }
+      : next === "salaryAccrual" && employee
       ? { ...emptyForm(), amount: String(employee.currentSalary), reason: "Оклад за расчётный период" }
       : next === "partialPayment" && employee && salaryAccrual
         ? {
@@ -576,6 +627,19 @@ export default function PayrollPage() {
             method: "kaspi",
             reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
           }
+        : next === "allowance" && employee
+          ? {
+              ...emptyForm(),
+              amount: String(employee.defaultGuaranteedBonus),
+              reason: "Изменение гарантированного бонуса",
+            }
+        : next === "editAccrual" && editableAccrual
+          ? {
+              ...emptyForm(),
+              amount: String(editableAccrual.amount),
+              accrualId: String(editableAccrual.id),
+              reason: "",
+            }
         : emptyForm());
   };
   const submitOperation = async () => {
@@ -618,6 +682,13 @@ export default function PayrollPage() {
         externalReference: form.externalReference,
         comment: form.reason,
         relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
+      };
+    else if (operation === "editAccrual")
+      body = {
+        action: "correct-accrual",
+        id: Number(form.accrualId),
+        amount,
+        reason: form.reason,
       };
     else if (operation === "reversal")
       body = {
@@ -1000,6 +1071,7 @@ export default function PayrollPage() {
           row={data.rows.find((row) => row.id === details.id) ?? details}
           director={director}
           canManageSalary={salaryManager}
+          canManageAccruals={payrollAdministrator}
           canReviewPayments={founder}
           canAccrueSalary={canAccrueSalary}
           orderBonuses={managedBonuses.filter(
@@ -1030,11 +1102,21 @@ export default function PayrollPage() {
               ? salaryCandidates
               : operation === "partialPayment"
                 ? partialPaymentCandidates
+                : operation === "editAccrual"
+                  ? accrualCorrectionCandidates
                 : data.rows
           }
           onRowChange={(row) => {
             setTarget(row);
-            setForm(operation === "salaryAccrual"
+            const firstEditableAccrual = editablePayrollAccruals(row)[0];
+            setForm(operation === "salary"
+              ? {
+                  ...emptyForm(),
+                  amount: String(row.currentSalary),
+                  date: `${selected.year}-${String(selected.month).padStart(2, "0")}-01`,
+                  reason: "Изменение оклада",
+                }
+              : operation === "salaryAccrual"
               ? { ...emptyForm(), amount: String(row.currentSalary), reason: "Оклад за расчётный период" }
               : operation === "partialPayment"
                 ? {
@@ -1056,6 +1138,18 @@ export default function PayrollPage() {
                     amount: String(Math.max(row.payrollAudit?.approvedPayable ?? row.totals.payable, 0)),
                     method: "kaspi",
                     reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+                  }
+              : operation === "allowance"
+                ? {
+                    ...emptyForm(),
+                    amount: String(row.defaultGuaranteedBonus),
+                    reason: "Изменение гарантированного бонуса",
+                  }
+              : operation === "editAccrual" && firstEditableAccrual
+                ? {
+                    ...emptyForm(),
+                    amount: String(firstEditableAccrual.amount),
+                    accrualId: String(firstEditableAccrual.id),
                   }
               : emptyForm());
           }}
@@ -1368,6 +1462,7 @@ function EmployeeDrawer({
   row,
   director,
   canManageSalary,
+  canManageAccruals,
   canReviewPayments,
   canAccrueSalary,
   canPay,
@@ -1385,6 +1480,7 @@ function EmployeeDrawer({
   row: PayrollRow;
   director: boolean;
   canManageSalary: boolean;
+  canManageAccruals: boolean;
   canReviewPayments: boolean;
   canAccrueSalary: boolean;
   canPay: boolean;
@@ -1392,7 +1488,11 @@ function EmployeeDrawer({
   canCorrectOrderBonuses: boolean;
   closed: boolean;
   onClose: () => void;
-  onOperation: (operation: Operation, row: PayrollRow) => void;
+  onOperation: (
+    operation: Operation,
+    row: PayrollRow,
+    accrual?: Accrual,
+  ) => void;
   onReversePayment: (item: Payment) => Promise<unknown>;
   onReviewPayment: (item: PaymentConfirmation, decision: "CONFIRM" | "REJECT") => Promise<unknown>;
   onApproveManual: (row: PayrollRow) => Promise<unknown>;
@@ -1413,6 +1513,7 @@ function EmployeeDrawer({
       title: `${labels[item.type] ?? item.type}${item.order ? ` · ${item.order.number}` : ""}`,
       amount: Number(item.amount) * (item.direction === "DECREASE" ? -1 : 1),
       reason: `${item.reason}${item.externalReference ? ` · Референс: ${item.externalReference}` : ""}`,
+      accrual: item,
     })),
     ...row.payments.map((item) => ({
       id: `p-${item.id}`,
@@ -1420,6 +1521,7 @@ function EmployeeDrawer({
       title: labels[item.type] ?? item.type,
       amount: -Number(item.amount),
       reason: item.comment ?? "",
+      accrual: null,
     })),
   ].sort((a, b) => +new Date(b.date) - +new Date(a.date));
   const salaryHistory = row.salaryRates.filter(
@@ -1440,6 +1542,8 @@ function EmployeeDrawer({
         !item.reversedBy,
     );
   const partialSalaryBalance = partialSalaryAvailable(row);
+  const editableAccruals = editablePayrollAccruals(row);
+  const reversibleAccruals = reversiblePayrollAccruals(row);
   return (
     <div
       className="fixed inset-0 z-[80] flex justify-end bg-black/70"
@@ -1629,12 +1733,15 @@ function EmployeeDrawer({
             ))}
           </div>
         </section>
-        {(canAccrueThisSalary || canPay || canManageSalary) && !closed && (
+        {(canAccrueThisSalary || canPay || canManageSalary || canManageAccruals) && !closed && (
           <section className="mt-5">
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2">
               {canAccrueThisSalary && (
                 <Action label="Начислить оклад" onClick={() => onOperation("salaryAccrual", row)} />
+              )}
+              {canManageSalary && (
+                <Action label="Изменить оклад" onClick={() => onOperation("salary", row)} />
               )}
               {canPay && <Action label="Выплатить" onClick={() => onOperation("payment", row)} />}
               {canManageSalary && partialSalaryBalance > 0 && (
@@ -1645,14 +1752,10 @@ function EmployeeDrawer({
               )}
               {canManageSalary && <Action label="Гарантированный бонус" onClick={() => onOperation("allowance", row)} />}
             </div>
-            {director && (
+            {canManageAccruals && (
               <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-300">Дополнительные операции</summary>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <Action
-                    label="Гарантированный бонус"
-                    onClick={() => onOperation("allowance", row)}
-                  />
                   <Action
                     label="Добавить бонус"
                     onClick={() => onOperation("bonus", row)}
@@ -1665,10 +1768,20 @@ function EmployeeDrawer({
                     label="Штраф / удержание"
                     onClick={() => onOperation("deduction", row)}
                   />
-                  <Action
-                    label="Сторно"
-                    onClick={() => onOperation("reversal", row)}
-                  />
+                  {editableAccruals.length > 0 && (
+                    <Action
+                      label="Редактировать начисление"
+                      onClick={() =>
+                        onOperation("editAccrual", row, editableAccruals[0])
+                      }
+                    />
+                  )}
+                  {reversibleAccruals.length > 0 && (
+                    <Action
+                      label="Сторно"
+                      onClick={() => onOperation("reversal", row)}
+                    />
+                  )}
                 </div>
               </details>
             )}
@@ -1773,6 +1886,22 @@ function EmployeeDrawer({
                       {dateLabel(item.date)}
                       {item.reason ? ` · ${item.reason}` : ""}
                     </p>
+                    {canManageAccruals &&
+                      !closed &&
+                      item.accrual &&
+                      editableAccruals.some(
+                        (accrual) => accrual.id === item.accrual!.id,
+                      ) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOperation("editAccrual", row, item.accrual!)
+                          }
+                          className="mt-2 flex min-h-10 items-center gap-2 rounded-lg border border-blue-500/40 px-3 text-sm font-semibold text-blue-200"
+                        >
+                          <Pencil size={15} /> Редактировать начисление
+                        </button>
+                      )}
                   </div>
                 </div>
               ))
@@ -2129,7 +2258,7 @@ function OperationModal({
   onSubmit: () => Promise<void>;
 }) {
   const titles: Record<Operation, string> = {
-      salary: "Назначить новый оклад",
+      salary: "Изменить оклад",
       salaryAccrual: "Подтвердить начисление оклада",
       partialPayment: "Частичная оплата зарплаты",
       allowance: "Изменить гарантированный бонус",
@@ -2138,14 +2267,14 @@ function OperationModal({
       deduction: "Добавить штраф / удержание",
       payment: "Зарегистрировать выплату",
       advanceReport: "Зарегистрировать полученный аванс",
+      editAccrual: "Редактировать начисление",
       reversal: "Сторнировать начисление",
     },
-    reversible = row.accruals.filter(
-      (item) =>
-        !item.reversalOfId &&
-        !item.reversedBy &&
-        item.type !== "BONUS_REVERSAL",
-    );
+    reversible = reversiblePayrollAccruals(row);
+  const editableAccruals = editablePayrollAccruals(row);
+  const selectedEditableAccrual = editableAccruals.find(
+    (item) => item.id === Number(form.accrualId),
+  );
   const orderOperation = operation === "bonus" || operation === "deduction";
   const [orderQuery, setOrderQuery] = useState("");
   const [orders, setOrders] = useState<OrderOption[]>([]);
@@ -2246,6 +2375,52 @@ function OperationModal({
                 ))}
               </select>
             </Field>
+          ) : operation === "editAccrual" ? (
+            <>
+              <Field label="Начисление">
+                <select
+                  value={form.accrualId}
+                  onChange={(event) => {
+                    const selected = editableAccruals.find(
+                      (item) => item.id === Number(event.target.value),
+                    );
+                    setForm({
+                      ...form,
+                      accrualId: event.target.value,
+                      amount: selected ? String(selected.amount) : "",
+                    });
+                  }}
+                  className="control"
+                >
+                  <option value="">Выберите начисление</option>
+                  {editableAccruals.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {labels[item.type] ?? item.type} · {currency(item.amount)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Новая сумма, ₸">
+                <input
+                  autoFocus
+                  type="number"
+                  min="1"
+                  value={form.amount}
+                  onChange={(event) =>
+                    setForm({ ...form, amount: event.target.value })
+                  }
+                  className="control"
+                />
+                <span className="mt-1.5 block text-xs text-blue-300">
+                  Исходная запись не удалится: система создаст сторно и новое начисление.
+                </span>
+                {selectedEditableAccrual?.type === "BASE_SALARY" && (
+                  <span className="mt-1.5 block text-xs text-amber-200">
+                    Это исправит начисление выбранного месяца. Постоянный оклад меняется отдельной кнопкой «Изменить оклад».
+                  </span>
+                )}
+              </Field>
+            </>
           ) : operation !== "bonus" ? (
             <Field label="Сумма, ₸">
               <input
@@ -2476,6 +2651,8 @@ function OperationModal({
             label={
               operation === "reversal"
                 ? "Причина сторно"
+                : operation === "editAccrual"
+                  ? "Причина изменения"
                 : operation === "bonus" && form.manualOverride
                   ? "Причина ручного изменения суммы"
                   : "Комментарий / основание"
@@ -2508,6 +2685,10 @@ function OperationModal({
             disabled={
               operation === "reversal"
                 ? !form.accrualId || !form.reason.trim()
+                : operation === "editAccrual"
+                  ? !form.accrualId || Number(form.amount) <= 0 || !form.reason.trim()
+                : operation === "salary"
+                  ? Number(form.amount) <= 0 || !form.date || !form.reason.trim()
                 : operation === "allowance"
                   ? form.amount === "" || Number(form.amount) < 0
                   : Number(form.amount) <= 0 ||
@@ -2534,6 +2715,8 @@ function OperationModal({
               ? "Подтвердить начисление"
               : operation === "partialPayment"
                 ? "Учесть частичную оплату"
+                : operation === "editAccrual"
+                  ? "Сохранить исправление"
                 : "Сохранить"}
           </button>
         </div>

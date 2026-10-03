@@ -534,7 +534,7 @@ export async function createAccrual(input: AccrualInput, actor: PayrollActor) {
     input.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS
   )
     orderBonusManager(actor);
-  else director(actor);
+  else salaryManager(actor);
   return createAccrualInternal(input, actor);
 }
 
@@ -2028,6 +2028,9 @@ export async function payrollSummary(
     const policySigned = (row: (typeof activeAccruals)[number]) =>
       Number(row.amount) *
       (row.direction === PayrollDirection.INCREASE ? 1 : -1);
+    const baseSalaryPosted = activeAccruals
+      .filter((row) => row.type === PayrollAccrualType.BASE_SALARY)
+      .reduce((sum, row) => sum + policySigned(row), 0);
     const salaryPosted = activeAccruals
       .filter(
         (row) =>
@@ -2035,9 +2038,15 @@ export async function payrollSummary(
           row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
       )
       .reduce((sum, row) => sum + policySigned(row), 0);
+    const configuredSalary = Number(activeRate?.amount ?? employee.baseSalary);
+    const statementSalary = employeeEmploymentEnded
+      ? Math.max(baseSalaryPosted, 0)
+      : baseSalaryPosted > 0
+        ? Math.max(baseSalaryPosted, 0)
+        : configuredSalary;
     const currentSalary = employeeEmploymentEnded
-      ? Math.max(salaryPosted, 0)
-      : Number(activeRate?.amount ?? employee.baseSalary);
+      ? statementSalary
+      : configuredSalary;
     const managerPolicyApplies = identity.role === Role.MANAGER;
     const assignedOrders = managerPolicyApplies
       ? periodOrders.filter(
@@ -2227,7 +2236,7 @@ export async function payrollSummary(
     const approvedAccrued = accrued;
     const approvedPayable = approvedAccrued - paid;
     const personalCalculation = personalPayrollCalculation({
-      salary: currentSalary,
+      salary: statementSalary,
       bonuses: increase([
         PayrollAccrualType.GUARANTEED_ORDER_BONUS,
         PayrollAccrualType.ORDER_BONUS,
@@ -3316,6 +3325,195 @@ export async function correctOrderBonus(
   }
 }
 
+type PayrollAccrualCorrectionInput = {
+  accrualId: number;
+  amount: number;
+  reason: string;
+  key: string;
+  requestHash: string;
+};
+
+const genericAccrualCorrectionTypes = new Set<PayrollAccrualType>([
+  PayrollAccrualType.BASE_SALARY,
+  PayrollAccrualType.MEASUREMENT_BONUS,
+  PayrollAccrualType.EXTRA_BONUS,
+  PayrollAccrualType.PREMIUM,
+  PayrollAccrualType.DEDUCTION,
+  PayrollAccrualType.ADJUSTMENT_INCREASE,
+  PayrollAccrualType.ADJUSTMENT_DECREASE,
+]);
+
+export async function correctPayrollAccrual(
+  input: PayrollAccrualCorrectionInput,
+  actor: PayrollActor,
+) {
+  salaryManager(actor);
+  const reason = requiredReason(input.reason);
+  const amount = money(input.amount);
+  const companyId = requireTenantIdentity().companyId;
+  return prisma.$transaction(
+    async (tx) => {
+      const replay = await tx.payrollAccrual.findUnique({
+        where: { idempotencyKey: `${input.key}:reversal` },
+      });
+      if (replay) {
+        if (!compareRequestHash(replay.requestHash, input.requestHash))
+          throw new PayrollError("IDEMPOTENCY_CONFLICT");
+        return {
+          created: false,
+          reversal: replay,
+          replacement: await tx.payrollAccrual.findUnique({
+            where: { idempotencyKey: `${input.key}:replacement` },
+          }),
+        };
+      }
+
+      const original = await tx.payrollAccrual.findFirst({
+        where: { id: input.accrualId, employee: { companyId } },
+        include: {
+          period: true,
+          reversedBy: { select: { id: true } },
+          payments: {
+            where: { reversalOfId: null, reversedAt: null },
+            select: { id: true },
+          },
+        },
+      });
+      if (!original || original.reversalOfId)
+        throw new PayrollError("ACCRUAL_NOT_FOUND");
+      if (original.reversedBy)
+        throw new PayrollError("ACCRUAL_ALREADY_REVERSED");
+      if (!genericAccrualCorrectionTypes.has(original.type))
+        throw new PayrollError("ACCRUAL_NOT_EDITABLE");
+      if (original.payments.length > 0)
+        throw new PayrollError("ACCRUAL_PAYMENT_EXISTS");
+      if (original.period.status !== PayrollPeriodStatus.OPEN)
+        throw new PayrollError(
+          original.period.status === PayrollPeriodStatus.CLOSED
+            ? "PERIOD_CLOSED"
+            : "PERIOD_NOT_OPEN",
+        );
+
+      if (original.measurementId)
+        await tx.payrollAccrual.update({
+          where: { id: original.id },
+          data: { measurementId: null },
+        });
+
+      const reversalDirection =
+        original.direction === PayrollDirection.INCREASE
+          ? PayrollDirection.DECREASE
+          : PayrollDirection.INCREASE;
+      const reversal = await tx.payrollAccrual.create({
+        data: {
+          employeeId: original.employeeId,
+          periodId: original.periodId,
+          earnedPeriodId: original.earnedPeriodId ?? original.periodId,
+          type: PayrollAccrualType.BONUS_REVERSAL,
+          direction: reversalDirection,
+          amount: original.amount,
+          orderId: original.orderId,
+          reason: `Отмена перед исправлением: ${reason}`,
+          approvedById: actor.userId,
+          createdById: actor.userId,
+          reversalOfId: original.id,
+          idempotencyKey: `${input.key}:reversal`,
+          requestHash: input.requestHash,
+        },
+      });
+      await tx.companyLedgerEntry.create({
+        data: {
+          companyId,
+          type: "PAYROLL_ACCRUAL",
+          category: "SALARY",
+          source: "OTHER_SYSTEM",
+          direction:
+            reversal.direction === PayrollDirection.INCREASE
+              ? "EXPENSE"
+              : "INCOME",
+          amount: reversal.amount,
+          operationDate: reversal.createdAt,
+          comment: reversal.reason,
+          orderId: reversal.orderId,
+          employeeId: original.employeeId,
+          authorId: actor.userId,
+          idempotencyKey: `payroll-accrual:${reversal.id}`,
+          requestHash: input.requestHash,
+          affectsProfit: true,
+          payrollAccrualId: reversal.id,
+        },
+      });
+
+      const replacement = await tx.payrollAccrual.create({
+        data: {
+          employeeId: original.employeeId,
+          periodId: original.periodId,
+          earnedPeriodId: original.earnedPeriodId,
+          type: original.type,
+          direction: original.direction,
+          amount,
+          orderId: original.orderId,
+          measurementId: original.measurementId,
+          reason: `Исправление начисления: ${reason}`,
+          externalReference: original.externalReference,
+          paymentMode: original.paymentMode,
+          approvedById: actor.userId,
+          createdById: actor.userId,
+          idempotencyKey: `${input.key}:replacement`,
+          requestHash: input.requestHash,
+        },
+      });
+      await tx.companyLedgerEntry.create({
+        data: {
+          companyId,
+          type: "PAYROLL_ACCRUAL",
+          category: "SALARY",
+          source: "OTHER_SYSTEM",
+          direction:
+            replacement.direction === PayrollDirection.INCREASE
+              ? "EXPENSE"
+              : "INCOME",
+          amount: replacement.amount,
+          operationDate: replacement.createdAt,
+          comment: replacement.reason,
+          orderId: replacement.orderId,
+          employeeId: original.employeeId,
+          authorId: actor.userId,
+          idempotencyKey: `payroll-accrual:${replacement.id}`,
+          requestHash: input.requestHash,
+          affectsProfit: true,
+          payrollAccrualId: replacement.id,
+        },
+      });
+      await audit(tx, {
+        action: "PAYROLL_ACCRUAL_CORRECTED",
+        actor,
+        periodId: original.periodId,
+        employeeId: original.employeeId,
+        before: {
+          accrualId: original.id,
+          type: original.type,
+          amount: Number(original.amount),
+          direction: original.direction,
+        },
+        after: {
+          reversalId: reversal.id,
+          accrualId: replacement.id,
+          amount: Number(replacement.amount),
+          direction: replacement.direction,
+        },
+        reason,
+        idempotencyKey: `${input.key}:audit`,
+      });
+      return { created: true, reversal, replacement };
+    },
+    {
+      ...transactionOptions,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    },
+  );
+}
+
 export async function reverseAccrual(
   id: number,
   periodId: number,
@@ -3324,48 +3522,102 @@ export async function reverseAccrual(
   requestHash: string,
   actor: PayrollActor,
 ) {
-  director(actor);
+  salaryManager(actor);
   const reversalReason = requiredReason(reason);
-  const original = await prisma.payrollAccrual.findUnique({
-    where: { id },
-    include: { reversedBy: { select: { id: true } } },
-  });
-  if (!original || original.reversalOfId) throw new PayrollError("NOT_FOUND");
-  if (original.reversedBy) throw new PayrollError("ACCRUAL_ALREADY_REVERSED");
-  const result = await createAccrual(
-    {
-      employeeId: original.employeeId,
-      periodId,
-      earnedPeriodId: original.periodId,
-      type: PayrollAccrualType.BONUS_REVERSAL,
-      amount: Number(original.amount),
-      orderId: original.orderId ?? undefined,
-      reason: reversalReason,
-      key,
-      requestHash,
-    },
-    actor,
-  );
-  await prisma.$transaction(async (tx) => {
-    await Promise.all([
-      tx.payrollAccrual.update({
-        where: { id: result.accrual.id },
-        data: { reversalOfId: original.id },
-      }),
-      tx.payrollAccrual.update({
+  const companyId = requireTenantIdentity().companyId;
+  return prisma.$transaction(
+    async (tx) => {
+      const replay = await tx.payrollAccrual.findUnique({
+        where: { idempotencyKey: key },
+      });
+      if (replay) {
+        if (!compareRequestHash(replay.requestHash, requestHash))
+          throw new PayrollError("IDEMPOTENCY_CONFLICT");
+        return { accrual: replay, created: false };
+      }
+      const original = await tx.payrollAccrual.findFirst({
+        where: { id, employee: { companyId } },
+        include: {
+          reversedBy: { select: { id: true } },
+          payments: {
+            where: { reversalOfId: null, reversedAt: null },
+            select: { id: true },
+          },
+        },
+      });
+      if (!original || original.reversalOfId)
+        throw new PayrollError("ACCRUAL_NOT_FOUND");
+      if (original.reversedBy)
+        throw new PayrollError("ACCRUAL_ALREADY_REVERSED");
+      if (original.payments.length > 0)
+        throw new PayrollError("ACCRUAL_PAYMENT_EXISTS");
+      await openPeriod(tx, periodId);
+
+      const direction =
+        original.direction === PayrollDirection.INCREASE
+          ? PayrollDirection.DECREASE
+          : PayrollDirection.INCREASE;
+      const reversal = await tx.payrollAccrual.create({
+        data: {
+          employeeId: original.employeeId,
+          periodId,
+          earnedPeriodId: original.periodId,
+          type: PayrollAccrualType.BONUS_REVERSAL,
+          direction,
+          amount: original.amount,
+          orderId: original.orderId,
+          reason: reversalReason,
+          approvedById: actor.userId,
+          createdById: actor.userId,
+          reversalOfId: original.id,
+          idempotencyKey: key,
+          requestHash,
+        },
+      });
+      await tx.payrollAccrual.update({
         where: { id: original.id },
         data: { orderBonusUniquenessKey: null },
-      }),
-    ]);
-    await audit(tx, {
-      action: "PAYROLL_ACCRUAL_REVERSED",
-      actor,
-      periodId,
-      employeeId: original.employeeId,
-      before: { accrualId: original.id, type: original.type, amount: Number(original.amount) },
-      after: { reversalId: result.accrual.id },
-      reason: reversalReason,
-    });
-  }, transactionOptions);
-  return result;
+      });
+      await tx.companyLedgerEntry.create({
+        data: {
+          companyId,
+          type: "PAYROLL_ACCRUAL",
+          category: "SALARY",
+          source: "OTHER_SYSTEM",
+          direction:
+            direction === PayrollDirection.INCREASE ? "EXPENSE" : "INCOME",
+          amount: reversal.amount,
+          operationDate: reversal.createdAt,
+          comment: reversalReason,
+          orderId: reversal.orderId,
+          employeeId: original.employeeId,
+          authorId: actor.userId,
+          idempotencyKey: `payroll-accrual:${reversal.id}`,
+          requestHash,
+          affectsProfit: true,
+          payrollAccrualId: reversal.id,
+        },
+      });
+      await audit(tx, {
+        action: "PAYROLL_ACCRUAL_REVERSED",
+        actor,
+        periodId,
+        employeeId: original.employeeId,
+        before: {
+          accrualId: original.id,
+          type: original.type,
+          amount: Number(original.amount),
+          direction: original.direction,
+        },
+        after: { reversalId: reversal.id, direction },
+        reason: reversalReason,
+        idempotencyKey: `${key}:audit`,
+      });
+      return { accrual: reversal, created: true };
+    },
+    {
+      ...transactionOptions,
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    },
+  );
 }

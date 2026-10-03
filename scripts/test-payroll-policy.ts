@@ -376,14 +376,25 @@ assert.match(bonusCorrectionRouteSource, /listOrderBonusesForCorrection/);
 assert.match(bonusCorrectionRouteSource, /correctOrderBonus/);
 assert.match(bonusCorrectionRouteSource, /syncAutomaticOrderBonuses/);
 assert.match(bonusCorrectionRouteSource, /action !== "correct" && action !== "cancel"/);
-assert.doesNotMatch(payrollRouteSource, /identity\.role === Role\.OPERATIONS_DIRECTOR[\s\S]*FORBIDDEN/);
+assert.match(
+  payrollRouteSource,
+  /identity\.role !== Role\.DIRECTOR &&[\s\S]*identity\.role !== Role\.OPERATIONS_DIRECTOR[\s\S]*FORBIDDEN/,
+);
 assert.match(payrollPageSource, /adminView = founder \|\| operationsDirector \|\| accountant/);
 assert.match(payrollPageSource, /statementAccrued/);
 assert.match(payrollPageSource, /statementPayable/);
 assert.match(payrollPageSource, /Начислено.*минус все подтверждённые выплаты/);
 assert.match(payrollPageSource, /Частичная оплата зарплаты/);
 assert.match(payrollPageSource, /Оклад сотрудника не изменится; выплата будет учтена как аванс/);
-assert.doesNotMatch(payrollPageSource, /label="Изменить оклад"/);
+assert.match(payrollPageSource, /label="Изменить оклад"/);
+assert.match(payrollPageSource, /label="Редактировать начисление"/);
+assert.match(payrollPageSource, /payrollAdministrator = founder \|\| operationsDirector/);
+assert.match(payrollRouteSource, /action === "correct-accrual"/);
+assert.match(payrollRouteSource, /correctPayrollAccrual/);
+assert.match(serviceSource, /export async function correctPayrollAccrual/);
+assert.match(serviceSource, /PAYROLL_ACCRUAL_CORRECTED/);
+assert.match(serviceSource, /else salaryManager\(actor\)/);
+assert.match(serviceSource, /baseSalaryPosted > 0[\s\S]*statementSalary/);
 assert.match(serviceSource, /isValidOptionalPaymentReference/);
 assert.match(serviceSource, /PARTIAL_SALARY_PAYMENT_CREATED/);
 assert.match(serviceSource, /PARTIAL_SALARY_ACCRUAL_REQUIRED/);
