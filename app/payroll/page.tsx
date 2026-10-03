@@ -1601,14 +1601,14 @@ function EmployeeDrawer({
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
-                {row.payrollAudit.readyToPay ? (row.payrollAudit.manualApproved ? "Исключение подтверждено" : "Начисления сверены") : row.payrollAudit.calculationReady ? "Работа не закрыта" : "Не всё начислено"}
+                {row.payrollAudit.readyToPay ? (row.payrollAudit.manualApproved ? "Ручной расчёт подтверждён" : "Оклад сверен") : "Не всё начислено"}
               </span>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div className="rounded-xl bg-slate-950 p-2"><p className="text-[11px] text-slate-500">Заказов проверено</p><p className="mt-1 font-semibold">{row.payrollAudit.linkedOrders}</p></div>
               <Metric label="Внесено менеджером" value={row.payrollAudit.submittedOrderBonus} />
               <Metric label="Предлагает система" value={row.payrollAudit.requiredOrderBonus} />
-              <Metric label="Расхождение" value={row.payrollAudit.managerDifference} accent={row.payrollAudit.managerDifference !== 0} />
+              <Metric label="Разница с подсказкой" value={row.payrollAudit.managerDifference} accent={row.payrollAudit.managerDifference !== 0} />
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {[
@@ -1618,7 +1618,7 @@ function EmployeeDrawer({
                 ["Штрафы / удержания", -row.payrollAudit.deductions],
                 ["Авансы", -row.payrollAudit.advances],
                 ["Другие выплаты", -(row.payrollAudit.alreadyPaid - row.payrollAudit.advances)],
-                ["Контрольная сумма", row.payrollAudit.auditedAccrued],
+                ["Ориентир системы", row.payrollAudit.auditedAccrued],
               ].map(([label, amount], index) => (
                 <div key={String(label)} className={`flex justify-between rounded-xl px-3 py-2 text-sm ${index === 6 ? "bg-emerald-500/10 text-emerald-200" : "bg-slate-950"}`}>
                   <span>{String(label)}</span>
@@ -1636,10 +1636,10 @@ function EmployeeDrawer({
               {row.payrollAudit.mismatches.map((item) => {
                 const difference = item.managerDifference;
                 const mismatch = difference > 0
-                  ? `лишнее ${currency(difference)}`
+                  ? `выше подсказки на ${currency(difference)}`
                   : difference < 0
-                    ? `не хватает ${currency(Math.abs(difference))}`
-                    : "верно";
+                    ? `ниже подсказки на ${currency(Math.abs(difference))}`
+                    : "совпадает с подсказкой";
                 return (
                   <div key={item.accrualId} className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm">
                     <div className="flex flex-wrap justify-between gap-2">

@@ -1824,6 +1824,7 @@ export async function payrollSummary(
     },
     select: {
       orderDateNeedsReview: true,
+      manager: true,
       managerUserId: true,
       partnerId: true,
       partnerPrice: true,
@@ -2165,7 +2166,10 @@ export async function payrollSummary(
       managerPolicyApplies && identity.id && !employeeEmploymentEnded
       ? {
           orderIssues: readinessOrders.filter(
-            (order) => order.managerUserId === identity.id && orderDataGaps(order).length > 0,
+            (order) =>
+              order.managerUserId === identity.id &&
+              !isCompanyResponsibleOrder({ managerName: order.manager }) &&
+              orderDataGaps(order).length > 0,
           ).length,
           measurementsToClose: readinessMeasurements.filter(
             (measurement) => measurement.client.managerUserId === identity.id,
