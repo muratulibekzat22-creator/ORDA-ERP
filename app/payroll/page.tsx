@@ -292,6 +292,8 @@ const partialSalaryAvailable = (row: PayrollRow) => {
     0,
   );
 };
+const statementAccrued = (row: PayrollRow) => row.calculation.totalToAccrue;
+const statementPayable = (row: PayrollRow) => row.calculation.amountToPay;
 const errorLabels: Record<string, string> = {
   FORBIDDEN: "Недостаточно прав для этой операции",
   PERIOD_CLOSED: "Закрытый месяц нельзя изменять",
@@ -739,14 +741,18 @@ export default function PayrollPage() {
       "Зарплатный профиль настроен",
     );
   };
-  const expectedAccrualTotal = data.rows.reduce(
-    (sum, row) => sum + row.calculation.totalToAccrue,
+  const statementAccruedTotal = data.rows.reduce(
+    (sum, row) => sum + statementAccrued(row),
+    0,
+  );
+  const statementPayableTotal = data.rows.reduce(
+    (sum, row) => sum + statementPayable(row),
     0,
   );
   const stats: Array<[string, number, LucideIcon, string]> = [
-    ["Начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
+    ["Начислено", statementAccruedTotal, CircleDollarSign, "text-white"],
     ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
-    ["Расчёт системы (ещё не начислено)", expectedAccrualTotal, Banknote, "text-amber-300"],
+    ["К выплате", statementPayableTotal, Banknote, "text-amber-300"],
   ];
 
   if (sessionStatus === "loading")
@@ -847,7 +853,7 @@ export default function PayrollPage() {
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
             <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и рассчитывает бонус по сумме заказа: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Активным менеджерам бонус относится к месяцу оформления заказа; уволенному менеджеру он начисляется только после фактического завершения заказа. Ручное изменение суммы требует причины, а исправление сохраняет историю.</p>
-            <p className="mt-2 leading-6">Оклад считается начисленным только после нажатия «Начислить оклад». Затем директор проверяет замечания по заказам и замерам и регистрирует фактическую выплату; референс перевода желателен для сверки, но не обязателен.</p>
+            <p className="mt-2 leading-6">«Начислено» показывает полную сумму за месяц: оклад по профилю + фактически внесённые бонусы и премии − удержания. «К выплате» — это начислено минус все подтверждённые выплаты. Если оклад ещё не подтверждён в ведомости, останется статус «Не всё начислено» и кнопка «Начислить оклад»; референс перевода необязателен.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
         )}
@@ -926,7 +932,6 @@ export default function PayrollPage() {
                       {[
                         "Сотрудник",
                         "Начислено",
-                        "Расчёт системы",
                         "Выплачено",
                         "К выплате",
                         "Статус",
@@ -963,17 +968,17 @@ export default function PayrollPage() {
                         </p>
                       </div>
                       <Status
-                        payable={row.totals.payable}
+                        payable={statementPayable(row)}
                         paid={row.totals.paid}
                         calculationReady={row.payrollAudit?.calculationReady ?? true}
                       />
                     </div>
                     <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
-                      <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Расчёт системы" value={row.payrollAudit?.auditedAccrued ?? row.totals.accrued} />
+                      <Metric label="Начислено" value={statementAccrued(row)} />
+                      <Metric label="Выплачено" value={row.totals.paid} />
                       <Metric
                         label="К выплате"
-                        value={row.totals.payable}
+                        value={statementPayable(row)}
                         accent
                       />
                     </div>
@@ -1101,23 +1106,15 @@ function PayrollTableRow({
           {employeePosition(row)}
         </span>
       </td>
-      <td className="px-4 py-4">{currency(row.totals.accrued)}</td>
-      <td className="px-4 py-4">
-        <b>{currency(row.payrollAudit?.auditedAccrued ?? row.totals.accrued)}</b>
-        {row.payrollAudit && row.payrollAudit.ledgerDifference !== 0 && (
-          <span className="mt-0.5 block text-xs text-amber-300">
-            {row.payrollAudit.ledgerDifference > 0 ? "не начислено " : "начислено лишнее "}{currency(Math.abs(row.payrollAudit.ledgerDifference))}
-          </span>
-        )}
-      </td>
+      <td className="px-4 py-4">{currency(statementAccrued(row))}</td>
       <td className="px-4 py-4 text-emerald-300">
         {currency(row.totals.paid)}
       </td>
       <td className="px-4 py-4 font-bold text-amber-300">
-        {currency(row.totals.payable)}
+        {currency(statementPayable(row))}
       </td>
       <td className="px-4 py-4">
-        <Status payable={row.totals.payable} paid={row.totals.paid} calculationReady={row.payrollAudit?.calculationReady ?? true} />
+        <Status payable={statementPayable(row)} paid={row.totals.paid} calculationReady={row.payrollAudit?.calculationReady ?? true} />
       </td>
       <td className="px-4 py-4">
         <button
@@ -1192,21 +1189,21 @@ function PersonalPayrollReport({
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <div className="rounded-xl bg-slate-950 p-3">
-              <p className="text-xs text-slate-500">Сумма к начислению</p>
+              <p className="text-xs text-slate-500">Начислено</p>
               <p className="mt-1 text-lg font-bold text-white">{currency(calculation.totalToAccrue)}</p>
             </div>
             <div className="rounded-xl bg-slate-950 p-3">
-              <p className="text-xs text-slate-500">Уже начислено</p>
-              <p className="mt-1 text-lg font-bold text-blue-200">{currency(calculation.accrued)}</p>
+              <p className="text-xs text-slate-500">Выплачено</p>
+              <p className="mt-1 text-lg font-bold text-blue-200">{currency(row.totals.paid)}</p>
             </div>
             <div className="rounded-xl bg-emerald-500/10 p-3">
-              <p className="text-xs text-emerald-200/75">К выплате после авансов</p>
+              <p className="text-xs text-emerald-200/75">К выплате</p>
               <p className="mt-1 text-lg font-bold text-emerald-200">{currency(calculation.amountToPay)}</p>
             </div>
           </div>
           {calculation.remainingToAccrue > 0.01 && (
             <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-              Осталось начислить за месяц: <b>{currency(calculation.remainingToAccrue)}</b>.
+              Требует подтверждения в ведомости: <b>{currency(calculation.remainingToAccrue)}</b>.
             </p>
           )}
           {calculation.pendingAdvances > 0 && (
@@ -1494,9 +1491,9 @@ function EmployeeDrawer({
           </button>
         </div>
         <div className="mt-5 grid grid-cols-3 gap-2">
-          <Metric label="Начислено" value={row.totals.accrued} />
+          <Metric label="Начислено" value={statementAccrued(row)} />
           <Metric label="Выплачено" value={row.totals.paid} />
-          <Metric label="К выплате" value={row.totals.payable} accent />
+          <Metric label="К выплате" value={statementPayable(row)} accent />
         </div>
         <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
           <h3 className="font-semibold">Расчёт к выплате</h3>
@@ -1543,7 +1540,7 @@ function EmployeeDrawer({
                 ["Штрафы / удержания", -row.payrollAudit.deductions],
                 ["Авансы", -row.payrollAudit.advances],
                 ["Другие выплаты", -(row.payrollAudit.alreadyPaid - row.payrollAudit.advances)],
-                ["Расчёт системы (ещё не начислено)", row.payrollAudit.auditedAccrued],
+                ["Контрольная сумма", row.payrollAudit.auditedAccrued],
               ].map(([label, amount], index) => (
                 <div key={String(label)} className={`flex justify-between rounded-xl px-3 py-2 text-sm ${index === 6 ? "bg-emerald-500/10 text-emerald-200" : "bg-slate-950"}`}>
                   <span>{String(label)}</span>
@@ -1598,7 +1595,7 @@ function EmployeeDrawer({
           <h3 className="font-semibold">Структура зарплаты</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {[
-              ["Оклад", accrualTotal(["BASE_SALARY"])],
+              ["Оклад за месяц", row.calculation.salary],
               [
                 "Гарантированный бонус",
                 accrualTotal(["GUARANTEED_ORDER_BONUS"]),

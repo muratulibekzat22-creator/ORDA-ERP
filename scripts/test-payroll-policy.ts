@@ -224,6 +224,33 @@ assert.equal(
   150_000,
   "partial salary payment must leave 200,000 - 50,000 = 150,000",
 );
+assert.deepEqual(
+  personalPayrollCalculation({
+    salary: 200_000,
+    bonuses: 90_000,
+    premiums: 0,
+    deductions: 0,
+    advances: 50_000,
+    otherPayments: 0,
+    pendingAdvances: 0,
+    accrued: 90_000,
+  }),
+  {
+    salary: 200_000,
+    bonuses: 90_000,
+    premiums: 0,
+    deductions: 0,
+    advances: 50_000,
+    otherPayments: 0,
+    pendingAdvances: 0,
+    accrued: 90_000,
+    totalToAccrue: 290_000,
+    remainingToAccrue: 200_000,
+    amountToPay: 240_000,
+    amountToPayAfterPendingAdvances: 240_000,
+  },
+  "Akbota statement must show 290,000 accrued, 50,000 paid and 240,000 payable",
+);
 
 const gulsimOrders = [
   6_000_000,
@@ -351,8 +378,9 @@ assert.match(bonusCorrectionRouteSource, /syncAutomaticOrderBonuses/);
 assert.match(bonusCorrectionRouteSource, /action !== "correct" && action !== "cancel"/);
 assert.doesNotMatch(payrollRouteSource, /identity\.role === Role\.OPERATIONS_DIRECTOR[\s\S]*FORBIDDEN/);
 assert.match(payrollPageSource, /adminView = founder \|\| operationsDirector \|\| accountant/);
-assert.match(payrollPageSource, /Сумма к начислению/);
-assert.match(payrollPageSource, /К выплате после авансов/);
+assert.match(payrollPageSource, /statementAccrued/);
+assert.match(payrollPageSource, /statementPayable/);
+assert.match(payrollPageSource, /Начислено.*минус все подтверждённые выплаты/);
 assert.match(payrollPageSource, /Частичная оплата зарплаты/);
 assert.match(payrollPageSource, /Оклад сотрудника не изменится; выплата будет учтена как аванс/);
 assert.doesNotMatch(payrollPageSource, /label="Изменить оклад"/);

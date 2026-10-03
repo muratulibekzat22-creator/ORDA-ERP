@@ -2243,7 +2243,6 @@ export async function payrollSummary(
       otherPayments: paid - advancesPaid,
       pendingAdvances,
       accrued,
-      expectedTotalOverride: managerPolicyApplies ? auditedAccrued : undefined,
     });
     const payments = employee.payments.map((payment) => ({
       ...payment,

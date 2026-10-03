@@ -172,11 +172,9 @@ export const personalPayrollCalculation = (input: {
   otherPayments: number;
   pendingAdvances: number;
   accrued: number;
-  expectedTotalOverride?: number;
 }) => {
   const totalToAccrue = money(
-    input.expectedTotalOverride ??
-      input.salary + input.bonuses + input.premiums - input.deductions,
+    input.salary + input.bonuses + input.premiums - input.deductions,
   );
   const amountToPay = money(
     totalToAccrue - input.advances - input.otherPayments,
