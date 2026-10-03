@@ -55,7 +55,7 @@ async function main() {
     orders: [],
   };
   try {
-    const [director, manager, accountant, partner] = await Promise.all([
+    const [director, manager, accountant, partner, founder] = await Promise.all([
       prisma.user.create({
         data: {
           name: `${tag}-director`,
@@ -88,8 +88,16 @@ async function main() {
           role: Role.PARTNER,
         },
       }),
+      prisma.user.create({
+        data: {
+          name: `${tag}-founder`,
+          email: `${tag}-founder@test.local`,
+          password: "test",
+          role: Role.DIRECTOR,
+        },
+      }),
     ]);
-    ids.users.push(director.id, manager.id, accountant.id, partner.id);
+    ids.users.push(director.id, manager.id, accountant.id, partner.id, founder.id);
     const directorActor = {
       userId: director.id,
       role: Role.OPERATIONS_DIRECTOR,
@@ -109,6 +117,11 @@ async function main() {
       userId: partner.id,
       role: Role.PARTNER,
       name: partner.name,
+    };
+    const founderActor = {
+      userId: founder.id,
+      role: Role.DIRECTOR,
+      name: founder.name,
     };
     const profile = await upsertPayrollProfile(
       {
@@ -383,7 +396,7 @@ async function main() {
       () => payAdvance(formulaAdvance.id, { key: key("accountant-advance-payment"), requestHash: "accountant-advance-payment" }, accountantActor),
       "FORBIDDEN",
     );
-    await createAccrual({ employeeId: profile.id, periodId: confirmationPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("confirmation-salary"), requestHash: "confirmation-salary" }, directorActor);
+    const confirmationSalary = await createAccrual({ employeeId: profile.id, periodId: confirmationPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("confirmation-salary"), requestHash: "confirmation-salary" }, directorActor);
     const confirmationPayload = { periodId: confirmationPeriod.id, amount: 30000, type: PayrollPaymentType.SALARY_PAYMENT, claimedPaymentDate: new Date("2026-11-15"), method: "bank_transfer", comment: "Получено" };
     const confirmation = await requestPaymentConfirmation({ ...confirmationPayload, key: key("confirmation-request"), requestHash: createRequestHash(confirmationPayload) }, managerActor);
     let confirmationSummary = await payrollSummary(confirmationPeriod.id, directorActor);
@@ -415,6 +428,45 @@ async function main() {
     const reversalReplay = await reversePayment(confirmed.payment!.id, { reason: "Ошибочная выплата", key: key("payment-reversal"), requestHash: "payment-reversal" }, directorActor);
     assert.equal(reversal.id, reversalReplay.id, "payment reversal idempotency");
     assert.deepEqual((await payrollSummary(confirmationPeriod.id, directorActor)).totals, { accrued: 200000, paid: 0, pending: 0, payable: 200000 }, "reversal totals");
+    const partialSalary = await createPayment(
+      {
+        employeeId: profile.id,
+        periodId: confirmationPeriod.id,
+        amount: 50000,
+        type: PayrollPaymentType.ADVANCE,
+        paymentDate: new Date("2026-11-20"),
+        method: "kaspi",
+        comment: "Частичная оплата зарплаты",
+        relatedAccrualId: confirmationSalary.accrual.id,
+        key: key("founder-partial-salary"),
+        requestHash: "founder-partial-salary",
+      },
+      founderActor,
+    );
+    assert.equal(Number(partialSalary.amount), 50000);
+    assert.deepEqual(
+      (await payrollSummary(confirmationPeriod.id, directorActor)).totals,
+      { accrued: 200000, paid: 50000, pending: 0, payable: 150000 },
+      "partial salary payment must leave 150,000 from a 200,000 salary",
+    );
+    await expectCode(
+      () => createPayment(
+        {
+          employeeId: profile.id,
+          periodId: confirmationPeriod.id,
+          amount: 150001,
+          type: PayrollPaymentType.ADVANCE,
+          paymentDate: new Date("2026-11-21"),
+          method: "kaspi",
+          comment: "Переплата",
+          relatedAccrualId: confirmationSalary.accrual.id,
+          key: key("founder-partial-salary-overpay"),
+          requestHash: "founder-partial-salary-overpay",
+        },
+        founderActor,
+      ),
+      "PAYMENT_EXCEEDS_ACCRUAL",
+    );
     assert.equal(await prisma.payrollAuditEvent.count({ where: { employeeId: profile.id, action: "PAYROLL_PAYMENT_REVERSED" } }), 1, "payment reversal audit");
     const employeeAuditActions = new Set((await prisma.payrollAuditEvent.findMany({ where: { employeeId: profile.id }, select: { action: true } })).map((event) => event.action));
     for (const action of ["SALARY_CHANGED", "ALLOWANCE_CHANGED", "PREMIUM_ACCRUED", "ADVANCE_APPROVED"])

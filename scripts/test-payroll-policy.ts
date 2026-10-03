@@ -122,6 +122,20 @@ assert.deepEqual(
     amountToPayAfterPendingAdvances: 275_000,
   },
 );
+assert.equal(
+  personalPayrollCalculation({
+    salary: 200_000,
+    bonuses: 0,
+    premiums: 0,
+    deductions: 0,
+    advances: 50_000,
+    otherPayments: 0,
+    pendingAdvances: 0,
+    accrued: 200_000,
+  }).amountToPay,
+  150_000,
+  "partial salary payment must leave 200,000 - 50,000 = 150,000",
+);
 
 const gulsimOrders = [
   6_000_000,
@@ -218,7 +232,12 @@ assert.match(payrollRouteSource, /identity\.role === Role\.OPERATIONS_DIRECTOR[\
 assert.match(payrollPageSource, /adminView = founder \|\| accountant/);
 assert.match(payrollPageSource, /Сумма к начислению/);
 assert.match(payrollPageSource, /К выплате после авансов/);
+assert.match(payrollPageSource, /Частичная оплата зарплаты/);
+assert.match(payrollPageSource, /Оклад сотрудника не изменится; выплата будет учтена как аванс/);
+assert.doesNotMatch(payrollPageSource, /label="Изменить оклад"/);
 assert.match(serviceSource, /KASPI_REFERENCE_REQUIRED/);
+assert.match(serviceSource, /PARTIAL_SALARY_PAYMENT_CREATED/);
+assert.match(serviceSource, /PARTIAL_SALARY_ACCRUAL_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_WORK_INCOMPLETE/);
 assert.match(serviceSource, /MANAGER_PAYROLL_MANUAL_APPROVED/);

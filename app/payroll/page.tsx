@@ -50,6 +50,7 @@ type Payment = {
   reversalOfId?: number | null;
   reversedAt?: string | null;
   reversal?: { id: number } | null;
+  relatedAccrualId?: number | null;
   confirmationNumber?: string;
   paymentPurpose?: string;
 };
@@ -157,7 +158,7 @@ type Payload = {
   unconfigured?: Array<{ id: number; name: string; role: string }>;
 };
 type Operation =
-  "salary" | "salaryAccrual" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advanceReport" | "reversal";
+  "salary" | "salaryAccrual" | "partialPayment" | "allowance" | "bonus" | "premium" | "deduction" | "payment" | "advanceReport" | "reversal";
 type OrderOption = {
   id: number;
   number: string;
@@ -256,6 +257,39 @@ const dateLabel = (value: string) =>
   new Date(value).toLocaleDateString("ru-RU");
 const employeePosition = (row: PayrollRow) =>
   row.position || roleNames[row.user.role] || row.user.role || "Сотрудник";
+const salaryPaymentTypes = new Set([
+  "ADVANCE",
+  "SALARY_PAYMENT",
+  "FINAL_SETTLEMENT",
+]);
+const activeSalaryAccrual = (row: PayrollRow) =>
+  row.accruals.find(
+    (item) =>
+      item.type === "BASE_SALARY" &&
+      item.direction === "INCREASE" &&
+      !item.reversalOfId &&
+      !item.reversedBy,
+  ) ?? null;
+const partialSalaryAvailable = (row: PayrollRow) => {
+  const salaryAccrual = activeSalaryAccrual(row);
+  if (!salaryAccrual) return 0;
+  const paidTowardSalary = row.payments
+    .filter(
+      (item) =>
+        !item.reversalOfId &&
+        !item.reversedAt &&
+        (item.relatedAccrualId === salaryAccrual.id ||
+          salaryPaymentTypes.has(item.type)),
+    )
+    .reduce((sum, item) => sum + Number(item.amount), 0);
+  return Math.max(
+    Math.min(
+      Number(salaryAccrual.amount) - paidTowardSalary,
+      row.totals.payable,
+    ),
+    0,
+  );
+};
 const errorLabels: Record<string, string> = {
   FORBIDDEN: "Недостаточно прав для этой операции",
   PERIOD_CLOSED: "Закрытый месяц нельзя изменять",
@@ -281,6 +315,8 @@ const errorLabels: Record<string, string> = {
   DIRECTOR_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает директор",
   PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
   PAYMENT_EXCEEDS_PAYABLE: "Сумма выплаты превышает подтверждённый остаток к выплате",
+  PAYMENT_EXCEEDS_ACCRUAL: "Сумма частичной оплаты превышает остаток начисленного оклада",
+  PARTIAL_SALARY_ACCRUAL_REQUIRED: "Сначала начислите оклад за выбранный месяц",
   KASPI_METHOD_REQUIRED: "Финальная зарплата выплачивается через Kaspi",
   KASPI_REFERENCE_REQUIRED: "Укажите реальный номер или референс перевода Kaspi",
   KASPI_REFERENCE_ALREADY_USED: "Этот референс Kaspi уже использован в другой выплате",
@@ -355,6 +391,9 @@ export default function PayrollPage() {
           !item.reversalOfId &&
           !item.reversedBy,
       ),
+  );
+  const partialPaymentCandidates = data.rows.filter(
+    (row) => partialSalaryAvailable(row) > 0,
   );
 
   const load = useCallback(async () => {
@@ -501,6 +540,7 @@ export default function PayrollPage() {
   };
   const openOperation = (next: Operation, row?: PayrollRow) => {
     const employee = row ?? details ?? data.rows[0] ?? null;
+    const salaryAccrual = employee ? activeSalaryAccrual(employee) : null;
     if (next === "payment" && employee?.payrollAudit && !employee.payrollAudit.readyToPay) {
       setDetails(employee);
       setError(employee.payrollAudit.workReadiness.ready
@@ -512,6 +552,14 @@ export default function PayrollPage() {
     setTarget(employee);
     setForm(next === "salaryAccrual" && employee
       ? { ...emptyForm(), amount: String(employee.currentSalary), reason: "Оклад за расчётный период" }
+      : next === "partialPayment" && employee && salaryAccrual
+        ? {
+            ...emptyForm(),
+            type: "ADVANCE",
+            accrualId: String(salaryAccrual.id),
+            method: "kaspi",
+            reason: `Частичная оплата зарплаты за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+          }
       : next === "advanceReport"
         ? {
             ...emptyForm(),
@@ -555,13 +603,13 @@ export default function PayrollPage() {
         amount,
         comment: form.reason,
       };
-    else if (operation === "payment")
+    else if (operation === "payment" || operation === "partialPayment")
       body = {
         action: "payment",
         employeeId: target.id,
         periodId: data.period.id,
         amount,
-        type: form.type,
+        type: operation === "partialPayment" ? "ADVANCE" : form.type,
         paymentDate: form.date,
         method: form.method,
         externalReference: form.externalReference,
@@ -609,6 +657,11 @@ export default function PayrollPage() {
       ? await runSelf(body, "Аванс зарегистрирован и ожидает подтверждения")
       : managerSelfService && (operation === "bonus" || operation === "deduction")
       ? await runSelf(body, operation === "bonus" ? "Бонус за заказ добавлен" : "Штраф добавлен")
+      : operation === "partialPayment"
+      ? await run(
+          body,
+          `Частичная оплата ${currency(amount)} учтена. Осталось к выплате ${currency(Math.max(partialSalaryAvailable(target) - amount, 0))}`,
+        )
       : await run(body);
     if (saved) {
       setOperation(null);
@@ -954,11 +1007,25 @@ export default function PayrollPage() {
         <OperationModal
           operation={operation}
           row={target}
-          rows={operation === "salaryAccrual" ? salaryCandidates : data.rows}
+          rows={
+            operation === "salaryAccrual"
+              ? salaryCandidates
+              : operation === "partialPayment"
+                ? partialPaymentCandidates
+                : data.rows
+          }
           onRowChange={(row) => {
             setTarget(row);
             setForm(operation === "salaryAccrual"
               ? { ...emptyForm(), amount: String(row.currentSalary), reason: "Оклад за расчётный период" }
+              : operation === "partialPayment"
+                ? {
+                    ...emptyForm(),
+                    type: "ADVANCE",
+                    accrualId: String(activeSalaryAccrual(row)?.id ?? ""),
+                    method: "kaspi",
+                    reason: `Частичная оплата зарплаты за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+                  }
               : operation === "advanceReport"
                 ? {
                     ...emptyForm(),
@@ -1351,6 +1418,7 @@ function EmployeeDrawer({
         !item.reversalOfId &&
         !item.reversedBy,
     );
+  const partialSalaryBalance = partialSalaryAvailable(row);
   return (
     <div
       className="fixed inset-0 z-[80] flex justify-end bg-black/70"
@@ -1526,17 +1594,18 @@ function EmployeeDrawer({
                 <Action label="Начислить оклад" onClick={() => onOperation("salaryAccrual", row)} />
               )}
               {canPay && <Action label="Выплатить" onClick={() => onOperation("payment", row)} />}
-              {canManageSalary && <Action label="Изменить оклад" onClick={() => onOperation("salary", row)} />}
+              {canManageSalary && partialSalaryBalance > 0 && (
+                <Action
+                  label="Частичная оплата зарплаты"
+                  onClick={() => onOperation("partialPayment", row)}
+                />
+              )}
               {canManageSalary && <Action label="Гарантированный бонус" onClick={() => onOperation("allowance", row)} />}
             </div>
             {director && (
               <details className="mt-3 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
                 <summary className="cursor-pointer text-sm font-semibold text-slate-300">Дополнительные операции</summary>
                 <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <Action
-                    label="Изменить оклад"
-                    onClick={() => onOperation("salary", row)}
-                  />
                   <Action
                     label="Гарантированный бонус"
                     onClick={() => onOperation("allowance", row)}
@@ -2018,6 +2087,7 @@ function OperationModal({
   const titles: Record<Operation, string> = {
       salary: "Назначить новый оклад",
       salaryAccrual: "Подтвердить начисление оклада",
+      partialPayment: "Частичная оплата зарплаты",
       allowance: "Изменить гарантированный бонус",
       bonus: "Добавить бонус за заказ",
       premium: "Назначить премию",
@@ -2043,6 +2113,12 @@ function OperationModal({
     selectedOrder?.amount == null
       ? null
       : managerOrderBonus(Number(selectedOrder.amount));
+  const availablePartialSalary = partialSalaryAvailable(row);
+  const requestedPartialSalary = Number(form.amount) || 0;
+  const remainingAfterPartialSalary = Math.max(
+    availablePartialSalary - requestedPartialSalary,
+    0,
+  );
   useEffect(() => {
     if (!orderOperation) return;
     const controller = new AbortController();
@@ -2131,6 +2207,7 @@ function OperationModal({
                 autoFocus
                 type="number"
                 min="1"
+                max={operation === "partialPayment" ? availablePartialSalary : undefined}
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 readOnly={operation === "salaryAccrual"}
@@ -2138,7 +2215,12 @@ function OperationModal({
               />
               {operation === "salaryAccrual" && (
                 <span className="mt-1.5 block text-xs text-blue-300">
-                  Сумма рассчитана автоматически по окладу сотрудника. Для изменения используйте действие «Изменить оклад».
+                  Оклад начисляется полностью. После начисления можно отдельно провести частичную оплату зарплаты.
+                </span>
+              )}
+              {operation === "partialPayment" && (
+                <span className="mt-1.5 block text-xs text-blue-300">
+                  Доступно для частичной оплаты: {currency(availablePartialSalary)}.
                 </span>
               )}
             </Field>
@@ -2170,15 +2252,23 @@ function OperationModal({
               </select>
             </Field>
           )}
-          {(operation === "payment" || operation === "advanceReport") && (
+          {(operation === "payment" || operation === "partialPayment" || operation === "advanceReport") && (
             <Field label="Способ выплаты">
               <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control" disabled={operation === "payment" && (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT")}>
                 <option value="kaspi">Kaspi</option>
-                {(operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="cash">Наличные</option>}
-                {(operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="bank_transfer">Банковский перевод</option>}
-                {(operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="other">Другое</option>}
+                {(operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="cash">Наличные</option>}
+                {(operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="bank_transfer">Банковский перевод</option>}
+                {(operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="other">Другое</option>}
               </select>
             </Field>
+          )}
+          {operation === "partialPayment" && (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm text-emerald-100">
+              <p className="font-semibold">Остаток после оплаты</p>
+              <p className="mt-1 text-xs text-emerald-200/80">
+                {currency(availablePartialSalary)} − {currency(requestedPartialSalary)} = {currency(remainingAfterPartialSalary)}. Оклад сотрудника не изменится; выплата будет учтена как аванс.
+              </p>
+            </div>
           )}
           {operation === "payment" && (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") && (
             <Field label="Референс / номер перевода Kaspi">
@@ -2305,7 +2395,7 @@ function OperationModal({
               </div>
             </Field>
           )}
-          {(operation === "salary" || operation === "payment" || operation === "advanceReport") && (
+          {(operation === "salary" || operation === "payment" || operation === "partialPayment" || operation === "advanceReport") && (
             <Field
               label={
                 operation === "salary"
@@ -2368,6 +2458,9 @@ function OperationModal({
                 : operation === "allowance"
                   ? form.amount === "" || Number(form.amount) < 0
                   : Number(form.amount) <= 0 ||
+                    (operation === "partialPayment" &&
+                      (!form.accrualId ||
+                        Number(form.amount) > availablePartialSalary)) ||
                     (operation === "payment" &&
                       (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") &&
                       (form.method !== "kaspi" || form.externalReference.trim().length < 3)) ||
@@ -2379,7 +2472,11 @@ function OperationModal({
             }
             className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-40"
           >
-            {operation === "salaryAccrual" ? "Подтвердить начисление" : "Сохранить"}
+            {operation === "salaryAccrual"
+              ? "Подтвердить начисление"
+              : operation === "partialPayment"
+                ? "Учесть частичную оплату"
+                : "Сохранить"}
           </button>
         </div>
       </div>

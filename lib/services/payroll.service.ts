@@ -1033,8 +1033,96 @@ async function createPaymentTx(
   });
   return payment;
 }
+
+const salaryPaymentTypes = [
+  PayrollPaymentType.ADVANCE,
+  PayrollPaymentType.SALARY_PAYMENT,
+  PayrollPaymentType.FINAL_SETTLEMENT,
+] as const;
+
+async function assertPartialSalaryPaymentAvailable(
+  tx: Prisma.TransactionClient,
+  input: PaymentInput,
+) {
+  const salaryAccrual = await tx.payrollAccrual.findFirst({
+    where: {
+      id: input.relatedAccrualId,
+      employeeId: input.employeeId,
+      periodId: input.periodId,
+      type: PayrollAccrualType.BASE_SALARY,
+      direction: PayrollDirection.INCREASE,
+      reversalOfId: null,
+      reversedBy: null,
+    },
+    select: { id: true, amount: true },
+  });
+  if (!salaryAccrual)
+    throw new PayrollError("PARTIAL_SALARY_ACCRUAL_REQUIRED");
+
+  const [paymentsTowardSalary, activeAccruals, activePayments] =
+    await Promise.all([
+      tx.payrollPayment.findMany({
+        where: {
+          employeeId: input.employeeId,
+          periodId: input.periodId,
+          reversalOfId: null,
+          reversedAt: null,
+          OR: [
+            { relatedAccrualId: salaryAccrual.id },
+            { type: { in: [...salaryPaymentTypes] } },
+          ],
+        },
+        select: { amount: true },
+      }),
+      tx.payrollAccrual.findMany({
+        where: {
+          employeeId: input.employeeId,
+          periodId: input.periodId,
+          reversalOfId: null,
+          reversedBy: null,
+        },
+        select: { amount: true, direction: true },
+      }),
+      tx.payrollPayment.findMany({
+        where: {
+          employeeId: input.employeeId,
+          periodId: input.periodId,
+          reversalOfId: null,
+          reversedAt: null,
+        },
+        select: { amount: true },
+      }),
+    ]);
+
+  const paidTowardSalary = paymentsTowardSalary.reduce(
+    (sum, row) => sum + Number(row.amount),
+    0,
+  );
+  const salaryRemaining = Number(salaryAccrual.amount) - paidTowardSalary;
+  if (Number(input.amount) > salaryRemaining + 0.01)
+    throw new PayrollError("PAYMENT_EXCEEDS_ACCRUAL");
+
+  const accrued = activeAccruals.reduce(
+    (sum, row) =>
+      sum +
+      Number(row.amount) *
+        (row.direction === PayrollDirection.INCREASE ? 1 : -1),
+    0,
+  );
+  const paid = activePayments.reduce(
+    (sum, row) => sum + Number(row.amount),
+    0,
+  );
+  if (Number(input.amount) > accrued - paid + 0.01)
+    throw new PayrollError("PAYMENT_EXCEEDS_PAYABLE");
+}
+
 export async function createPayment(input: PaymentInput, actor: PayrollActor) {
-  payrollOperator(actor);
+  const founderPartialSalaryPayment =
+    actor.role === Role.DIRECTOR &&
+    input.type === PayrollPaymentType.ADVANCE &&
+    input.relatedAccrualId != null;
+  if (!founderPartialSalaryPayment) payrollOperator(actor);
   if (input.type === PayrollPaymentType.EMPLOYEE_REFUND)
     throw new PayrollError("FORBIDDEN");
   if (
@@ -1056,45 +1144,53 @@ export async function createPayment(input: PaymentInput, actor: PayrollActor) {
     throw new PayrollError("KASPI_REFERENCE_REQUIRED");
   try {
     return await prisma.$transaction(async (tx) => {
-    input.externalReference = externalReference;
-    const payment = await createPaymentTx(tx, input, actor);
-    await tx.payrollAuditEvent.upsert({
-      where: { idempotencyKey: `${input.key}:audit` },
-      update: {},
-      create: {
-        action: "PAYROLL_PAYMENT_CREATED",
-        actorId: actor.userId,
-        periodId: input.periodId,
-        employeeId: input.employeeId,
-        after: { paymentId: payment.id, amount: Number(payment.amount), type: payment.type },
-        reason: input.comment?.trim() || "Фактическая выплата сотруднику",
-        idempotencyKey: `${input.key}:audit`,
-      },
-    });
-    const [period, employee] = await Promise.all([
-      tx.payrollPeriod.findUniqueOrThrow({
-        where: { id: input.periodId },
-        select: { year: true, month: true },
-      }),
-      tx.employeePayrollProfile.findUniqueOrThrow({
-        where: { id: input.employeeId },
-        select: { name: true },
-      }),
-    ]);
-    return {
-      ...payment,
-      confirmationNumber: payrollPaymentReference(
-        period.year,
-        period.month,
-        payment.id,
-      ),
-      paymentPurpose: payrollPaymentPurpose(
-        employee.name,
-        period.year,
-        period.month,
-        payment.id,
-      ) + (payment.externalReference ? ` · Kaspi ${payment.externalReference}` : ""),
-    };
+      const replay = await tx.payrollPayment.findUnique({
+        where: { idempotencyKey: input.key },
+        select: { id: true },
+      });
+      if (founderPartialSalaryPayment && !replay)
+        await assertPartialSalaryPaymentAvailable(tx, input);
+      input.externalReference = externalReference;
+      const payment = await createPaymentTx(tx, input, actor);
+      await tx.payrollAuditEvent.upsert({
+        where: { idempotencyKey: `${input.key}:audit` },
+        update: {},
+        create: {
+          action: founderPartialSalaryPayment
+            ? "PARTIAL_SALARY_PAYMENT_CREATED"
+            : "PAYROLL_PAYMENT_CREATED",
+          actorId: actor.userId,
+          periodId: input.periodId,
+          employeeId: input.employeeId,
+          after: { paymentId: payment.id, amount: Number(payment.amount), type: payment.type },
+          reason: input.comment?.trim() || "Фактическая выплата сотруднику",
+          idempotencyKey: `${input.key}:audit`,
+        },
+      });
+      const [period, employee] = await Promise.all([
+        tx.payrollPeriod.findUniqueOrThrow({
+          where: { id: input.periodId },
+          select: { year: true, month: true },
+        }),
+        tx.employeePayrollProfile.findUniqueOrThrow({
+          where: { id: input.employeeId },
+          select: { name: true },
+        }),
+      ]);
+      return {
+        ...payment,
+        confirmationNumber: payrollPaymentReference(
+          period.year,
+          period.month,
+          payment.id,
+        ),
+        paymentPurpose: payrollPaymentPurpose(
+          employee.name,
+          period.year,
+          period.month,
+          payment.id,
+        ) + (payment.externalReference ? ` · Kaspi ${payment.externalReference}` : ""),
+      };
     }, { ...transactionOptions, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   } catch (error) {
     if (
