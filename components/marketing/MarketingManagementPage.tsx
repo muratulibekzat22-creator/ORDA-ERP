@@ -39,6 +39,7 @@ type Data = {
     conversion: number | null;
     spendTracked: boolean;
     crmTracked: boolean;
+    metaAttributionMissing: boolean;
   };
   dailyCrm: {
     dateLabel: string;
@@ -119,7 +120,8 @@ export default function MarketingManagementPage() {
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Кампания", "Расход", "Переписки", "Lead Meta", "Клики", "Показы", "Охват"].map(label => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{metaReport.campaigns.map(row => <tr key={row.id}><td className="px-3 py-3"><span className="font-semibold text-white">{row.name}</span><span className="block text-xs text-slate-500">{row.id}</span></td><td className="px-3 py-3">{sourceMoney(row.spend, metaReport.currency)}</td><td className="px-3 py-3">{row.conversations}</td><td className="px-3 py-3">{row.leadActions}</td><td className="px-3 py-3">{row.linkClicks.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.impressions.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.reach.toLocaleString("ru-RU")}</td></tr>)}</tbody></table></div>
       </section>}
 
-      {!data.summary.spendTracked ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка уже считаются из CRM. Расход и стоимостные KPI появятся после подключения служебного доступа Meta.</p> : null}
+      {!data.summary.spendTracked ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка уже считаются из CRM. Расход появится после подключения служебного доступа Meta.</p> : null}
+      {data.summary.metaAttributionMissing ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения и заказы CRM пока не связаны с конкретными кампаниями Meta. Поэтому цена обращения, цена заказа и ROAS не рассчитываются по общим данным всех источников.</p> : null}
 
       <section className="rounded-2xl border border-cyan-500/20 bg-[#101827] p-4">
         <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">CRM за предыдущий день</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Показывает фактическую обработку обращений менеджерами; расход Meta синхронизируется системой отдельно.</p></div>

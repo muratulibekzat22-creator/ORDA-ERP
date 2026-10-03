@@ -106,6 +106,25 @@ async function main() {
       assert.equal(analytics.revenue, 350_000, "CRM-attributed revenue is missing");
       assert.equal(analytics.spend, 100_000, "recorded advertising spend is missing");
       assert.equal(analytics.cpl, 100_000, "cost per inquiry is incorrect");
+      const metaAnalytics = await getMarketingAnalytics({
+        companyId: tenant.companyId,
+        start: january.start,
+        end: january.end,
+        metrics: [{
+          channel: "Instagram / Meta",
+          note: "Автосинхронизация Meta · test",
+          spend: 100_000,
+          leads: 20,
+          orders: 4,
+          revenue: 800_000,
+        }],
+      });
+      assert.equal(metaAnalytics.spend, 100_000);
+      assert.equal(metaAnalytics.leads, 1, "CRM totals must remain visible alongside Meta spend");
+      assert.equal(metaAnalytics.metaAttributionMissing, true);
+      assert.equal(metaAnalytics.cpl, null, "Meta spend must not be divided by all-source CRM leads");
+      assert.equal(metaAnalytics.cac, null, "Meta spend must not be divided by all-source CRM orders");
+      assert.equal(metaAnalytics.roas, null, "Meta spend must not be compared with all-source CRM revenue");
       await prisma.order.delete({ where: { id: crmOrder.id } });
       await prisma.client.delete({ where: { id: crmClient.id } });
       await prisma.managementMarketingTask.delete({ where: { id: task.id } });

@@ -23,12 +23,15 @@ export type MarketingAnalytics = {
   conversion: number | null;
   spendTracked: boolean;
   crmTracked: boolean;
+  metaAttributionMissing: boolean;
 };
 
 /**
  * Marketing spend is taken from recorded channel metrics. Inquiries, orders and
- * revenue are taken from the CRM acquisition cohort so those KPIs keep working
- * even when the Meta service token is temporarily unavailable.
+ * revenue are taken from the full CRM acquisition cohort so those totals keep
+ * working even when the Meta service token is unavailable. The CRM cohort is
+ * not attributed to ad campaigns, so ad efficiency ratios stay empty whenever
+ * these totals are mixed with automatic Meta spend.
  */
 export async function getMarketingAnalytics(input: {
   companyId: number;
@@ -84,6 +87,10 @@ export async function getMarketingAnalytics(input: {
 
   const crmTracked = crmClients.length > 0;
   const spendTracked = effectiveMetrics.length > 0;
+  const automaticMetaTracked = effectiveMetrics.some(
+    (metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"),
+  );
+  const comparableChannelResults = !automaticMetaTracked;
   const spend = recorded.spend;
   const leads = crmTracked ? crmClients.length : recorded.leads;
   const orders = crmTracked ? crmOrders.length : recorded.orders;
@@ -96,11 +103,12 @@ export async function getMarketingAnalytics(input: {
     leads,
     orders,
     revenue,
-    cpl: spendTracked && leads > 0 ? spend / leads : null,
-    cac: spendTracked && orders > 0 ? spend / orders : null,
-    roas: spendTracked && spend > 0 ? revenue / spend : null,
+    cpl: comparableChannelResults && spendTracked && leads > 0 ? spend / leads : null,
+    cac: comparableChannelResults && spendTracked && orders > 0 ? spend / orders : null,
+    roas: comparableChannelResults && spendTracked && spend > 0 ? revenue / spend : null,
     conversion: leads > 0 ? (orders / leads) * 100 : null,
     spendTracked,
     crmTracked,
+    metaAttributionMissing: automaticMetaTracked,
   };
 }

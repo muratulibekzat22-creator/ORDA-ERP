@@ -1,7 +1,7 @@
 {
   "components/Header.tsx": "6df47ae001842a014d5dc41f521d69503562fc6284d7656410377a02fb560b8e",
   "components/layout/RouteShell.tsx": "9e3a0e426bb7103f2021c20e2687aff0a0d781882dc4980e011baf05e1fd5d43",
-  "components/dashboard/DirectorCockpit.tsx": "99c1e3e61a322a17db767758503240567c8245bde876fb1a2e76c39bc8e56afc",
+  "components/dashboard/DirectorCockpit.tsx": "19c32f6675a1bb0ae15c54a1bbb60a6bc86313a2dc01eb616eb4266c528bc020",
   "components/pages/ClientsPage.tsx": "c015fc066432fe86baec6696c8900dd3c0d0e63fc21fcdf73f23dff40d824e85",
   "components/clients/ClientModal.tsx": "64997e9db1c1b3022975c6b574103139d06467f0c404e66123dfc9bfeda90691",
   "components/pages/OrdersPage.tsx": "2cfe79fa257ad067ffac34ffe4c0c1153ba0033f72df0b41b7228d1960d9a206",
