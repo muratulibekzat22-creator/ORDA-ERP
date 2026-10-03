@@ -4,7 +4,8 @@ ADD COLUMN "salaryPlanEnabled" BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE "EmployeeSalaryRate"
 ADD COLUMN "planEnabled" BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Preserve every existing positive salary as an explicit plan.
+-- Preserve existing salary plans for other tenants. Only the currently
+-- disputed roles in ALTYN SAPA are changed by this release.
 UPDATE "EmployeePayrollProfile"
 SET "salaryPlanEnabled" = TRUE
 WHERE "baseSalary" > 0;
@@ -13,18 +14,20 @@ UPDATE "EmployeeSalaryRate"
 SET "planEnabled" = TRUE
 WHERE "amount" > 0;
 
--- Еркебулан and Нурасыл Кокбай start payroll in October. Correcting the hire
--- boundary keeps September at zero without deleting their October salary plan.
 UPDATE "EmployeePayrollProfile" AS profile
-SET "hiredAt" = GREATEST(profile."hiredAt", TIMESTAMP '2026-10-01 00:00:00')
-FROM "User" AS account
+SET "salaryPlanEnabled" = FALSE,
+    "baseSalary" = 0
 WHERE profile."companyId" = (SELECT id FROM "Company" WHERE slug = 'altyn-sapa-company')
   AND profile."active" = TRUE
-  AND account.id = profile."userId"
-  AND (
-    LOWER(BTRIM(COALESCE(account."name", profile."name"))) LIKE '%еркебулан%'
-    OR (
-      LOWER(BTRIM(COALESCE(account."name", profile."name"))) LIKE '%нурасыл%'
-      AND LOWER(BTRIM(COALESCE(account."name", profile."name"))) LIKE '%кокбай%'
-    )
-  );
+  AND COALESCE(
+    (SELECT account."role"::text FROM "User" account WHERE account.id = profile."userId"),
+    profile."position"
+  ) NOT IN ('MANAGER', 'OPERATIONS_DIRECTOR');
+
+UPDATE "EmployeeSalaryRate" AS rate
+SET "planEnabled" = FALSE
+FROM "EmployeePayrollProfile" AS profile
+WHERE rate."employeeId" = profile.id
+  AND profile."companyId" = (SELECT id FROM "Company" WHERE slug = 'altyn-sapa-company')
+  AND profile."active" = TRUE
+  AND profile."salaryPlanEnabled" = FALSE;

@@ -493,6 +493,13 @@ const companyBonusResweepMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const payrollDataCorrectionMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004102000_payroll_data_correction/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -597,11 +604,14 @@ assert.match(optionalAccrualReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS 
 assert.match(deferredTerminatedBonusMigrationSource, /TERMINATED_MANAGER_BONUS_DEFERRED/);
 assert.match(deferredTerminatedBonusMigrationSource, /customer_order\."lifecycle" = 'COMPLETED'/);
 assert.match(deferredTerminatedBonusMigrationSource, /employee\."terminatedAt" IS NOT NULL/);
-assert.match(explicitSalaryPlansMigrationSource, /TIMESTAMP '2026-10-01 00:00:00'/);
-assert.match(explicitSalaryPlansMigrationSource, /%еркебулан%/);
-assert.match(explicitSalaryPlansMigrationSource, /%нурасыл%/);
-assert.match(unassignedSalaryCleanupMigrationSource, /period\."month" = 9/);
-assert.match(unassignedSalaryCleanupMigrationSource, /%кокбай%/);
-assert.match(companyBonusResweepMigrationSource, /customer_order\."managerUserId" IS NULL/);
+assert.match(explicitSalaryPlansMigrationSource, /ADD COLUMN "salaryPlanEnabled"/);
+assert.match(unassignedSalaryCleanupMigrationSource, /period\."month" IN \(9, 10\)/);
+assert.match(companyBonusResweepMigrationSource, /LOWER\(BTRIM\(customer_order\."manager"\)\)/);
+assert.match(payrollDataCorrectionMigrationSource, /TIMESTAMP '2026-10-01 00:00:00'/);
+assert.match(payrollDataCorrectionMigrationSource, /%еркебулан%/);
+assert.match(payrollDataCorrectionMigrationSource, /%нурасыл%/);
+assert.match(payrollDataCorrectionMigrationSource, /%кокбай%/);
+assert.match(payrollDataCorrectionMigrationSource, /customer_order\."managerUserId" IS NULL/);
+assert.match(payrollDataCorrectionMigrationSource, /salary-cleanup-restore:v2:/);
 
 console.log("Payroll policy tests passed");

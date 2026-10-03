@@ -1,6 +1,6 @@
--- The user explicitly confirmed that Еркебулан and Нурасыл Кокбай start with
--- October and must have zero salary in September. Reverse only their unpaid
--- September base accruals in the live tenant, retaining the original audit.
+-- Unassigned salaries for the founder, marketer and measurers were shown as
+-- payable in the September/October 2026 statement. Reverse only unpaid base
+-- accruals for those roles in the live tenant, retaining the original audit.
 CREATE TEMP TABLE "_UnassignedSalaryCleanup" AS
 SELECT
   accrual."id" AS "originalId",
@@ -19,14 +19,8 @@ JOIN "EmployeePayrollProfile" employee ON employee."id" = accrual."employeeId"
 LEFT JOIN "User" account ON account."id" = employee."userId"
 WHERE company."slug" = 'altyn-sapa-company'
   AND period."year" = 2026
-  AND period."month" = 9
-  AND (
-    LOWER(BTRIM(COALESCE(account."name", employee."name"))) LIKE '%еркебулан%'
-    OR (
-      LOWER(BTRIM(COALESCE(account."name", employee."name"))) LIKE '%нурасыл%'
-      AND LOWER(BTRIM(COALESCE(account."name", employee."name"))) LIKE '%кокбай%'
-    )
-  )
+  AND period."month" IN (9, 10)
+  AND COALESCE(account."role"::text, employee."position") IN ('DIRECTOR', 'MARKETER', 'MEASURER')
   AND accrual."type" = 'BASE_SALARY'
   AND accrual."direction" = 'INCREASE'
   AND accrual."reversalOfId" IS NULL

@@ -25,10 +25,7 @@ WHERE company."slug" = 'altyn-sapa-company'
   AND accrual."type" IN ('ORDER_BONUS', 'GUARANTEED_ORDER_BONUS')
   AND accrual."direction" = 'INCREASE'
   AND accrual."reversalOfId" IS NULL
-  AND (
-    customer_order."managerUserId" IS NULL
-    OR LOWER(BTRIM(customer_order."manager")) IN ('компания', 'company')
-  )
+  AND LOWER(BTRIM(customer_order."manager")) IN ('компания', 'company')
   AND NOT EXISTS (
     SELECT 1
     FROM "PayrollAccrual" reversal
