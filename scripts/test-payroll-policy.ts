@@ -525,6 +525,13 @@ const factualOrderMonthBonusCleanupMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const payrollPeriodCorrectionVerificationMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004104000_verify_payroll_period_corrections/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -662,5 +669,10 @@ assert.match(factualOrderMonthBonusCleanupMigrationSource, /period\."month" IN \
 assert.match(factualOrderMonthBonusCleanupMigrationSource, /factual-order-month-bonus:v1:/);
 assert.match(factualOrderMonthBonusCleanupMigrationSource, /'ORDER_BONUS_CANCELLED'/);
 assert.doesNotMatch(factualOrderMonthBonusCleanupMigrationSource, /DELETE FROM/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /target_count <> 2/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /invalid_plan_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /active_salary_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /wrong_period_bonus_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /RAISE EXCEPTION/);
 
 console.log("Payroll policy tests passed");
