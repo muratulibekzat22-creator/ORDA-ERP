@@ -166,6 +166,7 @@ type OrderOption = {
   id: number;
   number: string;
   amount?: number | string;
+  orderReceivedAt?: string;
   client: { id?: number; name: string; phone?: string | null };
 };
 type ManagedOrderBonus = {
@@ -275,7 +276,7 @@ const labels: Record<string, string> = {
 const currency = (value: number | string) =>
   `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`;
 const dateLabel = (value: string) =>
-  new Date(value).toLocaleDateString("ru-RU");
+  new Date(value).toLocaleDateString("ru-RU", { timeZone: "Asia/Almaty" });
 const employeePosition = (row: PayrollRow) =>
   row.position || roleNames[row.user.role] || row.user.role || "Сотрудник";
 const salaryPaymentTypes = new Set([
@@ -940,7 +941,7 @@ export default function PayrollPage() {
         {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
-            <p className="mt-2 leading-6">Система предлагает бонус: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Итоговую сумму за заказ вводят менеджер, директор или основатель. Заказы с ответственным «Компания» не дают менеджерский бонус. Уволенному менеджеру бонус начисляется после завершения заказа.</p>
+            <p className="mt-2 leading-6">Система предлагает бонус: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Итоговую сумму за заказ вводят менеджер, директор или основатель. Заказы с ответственным «Компания» не дают менеджерский бонус. Расчётный месяц всегда определяется фактической датой заказа; уволенному менеджеру бонус становится доступен только после завершения заказа.</p>
             <p className="mt-2 leading-6">«Начислено» — полный расчёт за месяц: назначенный оклад, внесённые или предложенные бонусы, премии и удержания. «Выплачено» показывает фактические подтверждённые выплаты, а «К выплате» — остаток после их вычета. Оклад без назначения не создаёт долг.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
@@ -1335,7 +1336,7 @@ function PayrollOrderBonusAuditList({
             </div>
             <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
               <span>
-                Внесено {currency(item.submitted)} · система {currency(item.expected)}
+                Факт заказа {dateLabel(item.earnedAt)} · внесено {currency(item.submitted)} · система {currency(item.expected)}
               </span>
               <span
                 className={
@@ -1765,7 +1766,7 @@ function EmployeeDrawer({
               <div>
                 <h3 className="font-semibold">Автоматическая проверка зарплаты</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Момент начисления: {row.employmentEnded ? "заказ завершён в выбранном месяце" : "заказ принят в выбранном месяце"}.
+                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Расчётный месяц — по фактической дате заказа{row.employmentEnded ? "; начисление доступно после завершения заказа" : ""}.
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
@@ -2259,6 +2260,7 @@ function BonusCorrectionModal({
                   {orders.map((order) => (
                     <option key={order.id} value={order.id}>
                       {order.number} · {order.client.name}
+                      {order.orderReceivedAt ? ` · факт ${dateLabel(order.orderReceivedAt)}` : ""}
                     </option>
                   ))}
                 </select>
@@ -2716,7 +2718,7 @@ function OperationModal({
                   <option value="">{ordersLoading ? "Загрузка заказов…" : operation === "bonus" ? "Выберите заказ" : "Без привязки к заказу"}</option>
                   {orders.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.number} · {item.client.name}{item.client.phone ? ` · ${item.client.phone}` : ""}
+                      {item.number} · {item.client.name}{item.client.phone ? ` · ${item.client.phone}` : ""}{item.orderReceivedAt ? ` · факт ${dateLabel(item.orderReceivedAt)}` : ""}
                     </option>
                   ))}
                 </select>

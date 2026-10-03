@@ -695,7 +695,8 @@ async function createAccrualInternal(
           !bonusEarnedInRange(order, employee, monthRange)
         )
           throw new PayrollError(
-            terminatedManager
+            terminatedManager &&
+              (order.lifecycle !== OrderLifecycle.COMPLETED || !order.completedAt)
               ? "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE"
               : "ORDER_OUTSIDE_PERIOD",
           );
@@ -935,13 +936,7 @@ async function managerPayrollPolicyState(
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
-      OR: [
-        { orderReceivedAt: { gte: range.start, lt: range.end } },
-        {
-          lifecycle: OrderLifecycle.COMPLETED,
-          completedAt: { gte: range.start, lt: range.end },
-        },
-      ],
+      orderReceivedAt: { gte: range.start, lt: range.end },
       AND: [{ OR: [
         ...(employee.userId ? [{ managerUserId: employee.userId }] : []),
         {
@@ -1846,18 +1841,10 @@ export async function payrollSummary(
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
-      OR: [
-        {
-          orderReceivedAt: {
-            gte: periodRange.start,
-            lt: periodRange.end,
-          },
-        },
-        {
-          lifecycle: OrderLifecycle.COMPLETED,
-          completedAt: { gte: periodRange.start, lt: periodRange.end },
-        },
-      ],
+      orderReceivedAt: {
+        gte: periodRange.start,
+        lt: periodRange.end,
+      },
     },
     select: {
       id: true,
@@ -2471,6 +2458,7 @@ export async function listOrderBonusesForCorrection(
           amount: true,
           manager: true,
           managerUserId: true,
+          orderReceivedAt: true,
           client: { select: { name: true, phone: true } },
         },
       },
@@ -2663,14 +2651,15 @@ export async function syncAutomaticOrderBonuses(
       managerName: bonus.order.manager,
       managerUserId: bonus.order.managerUserId,
     });
-    const prematureTerminatedBonus =
+    const outsideFactualOrderMonth =
       !companyResponsible &&
-      employmentEnded(bonus.employee) &&
       !bonusEarnedInRange(bonus.order, bonus.employee, range);
-    if (!companyResponsible && !prematureTerminatedBonus) continue;
+    if (!companyResponsible && !outsideFactualOrderMonth) continue;
     const reason = companyResponsible
       ? "Заказ оформлен с ответственным «Компания»: менеджерский бонус не начисляется"
-      : "Начисление уволенного сотрудника отложено до завершения заказа";
+      : employmentEnded(bonus.employee) && bonus.order.lifecycle !== OrderLifecycle.COMPLETED
+        ? "Начисление уволенного сотрудника отложено до завершения заказа"
+        : "Бонус относится к месяцу фактической даты заказа";
     const requestHash = createHash("sha256")
       .update(JSON.stringify({ accrualId: bonus.id, action: "cancel", reason }))
       .digest("hex");
@@ -2681,7 +2670,7 @@ export async function syncAutomaticOrderBonuses(
         reason,
         key: companyResponsible
           ? `company-responsible-order-bonus:${bonus.id}`
-          : `terminated-manager-order-bonus-deferred:${bonus.id}`,
+          : `factual-order-month-bonus:${bonus.id}`,
         requestHash,
       },
       actor,
@@ -2711,13 +2700,7 @@ export async function syncAutomaticOrderBonuses(
         companyId,
         deletedAt: null,
         orderDateNeedsReview: false,
-        OR: [
-          { orderReceivedAt: { gte: range.start, lt: range.end } },
-          {
-            lifecycle: OrderLifecycle.COMPLETED,
-            completedAt: { gte: range.start, lt: range.end },
-          },
-        ],
+        orderReceivedAt: { gte: range.start, lt: range.end },
         ...(managerOwnOnly
           ? {
               AND: [
@@ -2917,7 +2900,7 @@ export async function accrueCompletedTerminatedManagerOrderBonus(
   if (!profile)
     return { created: false, skipped: true, reason: "EMPLOYEE_NOT_TERMINATED" };
 
-  const earnedPeriod = companyYearMonth(order.completedAt);
+  const earnedPeriod = companyYearMonth(order.orderReceivedAt);
   const period = await ensurePeriod(earnedPeriod.year, earnedPeriod.month);
   if (period.status !== PayrollPeriodStatus.OPEN)
     return { created: false, skipped: true, reason: "PERIOD_NOT_OPEN" };
@@ -2954,7 +2937,7 @@ export async function accrueCompletedTerminatedManagerOrderBonus(
             : "SOURCE_PERIOD_NOT_OPEN",
       };
     const reason =
-      "Начисление уволенного сотрудника перенесено в месяц завершения заказа";
+      "Начисление уволенного сотрудника перенесено в месяц фактической даты заказа";
     const cancellationHash = createHash("sha256")
       .update(
         JSON.stringify({
@@ -2983,7 +2966,8 @@ export async function accrueCompletedTerminatedManagerOrderBonus(
         orderId: order.id,
         periodId: period.id,
         amount,
-        earnedAt: order.completedAt.toISOString(),
+        earnedAt: order.orderReceivedAt.toISOString(),
+        unlockedAt: order.completedAt.toISOString(),
       }),
     )
     .digest("hex");
@@ -3218,7 +3202,9 @@ export async function correctOrderBonus(
           throw new PayrollError("ORDER_OUTSIDE_PERIOD");
         if (!bonusEarnedInRange(targetOrder, original.employee, range))
           throw new PayrollError(
-            originalEmploymentEnded
+            originalEmploymentEnded &&
+              (targetOrder.lifecycle !== OrderLifecycle.COMPLETED ||
+                !targetOrder.completedAt)
               ? "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE"
               : "ORDER_OUTSIDE_PERIOD",
           );

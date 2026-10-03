@@ -194,13 +194,13 @@ assert.equal(
 assert.equal(
   managerOrderBonusEarnedAt({
     orderReceivedAt: "2026-09-10T00:00:00.000Z",
-    completedAt: null,
-    lifecycle: "IN_PRODUCTION",
+    completedAt: "2026-10-03T08:00:00.000Z",
+    lifecycle: "COMPLETED",
     employeeActive: true,
     accountActive: true,
   })?.toISOString(),
   "2026-09-10T00:00:00.000Z",
-  "active manager earns the bonus when the order is received",
+  "an active manager's September order must remain in September after October completion",
 );
 assert.equal(
   managerOrderBonusEarnedAt({
@@ -223,8 +223,8 @@ assert.equal(
     employeeTerminatedAt: "2026-09-20T00:00:00.000Z",
     accountActive: false,
   })?.toISOString(),
-  "2026-10-03T08:00:00.000Z",
-  "terminated manager earns the bonus in the completion month",
+  "2026-09-10T00:00:00.000Z",
+  "completion unlocks a terminated manager's bonus without moving it out of the factual order month",
 );
 assert.equal(
   managerOrderBonusEarnedEvent({
@@ -411,6 +411,10 @@ const orderServiceSource = readFileSync(
   new URL("../lib/services/order.service.ts", import.meta.url),
   "utf8",
 );
+const payrollOrderSearchSource = orderServiceSource.slice(
+  orderServiceSource.indexOf("export async function searchOrderOptions"),
+  orderServiceSource.indexOf("export function countOrders"),
+);
 const orderLifecycleServiceSource = readFileSync(
   new URL("../lib/services/order360.service.ts", import.meta.url),
   "utf8",
@@ -507,6 +511,20 @@ const septemberStartCleanupMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const namedMeasurersZeroSalaryMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004103000_named_measurers_zero_salary/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const factualOrderMonthBonusCleanupMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004103500_factual_order_month_bonus_cleanup/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -566,6 +584,9 @@ assert.match(payrollPageSource, /payrollBonus: "true"/);
 assert.match(orderSearchRouteSource, /payrollBonusEligible: params\.get\("payrollBonus"\) === "true"/);
 assert.match(orderServiceSource, /manager: \{ equals: "Компания", mode: "insensitive" \}/);
 assert.match(orderServiceSource, /managerRoleScope/);
+assert.match(payrollOrderSearchSource, /orderReceivedAt: \{ gte: monthRange\.start, lt: monthRange\.end \}/);
+assert.doesNotMatch(payrollOrderSearchSource, /completedAt/);
+assert.match(payrollOrderSearchSource, /orderBy: \[\{ orderReceivedAt: "desc" \}/);
 assert.match(payrollPageSource, /manualOverride/);
 assert.match(serviceSource, /expectedOrderBonus = managerOrderBonus/);
 assert.match(serviceSource, /BONUS_PAYMENT_EXISTS/);
@@ -575,6 +596,7 @@ assert.match(serviceSource, /if \(!deferred\) return \[\]/);
 assert.match(serviceSource, /deferredCreated/);
 assert.match(serviceSource, /ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE/);
 assert.match(serviceSource, /accrueCompletedTerminatedManagerOrderBonus/);
+assert.match(serviceSource, /const earnedPeriod = companyYearMonth\(order\.orderReceivedAt\)/);
 assert.match(orderLifecycleServiceSource, /accrueCompletedTerminatedManagerOrderBonus/);
 assert.match(serviceSource, /priorBonuses/);
 assert.match(
@@ -625,5 +647,20 @@ assert.match(septemberStartCleanupMigrationSource, /%еркебулан%/);
 assert.match(septemberStartCleanupMigrationSource, /%нурасыл%/);
 assert.match(septemberStartCleanupMigrationSource, /%кокбай%/);
 assert.match(septemberStartCleanupMigrationSource, /september-start-salary:v1:/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /"baseSalary" = 0/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /"salaryPlanEnabled" = FALSE/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /SET "planEnabled" = FALSE/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /period\."month" IN \(9, 10\)/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /%еркебулан%/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /%нурасыл%/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /%кокбай%/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /named-measurers-zero-salary:v1:/);
+assert.match(namedMeasurersZeroSalaryMigrationSource, /'BONUS_REVERSAL'/);
+assert.match(factualOrderMonthBonusCleanupMigrationSource, /"orderDateNeedsReview" = FALSE/);
+assert.match(factualOrderMonthBonusCleanupMigrationSource, /"orderReceivedAt" AT TIME ZONE 'UTC'/);
+assert.match(factualOrderMonthBonusCleanupMigrationSource, /period\."month" IN \(9, 10\)/);
+assert.match(factualOrderMonthBonusCleanupMigrationSource, /factual-order-month-bonus:v1:/);
+assert.match(factualOrderMonthBonusCleanupMigrationSource, /'ORDER_BONUS_CANCELLED'/);
+assert.doesNotMatch(factualOrderMonthBonusCleanupMigrationSource, /DELETE FROM/);
 
 console.log("Payroll policy tests passed");

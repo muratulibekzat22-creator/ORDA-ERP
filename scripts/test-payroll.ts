@@ -928,10 +928,27 @@ async function main() {
         completedAt: new Date(Date.UTC(periodYear, 8, 20, 12)),
       },
     });
+    await expectCode(
+      () =>
+        createAccrual(
+          {
+            employeeId: profile.id,
+            periodId: nextPeriod.id,
+            type: PayrollAccrualType.ORDER_BONUS,
+            amount: 30000,
+            orderId: deferredOrder.id,
+            reason: "Проверка неверного месяца после завершения",
+            key: key("deferred-wrong-month-after-completion"),
+            requestHash: "deferred-wrong-month-after-completion",
+          },
+          directorActor,
+        ),
+      "ORDER_OUTSIDE_PERIOD",
+    );
     const deferredBonus = await createAccrual(
       {
         employeeId: profile.id,
-        periodId: nextPeriod.id,
+        periodId: period.id,
         type: PayrollAccrualType.ORDER_BONUS,
         amount: 30000,
         orderId: deferredOrder.id,
@@ -943,7 +960,7 @@ async function main() {
     );
     assert.equal(Number(deferredBonus.accrual.amount), 30000);
     const terminatedSummary = await payrollSummary(
-      nextPeriod.id,
+      period.id,
       directorActor,
       profile.id,
     );
@@ -953,7 +970,7 @@ async function main() {
       terminatedSummary.rows[0]?.bonusAccruals.some(
         (item) => item.id === deferredBonus.accrual.id,
       ),
-      "completed order bonus is missing from terminated employee payroll",
+      "completed order bonus is missing from the factual order month",
     );
     console.log(
       "payroll profile, approvals, formula, RBAC, period lock and finance checks passed",

@@ -102,7 +102,9 @@ export const managerOrderBonusEarnedAt = (input: {
   });
   if (!terminated) return validDate(input.orderReceivedAt);
   if (input.lifecycle !== "COMPLETED") return null;
-  return validDate(input.completedAt);
+  // Completion unlocks a terminated manager's bonus, but the bonus still
+  // belongs to the business month recorded as the factual order date.
+  return validDate(input.completedAt) ? validDate(input.orderReceivedAt) : null;
 };
 
 export const managerOrderBonusEarnedEvent = (employee: {
