@@ -669,9 +669,18 @@ assert.match(factualOrderMonthBonusCleanupMigrationSource, /period\."month" IN \
 assert.match(factualOrderMonthBonusCleanupMigrationSource, /factual-order-month-bonus:v1:/);
 assert.match(factualOrderMonthBonusCleanupMigrationSource, /'ORDER_BONUS_CANCELLED'/);
 assert.doesNotMatch(factualOrderMonthBonusCleanupMigrationSource, /DELETE FROM/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /target_count <> 2/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /target_count < 2/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /BEGIN;/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /COMMIT;/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /account\."role"::text = 'MEASURER'/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /measurer-zero-salary:v2:/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /LIKE '%еркебулан%'/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /LIKE '%нурасыл%'/);
 assert.match(payrollPeriodCorrectionVerificationMigrationSource, /invalid_plan_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /active_salary_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /active_accrual_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /active_payment_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /pending_confirmation_count <> 0/);
+assert.match(payrollPeriodCorrectionVerificationMigrationSource, /nonzero_payable_count <> 0/);
 assert.match(payrollPeriodCorrectionVerificationMigrationSource, /wrong_period_bonus_count <> 0/);
 assert.match(payrollPeriodCorrectionVerificationMigrationSource, /RAISE EXCEPTION/);
 
