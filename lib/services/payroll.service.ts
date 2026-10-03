@@ -15,19 +15,26 @@ import {
 } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { compareRequestHash } from "@/lib/idempotency";
-import { companyMonthRange, isCompanyMonthStarted } from "@/lib/company-calendar";
+import {
+  companyMonthRange,
+  companyYearMonth,
+  isCompanyMonthStarted,
+} from "@/lib/company-calendar";
 import {
   AUTOMATIC_ORDER_BONUS_REASON_PREFIX,
   auditManagerOrderBonus,
   isCompanyResponsibleOrder,
+  isDateInPayrollPeriod,
   isManagerOrderBonusAutomaticPeriod,
   managerOrderBonus,
+  managerOrderBonusEarnedAt,
+  managerOrderBonusEarnedEvent,
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
   isPayrollReconciled,
   isPayrollPolicyReady,
+  isTerminatedPayrollEmployee,
   isValidOptionalPaymentReference,
-  MANAGER_ORDER_BONUS_EARNED_EVENT,
   MANAGER_ORDER_BONUS_HIGH,
   MANAGER_ORDER_BONUS_STANDARD,
   MANAGER_ORDER_BONUS_THRESHOLD,
@@ -87,6 +94,49 @@ const payrollOperator = (actor: PayrollActor) => {
 };
 const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
 
+type BonusEmployment = {
+  active: boolean;
+  terminatedAt?: Date | null;
+  user?: { active?: boolean | null } | null;
+};
+
+type BonusOrderTiming = {
+  orderReceivedAt: Date;
+  completedAt?: Date | null;
+  lifecycle?: string | null;
+};
+
+const employmentEnded = (employee: BonusEmployment) =>
+  isTerminatedPayrollEmployee({
+    active: employee.active,
+    terminatedAt: employee.terminatedAt,
+    accountActive: employee.user?.active,
+  });
+
+const bonusEarnedAt = (
+  order: BonusOrderTiming,
+  employee: BonusEmployment,
+) =>
+  managerOrderBonusEarnedAt({
+    orderReceivedAt: order.orderReceivedAt,
+    completedAt: order.completedAt,
+    lifecycle: order.lifecycle,
+    employeeActive: employee.active,
+    employeeTerminatedAt: employee.terminatedAt,
+    accountActive: employee.user?.active,
+  });
+
+const bonusEarnedInRange = (
+  order: BonusOrderTiming,
+  employee: BonusEmployment,
+  range: { start: Date; end: Date },
+) => {
+  const earnedAt = bonusEarnedAt(order, employee);
+  return earnedAt && isDateInPayrollPeriod(earnedAt, range.start, range.end)
+    ? earnedAt
+    : null;
+};
+
 function payrollPolicyStateSignature(
   salaryDelta: number,
   orderDeltas: Array<{ orderId: number; delta: number }>,
@@ -102,9 +152,17 @@ function payrollPolicyStateSignature(
 
 async function managerWorkReadiness(
   tx: Prisma.TransactionClient,
-  employee: { userId: number | null; position: string; user?: { role: Role } | null },
+  employee: {
+    userId: number | null;
+    position: string;
+    active: boolean;
+    terminatedAt?: Date | null;
+    user?: { role: Role; active?: boolean | null } | null;
+  },
 ) {
   const applies = employee.user?.role === Role.MANAGER || employee.position === Role.MANAGER;
+  if (employmentEnded(employee))
+    return { ready: true, orderIssues: 0, measurementsToClose: 0, openTasks: 0 };
   if (!applies || !employee.userId)
     return { ready: true, orderIssues: 0, measurementsToClose: 0, openTasks: 0 };
   const companyId = requireTenantIdentity().companyId;
@@ -546,9 +604,20 @@ async function createAccrualInternal(
             id: input.employeeId,
             companyId: requireTenantIdentity().companyId,
           },
-          include: { user: { select: { id: true, name: true } } },
+          include: {
+            user: { select: { id: true, name: true, role: true, active: true } },
+          },
         });
-        if (!employee?.payrollEnabled || !employee.active)
+        const terminatedManager = Boolean(
+          employee &&
+          employmentEnded(employee) &&
+          (employee.user?.role === Role.MANAGER ||
+            employee.position === Role.MANAGER),
+        );
+        if (
+          !employee?.payrollEnabled ||
+          (employmentEnded(employee) && !(isOrderBonus && terminatedManager))
+        )
           throw new PayrollError("EMPLOYEE_NOT_FOUND");
       if (input.type === PayrollAccrualType.BASE_SALARY) {
         const range = companyMonthRange(period.year, period.month);
@@ -594,7 +663,14 @@ async function createAccrualInternal(
             companyId: requireTenantIdentity().companyId,
             deletedAt: null,
             orderDateNeedsReview: false,
-            orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
+            ...(!(isOrderBonus && terminatedManager)
+              ? {
+                  orderReceivedAt: {
+                    gte: monthRange.start,
+                    lt: monthRange.end,
+                  },
+                }
+              : {}),
             ...(isOrderBonus
               ? {
                   OR: [
@@ -622,6 +698,8 @@ async function createAccrualInternal(
             deletedAt: true,
             manager: true,
             managerUserId: true,
+            orderReceivedAt: true,
+            completedAt: true,
             leadConversion: { select: { managerId: true } },
           },
         });
@@ -645,6 +723,15 @@ async function createAccrualInternal(
           )
         )
           throw new PayrollError("ORDER_OUTSIDE_PERIOD");
+        if (
+          isOrderBonus &&
+          !bonusEarnedInRange(order, employee, monthRange)
+        )
+          throw new PayrollError(
+            terminatedManager
+              ? "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE"
+              : "ORDER_OUTSIDE_PERIOD",
+          );
         cancelledOrderWarning = /отмен|cancel/i.test(order.status);
         if (usesAutomaticOrderBonusPolicy) {
           if (
@@ -819,7 +906,7 @@ async function managerPayrollPolicyState(
   const employee = await tx.employeePayrollProfile.findUnique({
     where: { id: employeeId },
     include: {
-      user: { select: { role: true, name: true } },
+      user: { select: { role: true, name: true, active: true } },
       salaryRates: { orderBy: { effectiveFrom: "desc" } },
       accruals: {
         where: { periodId: period.id },
@@ -848,7 +935,6 @@ async function managerPayrollPolicyState(
       rate.effectiveFrom < range.end &&
       (!rate.effectiveTo || rate.effectiveTo >= range.start),
   ) ?? employee.salaryRates[0];
-  const requiredSalary = Number(activeRate?.amount ?? employee.baseSalary);
   const activeAccruals = employee.accruals.filter(
     (row) => !row.reversalOfId && !row.reversedBy,
   );
@@ -862,12 +948,21 @@ async function managerPayrollPolicyState(
         row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
     )
     .reduce((sum, row) => sum + signed(row), 0);
+  const requiredSalary = employmentEnded(employee)
+    ? Math.max(salaryPosted, 0)
+    : Number(activeRate?.amount ?? employee.baseSalary);
   const periodOrders = await tx.order.findMany({
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
-      orderReceivedAt: { gte: range.start, lt: range.end },
       OR: [
+        { orderReceivedAt: { gte: range.start, lt: range.end } },
+        {
+          lifecycle: OrderLifecycle.COMPLETED,
+          completedAt: { gte: range.start, lt: range.end },
+        },
+      ],
+      AND: [{ OR: [
         ...(employee.userId ? [{ managerUserId: employee.userId }] : []),
         {
           managerUserId: null,
@@ -876,7 +971,7 @@ async function managerPayrollPolicyState(
         ...(employee.userId
           ? [{ leadConversion: { managerId: employee.userId } }]
           : []),
-      ],
+      ] }],
     },
     select: {
       id: true,
@@ -886,21 +981,24 @@ async function managerPayrollPolicyState(
       deletedAt: true,
       manager: true,
       managerUserId: true,
+      orderReceivedAt: true,
+      completedAt: true,
       leadConversion: { select: { managerId: true } },
     },
   });
-  const orders = periodOrders.filter((order) =>
-    isOrderAssignedToManager(
-      {
-        managerUserId: order.managerUserId,
-        leadManagerId: order.leadConversion?.managerId,
-        managerName: order.manager,
-      },
-      {
-        id: employee.userId ?? -1,
-        name: employee.user?.name || employee.name,
-      },
-    ),
+  const orders = periodOrders.filter(
+    (order) =>
+      isOrderAssignedToManager(
+        {
+          managerUserId: order.managerUserId,
+          leadManagerId: order.leadConversion?.managerId,
+          managerName: order.manager,
+        },
+        {
+          id: employee.userId ?? -1,
+          name: employee.user?.name || employee.name,
+        },
+      ) && Boolean(bonusEarnedInRange(order, employee, range)),
   );
   const requiredByOrder = new Map(
     orders.map((order) => [
@@ -994,9 +1092,11 @@ async function createPaymentTx(
   const period = await openPeriod(tx, input.periodId);
   const employee = await tx.employeePayrollProfile.findUnique({
     where: { id: input.employeeId },
-    include: { user: { select: { role: true } } },
+    include: { user: { select: { role: true, active: true } } },
   });
-  if (!employee?.payrollEnabled || !employee.active)
+  // Historical obligations remain payable after employment ends. Access to
+  // the account is disabled, but the immutable payroll profile stays valid.
+  if (!employee?.payrollEnabled)
     throw new PayrollError("EMPLOYEE_NOT_FOUND");
   if (finalSalaryPayment) {
     const reconciliation = await managerPayrollPolicyState(
@@ -1722,7 +1822,6 @@ export async function payrollSummary(
     where: {
       ...(employeeId ? { id: employeeId } : {}),
       payrollEnabled: true,
-      active: true,
     },
     include: {
       user: { select: { id: true, name: true, role: true, active: true } },
@@ -1738,8 +1837,10 @@ export async function payrollSummary(
               number: true,
               amount: true,
               status: true,
+              lifecycle: true,
               deletedAt: true,
               orderReceivedAt: true,
+              completedAt: true,
               client: { select: { name: true, phone: true } },
             },
           },
@@ -1762,15 +1863,28 @@ export async function payrollSummary(
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
-      orderReceivedAt: { gte: periodRange.start, lt: periodRange.end },
+      OR: [
+        {
+          orderReceivedAt: {
+            gte: periodRange.start,
+            lt: periodRange.end,
+          },
+        },
+        {
+          lifecycle: OrderLifecycle.COMPLETED,
+          completedAt: { gte: periodRange.start, lt: periodRange.end },
+        },
+      ],
     },
     select: {
       id: true,
       number: true,
       amount: true,
       status: true,
+      lifecycle: true,
       deletedAt: true,
       orderReceivedAt: true,
+      completedAt: true,
       manager: true,
       managerUserId: true,
       leadConversion: { select: { managerId: true } },
@@ -1818,7 +1932,35 @@ export async function payrollSummary(
     select: { employeeId: true, after: true, createdAt: true },
     orderBy: { createdAt: "desc" },
   })]);
-  const rows = employees.map((employee) => {
+  const visibleEmployees = employees.filter((employee) => {
+    if (!employmentEnded(employee)) return employee.active;
+    if (
+      employee.accruals.length > 0 ||
+      employee.payments.length > 0 ||
+      employee.paymentConfirmations.length > 0 ||
+      employee.advanceRequests.length > 0
+    )
+      return true;
+    const manager =
+      employee.user?.role === Role.MANAGER ||
+      employee.position === Role.MANAGER;
+    if (!manager) return false;
+    return periodOrders.some(
+      (order) =>
+        isOrderAssignedToManager(
+          {
+            managerUserId: order.managerUserId,
+            leadManagerId: order.leadConversion?.managerId,
+            managerName: order.manager,
+          },
+          {
+            id: employee.userId ?? -1,
+            name: employee.user?.name || employee.name,
+          },
+        ) && Boolean(bonusEarnedInRange(order, employee, periodRange)),
+    );
+  });
+  const rows = visibleEmployees.map((employee) => {
     const activeAccruals = employee.accruals.filter(
       (row) => !row.reversalOfId && !row.reversedBy,
     );
@@ -1882,10 +2024,10 @@ export async function payrollSummary(
     const identity = employee.user
       ? employee.user
       : { id: 0, name: employee.name || "Сотрудник", role: employee.position || "EMPLOYEE", active: false };
+    const employeeEmploymentEnded = employmentEnded(employee);
     const policySigned = (row: (typeof activeAccruals)[number]) =>
       Number(row.amount) *
       (row.direction === PayrollDirection.INCREASE ? 1 : -1);
-    const currentSalary = Number(activeRate?.amount ?? employee.baseSalary);
     const salaryPosted = activeAccruals
       .filter(
         (row) =>
@@ -1893,17 +2035,22 @@ export async function payrollSummary(
           row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
       )
       .reduce((sum, row) => sum + policySigned(row), 0);
+    const currentSalary = employeeEmploymentEnded
+      ? Math.max(salaryPosted, 0)
+      : Number(activeRate?.amount ?? employee.baseSalary);
     const managerPolicyApplies = identity.role === Role.MANAGER;
     const assignedOrders = managerPolicyApplies
       ? periodOrders.filter(
-          (order) => isOrderAssignedToManager(
-            {
-              managerUserId: order.managerUserId,
-              leadManagerId: order.leadConversion?.managerId,
-              managerName: order.manager,
-            },
-            identity,
-          ),
+          (order) =>
+            isOrderAssignedToManager(
+              {
+                managerUserId: order.managerUserId,
+                leadManagerId: order.leadConversion?.managerId,
+                managerName: order.manager,
+              },
+              identity,
+            ) &&
+            Boolean(bonusEarnedInRange(order, employee, periodRange)),
         )
       : [];
     const orderBonusAudit = managerPolicyApplies
@@ -1943,6 +2090,7 @@ export async function payrollSummary(
               submitted,
               recorded,
             });
+            const earnedAt = bonusEarnedAt(order, employee)!;
             return {
               accrualId: manualBonus?.id ?? primaryBonuses[0]?.id ?? -order.id,
               orderId: order.id,
@@ -1950,8 +2098,12 @@ export async function payrollSummary(
               clientName: order.client.name,
               orderAmount: Number(order.amount),
               orderStatus: order.status,
-              earnedAt: order.orderReceivedAt,
-              earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
+              earnedAt,
+              earnedEvent: managerOrderBonusEarnedEvent({
+                active: employee.active,
+                terminatedAt: employee.terminatedAt,
+                accountActive: employee.user?.active,
+              }),
               eligible: policyAudit.eligible,
               submitted,
               expected: policyAudit.expected,
@@ -2012,8 +2164,15 @@ export async function payrollSummary(
         clientName: order?.client.name ?? "Не закреплён за менеджером",
         orderAmount: Number(order?.amount ?? 0),
         orderStatus: order?.status ?? "Вне расчётного периода",
-        earnedAt: order?.orderReceivedAt ?? new Date(0),
-        earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
+        earnedAt:
+          (order ? bonusEarnedAt(order, employee) : null) ??
+          order?.orderReceivedAt ??
+          new Date(0),
+        earnedEvent: managerOrderBonusEarnedEvent({
+          active: employee.active,
+          terminatedAt: employee.terminatedAt,
+          accountActive: employee.user?.active,
+        }),
         eligible: false,
         submitted: Number(manualBonus?.amount ?? 0),
         expected: 0,
@@ -2047,7 +2206,8 @@ export async function payrollSummary(
     const latestApproval = manualApprovals.find((row) => row.employeeId === employee.id);
     const approvalAfter = latestApproval?.after as { signature?: string } | null;
     const manualApproved = !policyReady && approvalAfter?.signature === policySignature;
-    const workReadiness = managerPolicyApplies && identity.id
+    const workReadiness =
+      managerPolicyApplies && identity.id && !employeeEmploymentEnded
       ? {
           orderIssues: readinessOrders.filter(
             (order) => order.managerUserId === identity.id && orderDataGaps(order).length > 0,
@@ -2104,6 +2264,7 @@ export async function payrollSummary(
       user: identity,
       payments,
       hasOrdaAccess: Boolean(employee.userId),
+      employmentEnded: employeeEmploymentEnded,
       currentSalary,
       salaryEffectiveFrom: activeRate?.effectiveFrom ?? employee.hiredAt,
       breakdown: {
@@ -2128,7 +2289,11 @@ export async function payrollSummary(
               threshold: MANAGER_ORDER_BONUS_THRESHOLD,
               belowOrEqual: MANAGER_ORDER_BONUS_STANDARD,
               above: MANAGER_ORDER_BONUS_HIGH,
-              earnedEvent: MANAGER_ORDER_BONUS_EARNED_EVENT,
+              earnedEvent: managerOrderBonusEarnedEvent({
+                active: employee.active,
+                terminatedAt: employee.terminatedAt,
+                accountActive: employee.user?.active,
+              }),
             },
             linkedOrders: allOrderBonusAudit.filter((row) => row.eligible).length,
             submittedOrderBonus: allOrderBonusAudit.reduce(
@@ -2381,7 +2546,7 @@ export async function syncAutomaticOrderBonuses(
   const existingPeriod = await prisma.payrollPeriod.findUnique({
     where: { companyId_year_month: { companyId, year, month } },
   });
-  if (!existingPeriod && !automaticPeriod)
+  if (!existingPeriod && !automaticPeriod && actor.role === Role.MANAGER)
     return { created: 0, removed: 0, skipped: true };
   const period = existingPeriod ?? await ensurePeriod(year, month);
   if (period.status !== PayrollPeriodStatus.OPEN)
@@ -2392,7 +2557,7 @@ export async function syncAutomaticOrderBonuses(
       periodStatus: period.status,
     };
   const managerOwnOnly = actor.role === Role.MANAGER;
-  const companyResponsibleBonuses = await prisma.payrollAccrual.findMany({
+  const bonusesNeedingPolicyCheck = await prisma.payrollAccrual.findMany({
     where: {
       periodId: period.id,
       type: { in: [...orderBonusTypes] },
@@ -2407,7 +2572,21 @@ export async function syncAutomaticOrderBonuses(
     },
     select: {
       id: true,
-      order: { select: { manager: true } },
+      employee: {
+        select: {
+          active: true,
+          terminatedAt: true,
+          user: { select: { active: true, role: true } },
+        },
+      },
+      order: {
+        select: {
+          manager: true,
+          orderReceivedAt: true,
+          completedAt: true,
+          lifecycle: true,
+        },
+      },
       payments: {
         where: { reversalOfId: null, reversedAt: null },
         select: { amount: true },
@@ -2415,15 +2594,22 @@ export async function syncAutomaticOrderBonuses(
     },
   });
   let removed = 0;
-  for (const bonus of companyResponsibleBonuses) {
-    if (
-      !bonus.order ||
-      !isCompanyResponsibleOrder({ managerName: bonus.order.manager }) ||
-      bonus.payments.some((payment) => Number(payment.amount) > 0)
-    )
+  let deferredRemoved = 0;
+  const range = companyMonthRange(year, month);
+  for (const bonus of bonusesNeedingPolicyCheck) {
+    if (!bonus.order || bonus.payments.some((payment) => Number(payment.amount) > 0))
       continue;
-    const reason =
-      "Заказ оформлен с ответственным «Компания»: менеджерский бонус не начисляется";
+    const companyResponsible = isCompanyResponsibleOrder({
+      managerName: bonus.order.manager,
+    });
+    const prematureTerminatedBonus =
+      !companyResponsible &&
+      employmentEnded(bonus.employee) &&
+      !bonusEarnedInRange(bonus.order, bonus.employee, range);
+    if (!companyResponsible && !prematureTerminatedBonus) continue;
+    const reason = companyResponsible
+      ? "Заказ оформлен с ответственным «Компания»: менеджерский бонус не начисляется"
+      : "Начисление уволенного сотрудника отложено до завершения заказа";
     const requestHash = createHash("sha256")
       .update(JSON.stringify({ accrualId: bonus.id, action: "cancel", reason }))
       .digest("hex");
@@ -2432,45 +2618,58 @@ export async function syncAutomaticOrderBonuses(
         accrualId: bonus.id,
         cancel: true,
         reason,
-        key: `company-responsible-order-bonus:${bonus.id}`,
+        key: companyResponsible
+          ? `company-responsible-order-bonus:${bonus.id}`
+          : `terminated-manager-order-bonus-deferred:${bonus.id}`,
         requestHash,
       },
       actor,
     );
-    if (result.created) removed += 1;
+    if (result.created) {
+      if (companyResponsible) removed += 1;
+      else deferredRemoved += 1;
+    }
   }
-  if (!automaticPeriod)
-    return { created: 0, removed, skipped: false, automaticPeriod: false };
-  const range = companyMonthRange(year, month);
   const [profiles, orders] = await Promise.all([
     prisma.employeePayrollProfile.findMany({
       where: {
         companyId,
         payrollEnabled: true,
-        active: true,
         ...(managerOwnOnly ? { userId: actor.userId } : {}),
         OR: [
           { position: Role.MANAGER },
           { user: { role: Role.MANAGER } },
         ],
       },
-      include: { user: { select: { id: true, name: true, role: true } } },
+      include: {
+        user: { select: { id: true, name: true, role: true, active: true } },
+      },
     }),
     prisma.order.findMany({
       where: {
         companyId,
         deletedAt: null,
         orderDateNeedsReview: false,
-        orderReceivedAt: { gte: range.start, lt: range.end },
+        OR: [
+          { orderReceivedAt: { gte: range.start, lt: range.end } },
+          {
+            lifecycle: OrderLifecycle.COMPLETED,
+            completedAt: { gte: range.start, lt: range.end },
+          },
+        ],
         ...(managerOwnOnly
           ? {
-              OR: [
-                { managerUserId: actor.userId },
+              AND: [
                 {
-                  managerUserId: null,
-                  manager: { equals: actor.name, mode: "insensitive" },
+                  OR: [
+                    { managerUserId: actor.userId },
+                    {
+                      managerUserId: null,
+                      manager: { equals: actor.name, mode: "insensitive" },
+                    },
+                    { leadConversion: { managerId: actor.userId } },
+                  ],
                 },
-                { leadConversion: { managerId: actor.userId } },
               ],
             }
           : {}),
@@ -2484,34 +2683,17 @@ export async function syncAutomaticOrderBonuses(
         deletedAt: true,
         managerUserId: true,
         manager: true,
+        orderReceivedAt: true,
+        completedAt: true,
         leadConversion: { select: { managerId: true } },
       },
       orderBy: [{ orderReceivedAt: "asc" }, { id: "asc" }],
     }),
   ]);
-  const eligibleOrders = orders.filter((order) =>
-    isManagerOrderBonusEligible({ ...order, managerName: order.manager }),
-  );
-  const priorBonuses = eligibleOrders.length
-    ? await prisma.payrollAccrual.findMany({
-        where: {
-          orderId: { in: eligibleOrders.map((order) => order.id) },
-          type: { in: [...orderBonusTypes] },
-          direction: PayrollDirection.INCREASE,
-          reversalOfId: null,
-        },
-        select: { orderId: true },
-      })
-    : [];
-  const handledOrderIds = new Set(
-    priorBonuses
-      .map((row) => row.orderId)
-      .filter((orderId): orderId is number => Boolean(orderId)),
-  );
-  let created = 0;
   const skippedOrders: number[] = [];
-  for (const order of eligibleOrders) {
-    if (handledOrderIds.has(order.id)) continue;
+  const bonusCandidates = orders.flatMap((order) => {
+    if (!isManagerOrderBonusEligible({ ...order, managerName: order.manager }))
+      return [];
     const profile = profiles.find((candidate) =>
       isOrderAssignedToManager(
         {
@@ -2527,25 +2709,65 @@ export async function syncAutomaticOrderBonuses(
     );
     if (!profile) {
       skippedOrders.push(order.id);
-      continue;
+      return [];
     }
+    const deferred = employmentEnded(profile);
+    if (!automaticPeriod && !deferred) return [];
+    const earnedAt = bonusEarnedInRange(order, profile, range);
+    return earnedAt ? [{ order, profile, earnedAt, deferred }] : [];
+  });
+  const priorBonuses = bonusCandidates.length
+    ? await prisma.payrollAccrual.findMany({
+        where: {
+          orderId: { in: bonusCandidates.map(({ order }) => order.id) },
+          type: { in: [...orderBonusTypes] },
+          direction: PayrollDirection.INCREASE,
+          reversalOfId: null,
+          reversedBy: { is: null },
+        },
+        select: { orderId: true },
+      })
+    : [];
+  const handledOrderIds = new Set(
+    priorBonuses
+      .map((row) => row.orderId)
+      .filter((orderId): orderId is number => Boolean(orderId)),
+  );
+  let created = 0;
+  let deferredCreated = 0;
+  for (const { order, profile, earnedAt, deferred } of bonusCandidates) {
+    if (handledOrderIds.has(order.id)) continue;
     const amount = managerOrderBonus(Number(order.amount));
     const payload = {
       periodId: period.id,
       type: PayrollAccrualType.ORDER_BONUS,
       amount,
       orderId: order.id,
-      reason: `${AUTOMATIC_ORDER_BONUS_REASON_PREFIX}: ${order.number}`,
-      key: `automatic-order-bonus:${order.id}`,
+      reason: deferred
+        ? `${AUTOMATIC_ORDER_BONUS_REASON_PREFIX} после завершения заказа уволенного сотрудника: ${order.number}`
+        : `${AUTOMATIC_ORDER_BONUS_REASON_PREFIX}: ${order.number}`,
+      key: deferred
+        ? `automatic-order-bonus-completed:${order.id}:${period.id}`
+        : `automatic-order-bonus:${order.id}`,
       requestHash: createHash("sha256")
-        .update(JSON.stringify({ orderId: order.id, periodId: period.id, amount }))
+        .update(
+          JSON.stringify({
+            orderId: order.id,
+            periodId: period.id,
+            amount,
+            earnedAt: earnedAt.toISOString(),
+          }),
+        )
         .digest("hex"),
     };
     try {
       const result = managerOwnOnly
         ? await createSelfAccrual(payload, actor)
         : await createAccrual({ ...payload, employeeId: profile.id }, actor);
-      if (result.created) created += 1;
+      if (result.created) {
+        created += 1;
+        if (deferred) deferredCreated += 1;
+      }
       handledOrderIds.add(order.id);
     } catch (error) {
       if (
@@ -2558,7 +2780,174 @@ export async function syncAutomaticOrderBonuses(
       throw error;
     }
   }
-  return { created, removed, skipped: false, skippedOrders };
+  return {
+    created,
+    deferredCreated,
+    deferredRemoved,
+    removed,
+    skipped: false,
+    automaticPeriod,
+    skippedOrders,
+  };
+}
+
+export async function accrueCompletedTerminatedManagerOrderBonus(
+  orderId: number,
+  actor: PayrollActor,
+) {
+  const companyId = requireTenantIdentity().companyId;
+  const order = await prisma.order.findFirst({
+    where: {
+      id: orderId,
+      companyId,
+      deletedAt: null,
+      orderDateNeedsReview: false,
+      lifecycle: OrderLifecycle.COMPLETED,
+      completedAt: { not: null },
+    },
+    select: {
+      id: true,
+      number: true,
+      amount: true,
+      status: true,
+      lifecycle: true,
+      deletedAt: true,
+      manager: true,
+      managerUserId: true,
+      orderReceivedAt: true,
+      completedAt: true,
+      leadConversion: { select: { managerId: true } },
+    },
+  });
+  if (
+    !order?.completedAt ||
+    !isManagerOrderBonusEligible({ ...order, managerName: order.manager })
+  )
+    return { created: false, skipped: true, reason: "ORDER_NOT_ELIGIBLE" };
+
+  const profiles = await prisma.employeePayrollProfile.findMany({
+    where: {
+      companyId,
+      payrollEnabled: true,
+      OR: [
+        { position: Role.MANAGER },
+        { user: { role: Role.MANAGER } },
+      ],
+    },
+    include: {
+      user: { select: { id: true, name: true, role: true, active: true } },
+    },
+  });
+  const profile = profiles.find(
+    (candidate) =>
+      employmentEnded(candidate) &&
+      isOrderAssignedToManager(
+        {
+          managerUserId: order.managerUserId,
+          leadManagerId: order.leadConversion?.managerId,
+          managerName: order.manager,
+        },
+        {
+          id: candidate.userId ?? -1,
+          name: candidate.user?.name || candidate.name,
+        },
+      ),
+  );
+  if (!profile)
+    return { created: false, skipped: true, reason: "EMPLOYEE_NOT_TERMINATED" };
+
+  const earnedPeriod = companyYearMonth(order.completedAt);
+  const period = await ensurePeriod(earnedPeriod.year, earnedPeriod.month);
+  if (period.status !== PayrollPeriodStatus.OPEN)
+    return { created: false, skipped: true, reason: "PERIOD_NOT_OPEN" };
+  const priorBonus = await prisma.payrollAccrual.findFirst({
+    where: {
+      orderId: order.id,
+      type: { in: [...orderBonusTypes] },
+      direction: PayrollDirection.INCREASE,
+      reversalOfId: null,
+      reversedBy: { is: null },
+      employeeId: profile.id,
+    },
+    include: {
+      period: { select: { id: true, status: true } },
+      payments: {
+        where: { reversalOfId: null, reversedAt: null },
+        select: { id: true },
+      },
+    },
+  });
+  if (priorBonus?.periodId === period.id)
+    return { created: false, skipped: true, reason: "ALREADY_ACCRUED" };
+  if (priorBonus) {
+    if (
+      priorBonus.period.status !== PayrollPeriodStatus.OPEN ||
+      priorBonus.payments.length > 0
+    )
+      return {
+        created: false,
+        skipped: true,
+        reason:
+          priorBonus.payments.length > 0
+            ? "BONUS_PAYMENT_EXISTS"
+            : "SOURCE_PERIOD_NOT_OPEN",
+      };
+    const reason =
+      "Начисление уволенного сотрудника перенесено в месяц завершения заказа";
+    const cancellationHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          accrualId: priorBonus.id,
+          action: "cancel",
+          reason,
+        }),
+      )
+      .digest("hex");
+    await correctOrderBonus(
+      {
+        accrualId: priorBonus.id,
+        cancel: true,
+        reason,
+        key: `terminated-manager-order-bonus-completed:${priorBonus.id}`,
+        requestHash: cancellationHash,
+      },
+      { ...actor, role: Role.DIRECTOR },
+    );
+  }
+  const amount = managerOrderBonus(Number(order.amount));
+  const key = `automatic-order-bonus-completed:${order.id}:${period.id}`;
+  const requestHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        orderId: order.id,
+        periodId: period.id,
+        amount,
+        earnedAt: order.completedAt.toISOString(),
+      }),
+    )
+    .digest("hex");
+  try {
+    return await createAccrualInternal(
+      {
+        employeeId: profile.id,
+        periodId: period.id,
+        type: PayrollAccrualType.ORDER_BONUS,
+        amount,
+        orderId: order.id,
+        reason: `${AUTOMATIC_ORDER_BONUS_REASON_PREFIX} после завершения заказа уволенного сотрудника: ${order.number}`,
+        key,
+        requestHash,
+      },
+      actor,
+    );
+  } catch (error) {
+    if (
+      error instanceof PayrollError &&
+      error.message === "ORDER_BONUS_ALREADY_EXISTS"
+    )
+      return { created: false, skipped: true, reason: error.message };
+    throw error;
+  }
 }
 
 type OrderBonusCorrectionInput = {
@@ -2604,7 +2993,9 @@ export async function correctOrderBonus(
         where: { id: input.accrualId, employee: { companyId } },
         include: {
           employee: {
-            include: { user: { select: { id: true, name: true } } },
+            include: {
+              user: { select: { id: true, name: true, active: true } },
+            },
           },
           period: true,
           reversedBy: { select: { id: true } },
@@ -2668,6 +3059,8 @@ export async function correctOrderBonus(
         deletedAt: Date | null;
         manager: string;
         managerUserId: number | null;
+        orderReceivedAt: Date;
+        completedAt: Date | null;
         leadConversion: { managerId: number | null } | null;
       } | null = null;
       let replacementAmount: Prisma.Decimal | null = null;
@@ -2705,13 +3098,18 @@ export async function correctOrderBonus(
               : "PERIOD_NOT_OPEN",
           );
         const range = companyMonthRange(targetYear, targetMonth);
+        const originalEmploymentEnded = employmentEnded(original.employee);
         targetOrder = await tx.order.findFirst({
           where: {
             id: targetOrderId,
             companyId,
             deletedAt: null,
             orderDateNeedsReview: false,
-            orderReceivedAt: { gte: range.start, lt: range.end },
+            ...(!originalEmploymentEnded
+              ? {
+                  orderReceivedAt: { gte: range.start, lt: range.end },
+                }
+              : {}),
             OR: [
               ...(original.employee.userId
                 ? [{ managerUserId: original.employee.userId }]
@@ -2737,6 +3135,8 @@ export async function correctOrderBonus(
             deletedAt: true,
             manager: true,
             managerUserId: true,
+            orderReceivedAt: true,
+            completedAt: true,
             leadConversion: { select: { managerId: true } },
           },
         });
@@ -2755,6 +3155,12 @@ export async function correctOrderBonus(
           )
         )
           throw new PayrollError("ORDER_OUTSIDE_PERIOD");
+        if (!bonusEarnedInRange(targetOrder, original.employee, range))
+          throw new PayrollError(
+            originalEmploymentEnded
+              ? "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE"
+              : "ORDER_OUTSIDE_PERIOD",
+          );
         if (
           !isManagerOrderBonusEligible({
             ...targetOrder,

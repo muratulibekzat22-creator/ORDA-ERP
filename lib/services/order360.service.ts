@@ -14,6 +14,7 @@ import { hasProductionPrice } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { INITIAL_PRODUCTION_STAGE } from "@/lib/production/stage-policy";
 import { reverseMeasurerBonusForCancelledOrder } from "@/lib/services/measurement.service";
+import { accrueCompletedTerminatedManagerOrderBonus } from "@/lib/services/payroll.service";
 
 export type Order360Actor = { userId: number; role: Role; name: string };
 export class Order360Error extends Error {}
@@ -331,7 +332,7 @@ export async function transitionLifecycle(
   actor: Order360Actor,
 ) {
   await assertAccess(input.orderId, actor);
-  return prisma.$transaction(
+  const result = await prisma.$transaction(
     async (tx) => {
       const existing = await tx.orderLifecycleEvent.findUnique({
         where: { idempotencyKey: input.key },
@@ -529,6 +530,20 @@ export async function transitionLifecycle(
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
+  if (input.to !== OrderLifecycle.COMPLETED || !result.created) return result;
+  try {
+    const deferredPayrollBonus =
+      await accrueCompletedTerminatedManagerOrderBonus(input.orderId, actor);
+    return { ...result, deferredPayrollBonus };
+  } catch (error) {
+    // Order completion remains authoritative even if the payroll period is
+    // temporarily closed. The payroll sync will retry the deterministic bonus.
+    console.error("Deferred terminated-manager bonus sync failed", error);
+    return {
+      ...result,
+      deferredPayrollBonus: { created: false, skipped: true, reason: "SYNC_FAILED" },
+    };
+  }
 }
 
 export async function completeControlMeasurement(

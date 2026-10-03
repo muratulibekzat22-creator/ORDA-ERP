@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   AdvanceRequestStatus,
   BonusPaymentMode,
+  OrderLifecycle,
   PayrollAccrualType,
   PayrollPaymentType,
   PayrollPeriodStatus,
@@ -836,11 +837,82 @@ async function main() {
       1,
       "disabling ORDA login removed the employee from payroll",
     );
-    await prisma.employeePayrollProfile.update({ where: { id: profile.id }, data: { active: false } });
+    await prisma.employeePayrollProfile.update({
+      where: { id: profile.id },
+      data: { active: false, terminatedAt: new Date(Date.UTC(periodYear, 7, 31, 12)) },
+    });
     assert.equal(
       (await payrollSummary(period.id, directorActor, profile.id)).rows.length,
-      0,
-      "inactive employee leaked into payroll dashboard",
+      1,
+      "terminated employee payroll history must remain available",
+    );
+    const deferredOrder = await prisma.order.create({
+      data: {
+        number: `PAY-DEFERRED-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Test",
+        amount: 100000,
+        manager: manager.name,
+        managerUserId: manager.id,
+        status: "В производстве",
+        lifecycle: OrderLifecycle.IN_PRODUCTION,
+        orderReceivedAt: new Date(Date.UTC(periodYear, 7, 20, 12)),
+      },
+    });
+    ids.orders.push(deferredOrder.id);
+    await expectCode(
+      () =>
+        createAccrual(
+          {
+            employeeId: profile.id,
+            periodId: nextPeriod.id,
+            type: PayrollAccrualType.ORDER_BONUS,
+            amount: 30000,
+            orderId: deferredOrder.id,
+            reason: "Бонус уволенного менеджера",
+            key: key("deferred-before-completion"),
+            requestHash: "deferred-before-completion",
+          },
+          directorActor,
+        ),
+      "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE",
+    );
+    await prisma.order.update({
+      where: { id: deferredOrder.id },
+      data: {
+        lifecycle: OrderLifecycle.COMPLETED,
+        status: "Заказ завершён",
+        completedAt: new Date(Date.UTC(periodYear, 8, 20, 12)),
+      },
+    });
+    const deferredBonus = await createAccrual(
+      {
+        employeeId: profile.id,
+        periodId: nextPeriod.id,
+        type: PayrollAccrualType.ORDER_BONUS,
+        amount: 30000,
+        orderId: deferredOrder.id,
+        reason: "Бонус после завершения заказа уволенного менеджера",
+        key: key("deferred-after-completion"),
+        requestHash: "deferred-after-completion",
+      },
+      directorActor,
+    );
+    assert.equal(Number(deferredBonus.accrual.amount), 30000);
+    const terminatedSummary = await payrollSummary(
+      nextPeriod.id,
+      directorActor,
+      profile.id,
+    );
+    assert.equal(terminatedSummary.rows[0]?.employmentEnded, true);
+    assert.equal(terminatedSummary.rows[0]?.currentSalary, 0);
+    assert(
+      terminatedSummary.rows[0]?.bonusAccruals.some(
+        (item) => item.id === deferredBonus.accrual.id,
+      ),
+      "completed order bonus is missing from terminated employee payroll",
     );
     console.log(
       "payroll profile, approvals, formula, RBAC, period lock and finance checks passed",

@@ -195,7 +195,27 @@ export async function searchOrderOptions(
       lifecycle: { not: "CANCELLED" },
       ...(monthRange ? {
         orderDateNeedsReview: false,
-        orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
+        ...(options.payrollBonusEligible
+          ? {
+              OR: [
+                {
+                  orderReceivedAt: {
+                    gte: monthRange.start,
+                    lt: monthRange.end,
+                  },
+                },
+                {
+                  lifecycle: OrderLifecycle.COMPLETED,
+                  completedAt: {
+                    gte: monthRange.start,
+                    lt: monthRange.end,
+                  },
+                },
+              ],
+            }
+          : {
+              orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
+            }),
       } : {}),
       AND: [roleScope, payrollBonusScope, searchWhere],
     },

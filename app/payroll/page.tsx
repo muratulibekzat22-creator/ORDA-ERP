@@ -125,6 +125,8 @@ type PayrollRow = {
     comment?: string | null;
     approvedBy?: { id: number; name: string };
   }>;
+  employmentEnded: boolean;
+  terminatedAt?: string | null;
   currentSalary: number;
   salaryEffectiveFrom: string;
   accruals: Accrual[];
@@ -301,6 +303,8 @@ const errorLabels: Record<string, string> = {
   ORDER_REQUIRED: "Для бонуса за заказ укажите заказ",
   ORDER_NOT_FOUND: "Заказ не найден",
   ORDER_OUTSIDE_PERIOD: "Выберите заказ из открытого расчётного месяца",
+  ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE:
+    "Для уволенного сотрудника бонус начисляется только после завершения заказа",
   ORDER_NOT_ELIGIBLE_FOR_BONUS: "Отменённый заказ не участвует в расчёте бонуса",
   ORDER_BONUS_ALREADY_EXISTS: "По этому заказу бонус уже начислен. Повторный бонус запрещён",
   BONUS_NOT_FOUND: "Бонус не найден или уже отменён",
@@ -382,6 +386,7 @@ export default function PayrollPage() {
     locked = Boolean(data.period && data.period.status !== "OPEN");
   const salaryCandidates = data.rows.filter(
     (row) =>
+      !row.employmentEnded &&
       row.currentSalary > 0 &&
       !row.accruals.some(
         (item) =>
@@ -841,7 +846,7 @@ export default function PayrollPage() {
         {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
-            <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и рассчитывает бонус по сумме заказа: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Начиная с октября 2026 года бонусы создаются автоматически по оформленным заказам; ручное изменение суммы требует причины. Ошибочный месяц или заказ исправляется со страницы без удаления истории.</p>
+            <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и рассчитывает бонус по сумме заказа: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Активным менеджерам бонус относится к месяцу оформления заказа; уволенному менеджеру он начисляется только после фактического завершения заказа. Ручное изменение суммы требует причины, а исправление сохраняет историю.</p>
             <p className="mt-2 leading-6">Оклад считается начисленным только после нажатия «Начислить оклад». Затем директор проверяет замечания по заказам и замерам и регистрирует фактическую выплату; референс перевода желателен для сверки, но не обязателен.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
@@ -1428,6 +1433,7 @@ function EmployeeDrawer({
   );
   const canAccrueThisSalary =
     canAccrueSalary &&
+    !row.employmentEnded &&
     row.currentSalary > 0 &&
     !row.accruals.some(
       (item) =>
@@ -1455,10 +1461,22 @@ function EmployeeDrawer({
               <UserRound />
             </div>
             <div>
-              <h2 className="text-xl font-bold">{row.user.name}</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-xl font-bold">{row.user.name}</h2>
+                {row.employmentEnded && (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-200">
+                    Уволен · бонус после завершения заказа
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-slate-400">
-                {employeePosition(row)} · Оклад{" "}
-                 {currency(row.currentSalary)} · действует с {dateLabel(row.salaryEffectiveFrom)}
+                {employeePosition(row)}
+                {!row.employmentEnded && (
+                  <>
+                    {" "}· Оклад {currency(row.currentSalary)} · действует с{" "}
+                    {dateLabel(row.salaryEffectiveFrom)}
+                  </>
+                )}
               </p>
               <p className="text-sm text-slate-400">
                 {row.payrollAudit
@@ -1504,7 +1522,7 @@ function EmployeeDrawer({
               <div>
                 <h3 className="font-semibold">Автоматическая проверка зарплаты</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Момент начисления: заказ принят в выбранном месяце.
+                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Момент начисления: {row.employmentEnded ? "заказ завершён в выбранном месяце" : "заказ принят в выбранном месяце"}.
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>

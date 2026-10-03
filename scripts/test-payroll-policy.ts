@@ -9,9 +9,12 @@ import {
   isOrderAssignedToManager,
   isPayrollReconciled,
   isPayrollPolicyReady,
+  isTerminatedPayrollEmployee,
   isValidKaspiReference,
   isValidOptionalPaymentReference,
   managerOrderBonus,
+  managerOrderBonusEarnedAt,
+  managerOrderBonusEarnedEvent,
   payrollPaymentPurpose,
   payrollPaymentReference,
   payrollRoleAccess,
@@ -101,6 +104,53 @@ assert.equal(
     managerName: "Компания",
   }),
   false,
+);
+assert.equal(
+  managerOrderBonusEarnedAt({
+    orderReceivedAt: "2026-09-10T00:00:00.000Z",
+    completedAt: null,
+    lifecycle: "IN_PRODUCTION",
+    employeeActive: true,
+    accountActive: true,
+  })?.toISOString(),
+  "2026-09-10T00:00:00.000Z",
+  "active manager earns the bonus when the order is received",
+);
+assert.equal(
+  managerOrderBonusEarnedAt({
+    orderReceivedAt: "2026-09-10T00:00:00.000Z",
+    completedAt: null,
+    lifecycle: "IN_PRODUCTION",
+    employeeActive: false,
+    employeeTerminatedAt: "2026-09-20T00:00:00.000Z",
+    accountActive: false,
+  }),
+  null,
+  "terminated manager must not earn a bonus before order completion",
+);
+assert.equal(
+  managerOrderBonusEarnedAt({
+    orderReceivedAt: "2026-09-10T00:00:00.000Z",
+    completedAt: "2026-10-03T08:00:00.000Z",
+    lifecycle: "COMPLETED",
+    employeeActive: false,
+    employeeTerminatedAt: "2026-09-20T00:00:00.000Z",
+    accountActive: false,
+  })?.toISOString(),
+  "2026-10-03T08:00:00.000Z",
+  "terminated manager earns the bonus in the completion month",
+);
+assert.equal(
+  managerOrderBonusEarnedEvent({
+    active: false,
+    terminatedAt: "2026-09-20T00:00:00.000Z",
+    accountActive: false,
+  }),
+  "ORDER_COMPLETED",
+);
+assert.equal(
+  isTerminatedPayrollEmployee({ active: true, accountActive: false }),
+  true,
 );
 const periodStart = new Date("2026-10-01T00:00:00.000Z");
 const periodEnd = new Date("2026-11-01T00:00:00.000Z");
@@ -225,6 +275,10 @@ const orderServiceSource = readFileSync(
   new URL("../lib/services/order.service.ts", import.meta.url),
   "utf8",
 );
+const orderLifecycleServiceSource = readFileSync(
+  new URL("../lib/services/order360.service.ts", import.meta.url),
+  "utf8",
+);
 const dailyOperationsRouteSource = readFileSync(
   new URL("../app/api/cron/daily-operations/route.ts", import.meta.url),
   "utf8",
@@ -275,6 +329,13 @@ const optionalAccrualReferenceMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const deferredTerminatedBonusMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261003143000_defer_terminated_manager_bonuses/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -312,6 +373,7 @@ assert.match(payrollPageSource, /Бонус автоматически/);
 assert.match(payrollPageSource, /Исправить бонус/);
 assert.match(payrollPageSource, /Отменить бонус/);
 assert.match(payrollPageSource, /Бонусы за заказы ·/);
+assert.match(payrollPageSource, /Уволен · бонус после завершения заказа/);
 assert.match(payrollPageSource, /Референс \/ номер перевода \(необязательно\)/);
 assert.match(payrollPageSource, /payrollBonus: "true"/);
 assert.match(orderSearchRouteSource, /payrollBonusEligible: params\.get\("payrollBonus"\) === "true"/);
@@ -323,6 +385,10 @@ assert.match(serviceSource, /BONUS_PAYMENT_EXISTS/);
 assert.match(serviceSource, /ORDER_BONUS_CORRECTED/);
 assert.match(serviceSource, /ORDER_BONUS_CANCELLED/);
 assert.match(serviceSource, /automatic-order-bonus:\$\{order\.id\}/);
+assert.match(serviceSource, /deferredCreated/);
+assert.match(serviceSource, /ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE/);
+assert.match(serviceSource, /accrueCompletedTerminatedManagerOrderBonus/);
+assert.match(orderLifecycleServiceSource, /accrueCompletedTerminatedManagerOrderBonus/);
 assert.match(serviceSource, /priorBonuses/);
 assert.match(
   serviceSource,
@@ -355,5 +421,8 @@ assert.match(companyResponsibleMigrationSource, /LOWER\(BTRIM\(customer_order\."
 assert.match(companyResponsibleMigrationSource, /'ORDER_BONUS_CANCELLED'/);
 assert.match(companyResponsibleMigrationSource, /"relatedAccrualId" = accrual\."id"/);
 assert.match(optionalAccrualReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS "externalReference"/);
+assert.match(deferredTerminatedBonusMigrationSource, /TERMINATED_MANAGER_BONUS_DEFERRED/);
+assert.match(deferredTerminatedBonusMigrationSource, /customer_order\."lifecycle" = 'COMPLETED'/);
+assert.match(deferredTerminatedBonusMigrationSource, /employee\."terminatedAt" IS NOT NULL/);
 
 console.log("Payroll policy tests passed");

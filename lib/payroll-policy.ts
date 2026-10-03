@@ -6,6 +6,7 @@ export const AUTOMATIC_ORDER_BONUS_REASON_PREFIX = "Автоматический
 export const PAYROLL_POLICY_ADJUSTMENT_PREFIX = "Автопроверка бонуса за заказ";
 export const PAYROLL_SALARY_ADJUSTMENT_PREFIX = "Автопроверка оклада";
 export const MANAGER_ORDER_BONUS_EARNED_EVENT = "ORDER_RECEIVED";
+export const TERMINATED_MANAGER_ORDER_BONUS_EARNED_EVENT = "ORDER_COMPLETED";
 
 const normalizeResponsibleName = (value: string | null | undefined) =>
   (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
@@ -16,6 +17,48 @@ export const isCompanyResponsibleOrder = (order: {
   const responsible = normalizeResponsibleName(order.managerName);
   return responsible === "компания" || responsible === "company";
 };
+
+export const isTerminatedPayrollEmployee = (employee: {
+  active: boolean;
+  terminatedAt?: Date | string | null;
+  accountActive?: boolean | null;
+}) =>
+  !employee.active ||
+  Boolean(employee.terminatedAt) ||
+  employee.accountActive === false;
+
+const validDate = (value: Date | string | null | undefined) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const managerOrderBonusEarnedAt = (input: {
+  orderReceivedAt: Date | string;
+  completedAt?: Date | string | null;
+  lifecycle?: string | null;
+  employeeActive: boolean;
+  employeeTerminatedAt?: Date | string | null;
+  accountActive?: boolean | null;
+}) => {
+  const terminated = isTerminatedPayrollEmployee({
+    active: input.employeeActive,
+    terminatedAt: input.employeeTerminatedAt,
+    accountActive: input.accountActive,
+  });
+  if (!terminated) return validDate(input.orderReceivedAt);
+  if (input.lifecycle !== "COMPLETED") return null;
+  return validDate(input.completedAt);
+};
+
+export const managerOrderBonusEarnedEvent = (employee: {
+  active: boolean;
+  terminatedAt?: Date | string | null;
+  accountActive?: boolean | null;
+}) =>
+  isTerminatedPayrollEmployee(employee)
+    ? TERMINATED_MANAGER_ORDER_BONUS_EARNED_EVENT
+    : MANAGER_ORDER_BONUS_EARNED_EVENT;
 
 export const managerOrderBonus = (orderAmount: number) =>
   orderAmount > MANAGER_ORDER_BONUS_THRESHOLD
