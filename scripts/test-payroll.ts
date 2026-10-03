@@ -268,6 +268,7 @@ async function main() {
         material: "Test",
         amount: 100000,
         manager: manager.name,
+        managerUserId: manager.id,
         status: "Оформлен",
         orderReceivedAt: new Date(Date.UTC(periodYear, 7, 15, 12)),
       },

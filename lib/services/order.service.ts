@@ -147,15 +147,7 @@ export async function searchOrderOptions(
   options: OrderSearchOptions = {},
 ) {
   const managerRoleScope: Prisma.OrderWhereInput = options.payrollBonusEligible
-    ? { OR: [
-        { managerUserId: actor.userId },
-        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
-        {
-          managerUserId: null,
-          manager: "",
-          leadConversion: { managerId: actor.userId },
-        },
-      ] }
+    ? { managerUserId: actor.userId }
     : { OR: [
         { managerUserId: actor.userId },
         { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
@@ -177,6 +169,7 @@ export async function searchOrderOptions(
   const monthRange = period ? companyMonthRange(period.year, period.month) : null;
   const payrollBonusScope: Prisma.OrderWhereInput = options.payrollBonusEligible
     ? {
+        managerUserId: { not: null },
         NOT: [
           { manager: { equals: "Компания", mode: "insensitive" } },
           { manager: { equals: "Company", mode: "insensitive" } },

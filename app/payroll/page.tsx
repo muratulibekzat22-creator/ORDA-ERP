@@ -578,6 +578,40 @@ export default function PayrollPage() {
     await load();
     return true;
   };
+  const editOrderBonusFromAudit = (
+    employee: PayrollRow,
+    audit: PayrollAuditOrder,
+  ) => {
+    const existing = managedBonuses.find(
+      (item) =>
+        item.employeeId === employee.id && item.orderId === audit.orderId,
+    );
+    if (existing) {
+      if (!existing.editable) {
+        setError(
+          existing.blockedReason === "BONUS_PAYMENT_EXISTS"
+            ? "Этот бонус уже выплачен. Сначала сторнируйте связанную выплату."
+            : existing.blockedReason === "BONUS_POLICY_ADJUSTED"
+              ? "Этот бонус уже исправлен системой и сохранён в истории."
+              : "Расчётный месяц закрыт для изменений.",
+        );
+        return;
+      }
+      setBonusCorrection({ mode: "correct", item: existing });
+      return;
+    }
+    if (!audit.eligible) {
+      setError("Этот заказ не участвует в бонусе выбранного месяца.");
+      return;
+    }
+    setTarget(employee);
+    setOperation("bonus");
+    setForm({
+      ...emptyForm(),
+      orderId: String(audit.orderId),
+      amount: String(audit.expected),
+    });
+  };
   const openOperation = (
     next: Operation,
     row?: PayrollRow,
@@ -623,7 +657,7 @@ export default function PayrollPage() {
       : next === "payment" && employee
         ? {
             ...emptyForm(),
-            amount: String(Math.max(employee.payrollAudit?.approvedPayable ?? employee.totals.payable, 0)),
+            amount: String(Math.max(employee.calculation.amountToPay, 0)),
             method: "kaspi",
             reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
           }
@@ -954,6 +988,13 @@ export default function PayrollPage() {
             )}
             canReportAdvance={advanceSelfService && Boolean(data.period) && !locked}
             onOperation={openOperation}
+            orderBonuses={managedBonuses.filter(
+              (item) => item.employeeId === data.rows[0].id,
+            )}
+            canEditOrderBonuses={canCorrectOrderBonuses && !locked}
+            onEditOrderBonus={(item) =>
+              editOrderBonusFromAudit(data.rows[0], item)
+            }
           />
         )}
         {canCorrectOrderBonuses && data.period && (
@@ -1091,6 +1132,12 @@ export default function PayrollPage() {
           onCancelBonus={(item) =>
             setBonusCorrection({ mode: "cancel", item })
           }
+          onEditAuditBonus={(item) =>
+            editOrderBonusFromAudit(
+              data.rows.find((row) => row.id === details.id) ?? details,
+              item,
+            )
+          }
         />
       )}{" "}
       {operation && target && data.period && (
@@ -1135,7 +1182,7 @@ export default function PayrollPage() {
               : operation === "payment"
                 ? {
                     ...emptyForm(),
-                    amount: String(Math.max(row.payrollAudit?.approvedPayable ?? row.totals.payable, 0)),
+                    amount: String(Math.max(row.calculation.amountToPay, 0)),
                     method: "kaspi",
                     reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
                   }
@@ -1253,18 +1300,120 @@ function Metric({
     </div>
   );
 }
+
+function PayrollOrderBonusAuditList({
+  items,
+  employeeId,
+  orderBonuses,
+  canEdit,
+  onEdit,
+}: {
+  items: PayrollAuditOrder[];
+  employeeId: number;
+  orderBonuses: ManagedOrderBonus[];
+  canEdit: boolean;
+  onEdit: (item: PayrollAuditOrder) => void;
+}) {
+  if (items.length === 0)
+    return (
+      <p className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+        Заказов менеджера в выбранном месяце нет.
+      </p>
+    );
+  return (
+    <div className="space-y-2">
+      {items.map((item) => {
+        const difference = item.managerDifference;
+        const mismatch =
+          difference > 0
+            ? `лишнее ${currency(difference)}`
+            : difference < 0
+              ? `не хватает ${currency(Math.abs(difference))}`
+              : "верно";
+        const existing = orderBonuses.find(
+          (bonus) =>
+            bonus.employeeId === employeeId && bonus.orderId === item.orderId,
+        );
+        const editable =
+          canEdit &&
+          (item.eligible || Boolean(existing)) &&
+          (!existing || existing.editable);
+        const blocked = existing?.blockedReason;
+        return (
+          <div
+            key={`${item.orderId}-${item.accrualId}`}
+            className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm"
+          >
+            <div className="flex flex-wrap justify-between gap-2">
+              <span>
+                <b>{item.orderNumber}</b> · {item.clientName}
+              </span>
+              <b>{currency(item.orderAmount)}</b>
+            </div>
+            <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
+              <span>
+                Внесено {currency(item.submitted)} · система {currency(item.expected)}
+              </span>
+              <span
+                className={
+                  difference === 0 ? "text-emerald-300" : "text-amber-300"
+                }
+              >
+                {item.eligible
+                  ? mismatch
+                  : "не участвует в этом расчётном периоде"}
+                {item.appliedAdjustment
+                  ? ` · исправлено ${currency(item.appliedAdjustment)}`
+                  : ""}
+              </span>
+            </div>
+            {(item.eligible || existing) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!editable}
+                  onClick={() => onEdit(item)}
+                  className="flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Pencil size={15} />
+                  {existing ? "Редактировать бонус" : "Указать бонус"}
+                </button>
+                {!editable && blocked && (
+                  <span className="text-xs text-amber-200">
+                    {blocked === "BONUS_PAYMENT_EXISTS"
+                      ? "Бонус уже выплачен"
+                      : blocked === "BONUS_POLICY_ADJUSTED"
+                        ? "Исправление уже сохранено"
+                        : "Месяц закрыт"}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PersonalPayrollReport({
   row,
   managerSelfService,
   automaticBonusMode,
   canReportAdvance,
   onOperation,
+  orderBonuses,
+  canEditOrderBonuses,
+  onEditOrderBonus,
 }: {
   row: PayrollRow;
   managerSelfService: boolean;
   automaticBonusMode: boolean;
   canReportAdvance: boolean;
   onOperation: (operation: Operation, row: PayrollRow) => void;
+  orderBonuses: ManagedOrderBonus[];
+  canEditOrderBonuses: boolean;
+  onEditOrderBonus: (item: PayrollAuditOrder) => void;
 }) {
   const calculation = row.calculation;
   return (
@@ -1311,6 +1460,20 @@ function PersonalPayrollReport({
                 ? "Бонусы по заказам формируются автоматически. Ошибочную запись можно исправить или отменить ниже."
                 : "Выберите каждый свой заказ за месяц — сумму бонуса ORDA подставит автоматически. Ошибочную запись можно исправить или отменить ниже."}
             </p>
+          )}
+          {managerSelfService && row.payrollAudit && (
+            <div className="mt-4">
+              <h3 className="mb-2 text-sm font-semibold text-white">
+                Мои заказы и бонусы
+              </h3>
+              <PayrollOrderBonusAuditList
+                items={row.payrollAudit.mismatches}
+                employeeId={row.id}
+                orderBonuses={orderBonuses}
+                canEdit={canEditOrderBonuses}
+                onEdit={onEditOrderBonus}
+              />
+            </div>
           )}
         </div>
         <div className="flex flex-wrap gap-2 xl:max-w-sm xl:justify-end">
@@ -1476,6 +1639,7 @@ function EmployeeDrawer({
   onApproveManual,
   onCorrectBonus,
   onCancelBonus,
+  onEditAuditBonus,
 }: {
   row: PayrollRow;
   director: boolean;
@@ -1498,6 +1662,7 @@ function EmployeeDrawer({
   onApproveManual: (row: PayrollRow) => Promise<unknown>;
   onCorrectBonus: (item: ManagedOrderBonus) => void;
   onCancelBonus: (item: ManagedOrderBonus) => void;
+  onEditAuditBonus: (item: PayrollAuditOrder) => void;
 }) {
   const accrualTotal = (types: string[]) =>
     row.accruals
@@ -1658,29 +1823,14 @@ function EmployeeDrawer({
               </div>
             )}
             {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100"><b>Расчётный лист и выплата заблокированы до завершения работы.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
-            <div className="mt-3 space-y-2">
-              {row.payrollAudit.mismatches.map((item) => {
-                const difference = item.managerDifference;
-                const mismatch = difference > 0
-                  ? `лишнее ${currency(difference)}`
-                  : difference < 0
-                    ? `не хватает ${currency(Math.abs(difference))}`
-                    : "верно";
-                return (
-                  <div key={item.accrualId} className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <span><b>{item.orderNumber}</b> · {item.clientName}</span>
-                      <b>{currency(item.orderAmount)}</b>
-                    </div>
-                    <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
-                      <span>Внесено {currency(item.submitted)} · система {currency(item.expected)}</span>
-                      <span className={difference === 0 ? "text-emerald-300" : "text-amber-300"}>
-                        {item.eligible ? mismatch : "не участвует в этом расчётном периоде"}{item.appliedAdjustment ? ` · исправлено ${currency(item.appliedAdjustment)}` : ""}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="mt-3">
+              <PayrollOrderBonusAuditList
+                items={row.payrollAudit.mismatches}
+                employeeId={row.id}
+                orderBonuses={orderBonuses}
+                canEdit={canCorrectOrderBonuses && !closed}
+                onEdit={onEditAuditBonus}
+              />
             </div>
             {director && !closed && !row.payrollAudit.calculationReady && <div className="mt-4"><button onClick={() => void onApproveManual(row)} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Подтвердить исключение вручную</button></div>}
           </section>
@@ -2277,7 +2427,21 @@ function OperationModal({
   );
   const orderOperation = operation === "bonus" || operation === "deduction";
   const [orderQuery, setOrderQuery] = useState("");
-  const [orders, setOrders] = useState<OrderOption[]>([]);
+  const preselectedAuditOrder = row.payrollAudit?.mismatches.find(
+    (item) => item.orderId === Number(form.orderId),
+  );
+  const [orders, setOrders] = useState<OrderOption[]>(() =>
+    preselectedAuditOrder
+      ? [
+          {
+            id: preselectedAuditOrder.orderId,
+            number: preselectedAuditOrder.orderNumber,
+            amount: preselectedAuditOrder.orderAmount,
+            client: { name: preselectedAuditOrder.clientName },
+          },
+        ]
+      : [],
+  );
   const [ordersLoading, setOrdersLoading] = useState(false);
   const selectedOrder = orders.find(
     (item) => item.id === Number(form.orderId),
@@ -2309,7 +2473,27 @@ function OperationModal({
           signal: controller.signal,
         });
         const body = await response.json().catch(() => ({}));
-        if (response.ok) setOrders(Array.isArray(body.items) ? body.items : []);
+        if (response.ok) {
+          const loaded = Array.isArray(body.items)
+            ? (body.items as OrderOption[])
+            : [];
+          setOrders(
+            preselectedAuditOrder &&
+              !loaded.some(
+                (item) => item.id === preselectedAuditOrder.orderId,
+              )
+              ? [
+                  {
+                    id: preselectedAuditOrder.orderId,
+                    number: preselectedAuditOrder.orderNumber,
+                    amount: preselectedAuditOrder.orderAmount,
+                    client: { name: preselectedAuditOrder.clientName },
+                  },
+                  ...loaded,
+                ]
+              : loaded,
+          );
+        }
       } finally {
         if (!controller.signal.aborted) setOrdersLoading(false);
       }
@@ -2318,7 +2502,7 @@ function OperationModal({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [orderOperation, orderQuery, period.month, period.year]);
+  }, [orderOperation, orderQuery, period.month, period.year, preselectedAuditOrder]);
   return (
     <div
       className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4"

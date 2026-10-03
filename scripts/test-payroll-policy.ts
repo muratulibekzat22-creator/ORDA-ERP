@@ -19,6 +19,7 @@ import {
   payrollPaymentReference,
   payrollRoleAccess,
   personalPayrollCalculation,
+  payrollSalaryForPeriod,
 } from "../lib/payroll-policy";
 
 assert.equal(managerOrderBonus(616_000), 30_000);
@@ -99,11 +100,96 @@ assert.equal(
 );
 assert.equal(isCompanyResponsibleOrder({ managerName: " Компания " }), true);
 assert.equal(
+  isCompanyResponsibleOrder({
+    managerName: "Гульсым",
+    managerUserId: null,
+  }),
+  true,
+  "an order without a current responsible user is company work even if a legacy manager name remains",
+);
+assert.equal(
+  isOrderAssignedToManager(
+    {
+      managerUserId: null,
+      leadManagerId: 12,
+      managerName: "Гульсым",
+    },
+    { id: 12, name: "Гульсым" },
+  ),
+  false,
+  "a former lead manager must not receive a company-owned order bonus",
+);
+assert.equal(
   isManagerOrderBonusEligible({
     status: "Оформлен",
     managerName: "Компания",
   }),
   false,
+);
+assert.equal(
+  isManagerOrderBonusEligible({
+    status: "Оформлен",
+    managerName: "Гульсым",
+    managerUserId: null,
+  }),
+  false,
+);
+
+const septemberRange = {
+  periodStart: new Date("2026-09-01T00:00:00.000Z"),
+  periodEnd: new Date("2026-10-01T00:00:00.000Z"),
+};
+assert.deepEqual(
+  payrollSalaryForPeriod({
+    hiredAt: "2026-10-01T00:00:00.000Z",
+    baseSalary: 200_000,
+    salaryRates: [
+      {
+        amount: 200_000,
+        effectiveFrom: "2026-10-01T00:00:00.000Z",
+      },
+    ],
+    ...septemberRange,
+  }),
+  {
+    amount: 0,
+    effectiveFrom: new Date("2026-10-01T00:00:00.000Z"),
+    employedInPeriod: false,
+  },
+  "an October employee must have zero salary and payable in September",
+);
+assert.equal(
+  payrollSalaryForPeriod({
+    hiredAt: "2026-01-01T00:00:00.000Z",
+    terminatedAt: "2026-10-01T00:00:00.000Z",
+    baseSalary: 200_000,
+    salaryRates: [
+      {
+        amount: 200_000,
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    ...septemberRange,
+  }).amount,
+  200_000,
+  "a manager employed during September keeps the full September salary",
+);
+assert.equal(
+  payrollSalaryForPeriod({
+    hiredAt: "2026-01-01T00:00:00.000Z",
+    terminatedAt: "2026-10-01T00:00:00.000Z",
+    baseSalary: 200_000,
+    salaryRates: [
+      {
+        amount: 200_000,
+        effectiveFrom: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    periodStart: new Date("2026-10-01T00:00:00.000Z"),
+    periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+  }).amount,
+  0,
+  "salary stops in the month after employment ends",
 );
 assert.equal(
   managerOrderBonusEarnedAt({
@@ -394,7 +480,10 @@ assert.match(payrollRouteSource, /correctPayrollAccrual/);
 assert.match(serviceSource, /export async function correctPayrollAccrual/);
 assert.match(serviceSource, /PAYROLL_ACCRUAL_CORRECTED/);
 assert.match(serviceSource, /else salaryManager\(actor\)/);
-assert.match(serviceSource, /baseSalaryPosted > 0[\s\S]*statementSalary/);
+assert.match(serviceSource, /payrollSalaryForPeriod/);
+assert.match(serviceSource, /const statementSalary = configuredSalary/);
+assert.match(payrollPageSource, /Редактировать бонус/);
+assert.match(payrollPageSource, /Указать бонус/);
 assert.match(serviceSource, /isValidOptionalPaymentReference/);
 assert.match(serviceSource, /PARTIAL_SALARY_PAYMENT_CREATED/);
 assert.match(serviceSource, /PARTIAL_SALARY_ACCRUAL_REQUIRED/);
@@ -433,7 +522,7 @@ assert.match(
   serviceSource,
   /actor\.role === Role\.MANAGER[\s\S]*original\.employee\.userId !== actor\.userId/,
 );
-assert.match(serviceSource, /const approvedAccrued = accrued/);
+assert.match(serviceSource, /const approvedAccrued = statementPosted/);
 assert.match(
   serviceSource,
   /input\.type === PayrollAccrualType\.BASE_SALARY[\s\S]*actor\.role !== Role\.DIRECTOR[\s\S]*actor\.role !== Role\.OPERATIONS_DIRECTOR/,

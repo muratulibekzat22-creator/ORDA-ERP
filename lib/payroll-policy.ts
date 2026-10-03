@@ -13,9 +13,63 @@ const normalizeResponsibleName = (value: string | null | undefined) =>
 
 export const isCompanyResponsibleOrder = (order: {
   managerName?: string | null;
+  managerUserId?: number | null;
 }) => {
   const responsible = normalizeResponsibleName(order.managerName);
-  return responsible === "компания" || responsible === "company";
+  const companyLabel = /(^|[\s(«"'/_-])(компания|company)(?=$|[\s)»"'/_-])/iu;
+  return order.managerUserId === null || companyLabel.test(responsible);
+};
+
+const payrollDate = (value: Date | string | null | undefined) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+export const payrollSalaryForPeriod = (input: {
+  hiredAt: Date | string;
+  terminatedAt?: Date | string | null;
+  baseSalary: number | string | { toString(): string };
+  salaryRates: Array<{
+    amount: number | string | { toString(): string };
+    effectiveFrom: Date | string;
+    effectiveTo?: Date | string | null;
+  }>;
+  periodStart: Date;
+  periodEnd: Date;
+}) => {
+  const hiredAt = payrollDate(input.hiredAt);
+  const terminatedAt = payrollDate(input.terminatedAt);
+  const employedInPeriod = Boolean(
+    hiredAt &&
+      hiredAt < input.periodEnd &&
+      (!terminatedAt || terminatedAt > input.periodStart),
+  );
+  const activeRate = employedInPeriod
+    ? input.salaryRates.find((rate) => {
+        const effectiveFrom = payrollDate(rate.effectiveFrom);
+        const effectiveTo = payrollDate(rate.effectiveTo);
+        return Boolean(
+          effectiveFrom &&
+            effectiveFrom < input.periodEnd &&
+            (!effectiveTo || effectiveTo > input.periodStart),
+        );
+      })
+    : undefined;
+  const amount = !employedInPeriod
+    ? 0
+    : activeRate
+      ? Number(activeRate.amount)
+      : input.salaryRates.length === 0
+        ? Number(input.baseSalary)
+        : 0;
+  return {
+    amount: Number.isFinite(amount) ? amount : 0,
+    effectiveFrom: activeRate
+      ? payrollDate(activeRate.effectiveFrom)
+      : hiredAt,
+    employedInPeriod,
+  };
 };
 
 export const isTerminatedPayrollEmployee = (employee: {
@@ -78,6 +132,7 @@ export const isManagerOrderBonusEligible = (order: {
   lifecycle?: string | null;
   deletedAt?: Date | string | null;
   managerName?: string | null;
+  managerUserId?: number | null;
 }) =>
   !order.deletedAt &&
   !isCompanyResponsibleOrder(order) &&
@@ -96,12 +151,12 @@ export const isOrderAssignedToManager = (
   // manager must not receive a bonus after the order is reassigned to the
   // company or to another manager.
   if (isCompanyResponsibleOrder(order)) return false;
-  if (order.managerUserId != null)
-    return order.managerUserId === manager.id;
+  if (manager.id > 0) return order.managerUserId === manager.id;
+  if (order.managerUserId != null) return false;
   const responsible = normalizeResponsibleName(order.managerName);
   if (responsible)
     return responsible === normalizeResponsibleName(manager.name);
-  return order.leadManagerId === manager.id;
+  return false;
 };
 
 export const isDateInPayrollPeriod = (
@@ -115,6 +170,7 @@ export const auditManagerOrderBonus = (input: {
   status?: string | null;
   deletedAt?: Date | string | null;
   managerName?: string | null;
+  managerUserId?: number | null;
   submitted: number;
   recorded: number;
 }) => {
