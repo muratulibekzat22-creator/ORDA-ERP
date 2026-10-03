@@ -233,6 +233,51 @@ async function main() {
     });
     ids.orders.push(order.id);
     const base = { employeeId: profile.id, periodId: period.id };
+    const beforeManualSalaryAccrual = await payrollSummary(
+      period.id,
+      directorActor,
+    );
+    const beforeManualSalaryRow = beforeManualSalaryAccrual.rows.find(
+      (row) => row.id === profile.id,
+    );
+    assert(beforeManualSalaryRow, "manager payroll preview row is missing");
+    assert.equal(
+      beforeManualSalaryRow.totals.accrued,
+      0,
+      "configured salary must remain a preview until the founder accrues it",
+    );
+    assert.equal(beforeManualSalaryRow.currentSalary, 200000);
+    const companyOrder = await prisma.order.create({
+      data: {
+        number: `PAY-COMPANY-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Test",
+        amount: 100000,
+        manager: "Компания",
+        managerUserId: null,
+        status: "Оформлен",
+        orderReceivedAt: new Date(Date.UTC(periodYear, 7, 16, 12)),
+      },
+    });
+    ids.orders.push(companyOrder.id);
+    await expectCode(
+      () =>
+        createSelfAccrual(
+          {
+            periodId: period.id,
+            type: PayrollAccrualType.ORDER_BONUS,
+            amount: 30000,
+            orderId: companyOrder.id,
+            reason: "Компания не получает менеджерский бонус",
+            key: key("company-order-bonus"),
+            requestHash: "company-order-bonus",
+          },
+          managerActor,
+        ),
+      "ORDER_OUTSIDE_PERIOD",
+    );
     await expectCode(
       () =>
         createAccrual(
@@ -248,16 +293,22 @@ async function main() {
         ),
       "MEASUREMENT_BONUS_AUTOMATIC_ONLY",
     );
-    await createAccrual(
+    const salaryAccrual = await createAccrual(
       {
         ...base,
         type: PayrollAccrualType.BASE_SALARY,
         amount: 200000,
         reason: "Оклад",
+        externalReference: "KASPI-SALARY-TEST",
         key: key("salary"),
         requestHash: "salary",
       },
       directorActor,
+    );
+    assert.equal(
+      salaryAccrual.accrual.externalReference,
+      "KASPI-SALARY-TEST",
+      "optional salary accrual reference must be preserved",
     );
     const guaranteed = await createAccrual(
       {

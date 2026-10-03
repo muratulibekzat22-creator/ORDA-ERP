@@ -7,6 +7,16 @@ export const PAYROLL_POLICY_ADJUSTMENT_PREFIX = "Автопроверка бон
 export const PAYROLL_SALARY_ADJUSTMENT_PREFIX = "Автопроверка оклада";
 export const MANAGER_ORDER_BONUS_EARNED_EVENT = "ORDER_RECEIVED";
 
+const normalizeResponsibleName = (value: string | null | undefined) =>
+  (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
+
+export const isCompanyResponsibleOrder = (order: {
+  managerName?: string | null;
+}) => {
+  const responsible = normalizeResponsibleName(order.managerName);
+  return responsible === "компания" || responsible === "company";
+};
+
 export const managerOrderBonus = (orderAmount: number) =>
   orderAmount > MANAGER_ORDER_BONUS_THRESHOLD
     ? MANAGER_ORDER_BONUS_HIGH
@@ -24,8 +34,10 @@ export const isManagerOrderBonusEligible = (order: {
   status?: string | null;
   lifecycle?: string | null;
   deletedAt?: Date | string | null;
+  managerName?: string | null;
 }) =>
   !order.deletedAt &&
+  !isCompanyResponsibleOrder(order) &&
   order.lifecycle !== "CANCELLED" &&
   !/(отмен|возврат|cancel|refund|return)/i.test(order.status ?? "");
 
@@ -36,12 +48,18 @@ export const isOrderAssignedToManager = (
     managerName?: string | null;
   },
   manager: { id: number; name: string },
-) =>
-  order.managerUserId === manager.id ||
-  order.leadManagerId === manager.id ||
-  (!order.managerUserId &&
-    (order.managerName ?? "").trim().toLocaleLowerCase("ru-RU") ===
-      manager.name.trim().toLocaleLowerCase("ru-RU"));
+) => {
+  // The order's current responsible party is authoritative.  A lead's former
+  // manager must not receive a bonus after the order is reassigned to the
+  // company or to another manager.
+  if (isCompanyResponsibleOrder(order)) return false;
+  if (order.managerUserId != null)
+    return order.managerUserId === manager.id;
+  const responsible = normalizeResponsibleName(order.managerName);
+  if (responsible)
+    return responsible === normalizeResponsibleName(manager.name);
+  return order.leadManagerId === manager.id;
+};
 
 export const isDateInPayrollPeriod = (
   value: Date,
@@ -53,6 +71,7 @@ export const auditManagerOrderBonus = (input: {
   orderAmount: number;
   status?: string | null;
   deletedAt?: Date | string | null;
+  managerName?: string | null;
   submitted: number;
   recorded: number;
 }) => {
@@ -78,6 +97,10 @@ export const isValidKaspiReference = (value: string | undefined) => {
   const normalized = value?.trim() ?? "";
   return normalized.length >= 3 && normalized.length <= 120;
 };
+
+export const isValidOptionalPaymentReference = (
+  value: string | undefined,
+) => !value?.trim() || isValidKaspiReference(value);
 
 export const isPayrollReconciled = (delta: number) =>
   Number.isFinite(delta) && Math.abs(delta) < 0.01;

@@ -8,10 +8,7 @@ import {
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
-import {
-  isCompanyMonthComplete,
-  isCompanyMonthStarted,
-} from "@/lib/company-calendar";
+import { isCompanyMonthStarted } from "@/lib/company-calendar";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { requireTenantIdentity } from "@/lib/tenant-context";
@@ -64,8 +61,6 @@ export async function GET(request: Request) {
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
     const identity = actor(auth.session!);
-    if (identity.role === Role.OPERATIONS_DIRECTOR)
-      throw new PayrollError("FORBIDDEN");
     const canAccrueSalary = identity.role === Role.DIRECTOR;
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
@@ -105,8 +100,6 @@ export async function POST(request: Request) {
   const auth = await requirePermission("payroll");
   if (auth.response) return auth.response;
   const identity = actor(auth.session!);
-  if (identity.role === Role.OPERATIONS_DIRECTOR)
-    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
   const keyResult = readIdempotencyKey(request);
   if ("response" in keyResult) return keyResult.response;
   try {
@@ -166,8 +159,8 @@ export async function POST(request: Request) {
           select: { year: true, month: true },
         });
         if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
-        if (!isCompanyMonthComplete(period.year, period.month))
-          throw new PayrollError("PAYROLL_PERIOD_NOT_FINISHED");
+        if (!isCompanyMonthStarted(period.year, period.month))
+          throw new PayrollError("PAYROLL_PERIOD_NOT_STARTED");
       }
       return NextResponse.json(
         await createAccrual(
@@ -182,6 +175,10 @@ export async function POST(request: Request) {
             amount: Number(body.amount),
             orderId: body.orderId == null ? undefined : Number(body.orderId),
             reason: String(body.reason ?? ""),
+            externalReference:
+              typeof body.externalReference === "string"
+                ? body.externalReference
+                : undefined,
             paymentMode: body.paymentMode as BonusPaymentMode | undefined,
             manualOverride: body.manualOverride === true,
             key: keyResult.key,

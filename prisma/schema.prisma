@@ -1646,6 +1646,7 @@ model PayrollAccrual {
   measurementId           Int?                   @unique
   measurement             Measurement?           @relation(fields: [measurementId], references: [id], onDelete: Restrict)
   reason                  String
+  externalReference       String?
   paymentMode             BonusPaymentMode?
   approvedAt              DateTime               @default(now())
   approvedById            Int

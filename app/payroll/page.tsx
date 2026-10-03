@@ -19,7 +19,6 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { isCompanyMonthComplete } from "@/lib/company-calendar";
 import {
   isManagerOrderBonusAutomaticPeriod,
   managerOrderBonus,
@@ -32,6 +31,7 @@ type Accrual = {
   amount: string;
   direction: "INCREASE" | "DECREASE";
   reason: string;
+  externalReference?: string | null;
   orderId?: number | null;
   order?: OrderOption | null;
   createdAt: string;
@@ -310,7 +310,7 @@ const errorLabels: Record<string, string> = {
   INVALID_PERIOD: "Выберите текущий или прошедший расчётный месяц",
   SALARY_ALREADY_ACCRUED: "Оклад за этот месяц уже начислен",
   SALARY_AMOUNT_MISMATCH: "Сумма оклада изменилась. Обновите ведомость и повторите начисление",
-  PAYROLL_PERIOD_NOT_FINISHED: "Оклад можно начислить только за завершённый месяц",
+  PAYROLL_PERIOD_NOT_STARTED: "Расчётный месяц ещё не начался",
   ACCRUAL_ALREADY_REVERSED: "Это начисление уже сторнировано",
   DIRECTOR_CONFIRMATION_REQUIRED: "Финальную выплату зарплаты подтверждает директор",
   PAYROLL_POLICY_NOT_APPLICABLE: "Автоматическая проверка применяется только к зарплате менеджера",
@@ -318,7 +318,7 @@ const errorLabels: Record<string, string> = {
   PAYMENT_EXCEEDS_ACCRUAL: "Сумма частичной оплаты превышает остаток начисленного оклада",
   PARTIAL_SALARY_ACCRUAL_REQUIRED: "Сначала начислите оклад за выбранный месяц",
   KASPI_METHOD_REQUIRED: "Финальная зарплата выплачивается через Kaspi",
-  KASPI_REFERENCE_REQUIRED: "Укажите реальный номер или референс перевода Kaspi",
+  KASPI_REFERENCE_REQUIRED: "Если указываете референс Kaspi, введите не менее трёх символов",
   KASPI_REFERENCE_ALREADY_USED: "Этот референс Kaspi уже использован в другой выплате",
   PAYROLL_RECONCILIATION_REQUIRED: "Сначала директор начисляет оклад, а менеджер регистрирует все бонусы по заказам",
   PAYROLL_WORK_INCOMPLETE: "Выплата заблокирована: сначала закройте замечания по заказам, просроченные замеры и контрольные задачи",
@@ -370,17 +370,16 @@ export default function PayrollPage() {
     founder = roleAccess.founder,
     operationsDirector = roleAccess.administrator,
     accountant = roleAccess.accountant,
-    adminView = founder || accountant,
+    adminView = founder || operationsDirector || accountant,
     salaryManager = founder,
-    director = operationsDirector && adminView,
+    director = operationsDirector,
     canAccrueSalary = founder,
     managerSelfService = role === "MANAGER" && !adminView,
     canCorrectOrderBonuses =
       role === "MANAGER" || role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR",
     advanceSelfService = !adminView && role !== "PARTNER",
     closed = data.period?.status === "CLOSED",
-    locked = Boolean(data.period && data.period.status !== "OPEN"),
-    completedMonth = isCompanyMonthComplete(selected.year, selected.month);
+    locked = Boolean(data.period && data.period.status !== "OPEN");
   const salaryCandidates = data.rows.filter(
     (row) =>
       row.currentSalary > 0 &&
@@ -404,10 +403,7 @@ export default function PayrollPage() {
       year: String(selected.year),
       month: String(selected.month),
     });
-    if (
-      canCorrectOrderBonuses &&
-      isManagerOrderBonusAutomaticPeriod(selected.year, selected.month)
-    ) {
+    if (canCorrectOrderBonuses) {
       const syncResponse = await fetch("/api/payroll/bonus-corrections", {
         method: "POST",
         headers: {
@@ -651,6 +647,8 @@ export default function PayrollPage() {
               ? "DEDUCTION"
               : "ORDER_BONUS",
         orderId: form.orderId ? Number(form.orderId) : undefined,
+        externalReference:
+          operation === "salaryAccrual" ? form.externalReference : undefined,
         manualOverride: operation === "bonus" && form.manualOverride,
       };
     const saved = operation === "advanceReport"
@@ -743,7 +741,7 @@ export default function PayrollPage() {
   const stats: Array<[string, number, LucideIcon, string]> = [
     ["Начислено", data.breakdown.totalAccrued, CircleDollarSign, "text-white"],
     ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
-    ["По правилам к начислению", expectedAccrualTotal, Banknote, "text-amber-300"],
+    ["Расчёт системы (ещё не начислено)", expectedAccrualTotal, Banknote, "text-amber-300"],
   ];
 
   if (sessionStatus === "loading")
@@ -792,7 +790,7 @@ export default function PayrollPage() {
                 {labels[data.period.status]}
               </span>
             )}
-            {canAccrueSalary && data.period && !locked && completedMonth && (
+            {canAccrueSalary && data.period && !locked && (
               <button
                 onClick={() => openOperation("salaryAccrual", salaryCandidates[0])}
                 disabled={!salaryCandidates.length}
@@ -844,7 +842,7 @@ export default function PayrollPage() {
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
             <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и рассчитывает бонус по сумме заказа: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Начиная с октября 2026 года бонусы создаются автоматически по оформленным заказам; ручное изменение суммы требует причины. Ошибочный месяц или заказ исправляется со страницы без удаления истории.</p>
-            <p className="mt-2 leading-6">После начисления операционный директор проверяет замечания по заказам и замерам, затем регистрирует фактическую выплату с референсом Kaspi. Право выплаты остаётся отдельно от права начислить оклад.</p>
+            <p className="mt-2 leading-6">Оклад считается начисленным только после нажатия «Начислить оклад». Затем директор проверяет замечания по заказам и замерам и регистрирует фактическую выплату; референс перевода желателен для сверки, но не обязателен.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
         )}
@@ -923,7 +921,7 @@ export default function PayrollPage() {
                       {[
                         "Сотрудник",
                         "Начислено",
-                        "Должно быть",
+                        "Расчёт системы",
                         "Выплачено",
                         "К выплате",
                         "Статус",
@@ -967,7 +965,7 @@ export default function PayrollPage() {
                     </div>
                     <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                       <Metric label="Начислено" value={row.totals.accrued} />
-                      <Metric label="Должно быть" value={row.payrollAudit?.auditedAccrued ?? row.totals.accrued} />
+                      <Metric label="Расчёт системы" value={row.payrollAudit?.auditedAccrued ?? row.totals.accrued} />
                       <Metric
                         label="К выплате"
                         value={row.totals.payable}
@@ -993,7 +991,11 @@ export default function PayrollPage() {
           director={director}
           canManageSalary={salaryManager}
           canReviewPayments={founder}
-          canAccrueSalary={canAccrueSalary && completedMonth}
+          canAccrueSalary={canAccrueSalary}
+          orderBonuses={managedBonuses.filter(
+            (item) => item.employeeId === details.id,
+          )}
+          canCorrectOrderBonuses={canCorrectOrderBonuses}
           canPay={director}
           closed={locked}
           onClose={() => setDetails(null)}
@@ -1001,6 +1003,12 @@ export default function PayrollPage() {
           onReversePayment={reversePayrollPayment}
           onReviewPayment={reviewPaymentReport}
           onApproveManual={approveManualPayroll}
+          onCorrectBonus={(item) =>
+            setBonusCorrection({ mode: "correct", item })
+          }
+          onCancelBonus={(item) =>
+            setBonusCorrection({ mode: "cancel", item })
+          }
         />
       )}{" "}
       {operation && target && data.period && (
@@ -1232,11 +1240,13 @@ function PersonalPayrollReport({
 function OrderBonusCorrectionPanel({
   items,
   managerView,
+  title,
   onCorrect,
   onCancel,
 }: {
   items: ManagedOrderBonus[];
   managerView: boolean;
+  title?: string;
   onCorrect: (item: ManagedOrderBonus) => void;
   onCancel: (item: ManagedOrderBonus) => void;
 }) {
@@ -1245,7 +1255,7 @@ function OrderBonusCorrectionPanel({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="font-semibold">
-            {managerView ? "Мои бонусы за заказы" : "Бонусы менеджеров"}
+            {title ?? (managerView ? "Мои бонусы за заказы" : "Бонусы менеджеров")}
           </h2>
           <p className="mt-1 text-sm text-slate-400">
             Исправьте месяц или заказ одним действием. Система пересчитает сумму по заказу, а исходная запись останется в истории.
@@ -1359,12 +1369,16 @@ function EmployeeDrawer({
   canReviewPayments,
   canAccrueSalary,
   canPay,
+  orderBonuses,
+  canCorrectOrderBonuses,
   closed,
   onClose,
   onOperation,
   onReversePayment,
   onReviewPayment,
   onApproveManual,
+  onCorrectBonus,
+  onCancelBonus,
 }: {
   row: PayrollRow;
   director: boolean;
@@ -1372,12 +1386,16 @@ function EmployeeDrawer({
   canReviewPayments: boolean;
   canAccrueSalary: boolean;
   canPay: boolean;
+  orderBonuses: ManagedOrderBonus[];
+  canCorrectOrderBonuses: boolean;
   closed: boolean;
   onClose: () => void;
   onOperation: (operation: Operation, row: PayrollRow) => void;
   onReversePayment: (item: Payment) => Promise<unknown>;
   onReviewPayment: (item: PaymentConfirmation, decision: "CONFIRM" | "REJECT") => Promise<unknown>;
   onApproveManual: (row: PayrollRow) => Promise<unknown>;
+  onCorrectBonus: (item: ManagedOrderBonus) => void;
+  onCancelBonus: (item: ManagedOrderBonus) => void;
 }) {
   const accrualTotal = (types: string[]) =>
     row.accruals
@@ -1392,7 +1410,7 @@ function EmployeeDrawer({
       date: item.createdAt,
       title: `${labels[item.type] ?? item.type}${item.order ? ` · ${item.order.number}` : ""}`,
       amount: Number(item.amount) * (item.direction === "DECREASE" ? -1 : 1),
-      reason: item.reason,
+      reason: `${item.reason}${item.externalReference ? ` · Референс: ${item.externalReference}` : ""}`,
     })),
     ...row.payments.map((item) => ({
       id: `p-${item.id}`,
@@ -1507,7 +1525,7 @@ function EmployeeDrawer({
                 ["Штрафы / удержания", -row.payrollAudit.deductions],
                 ["Авансы", -row.payrollAudit.advances],
                 ["Другие выплаты", -(row.payrollAudit.alreadyPaid - row.payrollAudit.advances)],
-                ["По правилам к начислению", row.payrollAudit.auditedAccrued],
+                ["Расчёт системы (ещё не начислено)", row.payrollAudit.auditedAccrued],
               ].map(([label, amount], index) => (
                 <div key={String(label)} className={`flex justify-between rounded-xl px-3 py-2 text-sm ${index === 6 ? "bg-emerald-500/10 text-emerald-200" : "bg-slate-950"}`}>
                   <span>{String(label)}</span>
@@ -1517,7 +1535,7 @@ function EmployeeDrawer({
             </div>
             {!row.payrollAudit.calculationReady && (
               <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-                Не все записи внесены: директор вручную начисляет оклад после окончания месяца, менеджер регистрирует бонус по каждому своему заказу. Осталось учесть {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}.
+                Не все записи внесены: основатель вручную начисляет оклад, а менеджер проверяет бонусы по своим заказам. Осталось учесть {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}.
               </div>
             )}
             {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100"><b>Расчётный лист и выплата заблокированы до завершения работы.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
@@ -1548,6 +1566,16 @@ function EmployeeDrawer({
             {director && !closed && !row.payrollAudit.calculationReady && <div className="mt-4"><button onClick={() => void onApproveManual(row)} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Подтвердить исключение вручную</button></div>}
           </section>
         )}
+        {canCorrectOrderBonuses &&
+          (row.user.role === "MANAGER" || orderBonuses.length > 0) && (
+            <OrderBonusCorrectionPanel
+              items={orderBonuses}
+              managerView={false}
+              title={`Бонусы за заказы · ${row.user.name}`}
+              onCorrect={onCorrectBonus}
+              onCancel={onCancelBonus}
+            />
+          )}
         <section className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-4">
           <h3 className="font-semibold">Структура зарплаты</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -1817,6 +1845,7 @@ function BonusCorrectionModal({
           limit: "50",
           year: String(year),
           month: String(month),
+          payrollBonus: "true",
         });
         const response = await fetch(`/api/orders/search?${params}`, {
           signal: controller.signal,
@@ -2130,6 +2159,7 @@ function OperationModal({
           limit: "30",
           year: String(period.year),
           month: String(period.month),
+          payrollBonus: "true",
         });
         const response = await fetch(`/api/orders/search?${params}`, {
           signal: controller.signal,
@@ -2270,8 +2300,11 @@ function OperationModal({
               </p>
             </div>
           )}
-          {operation === "payment" && (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") && (
-            <Field label="Референс / номер перевода Kaspi">
+          {(operation === "salaryAccrual" ||
+            (operation === "payment" &&
+              (form.type === "SALARY_PAYMENT" ||
+                form.type === "FINAL_SETTLEMENT"))) && (
+            <Field label="Референс / номер перевода (необязательно)">
               <input
                 value={form.externalReference}
                 onChange={(e) => setForm({ ...form, externalReference: e.target.value })}
@@ -2279,6 +2312,11 @@ function OperationModal({
                 maxLength={120}
                 className="control"
               />
+              <span className="mt-1.5 block text-xs text-blue-300">
+                {operation === "salaryAccrual"
+                  ? "Если начисляете оклад по факту перевода, референс поможет сверке. Поле можно оставить пустым."
+                  : "Желательно указать для быстрой сверки перевода, но выплату можно сохранить и без него."}
+              </span>
             </Field>
           )}
           {operation === "payment" && (
@@ -2461,9 +2499,14 @@ function OperationModal({
                     (operation === "partialPayment" &&
                       (!form.accrualId ||
                         Number(form.amount) > availablePartialSalary)) ||
+                    (operation === "salaryAccrual" &&
+                      form.externalReference.trim().length > 0 &&
+                      form.externalReference.trim().length < 3) ||
                     (operation === "payment" &&
                       (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") &&
-                      (form.method !== "kaspi" || form.externalReference.trim().length < 3)) ||
+                      (form.method !== "kaspi" ||
+                        (form.externalReference.trim().length > 0 &&
+                          form.externalReference.trim().length < 3))) ||
                     (operation === "bonus" && !form.orderId) ||
                     (operation === "bonus" &&
                       form.manualOverride &&

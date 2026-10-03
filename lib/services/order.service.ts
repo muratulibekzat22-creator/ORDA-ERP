@@ -135,18 +135,34 @@ export async function getOrders(
 
 export type OrderSearchActor = { role: Role; userId: number; name: string };
 
+type OrderSearchOptions = {
+  payrollBonusEligible?: boolean;
+};
+
 export async function searchOrderOptions(
   actor: OrderSearchActor,
   query = "",
   limit = 20,
   period?: { year: number; month: number },
+  options: OrderSearchOptions = {},
 ) {
-  const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
+  const managerRoleScope: Prisma.OrderWhereInput = options.payrollBonusEligible
     ? { OR: [
         { managerUserId: actor.userId },
         { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
-        { leadConversion: { managerId: actor.userId } },
+        {
+          managerUserId: null,
+          manager: "",
+          leadConversion: { managerId: actor.userId },
+        },
       ] }
+    : { OR: [
+        { managerUserId: actor.userId },
+        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
+        { leadConversion: { managerId: actor.userId } },
+      ] };
+  const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
+    ? managerRoleScope
     : actor.role === Role.PARTNER
       ? { partner: { userId: actor.userId } }
       : actor.role === Role.PRODUCTION
@@ -159,6 +175,14 @@ export async function searchOrderOptions(
   const search = query.trim().slice(0, 120);
   const digits = search.replace(/\D/g, "");
   const monthRange = period ? companyMonthRange(period.year, period.month) : null;
+  const payrollBonusScope: Prisma.OrderWhereInput = options.payrollBonusEligible
+    ? {
+        NOT: [
+          { manager: { equals: "Компания", mode: "insensitive" } },
+          { manager: { equals: "Company", mode: "insensitive" } },
+        ],
+      }
+    : {};
   const searchWhere: Prisma.OrderWhereInput = search ? { OR: [
     { number: { contains: search, mode: "insensitive" } },
     { client: { name: { contains: search, mode: "insensitive" } } },
@@ -173,7 +197,7 @@ export async function searchOrderOptions(
         orderDateNeedsReview: false,
         orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
       } : {}),
-      AND: [roleScope, searchWhere],
+      AND: [roleScope, payrollBonusScope, searchWhere],
     },
     select: { id: true, number: true, amount: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],

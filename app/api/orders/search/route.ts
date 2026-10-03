@@ -23,10 +23,16 @@ export async function GET(request: Request) {
     (year !== null && (!Number.isInteger(year) || !Number.isInteger(month) || month! < 1 || month! > 12))
   )
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
-  const items = await searchOrderOptions({
-    role: auth.session!.user.role as Role,
-    userId,
-    name: auth.session!.user.name ?? "",
-  }, params.get("q") ?? "", limit, year === null ? undefined : { year, month: month! });
+  const items = await searchOrderOptions(
+    {
+      role: auth.session!.user.role as Role,
+      userId,
+      name: auth.session!.user.name ?? "",
+    },
+    params.get("q") ?? "",
+    limit,
+    year === null ? undefined : { year, month: month! },
+    { payrollBonusEligible: params.get("payrollBonus") === "true" },
+  );
   return NextResponse.json({ items });
 }
