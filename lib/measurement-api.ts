@@ -11,9 +11,17 @@ export function measurementError(error: unknown) {
   if (code === "FORBIDDEN") return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   if (["NOT_FOUND", "CLIENT_NOT_FOUND"].includes(code)) return NextResponse.json({ error: "Замер или заявка не найдены" }, { status: 404 });
   if (code === "MEASURER_NOT_FOUND") return NextResponse.json({ error: "Активный замерщик не найден" }, { status: 404 });
+  if (code === "MEASURER_OUTSIDE_SERVICE_AREA") return NextResponse.json({ error: "Этот город не входит в зону выездов выбранного замерщика. Выберите другого сотрудника." }, { status: 409 });
+  if (code === "MEASURER_TRAVEL_APPROVAL_REQUIRED") return NextResponse.json({ error: "Это дальний выезд. Подтвердите согласование поездки с замерщиком." }, { status: 409 });
   if (code === "CLIENT_PHONE_REQUIRED") return NextResponse.json({ error: "У клиента должен быть указан телефон" }, { status: 400 });
   if (code === "LOCATION_REQUIRED") return NextResponse.json({ error: "Укажите адрес или ссылку на локацию" }, { status: 400 });
   if (code === "SHEET_PHOTO_REQUIRED") return NextResponse.json({ error: "Перед завершением загрузите фото листа замера" }, { status: 409 });
+  if (code === "OBJECT_PHOTOS_REQUIRED") return NextResponse.json({ error: "Добавьте три обязательных ракурса лестницы: спереди, сбоку и с обратной стороны" }, { status: 409 });
+  if (code === "DESIGN_REFERENCE_REQUIRED") return NextResponse.json({ error: "Добавьте референс дизайна, который выбрал клиент" }, { status: 409 });
+  if (code === "DESIGN_INPUT_REQUIRED") return NextResponse.json({ error: "Для промпта нужны три ракурса объекта и референс клиента" }, { status: 409 });
+  if (code === "DESIGN_PROMPT_REQUIRED") return NextResponse.json({ error: "Скопируйте готовый промпт и подготовьте визуализацию" }, { status: 409 });
+  if (code === "DESIGN_RESULT_REQUIRED") return NextResponse.json({ error: "Загрузите готовую визуализацию лестницы" }, { status: 409 });
+  if (code === "DESIGN_NOT_SHOWN") return NextResponse.json({ error: "Покажите визуализацию клиенту и подтвердите это в замере" }, { status: 409 });
   if (code === "OUTCOME_COMMENT_REQUIRED") return NextResponse.json({ error: "Для передачи менеджеру укажите комментарий" }, { status: 400 });
   if (code === "CLIENT_OUTCOME_REQUIRED") return NextResponse.json({ error: "Выберите результат общения с клиентом" }, { status: 400 });
   if (code === "REFUSAL_REASON_REQUIRED") return NextResponse.json({ error: "Укажите причину отказа; для «Другое» нужен комментарий" }, { status: 400 });

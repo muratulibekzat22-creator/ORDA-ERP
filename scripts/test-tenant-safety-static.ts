@@ -34,7 +34,7 @@ assert.match(auth, /runWithSystemAccess/u);
 assert.doesNotMatch(auth, /credentials\.(?:tenantId|companyId)/u, "tenant identity must not come from credentials");
 
 const tenantScope = read("lib/tenant-scope.ts");
-for (const model of ["User", "Client", "Order", "Measurement", "CalendarTask", "CommercialProposal", "Document", "Payment", "EmployeePayrollProfile", "PayrollPeriod", "CompanyLedgerEntry", "Material", "Partner", "RolePermission"]) {
+for (const model of ["User", "Client", "Order", "Measurement", "CalendarTask", "CommercialProposal", "Document", "Payment", "EmployeePayrollProfile", "PayrollPeriod", "CompanyLedgerEntry", "RecurringExpensePlan", "BankStatementImport", "BankStatementTransaction", "BankStatementRule", "Material", "Partner", "RolePermission"]) {
   assert.ok(tenantScope.includes(`"${model}"`), `tenant model is missing from fail-closed scope: ${model}`);
 }
 assert.match(tenantScope, /TENANT_CONTEXT_REQUIRED/u);

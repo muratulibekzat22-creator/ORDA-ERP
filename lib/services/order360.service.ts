@@ -10,12 +10,17 @@ import {
   Role,
 } from "@prisma/client";
 import { compareRequestHash } from "@/lib/idempotency";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { INITIAL_PRODUCTION_STAGE } from "@/lib/production/stage-policy";
 import { reverseMeasurerBonusForCancelledOrder } from "@/lib/services/measurement.service";
+import { accrueCompletedTerminatedManagerOrderBonus } from "@/lib/services/payroll.service";
 
 export type Order360Actor = { userId: number; role: Role; name: string };
 export class Order360Error extends Error {}
+
+const isDirector = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 
 export const LIFECYCLE: OrderLifecycle[] = [
   OrderLifecycle.CREATED,
@@ -50,10 +55,10 @@ export async function canAccessOrder360(
   if (!order) return false;
   if (
     order.deletedAt &&
-    !(actor.role === Role.DIRECTOR && options.includeDeleted)
+    !(isDirector(actor.role) && options.includeDeleted)
   )
     return false;
-  if (actor.role === Role.DIRECTOR || actor.role === Role.ACCOUNTANT)
+  if (isDirector(actor.role) || actor.role === Role.ACCOUNTANT)
     return true;
   if (actor.role === Role.MANAGER)
     return (
@@ -102,20 +107,38 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
           status: OrderBlockerStatus.OPEN,
           severity: OrderBlockerSeverity.CRITICAL,
         },
-        select: { id: true },
+        select: { id: true, type: true },
       },
       installation: true,
     },
   });
   if (!order) throw new Order360Error("NOT_FOUND");
+  const activeCriticalBlockers = order.blockers.filter(
+    (blocker) => {
+      if (
+        target === OrderLifecycle.PREPARATION &&
+        ["PARTNER_REQUIRED", "PARTNER_COST_REQUIRED"].includes(blocker.type)
+      ) return false;
+      return !(
+        (blocker.type === "PARTNER_REQUIRED" && order.partnerId) ||
+        (blocker.type === "PARTNER_COST_REQUIRED" &&
+          hasProductionPrice(order.partnerPrice, order.partnerAgreedAt))
+      );
+    },
+  );
   const noCritical: GateItem = {
     code: "NO_CRITICAL_BLOCKERS",
-    passed: order.blockers.length === 0,
+    passed: activeCriticalBlockers.length === 0,
     message: "Есть критический блокер",
   };
   let checks: GateItem[] = [noCritical];
   if (target === OrderLifecycle.READY_FOR_PRODUCTION)
     checks = [
+      {
+        code: "ORDER_DATE",
+        passed: !order.orderDateNeedsReview,
+        message: "Фактическая дата заказа не подтверждена",
+      },
       {
         code: "CONTRACT",
         passed:
@@ -124,41 +147,19 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
         message: "Договор не подтверждён",
       },
       {
-        code: "PREPAYMENT",
-        passed: Number(order.prepayment) >= Number(order.requiredPrepayment),
-        message: "Требуемая предоплата не получена",
-      },
-      {
-        code: "MEASUREMENT",
-        passed:
-          !!order.controlMeasurementCompletedAt ||
-          order.measurements.length > 0,
-        message: "Контрольный замер не завершён",
-      },
-      {
-        code: "DRAWING",
-        passed: !!order.drawingApprovedAt,
-        message: "Чертёж не согласован",
-      },
-      {
-        code: "SPECIFICATION",
-        passed: !!order.specificationDefinedAt,
-        message: "Спецификация не определена",
-      },
-      {
         code: "WORKSHOP",
-        passed: !!order.partnerId && !!order.workshopConfirmedAt,
-        message: "ЦЕХ не назначен или не подтвердил",
+        passed: !!order.partnerId,
+        message: "Цех не назначен",
+      },
+      {
+        code: "PRODUCTION_PRICE",
+        passed: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
+        message: "Цена производства не указана",
       },
       {
         code: "DEADLINE",
-        passed: !!order.productionDeadline,
-        message: "Срок производства не установлен",
-      },
-      {
-        code: "MATERIALS",
-        passed: !!order.materialsReadyAt,
-        message: "Материалы не готовы",
+        passed: !!(order.promisedAt ?? order.productionDeadline),
+        message: "Срок заказа не указан",
       },
       noCritical,
     ];
@@ -176,16 +177,6 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
         code: "QA",
         passed: !order.qaRequired || !!order.qaApprovedAt,
         message: "QA не подтверждён",
-      },
-      {
-        code: "COMPLETENESS",
-        passed: !!order.completenessConfirmedAt,
-        message: "Комплектность не подтверждена",
-      },
-      {
-        code: "MATERIALS",
-        passed: !!order.materialsReadyAt,
-        message: "Материалы или комплектующие не готовы",
       },
       noCritical,
     ];
@@ -227,11 +218,15 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
   if (target === OrderLifecycle.COMPLETED)
     checks = [
       {
-        code: "ACCEPTANCE",
-        passed: !!order.operationalAcceptedAt,
-        message: "Приёмка не зафиксирована",
+        code: "SALE_AMOUNT",
+        passed: Number(order.amount) > 0,
+        message: "Не указана сумма продажи",
       },
-      noCritical,
+      {
+        code: "PRODUCTION_PRICE",
+        passed: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
+        message: "Не указана сумма производства",
+      },
     ];
   return { target, passed: checks.every((item) => item.passed), checks };
 }
@@ -241,7 +236,14 @@ function roleCanTransition(
   from: OrderLifecycle,
   to: OrderLifecycle,
 ) {
-  if (role === Role.DIRECTOR) return from !== to;
+  if (isDirector(role)) return from !== to;
+  if (
+    role === Role.MANAGER &&
+    to === OrderLifecycle.COMPLETED &&
+    from !== OrderLifecycle.COMPLETED &&
+    from !== OrderLifecycle.CANCELLED
+  )
+    return true;
   if (to === OrderLifecycle.CANCELLED)
     return role === Role.MANAGER && from !== OrderLifecycle.COMPLETED;
   const next = LIFECYCLE.indexOf(to) === LIFECYCLE.indexOf(from) + 1;
@@ -281,9 +283,28 @@ export async function availableTransitions(
     select: { lifecycle: true, version: true },
   });
   const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
+  const simpleNext =
+    order.lifecycle === OrderLifecycle.CREATED
+      ? OrderLifecycle.PREPARATION
+      : order.lifecycle === OrderLifecycle.PREPARATION
+        ? OrderLifecycle.READY_FOR_PRODUCTION
+        : order.lifecycle !== OrderLifecycle.COMPLETED &&
+            order.lifecycle !== OrderLifecycle.CANCELLED
+          ? OrderLifecycle.COMPLETED
+          : undefined;
+  const preferredNext =
+    isDirector(actor.role)
+      ? LIFECYCLE[currentIndex + 1]
+      : actor.role === Role.MANAGER
+        ? simpleNext
+        : LIFECYCLE[currentIndex + 1];
   const preferred = [
-    LIFECYCLE[currentIndex + 1],
-    ...(actor.role === Role.DIRECTOR ? [LIFECYCLE[currentIndex - 1]] : []),
+    preferredNext,
+    ...((isDirector(actor.role) || actor.role === Role.MANAGER) &&
+    order.lifecycle !== OrderLifecycle.COMPLETED
+      ? [OrderLifecycle.COMPLETED]
+      : []),
+    ...(isDirector(actor.role) ? [LIFECYCLE[currentIndex - 1]] : []),
     OrderLifecycle.CANCELLED,
   ].filter((value): value is OrderLifecycle => Boolean(value));
   const candidates = [...new Set(preferred)].filter((to) => roleCanTransition(actor.role, order.lifecycle, to));
@@ -311,7 +332,7 @@ export async function transitionLifecycle(
   actor: Order360Actor,
 ) {
   await assertAccess(input.orderId, actor);
-  return prisma.$transaction(
+  const result = await prisma.$transaction(
     async (tx) => {
       const existing = await tx.orderLifecycleEvent.findUnique({
         where: { idempotencyKey: input.key },
@@ -329,19 +350,62 @@ export async function transitionLifecycle(
         throw new Order360Error("TRANSITION_FORBIDDEN");
       const currentIndex = LIFECYCLE.indexOf(order.lifecycle);
       const targetIndex = LIFECYCLE.indexOf(input.to);
+      const backwardTransition = targetIndex >= 0 && targetIndex < currentIndex;
+      const returningToContract =
+        order.lifecycle === OrderLifecycle.READY_FOR_PRODUCTION &&
+        input.to === OrderLifecycle.PREPARATION;
       if (
-        actor.role === Role.DIRECTOR &&
-        targetIndex >= 0 &&
-        targetIndex < currentIndex &&
+        isDirector(actor.role) &&
+        backwardTransition &&
         !input.reason?.trim()
       )
         throw new Order360Error("REASON_REQUIRED");
-      const gate = await evaluateGate(input.orderId, input.to);
+      const rollbackProductions = returningToContract
+        ? await tx.production.findMany({
+            where: { orderId: order.id, archivedAt: null },
+            select: {
+              id: true,
+              stage: true,
+              percent: true,
+              master: true,
+              masterUserId: true,
+              completedAt: true,
+              actualEndAt: true,
+              finishDate: true,
+            },
+          })
+        : [];
+      if (
+        returningToContract &&
+        (Number(order.partnerPaid) > 0 ||
+          rollbackProductions.some(
+            (production) =>
+              production.stage !== INITIAL_PRODUCTION_STAGE ||
+              production.percent > 0 ||
+              production.master.trim().length > 0 ||
+              production.masterUserId !== null ||
+              production.completedAt !== null ||
+              production.actualEndAt !== null ||
+              production.finishDate !== null,
+          ))
+      )
+        throw new Order360Error("ROLLBACK_BLOCKED");
+      const gate = backwardTransition
+        ? { target: input.to, passed: true, checks: [] as GateItem[] }
+        : await evaluateGate(input.orderId, input.to);
       if (!gate.passed) {
+        const hardWorkshopGateFailed =
+          input.to === OrderLifecycle.READY_FOR_PRODUCTION &&
+          gate.checks.some(
+            (check) =>
+              !check.passed &&
+              ["ORDER_DATE", "WORKSHOP", "PRODUCTION_PRICE", "DEADLINE"].includes(check.code),
+          );
         if (!(
           input.override &&
-          actor.role === Role.DIRECTOR &&
-          input.reason?.trim()
+          isDirector(actor.role) &&
+          input.reason?.trim() &&
+          !hardWorkshopGateFailed
         ))
           throw new Order360Error("GATE_FAILED");
         await tx.orderGateOverride.create({
@@ -360,6 +424,33 @@ export async function transitionLifecycle(
         where: { id: input.orderId, version: input.expectedVersion },
         data: {
           lifecycle: input.to,
+          ...(input.to === OrderLifecycle.PREPARATION &&
+          order.lifecycle === OrderLifecycle.CREATED
+            ? { contractConfirmedAt: order.contractConfirmedAt ?? new Date() }
+            : {}),
+          ...(input.to === OrderLifecycle.READY_FOR_PRODUCTION
+            ? {
+                workshopConfirmedAt: order.workshopConfirmedAt ?? new Date(),
+                status: "Передан в цех",
+              }
+            : {}),
+          ...(returningToContract
+            ? {
+                status: "Договор",
+                workshopConfirmedAt: null,
+                partnerId: null,
+                partnerPrice: 0,
+                partnerAgreedAt: null,
+                partnerPaid: 0,
+                partnerBalance: 0,
+                companyProfit: 0,
+                partnerPlannedReadyAt: null,
+                readyForInstallation: false,
+              }
+            : {}),
+          ...(input.to === OrderLifecycle.COMPLETED
+            ? { status: "Заказ завершён" }
+            : {}),
           version: { increment: 1 },
           ...(input.to === OrderLifecycle.COMPLETED
             ? { completedAt: new Date() }
@@ -367,6 +458,51 @@ export async function transitionLifecycle(
         },
       });
       if (updated.count !== 1) throw new Order360Error("STALE_VERSION");
+      if (returningToContract) {
+        const reason = input.reason!.trim();
+        if (rollbackProductions.length)
+          await tx.production.updateMany({
+            where: { id: { in: rollbackProductions.map((item) => item.id) } },
+            data: {
+              archivedAt: new Date(),
+              archiveReason: `Заказ возвращён в договор: ${reason}`,
+            },
+          });
+        await tx.financeAuditEvent.create({
+          data: {
+            orderId: order.id,
+            action: "WORKSHOP_ASSIGNMENT_CLEARED",
+            entityType: "Order",
+            entityId: order.id,
+            before: {
+              partnerId: order.partnerId,
+              partnerPrice: order.partnerPrice.toString(),
+              partnerAgreedAt: order.partnerAgreedAt?.toISOString() ?? null,
+              partnerPaid: order.partnerPaid.toString(),
+              partnerBalance: order.partnerBalance.toString(),
+            },
+            after: {
+              partnerId: null,
+              partnerPrice: "0",
+              partnerAgreedAt: null,
+              partnerPaid: "0",
+              partnerBalance: "0",
+            },
+            reason,
+            authorId: actor.userId,
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: order.id,
+            title: "Заказ возвращён в договор",
+            description: reason,
+            user: actor.name,
+            idempotencyKey: `${input.key}:return-to-contract`,
+            requestHash: input.requestHash,
+          },
+        });
+      }
       const event = await tx.orderLifecycleEvent.create({
         data: {
           orderId: input.orderId,
@@ -394,6 +530,20 @@ export async function transitionLifecycle(
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
+  if (input.to !== OrderLifecycle.COMPLETED || !result.created) return result;
+  try {
+    const deferredPayrollBonus =
+      await accrueCompletedTerminatedManagerOrderBonus(input.orderId, actor);
+    return { ...result, deferredPayrollBonus };
+  } catch (error) {
+    // Order completion remains authoritative even if the payroll period is
+    // temporarily closed. The payroll sync will retry the deterministic bonus.
+    console.error("Deferred terminated-manager bonus sync failed", error);
+    return {
+      ...result,
+      deferredPayrollBonus: { created: false, skipped: true, reason: "SYNC_FAILED" },
+    };
+  }
 }
 
 export async function completeControlMeasurement(
@@ -408,7 +558,7 @@ export async function completeControlMeasurement(
   actor: Order360Actor,
 ) {
   await assertAccess(input.orderId, actor);
-  if (!(new Set<Role>([Role.DIRECTOR, Role.MANAGER, Role.MEASURER])).has(actor.role))
+  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.MEASURER])).has(actor.role))
     throw new Order360Error("FORBIDDEN");
   if (Number.isNaN(input.completedAt.getTime())) throw new Order360Error("INVALID_DATE");
   const comment = input.comment?.trim().slice(0, 2000) || null;
@@ -434,8 +584,8 @@ export async function completeControlMeasurement(
       where: { id: order.id, version: input.expectedVersion },
       data: {
         controlMeasurementCompletedAt: input.completedAt,
-        lifecycle: OrderLifecycle.READY_FOR_PRODUCTION,
-        status: "Заготовка",
+        lifecycle: OrderLifecycle.PREPARATION,
+        status: "Договор",
         version: { increment: 1 },
       },
     });
@@ -477,7 +627,7 @@ export async function completeControlMeasurement(
           action: "COMPLETED_FROM_ORDER",
           actorId: actor.userId,
           before: { status: measurement.status },
-          after: { status: MeasurementStatus.COMPLETED, orderLifecycle: OrderLifecycle.READY_FOR_PRODUCTION },
+          after: { status: MeasurementStatus.COMPLETED, orderLifecycle: OrderLifecycle.PREPARATION },
           comment,
         },
       });
@@ -515,7 +665,7 @@ export async function completeControlMeasurement(
 
     for (const missing of [
       ...(!order.partnerId ? [{ type: "PARTNER_REQUIRED", title: "Назначить партнёра/цех", suffix: "partner" }] : []),
-      ...(!order.partnerAgreedAt ? [{ type: "PARTNER_COST_REQUIRED", title: "Указать стоимость партнёра", suffix: "partner-cost" }] : []),
+      ...(!hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? [{ type: "PARTNER_COST_REQUIRED", title: "Указать цену производства", suffix: "partner-cost" }] : []),
     ]) {
       await tx.orderBlocker.create({
         data: {
@@ -556,7 +706,7 @@ export async function completeControlMeasurement(
         orderId: order.id,
         type: "CONTROL_MEASUREMENT_COMPLETED",
         fromLifecycle: order.lifecycle,
-        toLifecycle: OrderLifecycle.READY_FOR_PRODUCTION,
+        toLifecycle: OrderLifecycle.PREPARATION,
         message: comment,
         actorId: actor.userId,
         actorName: actor.name,
@@ -570,13 +720,13 @@ export async function completeControlMeasurement(
       data: {
         orderId: order.id,
         title: "Замер снят",
-        description: comment ?? "Контрольный замер завершён, заказ передан в заготовку",
+        description: comment ?? "Контрольный замер завершён, заказ готовится к передаче в цех",
         user: actor.name,
         idempotencyKey: `${input.key}:timeline`,
         requestHash: input.requestHash,
       },
     });
-    return { event, created: true, version: input.expectedVersion + 1, warnings: { partnerMissing: !order.partnerId, partnerCostMissing: !order.partnerAgreedAt } };
+    return { event, created: true, version: input.expectedVersion + 1, warnings: { partnerMissing: !order.partnerId, partnerCostMissing: !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) } };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
@@ -698,6 +848,7 @@ export async function confirmMilestone(
     "confirm-specification": { specificationDefinedAt: new Date() },
     "confirm-workshop": { workshopConfirmedAt: new Date() },
     "confirm-materials": { materialsReadyAt: new Date() },
+    // Kept for older API clients; this field no longer gates any user-visible stage.
     "confirm-completeness": { completenessConfirmedAt: new Date() },
     "approve-qa": { qaApprovedAt: new Date() },
     "record-acceptance": { operationalAcceptedAt: new Date() },
@@ -887,18 +1038,12 @@ export async function orderAttention(orderId: number, actor: Order360Actor) {
     !order.documents.some((d) => d.type === "CONTRACT")
   )
     push("CONTRACT_MISSING", "WARNING", "Нет подтверждённого договора");
-  if (!order.controlMeasurementCompletedAt && !order.measurements.length)
-    push("MEASUREMENT_MISSING", "WARNING", "Нет контрольного замера");
-  if (!order.drawingApprovedAt)
-    push("DRAWING_MISSING", "WARNING", "Проект или чертёж не согласован");
   if (
     order.productions.some(
       (p) => p.plannedEndAt && p.plannedEndAt < now && !p.completedAt,
     )
   )
     push("PRODUCTION_DELAY", "CRITICAL", "Производство задерживается");
-  if (!order.materialsReadyAt)
-    push("MATERIALS_MISSING", "WARNING", "Материалы не подтверждены");
   if (
     order.lifecycle === OrderLifecycle.READY_FOR_INSTALLATION &&
     !order.installation
@@ -911,7 +1056,13 @@ export async function orderAttention(orderId: number, actor: Order360Actor) {
     Number(order.partnerBalance) > 0
   )
     push("WORKSHOP_PAYABLE", "INFO", "Есть остаток к выплате ЦЕХ");
-  for (const blocker of order.blockers)
+  for (const blocker of order.blockers) {
+    if (blocker.type === "PARTNER_REQUIRED" && order.partnerId) continue;
+    if (
+      blocker.type === "PARTNER_COST_REQUIRED" &&
+      hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)
+    )
+      continue;
     signals.push({
       type: "OPEN_BLOCKER",
       severity: blocker.severity,
@@ -921,6 +1072,7 @@ export async function orderAttention(orderId: number, actor: Order360Actor) {
       actionCode: "RESOLVE_BLOCKER",
       deepLink: `/orders/${order.id}?blocker=${blocker.id}`,
     });
+  }
   return signals;
 }
 
@@ -942,6 +1094,7 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
       prepayment: true,
       balance: true,
       partnerPrice: true,
+      partnerAgreedAt: true,
       partnerPaid: true,
       partnerBalance: true,
       companyProfit: true,
@@ -1005,10 +1158,10 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
       receivable: order.balance,
       ...(actor.role === Role.DIRECTOR
         ? {
-            workshopPrice: order.partnerPrice,
+            workshopPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
             workshopPaid: order.partnerPaid,
-            workshopPayable: order.partnerBalance,
-            companyProfit: order.companyProfit,
+            workshopPayable: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null,
+            companyProfit: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.amount.sub(order.partnerPrice) : null,
           }
         : {}),
     };
@@ -1020,9 +1173,9 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
     };
   else if (actor.role === Role.PARTNER)
     result.workshop = {
-      price: order.partnerPrice,
+      price: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
       paid: order.partnerPaid,
-      payable: order.partnerBalance,
+      payable: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null,
     };
   return result;
 }
@@ -1036,6 +1189,7 @@ export async function orderFinance(orderId: number, actor: Order360Actor) {
       prepayment: true,
       balance: true,
       partnerPrice: true,
+      partnerAgreedAt: true,
       partnerPaid: true,
       partnerBalance: true,
       companyProfit: true,
@@ -1049,9 +1203,9 @@ export async function orderFinance(orderId: number, actor: Order360Actor) {
     throw new Order360Error("FORBIDDEN");
   if (actor.role === Role.PARTNER)
     return {
-      workshopPrice: order.partnerPrice,
+      workshopPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
       workshopPaid: order.partnerPaid,
-      workshopPayable: order.partnerBalance,
+      workshopPayable: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null,
     };
   if (actor.role === Role.MANAGER)
     return {
@@ -1063,11 +1217,11 @@ export async function orderFinance(orderId: number, actor: Order360Actor) {
     clientPrice: order.amount,
     received: order.prepayment,
     receivable: order.balance,
-    workshopPrice: order.partnerPrice,
+    workshopPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
     workshopPaid: order.partnerPaid,
-    workshopPayable: order.partnerBalance,
+    workshopPayable: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerBalance : null,
     ...(actor.role === Role.DIRECTOR
-      ? { companyProfit: order.companyProfit }
+      ? { companyProfit: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.amount.sub(order.partnerPrice) : null }
       : {}),
   };
 }

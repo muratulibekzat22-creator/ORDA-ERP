@@ -10,12 +10,14 @@ import { canAccessOrder360 } from "@/lib/services/order360.service";
 import { buildOrderSettlement } from "@/lib/services/order-settlement.service";
 import { enterTenantFromSession } from "@/lib/tenant-context";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { hasProductionPrice } from "@/lib/orders/production-price";
+import { partnerOnlySettlement, stripPartnerAllocation } from "@/lib/orders/settlement-redaction";
 
 export async function getAuthorizedOrder(id: number) {
   if (!Number.isInteger(id) || id <= 0) return null;
   const session = await getServerSession(authOptions);
   if (!session?.user || !enterTenantFromSession(session)) return null;
-  const role = session.user.role as Role;
+  const role = (session.user.accountRole || session.user.role) as Role;
   if (
     !Object.values(Role).includes(role) ||
     !(await hasPermission(role, "orders"))
@@ -46,7 +48,6 @@ export async function getAuthorizedOrder(id: number) {
         where: {
           id,
           partnerId: partner.id,
-          partnerAgreedAt: { not: null },
           lifecycle: { not: "CANCELLED" },
         },
         select: { id: true },
@@ -56,9 +57,10 @@ export async function getAuthorizedOrder(id: number) {
   }
   const source = await getOrder(id);
   if (!source) return null;
-  const { _count, ...sourceOrder } = source;
+  const { _count, partnerRelation, ...sourceOrder } = source;
   const order = {
     ...sourceOrder,
+    productionPrice: hasProductionPrice(source.partnerPrice, source.partnerAgreedAt) ? source.partnerPrice : null,
     deletionImpact: {
       hasFinancialHistory:
         _count.payments > 0 ||
@@ -66,7 +68,7 @@ export async function getAuthorizedOrder(id: number) {
         _count.financeAuditEvents > 0 ||
         _count.payrollAccruals > 0,
     },
-    settlement: buildOrderSettlement(source),
+    settlement: buildOrderSettlement({ ...sourceOrder, partnerRelation }),
     economy: calculateOrderEconomy({
       totalSale: source.amount,
       commercialAdjustments: source.commercialAdjustments,
@@ -79,13 +81,30 @@ export async function getAuthorizedOrder(id: number) {
       clientDueAt: source.promisedAt,
       payrollAccruals: source.payrollAccruals,
       ledgerEntries: source.companyLedgerEntries,
+      calculation: source.calculations[0] ?? null,
     }),
   };
   if (role === Role.DIRECTOR) return order;
+  if (role === Role.OPERATIONS_DIRECTOR)
+    return {
+      ...order,
+      companyProfit: undefined,
+      payrollAccruals: [],
+      companyLedgerEntries: [],
+      economy: undefined,
+      settlement: stripPartnerAllocation(order.settlement),
+      calculations: order.calculations.map((calculation) => {
+        const result = { ...calculation } as Partial<typeof calculation>;
+        delete result.grossDifference;
+        delete result.grossProfit;
+        return result;
+      }),
+    } as unknown as typeof order;
   if (role === Role.ACCOUNTANT)
     return {
       ...order,
       companyProfit: undefined,
+      settlement: stripPartnerAllocation(order.settlement),
       calculations: order.calculations.map((calculation) => {
         const result = { ...calculation } as Partial<typeof calculation>;
         delete result.grossDifference;
@@ -113,15 +132,7 @@ export async function getAuthorizedOrder(id: number) {
         delete safe.measurerUser;
         return safe;
       }),
-      settlement: {
-        partner: {
-          ...order.settlement.partner,
-          payouts: order.settlement.partner.payouts.filter(
-            (payment) => payment.partnerId === order.partnerId,
-          ),
-          assignments: [],
-        },
-      },
+      settlement: partnerOnlySettlement(order.settlement, order.partnerId),
       calculations: [],
     } as unknown as typeof order;
 
@@ -130,6 +141,8 @@ export async function getAuthorizedOrder(id: number) {
   // manager's browser, even when the interface does not render them.
   return {
     ...order,
+    productionPrice:
+      role === Role.MANAGER ? order.productionPrice : undefined,
     managerUser: undefined,
     partnerPrice: undefined,
     partnerAgreedAt: undefined,

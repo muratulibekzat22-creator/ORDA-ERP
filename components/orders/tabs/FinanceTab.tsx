@@ -10,7 +10,7 @@ function money(value: OrderTabData["amount"]) {
 
 export default function FinanceTab({ order }: { order: OrderTabData }) {
   const { data: session } = useSession();
-  const canSeeInternal = session?.user.role === "DIRECTOR" || session?.user.role === "ACCOUNTANT";
+  const canSeeInternal = session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR" || session?.user.role === "ACCOUNTANT";
   const cards = [
     ["Стоимость клиенту", order.amount, "text-green-400"],
     ["Предоплата", order.prepayment, "text-blue-400"],

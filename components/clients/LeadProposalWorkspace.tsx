@@ -31,6 +31,13 @@ type Proposal = {
     variants?: Variant[];
   };
   conversion?: { orderId: number } | null;
+  followUpActions?: Array<{
+    id: number;
+    followUpStep: number | null;
+    nextActionAt: string;
+    completedAt: string | null;
+    resultComment: string | null;
+  }>;
 };
 const money = (value: string | number) =>
   `${Number(value).toLocaleString("ru-RU")} ₸`;
@@ -47,17 +54,20 @@ export default function LeadProposalWorkspace({
     [optionIds, setOptionIds] = useState<number[]>([]),
     [message, setMessage] = useState(""),
     [saving, setSaving] = useState(false),
-    [currentTime, setCurrentTime] = useState(0);
+    [currentTime, setCurrentTime] = useState(0),
+    [designStatus, setDesignStatus] = useState<"PENDING" | "DONE" | "SKIPPED">("PENDING");
   const load = useCallback(async () => {
-    const [a, b] = await Promise.all([
+    const [a, b, c] = await Promise.all([
       fetch(`/api/clients/${clientId}/calculations`, { cache: "no-store" }),
       fetch(`/api/clients/${clientId}/proposals`, { cache: "no-store" }),
+      fetch(`/api/clients/${clientId}/design-project`, { cache: "no-store" }),
     ]);
     if (a.ok) setCalculations(await a.json());
     if (b.ok) {
       setProposals(await b.json());
       setCurrentTime(Date.now());
     }
+    if (c.ok) setDesignStatus(((await c.json()) as { status: "PENDING" | "DONE" | "SKIPPED" }).status);
   }, [clientId]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -122,23 +132,22 @@ export default function LeadProposalWorkspace({
     if (response.ok) await load();
     setSaving(false);
   }
-  async function followUp(days: number) {
-    const at = new Date(Date.now() + days * 86400000);
-    at.setHours(10, 0, 0, 0);
-    const response = await fetch(`/api/clients/${clientId}/next-actions`, {
-      method: "POST",
+  async function markSent(id: number) {
+    setSaving(true);
+    setMessage("");
+    const response = await fetch(`/api/proposals/${id}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nextActionType: "FOLLOW_UP",
-        nextActionAt: at.toISOString(),
-        nextActionComment: "Повторный контакт после КП",
-      }),
+      body: JSON.stringify({ status: "SENT" }),
     });
+    const body = await response.json();
     setMessage(
       response.ok
-        ? `Контакт назначен на ${at.toLocaleDateString("ru-RU")}`
-        : (await response.json()).error,
+        ? "Отправка зафиксирована. Контрольные сообщения назначены автоматически."
+        : (body.error ?? "Не удалось зафиксировать отправку"),
     );
+    if (response.ok) await load();
+    setSaving(false);
   }
   async function convert(id: number) {
     if (!confirm("Клиент согласился? Будет создан заказ из КП.")) return;
@@ -154,6 +163,18 @@ export default function LeadProposalWorkspace({
     const body = await response.json();
     if (response.ok) router.push(`/orders/${body.id}`);
     else setMessage(body.error);
+  }
+  async function markDesign(status: "DONE" | "SKIPPED") {
+    setSaving(true);
+    const response = await fetch(`/api/clients/${clientId}/design-project`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const body = await response.json() as { error?: string };
+    setMessage(response.ok ? status === "DONE" ? "3D-проект отмечен как показанный клиенту" : "Отмечено: 3D-проект не использован" : body.error ?? "Не удалось сохранить");
+    if (response.ok) setDesignStatus(status);
+    setSaving(false);
   }
   return (
     <main className="space-y-6 p-4 md:p-8">
@@ -201,7 +222,7 @@ export default function LeadProposalWorkspace({
         </button>
       </section>
       {latest && (
-        <section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
+        <><section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold text-white">
@@ -253,13 +274,22 @@ export default function LeadProposalWorkspace({
               Открыть / скачать PDF
             </a>
             {latest.status !== "SENT" && (
-              <button
-                disabled={saving}
-                onClick={() => void send(latest.id)}
-                className="min-h-12 rounded-xl bg-green-700 px-5 font-semibold text-white"
-              >
-                Отправить PDF в WhatsApp
-              </button>
+              <>
+                <button
+                  disabled={saving}
+                  onClick={() => void send(latest.id)}
+                  className="min-h-12 rounded-xl bg-green-700 px-5 font-semibold text-white"
+                >
+                  Отправить PDF в WhatsApp
+                </button>
+                <button
+                  disabled={saving}
+                  onClick={() => void markSent(latest.id)}
+                  className="min-h-12 rounded-xl border border-green-700 px-5 font-semibold text-green-200"
+                >
+                  Я отправила КП вручную
+                </button>
+              </>
             )}
             <button
               onClick={() => void createProposal(latest.id)}
@@ -276,27 +306,35 @@ export default function LeadProposalWorkspace({
           </div>
           {latest.sentAt && (
             <div className="mt-5 rounded-xl border border-blue-800 bg-blue-950/30 p-4">
-              <p className="font-medium text-white">
-                Когда связаться с клиентом?
+              <p className="font-medium text-white">Контроль после КП включён</p>
+              <p className="mt-1 text-sm text-slate-300">
+                Менеджер обязан зафиксировать ответ на 3-й рабочий день и повторно уточнить решение на 10-й день.
               </p>
-              <div className="mt-3 grid grid-cols-3 gap-2 sm:flex">
-                {[
-                  [1, "Завтра"],
-                  [2, "Через 2 дня"],
-                  [3, "Через 3 дня"],
-                ].map(([days, label]) => (
-                  <button
-                    key={days}
-                    onClick={() => void followUp(Number(days))}
-                    className="min-h-11 rounded-xl bg-slate-800 px-3 text-sm text-white"
-                  >
-                    {label}
-                  </button>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {(latest.followUpActions ?? []).map((action) => (
+                  <div key={action.id} className="rounded-lg bg-slate-900 p-3 text-sm">
+                    <b className="text-white">Контакт {action.followUpStep} из 2</b>
+                    <p className="mt-1 text-slate-300">
+                      {new Date(action.nextActionAt).toLocaleString("ru-RU", { dateStyle: "medium", timeStyle: "short" })}
+                    </p>
+                    <p className={action.completedAt ? "text-emerald-300" : "text-amber-300"}>
+                      {action.completedAt ? "Выполнено" : "Ожидает выполнения"}
+                    </p>
+                  </div>
                 ))}
               </div>
             </div>
           )}
         </section>
+        <section className="rounded-2xl border border-fuchsia-500/30 bg-fuchsia-500/5 p-5">
+          <p className="text-xs font-bold uppercase tracking-[.18em] text-fuchsia-300">Следующий шаг после КП</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Покажите клиенту 3D-проект</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-300">Это необязательно, но помогает клиенту увидеть лестницу в своём интерьере и принять решение увереннее. ORDA будет считать фактическую конверсию, поэтому процент не придумывается заранее.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button disabled={saving} onClick={() => void markDesign("DONE")} className={`min-h-11 rounded-xl px-4 font-semibold ${designStatus === "DONE" ? "bg-emerald-600 text-white" : "border border-emerald-700 text-emerald-200"}`}>3D-проект сделан</button>
+            <button disabled={saving} onClick={() => void markDesign("SKIPPED")} className={`min-h-11 rounded-xl px-4 ${designStatus === "SKIPPED" ? "bg-slate-600 text-white" : "border border-slate-700 text-slate-300"}`}>Не сделан</button>
+          </div>
+        </section></>
       )}
       <PriceObjectionPanel
         clientId={clientId}

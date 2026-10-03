@@ -4,7 +4,8 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ExternalLink, LoaderCircle, X } from "lucide-react";
 import CityCombobox from "@/components/clients/CityCombobox";
 
-export type ClientDraft = { name: string; phone: string; city: string; managerUserId: string };
+type LeadSourceCode = "WHATSAPP" | "INSTAGRAM" | "CALL" | "WEBSITE" | "REFERRAL" | "OFFICE" | "REPEAT" | "OTHER";
+export type ClientDraft = { name: string; phone: string; city: string; managerUserId: string; sourceCode: LeadSourceCode };
 type CreatedClient = { id: number; name: string; phone: string; city: string };
 type Manager = { id: number; name: string };
 type Tariff = { code: string; uiName: string; kind: string; salePrice: number; defaultQuantity: number; unit: string };
@@ -22,6 +23,7 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
   const [phone, setPhone] = useState("+7");
   const [city, setCity] = useState("Алматы");
   const [managerUserId, setManagerUserId] = useState("");
+  const [sourceCode, setSourceCode] = useState<LeadSourceCode | "">("");
   const [managers, setManagers] = useState<Manager[]>([]);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [deliveryPrices, setDeliveryPrices] = useState<Record<DeliveryOption, number>>({ NONE: 0, OPTION_1: 0, OPTION_2: 0 });
@@ -125,19 +127,21 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
     setError("");
     if (phone.replace(/\D/g, "").length < 10) return setError("Укажите корректный номер WhatsApp");
     if (!managerUserId) return setError("Выберите ответственного менеджера");
+    if (!sourceCode) return setError("Выберите источник заявки — это нужно для точного отчёта по рекламе");
     const normalizedCity = city.trim();
     if (!name.trim()) return setError("Укажите имя клиента");
     if (!normalizedCity) return setError("Укажите город");
     if (preview.length !== 3) return setError("Дождитесь расчёта трёх вариантов");
     setWorking(true);
     try {
-      const client = await onSave({ name: name.trim(), phone, city: normalizedCity, managerUserId });
-      const options = await Promise.all(materials.map(async (material) => {
+      const client = await onSave({ name: name.trim(), phone, city: normalizedCity, managerUserId, sourceCode });
+      const options: Option[] = [];
+      for (const material of materials) {
         const response = await fetch(`/api/clients/${client.id}/calculations`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...calculationInput, material }) });
         const payload = await response.json() as Option & { error?: string };
         if (!response.ok) throw new Error(payload.error ?? `Не удалось рассчитать вариант «${material}»`);
-        return payload;
-      }));
+        options.push(payload);
+      }
       const response = await fetch(`/api/clients/${client.id}/proposals`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ calculationIds: options.map((option) => option.id) }) });
       const created = await response.json() as { id?: number; number?: string; error?: string };
       if (!response.ok || !created.id || !created.number) throw new Error(created.error ?? "Не удалось сформировать КП");
@@ -155,7 +159,7 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
       <div className="flex items-start justify-between gap-3"><div><h2 id="new-lead-title" className="text-2xl font-bold text-white">Новая заявка</h2><p className="mt-1 text-sm text-slate-400">Клиент, расчёт трёх вариантов и КП — в одном окне</p></div><button type="button" onClick={onClose} disabled={working} className="grid size-11 shrink-0 place-items-center rounded-xl text-slate-300" aria-label="Закрыть"><X /></button></div>
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-950/50 p-3 text-sm text-red-300">{error}</p>}
       {proposal ? <Success proposal={proposal} onClose={onClose} /> : <form onSubmit={submit}>
-        <section className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Имя клиента"><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field><Field label="WhatsApp / телефон"><input required type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className={input} /></Field><Field label="Город"><CityCombobox value={city} onChange={setCity} className={input}/></Field><Field label="Ответственный менеджер"><select required value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)} className={input}><option value="">Выберите менеджера</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field></section>
+        <section className="mt-5 grid gap-3 sm:grid-cols-2"><Field label="Имя клиента"><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} className={input} /></Field><Field label="WhatsApp / телефон"><input required type="tel" inputMode="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className={input} /></Field><Field label="Город"><CityCombobox value={city} onChange={setCity} className={input}/></Field><Field label="Источник заявки"><select required value={sourceCode} onChange={(event) => setSourceCode(event.target.value as LeadSourceCode | "")} className={input}><option value="">Выберите источник</option><option value="INSTAGRAM">Instagram / Meta-реклама</option><option value="WHATSAPP">WhatsApp</option><option value="CALL">Звонок</option><option value="WEBSITE">Сайт</option><option value="REFERRAL">Рекомендация</option><option value="OFFICE">Офис</option><option value="REPEAT">Повторный клиент</option><option value="OTHER">Другое</option></select></Field><Field label="Ответственный менеджер"><select required value={managerUserId} onChange={(event) => setManagerUserId(event.target.value)} className={input}><option value="">Выберите менеджера</option>{managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field></section>
 
         <section className="mt-6 rounded-xl border border-slate-700 p-4"><h3 className="font-semibold text-white">Калькулятор лестницы</h3><div className="mt-4 grid gap-3 sm:grid-cols-2"><Counter label="Количество ступеней" value={steps} min={0} onChange={setSteps} /><Counter label="Количество площадок" value={platforms} min={0} onChange={setPlatforms} /><NumberField label="Ограждение, м" value={railingMeters} onChange={setRailingMeters} /><Toggle label="Подступенки" value={risers} onChange={setRisers} /></div><div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><Toggle label="Монтаж" value={installation} onChange={setInstallation} /><Toggle label="Замер" value={measurement} onChange={setMeasurement} />{city.trim().toLocaleLowerCase("ru") === "алматы" && <Toggle label="Доставка по Алматы" value={almatyDelivery} onChange={setAlmatyDelivery} />}</div>
 
@@ -174,7 +178,7 @@ export default function ClientModal({ open, onClose, onSave, saving = false }: P
 function Success({ proposal, onClose }: { proposal: Proposal; onClose: () => void }) {
   const pdf = `/api/proposals/${proposal.id}/pdf`;
   const delivery = proposal.deliveryOption === "NONE" ? "Без доставки" : `${proposal.deliveryOption === "OPTION_1" ? "Вариант 1" : "Вариант 2"} — ${money(proposal.deliveryCharge)}`;
-  return <section className="mt-6"><div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5"><CheckCircle2 className="text-emerald-300" /><h3 className="mt-3 text-2xl font-bold text-white">Заявка создана</h3><p className="mt-1 text-emerald-200">КП №{proposal.number}</p><p className="mt-2 text-sm text-emerald-100">Доставка: {delivery}</p></div><div className="mt-4 grid gap-3 sm:grid-cols-3">{proposal.options.map((option) => <article key={option.id} className="rounded-xl bg-slate-900 p-4"><p className="text-sm text-slate-400">{option.material}</p><strong className="mt-2 block text-xl text-white">{money(option.clientPrice)}</strong></article>)}</div><div className="mt-5 grid gap-2 sm:grid-cols-2"><a href={pdf} target="_blank" rel="noreferrer" className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold text-white"><ExternalLink size={17} />Открыть PDF</a><a href={`${pdf}?download=1`} className="grid min-h-12 place-items-center rounded-xl bg-slate-700 font-semibold text-white">Скачать PDF</a><button onClick={async () => { const response = await fetch(`/api/proposals/${proposal.id}/send`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: "{}" }); const body = await response.json() as { error?: string }; window.alert(response.ok ? "КП отправлено в WhatsApp" : body.error ?? "WhatsApp API не подключён. Скачайте PDF и отправьте вручную."); }} className="min-h-12 rounded-xl bg-emerald-700 font-semibold text-white">Отправить в WhatsApp</button><a href={`/clients/${proposal.clientId}`} className="grid min-h-12 place-items-center rounded-xl border border-slate-700 font-semibold text-white">Открыть заявку</a><button onClick={onClose} className="min-h-12 rounded-xl border border-slate-700 font-semibold text-white sm:col-span-2">Закрыть</button></div></section>;
+  return <section className="mt-6"><div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-5"><CheckCircle2 className="text-emerald-300" /><h3 className="mt-3 text-2xl font-bold text-white">Заявка создана</h3><p className="mt-1 text-emerald-200">КП №{proposal.number}</p><p className="mt-2 text-sm text-emerald-100">Доставка: {delivery}</p></div><div className="mt-4 grid gap-3 sm:grid-cols-3">{proposal.options.map((option) => <article key={option.id} className="rounded-xl bg-slate-900 p-4"><p className="text-sm text-slate-400">{option.material}</p><strong className="mt-2 block text-xl text-white">{money(option.clientPrice)}</strong></article>)}</div><div className="mt-5 grid gap-2 sm:grid-cols-2"><a href={pdf} target="_blank" rel="noreferrer" className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold text-white"><ExternalLink size={17} />Открыть PDF</a><a href={`${pdf}?download=1`} className="grid min-h-12 place-items-center rounded-xl bg-slate-700 font-semibold text-white">Скачать PDF</a><button onClick={async () => { const response = await fetch(`/api/proposals/${proposal.id}/send`, { method: "POST", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: "{}" }); const body = await response.json() as { error?: string }; window.alert(response.ok ? "КП отправлено в WhatsApp; контроль назначен автоматически" : body.error ?? "WhatsApp API не подключён. Скачайте PDF и отправьте вручную."); }} className="min-h-12 rounded-xl bg-emerald-700 font-semibold text-white">Отправить в WhatsApp</button><button onClick={async () => { const response = await fetch(`/api/proposals/${proposal.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status: "SENT" }) }); const body = await response.json() as { error?: string }; window.alert(response.ok ? "Отправка отмечена; контроль назначен автоматически" : body.error ?? "Не удалось сохранить отправку"); }} className="min-h-12 rounded-xl border border-emerald-700 font-semibold text-emerald-200">Я отправила вручную</button><a href={`/clients/${proposal.clientId}`} className="grid min-h-12 place-items-center rounded-xl border border-slate-700 font-semibold text-white">Открыть заявку</a><button onClick={onClose} className="min-h-12 rounded-xl border border-slate-700 font-semibold text-white">Закрыть</button></div></section>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="text-sm text-slate-300">{label}{children}</label>; }

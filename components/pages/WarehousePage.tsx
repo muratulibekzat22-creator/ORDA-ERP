@@ -13,10 +13,13 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import PurchaseBatchesPanel from "@/components/warehouse/PurchaseBatchesPanel";
 
 type Material = {
   id: number;
   name: string;
+  model?: string | null;
+  description?: string | null;
   category: string;
   unit: string;
   minimumStock: number;
@@ -24,6 +27,8 @@ type Material = {
   reserved: number;
   available: number;
   purchasePrice?: string;
+  averageCost?: string;
+  sellingPrice?: string;
   supplier: string | null;
   active: boolean;
   alerts: string[];
@@ -90,10 +95,13 @@ const empty: Data = {
 };
 const materialBlank = {
   name: "",
+  model: "",
+  description: "",
   category: "",
   unit: "шт",
   minimumStock: "0",
   purchasePrice: "0",
+  sellingPrice: "0",
   supplier: "",
   initialStock: "0",
   active: true,
@@ -117,6 +125,9 @@ const operationBlank = {
 const labels: Record<string, string> = {
   incoming: "Приход",
   outgoing: "Расход",
+  sale: "Продажа со склада",
+  writeoff: "Списание",
+  workshop_issue: "Передача в цех",
   adjustment: "Корректировка",
   return: "Возврат",
   reserve: "Резерв",
@@ -208,10 +219,13 @@ export default function WarehousePage() {
     event.preventDefault();
     const payload = {
       name: material.name,
+      model: material.model,
+      description: material.description,
       category: material.category,
       unit: material.unit,
       minimumStock: material.minimumStock,
       purchasePrice: material.purchasePrice,
+      sellingPrice: material.sellingPrice,
       supplier: material.supplier,
     };
     const ok = editing
@@ -246,10 +260,13 @@ export default function WarehousePage() {
     setEditing(item);
     setMaterial({
       name: item.name,
+      model: item.model ?? "",
+      description: item.description ?? "",
       category: item.category,
       unit: item.unit,
       minimumStock: String(item.minimumStock),
       purchasePrice: String(item.purchasePrice ?? 0),
+      sellingPrice: String(item.sellingPrice ?? 0),
       supplier: item.supplier ?? "",
       initialStock: "0",
       active: item.active,
@@ -261,7 +278,7 @@ export default function WarehousePage() {
       data.materials.filter(
         (item) =>
           (!search ||
-            [item.name, item.category, item.supplier ?? ""].some((value) =>
+            [item.name, item.model ?? "", item.description ?? "", item.category, item.supplier ?? ""].some((value) =>
               value
                 .toLocaleLowerCase("ru")
                 .includes(search.toLocaleLowerCase("ru")),
@@ -281,7 +298,9 @@ export default function WarehousePage() {
           ? ["consume"]
           : [
               "incoming",
-              "outgoing",
+              "sale",
+              "writeoff",
+              "workshop_issue",
               "adjustment",
               "return",
               "reserve",
@@ -294,7 +313,7 @@ export default function WarehousePage() {
         <div>
           <h1 className="text-3xl font-bold text-white">Склад</h1>
           <p className="mt-2 text-slate-400">
-            Материалы, физический и доступный остаток, резервы и списания
+            Товары, закупки, точная себестоимость, продажи и передача в цех
           </p>
         </div>
       </div>
@@ -344,6 +363,7 @@ export default function WarehousePage() {
       <div className="mb-5 flex gap-2 overflow-x-auto pb-2">
         {[
           ["materials", "Материалы"],
+          ...(canSeeCost ? [["purchases", "Закупки"]] : []),
           ["operations", "Операции"],
           ["reservations", "Резервы"],
           ["history", "История"],
@@ -373,10 +393,13 @@ export default function WarehousePage() {
                   {(
                     [
                       "name",
+                      "model",
+                      "description",
                       "category",
                       "unit",
                       "minimumStock",
                       "purchasePrice",
+                      "sellingPrice",
                       "supplier",
                     ] as const
                   ).map((field) => (
@@ -384,7 +407,7 @@ export default function WarehousePage() {
                       key={field}
                       required={["name", "category", "unit"].includes(field)}
                       type={
-                        ["minimumStock", "purchasePrice"].includes(field)
+                        ["minimumStock", "purchasePrice", "sellingPrice"].includes(field)
                           ? "number"
                           : "text"
                       }
@@ -400,10 +423,13 @@ export default function WarehousePage() {
                       placeholder={
                         {
                           name: "Название",
+                          model: "Модель / артикул",
+                          description: "Состав комплекта, например: пара = 2 шт.",
                           category: "Категория",
                           unit: "Единица",
                           minimumStock: "Минимальный остаток",
                           purchasePrice: "Закупочная цена",
+                          sellingPrice: "Продажная цена",
                           supplier: "Поставщик",
                         }[field]
                       }
@@ -578,7 +604,7 @@ export default function WarehousePage() {
                           "Физический",
                           "Резерв",
                           "Доступно",
-                          ...(canSeeCost ? ["Цена"] : []),
+                          ...(canSeeCost ? ["Себестоимость", "Цена продажи"] : []),
                           "Поставщик",
                           "Статус",
                           "",
@@ -599,6 +625,7 @@ export default function WarehousePage() {
                             {item.name}
                             <span className="block text-xs text-slate-500">
                               {item.unit}
+                            {item.model ? ` · ${item.model}` : ""}
                             </span>
                           </td>
                           <td>{item.category}</td>
@@ -615,7 +642,12 @@ export default function WarehousePage() {
                           </td>
                           {canSeeCost && (
                             <td>
-                              {Number(item.purchasePrice).toLocaleString()} ₸
+                              {Number(item.averageCost ?? item.purchasePrice).toLocaleString()} ₸
+                            </td>
+                          )}
+                          {canSeeCost && (
+                            <td>
+                              {Number(item.sellingPrice).toLocaleString()} ₸
                             </td>
                           )}
                           <td>{item.supplier || "—"}</td>
@@ -658,6 +690,15 @@ export default function WarehousePage() {
               </div>
             </div>
           )}
+          {tab === "purchases" && (
+            <PurchaseBatchesPanel
+              materials={data.materials.map((item) => ({
+                id: item.id,
+                name: item.name,
+                unit: item.unit,
+              }))}
+            />
+          )}
           {tab === "operations" && (
             <form
               onSubmit={saveOperation}
@@ -696,10 +737,10 @@ export default function WarehousePage() {
                     </option>
                   ))}
               </select>
-              {["reserve", "release", "consume"].includes(operation.type) ||
+              {["reserve", "release", "consume", "workshop_issue", "sale"].includes(operation.type) ||
               operation.type === "outgoing" ? (
                 <select
-                  required={["reserve", "release", "consume"].includes(
+                  required={["reserve", "release", "consume", "workshop_issue"].includes(
                     operation.type,
                   )}
                   value={operation.orderId}
@@ -742,7 +783,7 @@ export default function WarehousePage() {
                     onChange={(e) =>
                       setOperation({ ...operation, price: e.target.value })
                     }
-                    placeholder="Фактическая цена"
+                    placeholder={operation.type === "sale" ? "Цена продажи" : "Фактическая цена / себестоимость"}
                     className="rounded-xl bg-slate-900 p-3 text-white"
                   />
                   <input

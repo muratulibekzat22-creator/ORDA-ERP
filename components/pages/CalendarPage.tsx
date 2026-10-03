@@ -35,6 +35,18 @@ type Task = {
     city: string;
   } | null;
   order: { id: number; number: string; client: { name: string } } | null;
+  acknowledgementRequired: boolean;
+  acknowledgedAt: string | null;
+  acknowledgementComment: string | null;
+  plannedCompletionAt: string | null;
+  resultText: string | null;
+  resultSubmittedAt: string | null;
+  resultAttachments: Array<{
+    id: number;
+    fileName: string;
+    contentType: string;
+    size: number;
+  }>;
 };
 type Meta = {
   assignees: Array<{ id: number; name: string; role: string }>;
@@ -138,9 +150,9 @@ export default function CalendarPage({ initialState = "active" }: { initialState
     clientId: "",
     orderId: "",
     description: "",
+    acknowledgementRequired: false,
   });
-  const role = session?.user.role,
-    director = role === "DIRECTOR";
+  const director = session?.user.accountRole === "DIRECTOR";
   const selectedRange = useMemo(() => range(anchor, mode), [anchor, mode]);
   const load = useCallback(async (cursor?: string) => {
     setLoading(true);
@@ -211,6 +223,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
       assigneeId: f.assigneeId || String(meta.assignees[0]?.id ?? ""),
       clientId: "",
       orderId: "",
+      acknowledgementRequired: false,
     }));
     setOpen(true);
   }
@@ -476,6 +489,33 @@ export default function CalendarPage({ initialState = "active" }: { initialState
                             </Link>
                           )}
                         </div>
+                        {task.acknowledgementRequired && !task.acknowledgedAt ? (
+                          <p className="mt-2 text-sm font-semibold text-amber-300">
+                            Ждёт обязательного ознакомления сотрудника
+                          </p>
+                        ) : task.acknowledgedAt ? (
+                          <p className="mt-2 text-sm text-emerald-300">
+                            Ознакомлен
+                            {task.plannedCompletionAt
+                              ? ` · обещанный срок ${display(task.plannedCompletionAt, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+                              : ""}
+                          </p>
+                        ) : null}
+                        {task.resultSubmittedAt && (
+                          <div className="mt-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm">
+                            <p className="font-semibold text-emerald-200">Результат получен</p>
+                            {task.resultText && <p className="mt-1 whitespace-pre-wrap text-slate-300">{task.resultText}</p>}
+                            {task.resultAttachments.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {task.resultAttachments.map((file) => (
+                                  <a key={file.id} href={`/api/calendar/result-attachments/${file.id}`} className="text-blue-300 underline">
+                                    {file.fileName}
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                       {!["COMPLETED", "CANCELLED"].includes(task.status) && (
                         <div className="grid grid-cols-2 gap-2 md:flex">
@@ -499,6 +539,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
                                 clientId: String(task.client?.id ?? ""),
                                 orderId: String(task.order?.id ?? ""),
                                 description: task.description ?? "",
+                                acknowledgementRequired: task.acknowledgementRequired,
                               }));
                               setOpen(true);
                             }}
@@ -557,6 +598,20 @@ export default function CalendarPage({ initialState = "active" }: { initialState
                   className={field}
                 />
               </label>
+              {director && (
+                <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 text-sm text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={form.acknowledgementRequired}
+                    onChange={(e) => setForm({ ...form, acknowledgementRequired: e.target.checked })}
+                    className="mt-0.5 size-5 accent-amber-500"
+                  />
+                  <span>
+                    <b className="block text-amber-200">Обязательное ознакомление и отчёт</b>
+                    Сотрудник не сможет продолжить работу в системе, пока не подтвердит, что понял задачу, и не укажет срок. В выбранный день система потребует текст, фото, документ или видео с результатом.
+                  </span>
+                </label>
+              )}
               <label className="text-sm text-slate-300">
                 Тип
                 <select

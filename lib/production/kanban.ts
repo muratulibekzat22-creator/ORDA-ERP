@@ -17,7 +17,7 @@ export type FilterableProduction = {
   masterUserId: number | null;
   plannedEndAt: string | Date | null;
   completedAt: string | Date | null;
-  order: { number: string; client: { name: string } };
+  order: { number: string; client: { name: string }; partner?: { id: number } | null };
 };
 
 export const EMPTY_PRODUCTION_FILTERS: ProductionKanbanFilter = {
@@ -41,6 +41,7 @@ export function filterProductions<T extends FilterableProduction>(items: T[], fi
     if (filters.stage && item.stage !== filters.stage) return false;
     if (filters.assigneeId !== "" && item.masterUserId !== filters.assigneeId) return false;
     if (filters.priority !== "" && item.priority !== filters.priority) return false;
+    if (filters.partnerId !== "" && item.order.partner?.id !== filters.partnerId) return false;
     if (filters.overdueOnly && !isProductionOverdue(item, now)) return false;
     if (query && !`${item.order.number} ${item.order.client.name}`.toLocaleLowerCase("ru").includes(query)) return false;
     return true;

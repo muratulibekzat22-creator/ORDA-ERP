@@ -1,9 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
 import { Role, roleNames } from "@/lib/roles";
+import {
+  MEASURER_TERRITORY_TEMPLATES,
+  travelTimeLabel,
+  type MeasurerServiceArea,
+  type MeasurerTerritoryTemplate,
+} from "@/lib/measurements/measurer-territory";
 
 type Employee = {
   id: number;
@@ -19,6 +26,10 @@ type Employee = {
   accountActive: boolean;
   createdAt: string;
   lastLogin: string | null;
+  protectedAccount: boolean;
+  homeCity: string;
+  maxTravelMinutes: number;
+  serviceAreas: MeasurerServiceArea[];
 };
 type Form = {
   name: string;
@@ -29,10 +40,19 @@ type Form = {
   role: Role;
   password: string;
   active: boolean;
+  homeCity: string;
+  maxTravelMinutes: number;
+  serviceAreas: MeasurerServiceArea[];
 };
 type EmployeeFilter = "active" | "inactive" | "all";
 
-const employeeRoles = Object.values(Role).filter((role) => role !== Role.PARTNER);
+const founderRoles = Object.values(Role).filter((role) => role !== Role.PARTNER);
+const directorRoles = [Role.MARKETER, Role.MANAGER, Role.MEASURER, Role.DESIGNER, Role.PRODUCTION, Role.INSTALLER];
+const generatedPassword = () => {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
+  const bytes = crypto.getRandomValues(new Uint32Array(16));
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join("");
+};
 const blank: Form = {
   name: "",
   position: "",
@@ -42,9 +62,15 @@ const blank: Form = {
   role: Role.MANAGER,
   password: "",
   active: true,
+  homeCity: "",
+  maxTravelMinutes: 240,
+  serviceAreas: [],
 };
 
 export default function EmployeesPage() {
+  const { data: session } = useSession();
+  const founder = session?.user.accountRole === Role.DIRECTOR;
+  const employeeRoles = founder ? founderRoles : directorRoles;
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeeFilter, setEmployeeFilter] = useState<EmployeeFilter>("active");
   const [form, setForm] = useState<Form>(blank);
@@ -55,6 +81,7 @@ export default function EmployeesPage() {
   const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; password: string } | null>(null);
 
   const load = async (filter: EmployeeFilter) => {
     const response = await fetch(`/api/employees?status=${filter}`, { cache: "no-store" });
@@ -82,13 +109,17 @@ export default function EmployeesPage() {
         phone: form.phone,
         email: form.email,
         active: form.active,
+        homeCity: form.homeCity,
+        maxTravelMinutes: form.maxTravelMinutes,
+        serviceAreas: form.serviceAreas,
       } : form),
     });
     if (!response.ok) {
       const payload = await response.json() as { error?: string };
       return setError(payload.error ?? "Не удалось сохранить сотрудника");
     }
-    setNotice(edit ? "Данные сотрудника сохранены" : "Сотрудник добавлен");
+    setNotice(edit ? "Данные сотрудника сохранены" : "Сотрудник добавлен и виден основателю");
+    if (!edit && form.hasOrdaAccess) setCreatedCredentials({ email: form.email, password: form.password });
     setForm(blank);
     setEdit(null);
     await load(employeeFilter);
@@ -124,6 +155,7 @@ export default function EmployeesPage() {
       body: JSON.stringify(accessForm),
     });
     if (!response.ok) return setError(((await response.json()) as { error?: string }).error ?? "Не удалось создать доступ");
+    setCreatedCredentials({ email: accessForm.email, password: accessForm.password });
     setAccessEmployee(null);
     setAccessForm({ email: "", password: "", role: Role.MANAGER });
     setNotice("Доступ в ORDA создан без изменения Payroll-истории");
@@ -157,9 +189,24 @@ export default function EmployeesPage() {
       role: employee.role ?? Role.MANAGER,
       password: "",
       active: employee.active,
+      homeCity: employee.homeCity,
+      maxTravelMinutes: employee.maxTravelMinutes,
+      serviceAreas: employee.serviceAreas,
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  const measurerForm = form.role === Role.MEASURER || form.position.toLocaleLowerCase("ru").includes("замер");
+  const applyTerritoryTemplate = (template: MeasurerTerritoryTemplate) => setForm({
+    ...form,
+    homeCity: template.homeCity,
+    maxTravelMinutes: template.maxTravelMinutes,
+    serviceAreas: template.serviceAreas.map((area) => ({ ...area })),
+  });
+  const updateArea = (index: number, patch: Partial<MeasurerServiceArea>) => setForm({
+    ...form,
+    serviceAreas: form.serviceAreas.map((area, areaIndex) => areaIndex === index ? { ...area, ...patch } : area),
+  });
 
   return (
     <section className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-8">
@@ -182,13 +229,23 @@ export default function EmployeesPage() {
         <input type="email" required={!edit && form.hasOrdaAccess} value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} placeholder="Email — необязательно" aria-label="Email" />
         {!edit && <label className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-slate-200"><input type="checkbox" checked={form.hasOrdaAccess} onChange={(event) => setForm({ ...form, hasOrdaAccess: event.target.checked })} />Доступ в ORDA</label>}
         {!edit && form.hasOrdaAccess && <>
-          <select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value as Role })} aria-label="Роль ORDA">{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select>
-          <input required minLength={12} type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Пароль — минимум 12 символов" aria-label="Пароль" />
+          <select value={form.role} onChange={(event) => { const role = event.target.value as Role; setForm({ ...form, role, position: roleNames[role] }); }} aria-label="Роль ORDA">{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select>
+          <div className="flex min-w-0 gap-2"><input required minLength={12} type="text" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} placeholder="Временный пароль — минимум 12 символов" aria-label="Пароль" /><button type="button" onClick={() => setForm({ ...form, password: generatedPassword() })} className="shrink-0 rounded-xl bg-slate-700 px-3 text-sm text-white">Создать пароль</button></div>
         </>}
         <label className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-3 text-slate-200"><input type="checkbox" checked={form.active} onChange={(event) => setForm({ ...form, active: event.target.checked })} />Активный сотрудник</label>
+        {measurerForm && <div className="space-y-3 rounded-xl border border-amber-700/50 bg-amber-950/10 p-4 md:col-span-2 lg:col-span-3">
+          <div><h3 className="font-semibold text-white">Территория замерщика</h3><p className="text-xs text-slate-400">Выберите опорный регион. Менеджер увидит обычные выезды отдельно от дальних маршрутов по согласованию.</p></div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{MEASURER_TERRITORY_TEMPLATES.map((template) => <button key={template.id} type="button" onClick={() => applyTerritoryTemplate(template)} className={`min-h-20 rounded-xl border p-3 text-left ${form.homeCity === template.homeCity ? "border-amber-400 bg-amber-800/40" : "border-slate-700 bg-slate-900"}`}><b className="block text-sm text-white">{template.label}</b><span className="mt-1 block text-xs text-slate-400">{template.description}</span></button>)}</div>
+          <p className="rounded-lg border border-amber-800/60 bg-amber-950/30 p-3 text-xs text-amber-100">Правило ORDA: до 4 часов в одну сторону — обычный выезд. Более 4 часов или сложный маршрут — только после отдельного согласования директора.</p>
+          <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm text-slate-300">Базовый город<input value={form.homeCity} onChange={(event) => setForm({ ...form, homeCity: event.target.value })} placeholder="Например, Семей" className="mt-1 w-full" /></label><label className="text-sm text-slate-300">Максимум дороги в одну сторону<select value={form.maxTravelMinutes} onChange={(event) => setForm({ ...form, maxTravelMinutes: Number(event.target.value) })} className="mt-1 w-full"><option value={180}>3 часа</option><option value={240}>4 часа</option><option value={300}>5 часов</option><option value={360}>6 часов</option></select></label></div>
+          <div className="space-y-2">{form.serviceAreas.map((area, index) => <div key={`${index}-${area.city}`} className="grid gap-2 rounded-lg bg-slate-950/60 p-2 sm:grid-cols-[1fr_150px_190px_auto]"><input value={area.city} onChange={(event) => updateArea(index, { city: event.target.value })} placeholder="Город" aria-label={`Город зоны ${index + 1}`} /><input type="number" min={0} max={900} value={area.estimatedMinutes} onChange={(event) => updateArea(index, { estimatedMinutes: Number(event.target.value) })} aria-label={`Минуты в пути ${index + 1}`} /><select value={area.approvalRequired ? "approval" : "regular"} onChange={(event) => updateArea(index, { approvalRequired: event.target.value === "approval" })} aria-label={`Режим выезда ${index + 1}`}><option value="regular">Обычный выезд</option><option value="approval">По согласованию</option></select><button type="button" onClick={() => setForm({ ...form, serviceAreas: form.serviceAreas.filter((_, areaIndex) => areaIndex !== index) })} className="min-h-11 rounded-lg bg-red-950 px-3 text-red-200">Убрать</button></div>)}</div>
+          <button type="button" onClick={() => setForm({ ...form, serviceAreas: [...form.serviceAreas, { city: "", estimatedMinutes: 0, approvalRequired: false }] })} className="min-h-10 rounded-lg bg-slate-700 px-3 text-sm text-white">+ Добавить город</button>
+        </div>}
         <button className="min-h-12 rounded-xl bg-blue-600 p-3 font-semibold text-white hover:bg-blue-700">{edit ? "Сохранить изменения" : "Добавить сотрудника"}</button>
         {edit && <button type="button" onClick={() => { setEdit(null); setForm(blank); }} className="min-h-12 rounded-xl bg-slate-700 p-3 text-white">Отмена</button>}
       </form>
+
+      {createdCredentials && <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100"><b className="block text-white">Доступ создан — передайте сотруднику</b><p className="mt-2 break-all">Логин: {createdCredentials.email}</p><p className="break-all">Временный пароль: {createdCredentials.password}</p><button type="button" onClick={() => void navigator.clipboard.writeText(`Логин ORDA: ${createdCredentials.email}\nПароль: ${createdCredentials.password}`)} className="mt-3 min-h-10 rounded-xl bg-emerald-700 px-4 font-semibold text-white">Скопировать логин и пароль</button></div>}
 
       <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Фильтр сотрудников">
         {([["active", "Активные"], ["inactive", "Неактивные"], ["all", "Все"]] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setEmployeeFilter(value)} className={`min-h-11 rounded-xl px-4 font-medium ${employeeFilter === value ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300"}`}>{label}</button>)}
@@ -202,12 +259,13 @@ export default function EmployeesPage() {
             <span className={`shrink-0 rounded-full px-3 py-1 text-xs ${employee.active ? "bg-green-700 text-white" : "bg-slate-700 text-slate-300"}`}>{employee.active ? "Активен" : "Неактивен"}</span>
           </div>
           <div className="mt-3 rounded-xl bg-slate-900 p-3 text-sm"><p className={employee.hasOrdaAccess && employee.accountActive ? "text-emerald-300" : "text-slate-400"}>{!employee.hasOrdaAccess ? "Без доступа в ORDA" : employee.accountActive ? `Доступ активен · ${employee.role ? roleNames[employee.role] : ""}` : "Доступ в ORDA отключён"}</p>{employee.hasOrdaAccess && <p className="mt-1 text-xs text-slate-500">Последний вход: {employee.lastLogin ? new Date(employee.lastLogin).toLocaleString("ru-RU") : "ещё не входил"}</p>}</div>
+          {(employee.role === Role.MEASURER || employee.position.toLocaleLowerCase("ru").includes("замер")) && <div className="mt-3 rounded-xl border border-amber-900/60 bg-amber-950/10 p-3 text-sm"><b className="text-amber-100">Зона: {employee.homeCity || "не настроена"}</b><p className="mt-1 text-xs text-slate-400">Лимит: {travelTimeLabel(employee.maxTravelMinutes)} в одну сторону</p>{employee.serviceAreas.length > 0 && <p className="mt-2 text-xs text-slate-300">{employee.serviceAreas.map((area) => `${area.city} — ${travelTimeLabel(area.estimatedMinutes)}${area.approvalRequired ? " (по согласованию)" : ""}`).join(" · ")}</p>}</div>}
           <div className="mt-4 grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => startEdit(employee)} className="min-h-11 rounded-lg bg-slate-700 px-3 text-white">Изменить</button>
-            <button type="button" onClick={() => void updateProfile(employee, { active: !employee.active })} className="min-h-11 rounded-lg bg-amber-800 px-3 text-white">{employee.active ? "Деактивировать" : "Активировать"}</button>
+            {!employee.protectedAccount && <button type="button" onClick={() => startEdit(employee)} className="min-h-11 rounded-lg bg-slate-700 px-3 text-white">Изменить</button>}
+            {!employee.protectedAccount && <button type="button" onClick={() => void updateProfile(employee, { active: !employee.active })} className="min-h-11 rounded-lg bg-amber-800 px-3 text-white">{employee.active ? "Деактивировать" : "Активировать"}</button>}
             {!employee.hasOrdaAccess ? <button type="button" onClick={() => { setAccessEmployee(employee); setAccessForm({ email: employee.email ?? "", password: "", role: Role.MANAGER }); }} className="col-span-2 min-h-11 rounded-lg bg-blue-700 px-3 text-white">Создать доступ в ORDA</button> : <>
-              <button type="button" onClick={() => setPasswordEmployee(employee)} className="min-h-11 rounded-lg bg-blue-700 px-3 text-white">Изменить пароль</button>
-              <button type="button" onClick={() => void updateAccess(employee)} className="min-h-11 rounded-lg border border-slate-600 px-3 text-white">{employee.accountActive ? "Отключить доступ" : "Включить доступ"}</button>
+              {(!employee.protectedAccount || founder) && <button type="button" onClick={() => setPasswordEmployee(employee)} className={`${employee.protectedAccount ? "col-span-2" : ""} min-h-11 rounded-lg bg-blue-700 px-3 text-white`}>Изменить пароль</button>}
+              {!employee.protectedAccount && <button type="button" onClick={() => void updateAccess(employee)} className="min-h-11 rounded-lg border border-slate-600 px-3 text-white">{employee.accountActive ? "Отключить доступ" : "Включить доступ"}</button>}
             </>}
           </div>
         </article>)}
@@ -217,7 +275,7 @@ export default function EmployeesPage() {
         <form onSubmit={createAccess} className="space-y-4">
           <label className="block text-sm text-slate-300">Email<input autoFocus required type="email" className="control mt-1" value={accessForm.email} onChange={(event) => setAccessForm({ ...accessForm, email: event.target.value })} /></label>
           <label className="block text-sm text-slate-300">Роль<select className="control mt-1" value={accessForm.role} onChange={(event) => setAccessForm({ ...accessForm, role: event.target.value as Role })}>{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select></label>
-          <label className="block text-sm text-slate-300">Пароль<input required minLength={12} type="password" className="control mt-1" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /></label>
+          <label className="block text-sm text-slate-300">Временный пароль<div className="mt-1 flex gap-2"><input required minLength={12} type="text" className="control" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><button type="button" onClick={() => setAccessForm({ ...accessForm, password: generatedPassword() })} className="shrink-0 rounded-xl bg-slate-700 px-3">Создать</button></div></label>
           <button className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white">Создать доступ</button>
         </form>
       </Modal>}

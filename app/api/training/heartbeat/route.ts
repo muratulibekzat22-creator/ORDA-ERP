@@ -11,6 +11,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     return NextResponse.json(
       await recordTrainingHeartbeat(auth.actor!.userId, {
+        lessonKey: String(body.lessonKey ?? ""),
         currentTime: Number(body.currentTime),
         duration: Number(body.duration),
         playerState: String(body.playerState ?? ""),

@@ -58,6 +58,7 @@ export const authOptions: NextAuthOptions = {
       ]));
       return {
         id: String(user.id), name: user.name, email: user.email, role: user.role,
+        accountRole: user.role,
         sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
@@ -72,7 +73,7 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id; token.role = user.role; token.sessionVersion = user.sessionVersion;
+        token.id = user.id; token.role = user.role; token.accountRole = user.accountRole; token.sessionVersion = user.sessionVersion;
         token.mustChangePassword = user.mustChangePassword; token.companyId = user.companyId;
         token.companySlug = user.companySlug; token.companyName = user.companyName;
         token.isDemo = user.isDemo; token.invalid = false;
@@ -87,7 +88,7 @@ export const authOptions: NextAuthOptions = {
         }));
         token.invalid = !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
         if (current) {
-          token.role = current.role; token.mustChangePassword = current.mustChangePassword;
+          token.role = current.role; token.accountRole = current.role; token.mustChangePassword = current.mustChangePassword;
           token.companyId = current.companyId; token.companySlug = current.company.slug;
           token.companyName = current.company.name; token.isDemo = current.company.isDemo;
         }
@@ -96,7 +97,13 @@ export const authOptions: NextAuthOptions = {
     },
     session({ session, token }) {
       session.user.id = String(token.id ?? "");
-      session.user.role = token.invalid ? "" : String(token.role ?? "");
+      const accountRole = String(token.accountRole ?? token.role ?? "");
+      session.user.accountRole = token.invalid ? "" : accountRole;
+      session.user.role = token.invalid
+        ? ""
+        : accountRole === "OPERATIONS_DIRECTOR"
+          ? "DIRECTOR"
+          : accountRole;
       session.user.mustChangePassword = token.invalid ? false : token.mustChangePassword === true;
       session.user.companyId = Number(token.companyId ?? 0);
       session.user.companySlug = String(token.companySlug ?? "");

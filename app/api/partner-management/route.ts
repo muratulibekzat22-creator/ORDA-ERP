@@ -102,7 +102,7 @@ export async function GET(request: Request) {
       to: asDate(url.searchParams.get("to")),
       settlementStatus,
       debt,
-    }), { headers: { "cache-control": "no-store" } });
+    }, Number(auth.session!.user.id)), { headers: { "cache-control": "no-store" } });
   } catch (error) {
     return errorResponse(error);
   }
@@ -119,16 +119,17 @@ export async function POST(request: Request) {
   const user = actor(auth.session!);
   try {
     if (action === "create-partner") {
-      const kind = enumValue(Object.values(PartnerBusinessType), body.kind);
-      const rewardRule = enumValue(Object.values(PartnerRewardRule), body.rewardRule);
-      if (!kind || !rewardRule) throw new PartnerManagementError("INVALID_PARTNER_CONFIGURATION");
+      const kind = enumValue(Object.values(PartnerBusinessType), body.kind) ?? PartnerBusinessType.CONTRACTOR;
+      const rewardRule = enumValue(Object.values(PartnerRewardRule), body.rewardRule) ?? PartnerRewardRule.FIXED;
       return NextResponse.json(await createManagedPartner({
         name: asString(body.name) ?? "", kind, phone: asString(body.phone), secondaryPhone: asString(body.secondaryPhone),
         email: asString(body.email), iinBin: asString(body.iinBin), city: asString(body.city), address: asString(body.address),
         bankDetails: asString(body.bankDetails), contactPerson: asString(body.contactPerson), cooperationStartedAt: asDate(body.cooperationStartedAt),
         defaultRewardRule: rewardRule,
         defaultRewardPercent: body.rewardPercent == null || body.rewardPercent === "" ? null : String(body.rewardPercent),
-        defaultRewardFixedAmount: body.fixedAmount == null || body.fixedAmount === "" ? null : String(body.fixedAmount),
+        defaultRewardFixedAmount: body.fixedAmount == null || body.fixedAmount === ""
+          ? (rewardRule === PartnerRewardRule.FIXED ? "0" : null)
+          : String(body.fixedAmount),
         businessStatus: enumValue(Object.values(PartnerBusinessStatus), body.businessStatus), comment: asString(body.comment),
       }, user), { status: 201 });
     }

@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import { isOperatingProfitExpense, isAdditionalProfitIncome } from "../lib/finance/profit-entry";
+const bank = { direction: "EXPENSE", source: "BANK_STATEMENT", orderId: null, affectsProfit: true, category: "ADVERTISING", type: "OTHER" };
+assert.equal(isOperatingProfitExpense(bank), true);
+assert.equal(isOperatingProfitExpense({ ...bank, orderId: 42 }), false);
+assert.equal(isOperatingProfitExpense({ ...bank, affectsProfit: false }), false);
+assert.equal(isOperatingProfitExpense({ ...bank, type: "PARTNER_PAYOUT" }), false);
+assert.equal(isOperatingProfitExpense({ ...bank, category: "SALARY" }), false);
+for (const source of ["PAYROLL_ACCRUAL", "PAYROLL_PAYMENT", "OTHER_SYSTEM"]) assert.equal(isOperatingProfitExpense({ ...bank, source }), false);
+for (const source of ["MANUAL", "RECURRING_EXPENSE"]) assert.equal(isOperatingProfitExpense({ ...bank, source }), true);
+assert.equal(isAdditionalProfitIncome({ ...bank, direction: "INCOME" }), false);
+assert.equal(isAdditionalProfitIncome({ ...bank, source: "MANUAL", direction: "INCOME" }), true);
+assert.equal(isAdditionalProfitIncome({ ...bank, source: "MANUAL", direction: "INCOME", orderId: 42 }), false);
+console.log("Shared profit rule includes unlinked bank expenses and excludes order, payroll and partner duplicates");

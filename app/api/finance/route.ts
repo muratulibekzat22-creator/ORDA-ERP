@@ -58,7 +58,8 @@ function operationError(error: unknown) {
 export async function GET(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT)
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT)
     return NextResponse.json(
       { error: "Недостаточно прав" },
       { status: 403 },
@@ -128,7 +129,7 @@ export async function GET(request: Request) {
         pageSize: requestedPageSize,
       }),
     ]);
-    return NextResponse.json({ ...data, journal });
+    return NextResponse.json(role === Role.OPERATIONS_DIRECTOR ? { journal } : { ...data, journal });
   } catch (error) {
     logRequestFailure("finance.read_failed", request, error);
     return NextResponse.json({ error: "Не удалось загрузить финансы" }, { status: 500 });
@@ -138,7 +139,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request);
   if ("response" in idempotency) return idempotency.response;
   try {
@@ -207,7 +209,7 @@ export async function POST(request: Request) {
       });
     }
     const type = typeof body.type === "string" && financeOperationTypes.includes(body.type as FinanceOperationType) ? body.type as FinanceOperationType : null;
-    if (type === "PARTNER_PAYOUT" && auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+    if (type === "PARTNER_PAYOUT" && role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const amount = positiveMoney(body.amount);
     const method = typeof body.method === "string" && methods.includes(body.method as typeof methods[number]) ? body.method : null;
     const orderId = body.orderId == null || body.orderId === "" ? undefined : positiveInteger(body.orderId);

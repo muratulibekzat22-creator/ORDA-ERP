@@ -2,6 +2,7 @@ import { LeadStage, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { readIdempotencyKey } from "@/lib/idempotency";
+import { scheduleProposalFollowUp } from "@/lib/leads/proposal-follow-up";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { buildProposalPdf } from "@/lib/services/proposal-pdf.service";
@@ -15,7 +16,7 @@ export async function POST(
   if (auth.response) return auth.response;
   const id = Number((await params).id),
     role = auth.session!.user.role as Role;
-  if (!Number.isInteger(id) || (role !== Role.DIRECTOR && role !== Role.MANAGER))
+  if (!Number.isInteger(id) || (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request);
   if ("response" in idempotency) return idempotency.response;
@@ -108,8 +109,8 @@ export async function POST(
         { status: 502 },
       );
     const now = new Date();
-    await prisma.$transaction([
-      prisma.commercialProposal.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.commercialProposal.update({
         where: { id },
         data: {
           status: "SENT",
@@ -117,12 +118,12 @@ export async function POST(
           providerMessageId,
           sendIdempotencyKey: idempotency.key,
         },
-      }),
-      prisma.client.update({
+      });
+      await tx.client.update({
         where: { id: proposal.clientId },
         data: { stage: LeadStage.PROPOSAL_SENT, status: "КП отправлено" },
-      }),
-      prisma.leadStatusHistory.create({
+      });
+      await tx.leadStatusHistory.create({
         data: {
           clientId: proposal.clientId,
           fromStage: proposal.client.stage,
@@ -133,8 +134,14 @@ export async function POST(
           authorName: auth.session!.user.name ?? proposal.createdByName,
           comment: `WhatsApp PDF КП №${proposal.rootNumber ?? proposal.number}`,
         },
-      }),
-    ]);
+      });
+      await scheduleProposalFollowUp(tx, {
+        proposalId: id,
+        clientId: proposal.clientId,
+        actorId: Number(auth.session!.user.id),
+        sentAt: now,
+      });
+    });
     return NextResponse.json({ status: "SENT", sentAt: now });
   } catch {
     return NextResponse.json(

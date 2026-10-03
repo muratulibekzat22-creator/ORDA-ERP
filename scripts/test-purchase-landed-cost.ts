@@ -127,6 +127,19 @@ async function main() {
       },
     });
     ids.material = material.id;
+    await prisma.inventoryValuationEntry.create({
+      data: {
+        materialId: material.id,
+        quantity: 1,
+        unitCost: 10000,
+        totalValue: 10000,
+        type: "OPENING",
+        sourceType: "LEGACY",
+        version: 1,
+        costStatus: "LEGACY_UNVERIFIED",
+        reason: "Synthetic legacy opening valuation",
+      },
+    });
     const payload = {
       supplierId: supplier.id,
       orderDate: new Date(),
@@ -313,7 +326,7 @@ async function main() {
     );
     assert.equal(replay.created, false);
     const legacy = await prisma.inventoryValuationEntry.findFirst({
-      where: { costStatus: "LEGACY_UNVERIFIED", sourceType: "LEGACY" },
+      where: { materialId: material.id, costStatus: "LEGACY_UNVERIFIED", sourceType: "LEGACY" },
     });
     assert(legacy, "legacy opening valuation missing");
     console.log(

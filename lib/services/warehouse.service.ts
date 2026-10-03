@@ -6,6 +6,9 @@ import { prisma } from "@/lib/prisma";
 export const WAREHOUSE_OPERATION_TYPES = [
   "incoming",
   "outgoing",
+  "sale",
+  "writeoff",
+  "workshop_issue",
   "adjustment",
   "return",
   "reserve",
@@ -697,7 +700,7 @@ export async function createWarehouseOperation(input: {
         where: { id: input.data.materialId },
       });
       if (!material || !material.active) throw new WarehouseError("NOT_FOUND");
-      const needsOrder = ["reserve", "release", "consume"].includes(
+      const needsOrder = ["reserve", "release", "consume", "workshop_issue"].includes(
         input.data.type,
       );
       if (needsOrder && !input.data.orderId)
@@ -749,7 +752,7 @@ export async function createWarehouseOperation(input: {
         if (
           !original ||
           original.reversal ||
-          !["consume", "outgoing"].includes(original.type) ||
+          !["consume", "outgoing", "sale", "writeoff", "workshop_issue"].includes(original.type) ||
           original.materialId !== material.id ||
           original.orderId !== (input.data.orderId ?? null) ||
           input.data.quantity > original.quantity
@@ -761,7 +764,7 @@ export async function createWarehouseOperation(input: {
       } else if (input.data.type === "incoming") {
         stockDelta = input.data.quantity;
         stock += stockDelta;
-      } else if (input.data.type === "outgoing") {
+      } else if (["outgoing", "sale", "writeoff", "workshop_issue"].includes(input.data.type)) {
         if (stock - reserved < input.data.quantity)
           throw new WarehouseError("INSUFFICIENT_AVAILABLE");
         stockDelta = -input.data.quantity;
@@ -841,13 +844,13 @@ export async function createWarehouseOperation(input: {
             })
           : null;
       let purchaseBatchLineId: number | undefined;
-      if (input.data.type === "consume" || input.data.type === "outgoing") {
+      if (["consume", "outgoing", "sale", "writeoff", "workshop_issue"].includes(input.data.type)) {
         const receiptLines = await tx.purchaseBatchLine.findMany({
           where: { materialId: material.id, receivedQuantity: { gt: 0 } },
           orderBy: { createdAt: "asc" },
           include: {
             movements: {
-              where: { type: { in: ["consume", "outgoing"] } },
+              where: { type: { in: ["consume", "outgoing", "sale", "writeoff", "workshop_issue"] } },
               select: { quantity: true },
             },
           },
@@ -861,20 +864,23 @@ export async function createWarehouseOperation(input: {
             input.data.quantity,
         )?.id;
       }
-      const unitPrice = originalReturn
+      const unitCost = originalReturn
         ? Number(originalReturn.unitCostSnapshot)
-        : input.data.type === "consume" || input.data.type === "outgoing"
+        : ["consume", "outgoing", "sale", "writeoff", "workshop_issue"].includes(input.data.type)
           ? Number(material.averageCost)
           : input.actor.role === Role.PRODUCTION ||
               input.actor.role === Role.INSTALLER
             ? Number(material.averageCost)
             : (input.data.price ?? Number(material.averageCost));
+      const movementPrice = input.data.type === "sale"
+        ? (input.data.price ?? Number(material.sellingPrice))
+        : unitCost;
       const movementQuantity =
         input.data.type === "adjustment"
           ? Math.abs(stockDelta)
           : input.data.quantity;
       const valueBefore = Number(material.inventoryValue);
-      const inventoryValue = Math.max(0, valueBefore + stockDelta * unitPrice);
+      const inventoryValue = Math.max(0, valueBefore + stockDelta * unitCost);
       const averageCost =
         stock > 0 ? inventoryValue / stock : Number(material.averageCost);
       const valuationVersion = material.valuationVersion + (stockDelta ? 1 : 0);
@@ -893,8 +899,8 @@ export async function createWarehouseOperation(input: {
             : {}),
         },
       });
-      const cogs = ["consume", "outgoing"].includes(input.data.type)
-        ? movementQuantity * unitPrice
+      const cogs = ["consume", "outgoing", "sale", "writeoff", "workshop_issue"].includes(input.data.type)
+        ? movementQuantity * unitCost
         : null;
       const movement = await tx.materialMovement.create({
         data: {
@@ -905,9 +911,9 @@ export async function createWarehouseOperation(input: {
           quantity: movementQuantity,
           stockDelta,
           reserveDelta,
-          price: String(unitPrice),
-          amount: String(movementQuantity * unitPrice),
-          unitCostSnapshot: String(unitPrice),
+          price: String(movementPrice),
+          amount: String(movementQuantity * movementPrice),
+          unitCostSnapshot: String(unitCost),
           totalCogs: cogs === null ? undefined : String(cogs),
           valuationMethod: "MOVING_WEIGHTED_AVERAGE",
           valuationVersion,
@@ -930,7 +936,7 @@ export async function createWarehouseOperation(input: {
             movementId: movement.id,
             orderId: input.data.orderId,
             quantity: String(movementQuantity),
-            unitCostSnapshot: String(unitPrice),
+            unitCostSnapshot: String(unitCost),
             totalCogs: String(cogs),
             valuationVersion,
           },
@@ -942,8 +948,8 @@ export async function createWarehouseOperation(input: {
             movementId: movement.id,
             orderId: input.data.orderId,
             quantity: String(-movementQuantity),
-            unitCostSnapshot: String(unitPrice),
-            totalCogs: String(-movementQuantity * unitPrice),
+            unitCostSnapshot: String(unitCost),
+            totalCogs: String(-movementQuantity * unitCost),
             valuationVersion,
             adjustmentOfId: originalReturn.id,
             reason: input.data.comment ?? "Customer return at original cost",
@@ -954,8 +960,8 @@ export async function createWarehouseOperation(input: {
           data: {
             materialId: material.id,
             quantity: String(stockDelta),
-            unitCost: String(unitPrice),
-            totalValue: String(stockDelta * unitPrice),
+            unitCost: String(unitCost),
+            totalValue: String(stockDelta * unitCost),
             type: input.data.type.toUpperCase(),
             sourceType: "MATERIAL_MOVEMENT",
             sourceId: movement.id,
@@ -1188,7 +1194,7 @@ export async function createMaterialMovement(data: {
 
 export async function getOrderMaterials(orderId: number, canSeeCost = true) {
   const items = await prisma.materialMovement.findMany({
-    where: { orderId, type: { in: ["outgoing", "consume"] } },
+    where: { orderId, type: { in: ["outgoing", "consume", "sale", "writeoff", "workshop_issue"] } },
     include: { material: true, employee: { select: { id: true, name: true } } },
     orderBy: { operationAt: "desc" },
   });

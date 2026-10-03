@@ -14,7 +14,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const result = await getAttachmentContent(id, actor);
     if (!result) return NextResponse.json({ error: "Файл не найден" }, { status: 404 });
     const inlineRequested = new URL(request.url).searchParams.get("disposition") === "inline";
-    const inlineAllowed = result.attachment.contentType === "application/pdf" || result.attachment.contentType.startsWith("image/");
+    const inlineAllowed = result.attachment.contentType === "application/pdf" || result.attachment.contentType.startsWith("image/") || result.attachment.contentType.startsWith("video/");
     const disposition = inlineRequested && inlineAllowed ? "inline" : "attachment";
     const encodedName = encodeURIComponent(result.attachment.fileName).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
     return new Response(result.blob.stream, { headers: {

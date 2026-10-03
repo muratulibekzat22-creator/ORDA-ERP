@@ -4,6 +4,8 @@ import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { allocateEmployeeCode } from "@/lib/employee-code";
 import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
+import { sanitizeMeasurerServiceAreas } from "@/lib/measurements/measurer-territory";
 
 const employeeInclude = {
   user: {
@@ -29,6 +31,56 @@ type EmployeeWithAccount = Prisma.EmployeePayrollProfileGetPayload<{
 
 export class EmployeeError extends Error {}
 
+const positionByRole: Partial<Record<Role, string>> = {
+  [Role.DIRECTOR]: "Основатель / CEO",
+  [Role.OPERATIONS_DIRECTOR]: "Директор",
+  [Role.MARKETER]: "Маркетолог",
+  [Role.MANAGER]: "Менеджер",
+  [Role.ACCOUNTANT]: "Бухгалтер",
+  [Role.MEASURER]: "Замерщик",
+  [Role.DESIGNER]: "Конструктор",
+  [Role.PRODUCTION]: "Производство",
+  [Role.INSTALLER]: "Монтажник",
+};
+
+export async function ensureUserEmployeeProfiles() {
+  const companyId = requireTenantIdentity().companyId;
+  const users = await prisma.user.findMany({
+    where: {
+      companyId,
+      active: true,
+      role: { not: Role.PARTNER },
+      payrollProfile: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      phone: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+  if (!users.length) return 0;
+  const result = await prisma.employeePayrollProfile.createMany({
+    data: users.map((user) => ({
+      companyId,
+      userId: user.id,
+      name: user.name,
+      position: positionByRole[user.role] ?? "Сотрудник",
+      email: user.email,
+      phone: user.phone,
+      hiredAt: user.createdAt,
+      active: true,
+      payrollEnabled: true,
+      baseSalary: 0,
+      salaryPlanEnabled: false,
+    })),
+    skipDuplicates: true,
+  });
+  return result.count;
+}
+
 export function employeeDto(employee: EmployeeWithAccount) {
   const account = employee.user;
   return {
@@ -39,6 +91,9 @@ export function employeeDto(employee: EmployeeWithAccount) {
     position: employee.position || account?.role || "Сотрудник",
     email: employee.email || account?.email || null,
     phone: employee.phone || account?.phone || null,
+    homeCity: employee.homeCity,
+    maxTravelMinutes: employee.maxTravelMinutes,
+    serviceAreas: sanitizeMeasurerServiceAreas(employee.measurerServiceArea),
     role: account?.role ?? null,
     active: employee.active,
     hasOrdaAccess: Boolean(account),
@@ -48,10 +103,12 @@ export function employeeDto(employee: EmployeeWithAccount) {
     mustChangePassword: account?.mustChangePassword ?? false,
     lockedUntil: account?.lockedUntil ?? null,
     partnerProfile: account?.partnerProfile ?? null,
+    protectedAccount: account?.role === Role.DIRECTOR,
   };
 }
 
 export async function listEmployees(status: "active" | "inactive" | "all") {
+  await ensureUserEmployeeProfiles();
   const active = status === "all" ? undefined : status === "active";
   const employees = await prisma.employeePayrollProfile.findMany({
     where: active === undefined ? undefined : { active },
@@ -70,6 +127,9 @@ type CreateEmployeeInput = {
   hasOrdaAccess: boolean;
   role?: Role;
   password?: string;
+  homeCity?: string;
+  maxTravelMinutes?: number;
+  serviceAreas?: unknown;
 };
 
 function validateIdentity(input: CreateEmployeeInput) {
@@ -84,6 +144,11 @@ function validateIdentity(input: CreateEmployeeInput) {
 
 export async function createEmployee(input: CreateEmployeeInput, actorId: number) {
   const identity = validateIdentity(input);
+  const homeCity = input.homeCity?.trim().slice(0, 100) ?? "";
+  const maxTravelMinutes = Number.isInteger(input.maxTravelMinutes) && Number(input.maxTravelMinutes) >= 60 && Number(input.maxTravelMinutes) <= 720
+    ? Number(input.maxTravelMinutes)
+    : 240;
+  const serviceAreas = sanitizeMeasurerServiceAreas(input.serviceAreas);
   if (input.hasOrdaAccess) {
     if (!identity.email || !input.password || input.password.length < 12)
       throw new EmployeeError("ACCESS_FIELDS_REQUIRED");
@@ -117,9 +182,14 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
       data: {
         userId,
         ...identity,
+        homeCity,
+        maxTravelMinutes,
+        measurerServiceArea: serviceAreas as Prisma.InputJsonValue,
         hiredAt: new Date(),
         active: input.active ?? true,
         payrollEnabled: true,
+        baseSalary: 0,
+        salaryPlanEnabled: false,
       },
       include: employeeInclude,
     });
@@ -143,14 +213,25 @@ export async function createEmployee(input: CreateEmployeeInput, actorId: number
 
 export async function updateEmployee(
   employeeId: number,
-  input: { name?: string; position?: string; phone?: string; email?: string; active?: boolean },
+  input: { name?: string; position?: string; phone?: string; email?: string; active?: boolean; homeCity?: string; maxTravelMinutes?: number; serviceAreas?: unknown },
   actorId: number,
 ) {
   return prisma.$transaction(async (tx) => {
-    const previous = await tx.employeePayrollProfile.findUnique({ where: { id: employeeId } });
+    const previous = await tx.employeePayrollProfile.findUnique({
+      where: { id: employeeId },
+      include: { user: { select: { role: true } } },
+    });
     if (!previous) throw new EmployeeError("EMPLOYEE_NOT_FOUND");
+    if (previous.user?.role === Role.DIRECTOR) throw new EmployeeError("FOUNDER_PROTECTED");
     const name = typeof input.name === "string" ? input.name.trim() : undefined;
     const position = typeof input.position === "string" ? input.position.trim() : undefined;
+    const maxTravelMinutes = input.maxTravelMinutes === undefined
+      ? undefined
+      : Number.isInteger(input.maxTravelMinutes) && Number(input.maxTravelMinutes) >= 60 && Number(input.maxTravelMinutes) <= 720
+        ? Number(input.maxTravelMinutes)
+        : null;
+    if (maxTravelMinutes === null) throw new EmployeeError("INVALID_TRAVEL_LIMIT");
+    const serviceAreas = input.serviceAreas === undefined ? undefined : sanitizeMeasurerServiceAreas(input.serviceAreas);
     if (name === "" || position === "") throw new EmployeeError("EMPLOYEE_FIELDS_REQUIRED");
     const profile = await tx.employeePayrollProfile.update({
       where: { id: employeeId },
@@ -159,6 +240,9 @@ export async function updateEmployee(
         ...(position !== undefined ? { position } : {}),
         ...(typeof input.phone === "string" ? { phone: input.phone.trim() || null } : {}),
         ...(typeof input.email === "string" ? { email: input.email.trim().toLowerCase() || null } : {}),
+        ...(typeof input.homeCity === "string" ? { homeCity: input.homeCity.trim().slice(0, 100) } : {}),
+        ...(maxTravelMinutes !== undefined ? { maxTravelMinutes } : {}),
+        ...(serviceAreas !== undefined ? { measurerServiceArea: serviceAreas as Prisma.InputJsonValue } : {}),
         ...(typeof input.active === "boolean"
           ? { active: input.active, terminatedAt: input.active ? null : new Date() }
           : {}),

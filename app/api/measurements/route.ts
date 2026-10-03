@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { listMeasurements, measurementWorkspace, scheduleMeasurement, type MeasurementWorkspaceFilter } from "@/lib/services/measurement.service";
 import { selfScheduleMeasurement } from "@/lib/services/measurement.service";
 import { normalizePhone } from "@/lib/leads/domain";
+import { sanitizeMeasurerServiceAreas } from "@/lib/measurements/measurer-territory";
 
 const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
 const workspaceFilters = new Set<MeasurementWorkspaceFilter>(["today", "upcoming", "needs-closing", "completed", "cancelled", "all"]);
@@ -24,12 +25,20 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   if (url.searchParams.get("meta") === "1") {
     if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
-    const [measurers, managers] = await Promise.all([
-      prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" } }),
+    const [measurerRows, managers] = await Promise.all([
+      prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } }, orderBy: { name: "asc" } }),
       actor.role === Role.DIRECTOR
         ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
         : Promise.resolve([]),
     ]);
+    const measurers = measurerRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      phone: row.phone,
+      homeCity: row.payrollProfile?.homeCity ?? "",
+      maxTravelMinutes: row.payrollProfile?.maxTravelMinutes ?? 240,
+      serviceAreas: sanitizeMeasurerServiceAreas(row.payrollProfile?.measurerServiceArea),
+    }));
     return NextResponse.json({ measurers, managers });
   }
   if (url.searchParams.get("workspace") === "1") {
@@ -89,14 +98,9 @@ export async function POST(request: Request) {
     const orderId = positiveId(body.orderId);
     const order = !body.clientId && orderId ? await prisma.order.findFirst({ where: { id: orderId, deletedAt: null }, select: { clientId: true } }) : null;
     const clientId = positiveId(body.clientId) ?? order?.clientId ?? null;
-    let measurerUserId = positiveId(body.measurerUserId);
-    if (!measurerUserId) {
-      const activeMeasurers = await prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true }, take: 2 });
-      if (activeMeasurers.length === 0) return NextResponse.json({ error: "Нет активного замерщика" }, { status: 409 });
-      if (activeMeasurers.length === 1) measurerUserId = activeMeasurers[0].id;
-    }
+    const measurerUserId = positiveId(body.measurerUserId) ?? undefined;
     const visitDate = parseBusinessDateTime(body.visitDate) ?? (typeof body.visitDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.visitDate) ? parseBusinessDateTime(`${body.visitDate}T09:00`) : null);
-    if (!clientId || !measurerUserId || !visitDate) return NextResponse.json({ error: "Укажите заявку, замерщика, дату и время" }, { status: 400 });
+    if (!clientId || !visitDate) return NextResponse.json({ error: "Укажите заявку, дату и время" }, { status: 400 });
     const result = await scheduleMeasurement(actor, {
       clientId,
       orderId: orderId ?? undefined,
@@ -106,6 +110,7 @@ export async function POST(request: Request) {
       address: typeof body.address === "string" ? body.address : undefined,
       mapLink: typeof body.mapLink === "string" ? body.mapLink : undefined,
       comment: typeof body.comment === "string" ? body.comment : undefined,
+      travelApproved: body.travelApproved === true,
     });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {

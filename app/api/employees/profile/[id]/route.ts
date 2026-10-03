@@ -7,7 +7,7 @@ import { EmployeeError, updateEmployee } from "@/lib/services/employee.service";
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0)
@@ -20,9 +20,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       phone: typeof body.phone === "string" ? body.phone : undefined,
       email: typeof body.email === "string" ? body.email : undefined,
       active: typeof body.active === "boolean" ? body.active : undefined,
+      homeCity: typeof body.homeCity === "string" ? body.homeCity : undefined,
+      maxTravelMinutes: typeof body.maxTravelMinutes === "number" ? body.maxTravelMinutes : undefined,
+      serviceAreas: body.serviceAreas,
     }, Number(auth.session!.user.id)));
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
-    return NextResponse.json({ error: code === "EMPLOYEE_NOT_FOUND" ? "Сотрудник не найден" : "Не удалось обновить сотрудника" }, { status: error instanceof EmployeeError && code === "EMPLOYEE_NOT_FOUND" ? 404 : 400 });
+    return NextResponse.json({ error: code === "EMPLOYEE_NOT_FOUND" ? "Сотрудник не найден" : code === "FOUNDER_PROTECTED" ? "Аккаунт основателя защищён. Здесь можно изменить только его пароль" : "Не удалось обновить сотрудника" }, { status: error instanceof EmployeeError && code === "EMPLOYEE_NOT_FOUND" ? 404 : code === "FOUNDER_PROTECTED" ? 409 : 400 });
   }
 }

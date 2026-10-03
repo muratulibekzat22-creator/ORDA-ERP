@@ -25,7 +25,13 @@ export type DocumentOrder = {
     whatsapp: string;
     email: string;
     bankDetails: string;
+    kaspiGoldName?: string;
+    kaspiGoldPhone?: string;
     directorName: string;
+    directorFullName?: string;
+    iik?: string;
+    bank?: string;
+    bik?: string;
     logoUrl: string;
   } | null;
   calculations?: Array<{
@@ -51,5 +57,16 @@ export const money = (value: NumericValue) =>
   `${Number(value).toLocaleString("ru-RU")} ₸`;
 export const date = (value: Date | string) =>
   new Date(value).toLocaleDateString("ru-RU");
-export const documentNumber = (order: DocumentOrder, type: "OFFER" | "CONTRACT" | "ACT" | "INVOICE") => order.documents?.find((document) => document.type === type)?.number ?? order.number;
+export const documentNumber = (
+  order: DocumentOrder,
+  type: "OFFER" | "CONTRACT" | "ACT" | "INVOICE",
+) => {
+  const savedNumber = order.documents?.find(
+    (document) => document.type === type,
+  )?.number;
+  if (savedNumber) return savedNumber;
+  if (type === "INVOICE") return `СЧ-${order.number}`;
+  if (type === "OFFER") return `КП-${order.number}`;
+  return order.number;
+};
 import type { DocumentType } from "@prisma/client";

@@ -6,7 +6,7 @@ import { requirePermission } from "@/lib/server-auth";
 export async function GET() {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const now = new Date(), start = new Date(now); start.setHours(0, 0, 0, 0); const end = new Date(start); end.setDate(end.getDate() + 1);
   const scope: Prisma.ClientWhereInput = role === Role.MANAGER ? { managerUserId: Number(auth.session!.user.id) } : {};
   const leads = await prisma.client.findMany({ where: { ...scope, active: true, stage: { notIn: [LeadStage.WON, LeadStage.LOST] }, OR: [

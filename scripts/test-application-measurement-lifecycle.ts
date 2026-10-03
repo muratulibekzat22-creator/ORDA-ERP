@@ -87,6 +87,40 @@ async function addSheet(measurementId: number, uploaderId: number, suffix: strin
   });
 }
 
+async function prepareForCompletion(
+  measurementId: number,
+  uploaderId: number,
+  suffix: string,
+) {
+  const types = [
+    MeasurementPhotoType.SHEET,
+    MeasurementPhotoType.OBJECT_FRONT,
+    MeasurementPhotoType.OBJECT_SIDE,
+    MeasurementPhotoType.OBJECT_REAR,
+    MeasurementPhotoType.DESIGN_REFERENCE,
+    MeasurementPhotoType.DESIGN_RESULT,
+  ];
+  await prisma.measurementAttachment.createMany({
+    data: types.map((type) => ({
+      measurementId,
+      type,
+      uploadedById: uploaderId,
+      fileName: `${suffix}-${type}.jpg`,
+      pathname: `${tag}/${suffix}-${type}.jpg`,
+      contentType: "image/jpeg",
+      size: 100,
+    })),
+  });
+  await prisma.measurement.update({
+    where: { id: measurementId },
+    data: {
+      designStyle: "Современный",
+      designPromptCopiedAt: new Date(),
+      designShownAt: new Date(),
+    },
+  });
+}
+
 async function cleanup() {
   const measurements = await prisma.measurement.findMany({ where: { clientId: { in: clientIds } }, select: { id: true } });
   const measurementIds = measurements.map((row) => row.id);
@@ -185,7 +219,7 @@ async function main() {
 
     const readyClient = await client(manager, "ready");
     const readyMeasurement = await scheduleMeasurement(managerActor, { clientId: readyClient.id, measurerUserId: measurer.id, visitDate: new Date(Date.now() + 86_400_000), address: readyClient.address });
-    await addSheet(readyMeasurement.measurement.id, measurer.id, "ready");
+    await prepareForCompletion(readyMeasurement.measurement.id, measurer.id, "ready");
     const ready = await completeMeasurement(measurerActor, readyMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE });
     assert.equal(ready.status, MeasurementStatus.COMPLETED);
     assert.equal(ready.clientOutcome, MeasurementClientOutcome.READY_TO_CONTINUE);
@@ -194,7 +228,7 @@ async function main() {
 
     const returnClient = await client(manager, "return");
     const returnedMeasurement = await scheduleMeasurement(managerActor, { clientId: returnClient.id, measurerUserId: measurer.id, visitDate: new Date(Date.now() + 86_400_000), address: returnClient.address });
-    await addSheet(returnedMeasurement.measurement.id, measurer.id, "return");
+    await prepareForCompletion(returnedMeasurement.measurement.id, measurer.id, "return");
     await assert.rejects(() => completeMeasurement(measurerActor, returnedMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.RETURN_TO_MANAGER }), (error) => error instanceof MeasurementError && error.message === "OUTCOME_COMMENT_REQUIRED");
     const returned = await completeMeasurement(measurerActor, returnedMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.RETURN_TO_MANAGER, outcomeComment: "Уточнить срок и условия оплаты" });
     assert.equal(returned.status, MeasurementStatus.COMPLETED);
@@ -202,7 +236,7 @@ async function main() {
 
     const refusedClient = await client(manager, "refused");
     const refusedMeasurement = await scheduleMeasurement(managerActor, { clientId: refusedClient.id, measurerUserId: measurer.id, visitDate: new Date(Date.now() + 86_400_000), address: refusedClient.address });
-    await addSheet(refusedMeasurement.measurement.id, measurer.id, "refused");
+    await prepareForCompletion(refusedMeasurement.measurement.id, measurer.id, "refused");
     await assert.rejects(() => completeMeasurement(measurerActor, refusedMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.REFUSED, refusalReason: LeadLostReason.OTHER }), (error) => error instanceof MeasurementError && error.message === "REFUSAL_REASON_REQUIRED");
     const refused = await completeMeasurement(measurerActor, refusedMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.REFUSED, refusalReason: LeadLostReason.PRICE_TOO_HIGH, outcomeComment: "Клиент сравнит предложения" });
     const lost = await prisma.client.findUniqueOrThrow({ where: { id: refusedClient.id } });

@@ -64,7 +64,7 @@ export function normalizeLeadSource(value: unknown): LeadSource | null {
 }
 
 export function canAccessLead(role: Role, userId: number, lead: { managerUserId: number | null }) {
-  return role === Role.DIRECTOR || (role === Role.MANAGER && lead.managerUserId === userId);
+  return role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR || (role === Role.MANAGER && lead.managerUserId === userId);
 }
 
 export function requiresNextAction(stage: LeadStage) {

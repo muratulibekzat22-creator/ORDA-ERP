@@ -3,7 +3,7 @@ import "./require-test-database";
 import crypto from "crypto";
 import path from "path";
 import dotenv from "dotenv";
-import { Role, type PrismaClient } from "@prisma/client";
+import { PartnerPayoutPurpose, Role, type PrismaClient } from "@prisma/client";
 
 const parsed = dotenv.config({ path: path.join(process.cwd(), ".env.test.local"), quiet: true }).parsed;
 const testUrl = process.env.TEST_DATABASE_URL ?? parsed?.TEST_DATABASE_URL;
@@ -18,7 +18,7 @@ let prisma!: PrismaClient;
 async function main() {
   ({ prisma } = await import("@/lib/prisma"));
   const { createFinanceOperation, reconcileOrderFinance, adjustOrderAmount, reverseFinanceOperation } = await import("@/lib/services/payment.service");
-  const { assignPartnerToOrder } = await import("@/lib/services/partner.service");
+  const { assignPartnerToOrder, setProductionPrice } = await import("@/lib/services/partner.service");
   let userId = 0, managerUserId = 0, clientId = 0, orderId = 0; const partnerIds: number[] = [];
   try {
     const user = await prisma.user.create({ data: { name: tag, email: `${tag}@test.local`, password: "not-used", role: Role.DIRECTOR } }); userId = user.id;
@@ -40,11 +40,18 @@ async function main() {
     current = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
     ensure(Number(current.prepayment) === 600 && Number(current.balance) === 400, "concurrent payment/refund produced inconsistent mirrors");
     await Promise.all([
-      createFinanceOperation({ type: "PARTNER_PAYOUT", orderId, amount: 75, method: "cash", idempotencyKey: key("payout-a"), requestHash: hash("payout-a") }),
-      createFinanceOperation({ type: "PARTNER_PAYOUT", orderId, amount: 50, method: "cash", idempotencyKey: key("payout-b"), requestHash: hash("payout-b") }),
+      createFinanceOperation({ type: "PARTNER_PAYOUT", orderId, amount: 75, method: "cash", partnerPayoutPurpose: PartnerPayoutPurpose.SUPPORT, idempotencyKey: key("payout-a"), requestHash: hash("payout-a") }),
+      createFinanceOperation({ type: "PARTNER_PAYOUT", orderId, amount: 50, method: "cash", partnerPayoutPurpose: PartnerPayoutPurpose.ADVANCE, idempotencyKey: key("payout-b"), requestHash: hash("payout-b") }),
     ]);
     current = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
     ensure(Number(current.partnerPaid) === 125 && Number(current.partnerBalance) === 275, "concurrent partner payouts lost an update");
+    const payoutPurposes = await prisma.payment.findMany({ where: { orderId, type: "PARTNER_PAYOUT" }, select: { partnerPayoutPurpose: true } });
+    ensure(payoutPurposes.some((item) => item.partnerPayoutPurpose === PartnerPayoutPurpose.SUPPORT) && payoutPurposes.some((item) => item.partnerPayoutPurpose === PartnerPayoutPurpose.ADVANCE), "workshop support/advance purpose was not preserved");
+    const productionPriceInput = { orderId, amount: 425, actor: { id: manager.id, name: manager.name, role: Role.MANAGER }, idempotencyKey: key("production-price"), requestHash: hash("production-price") };
+    await setProductionPrice(productionPriceInput);
+    const replayedPrice = await setProductionPrice(productionPriceInput);
+    current = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    ensure(!replayedPrice.created && Number(current.partnerPrice) === 425 && Number(current.partnerBalance) === 300, "simple production-price command is not idempotent or broke workshop balance");
     await prisma.order.update({ where: { id: orderId }, data: { prepayment: "1", balance: "999" } });
     ensure((await reconcileOrderFinance(orderId)).mismatch, "reconciliation did not detect mirror drift");
     await reconcileOrderFinance(orderId, true); ensure(!(await reconcileOrderFinance(orderId)).mismatch, "reconciliation did not repair mirrors");
@@ -61,7 +68,7 @@ async function main() {
     const reassigned = await prisma.order.findUniqueOrThrow({ where: { id: orderId } }); ensure(Number(reassigned.partnerPaid) === 0 && Number(reassigned.partnerBalance) === 450, "old payouts reduced the new partner payable");
     let deleteBlocked = false; try { await prisma.order.delete({ where: { id: orderId } }); } catch { deleteBlocked = true; }
     ensure(deleteBlocked, "database allowed hard-delete of financially posted order");
-    console.log("FINANCE INTEGRITY SUMMARY: concurrency=passed; reconciliation=passed; adjustment=passed; hard-delete=blocked; reassignment=audited; reversal=passed; cost-redaction=passed");
+    console.log("FINANCE INTEGRITY SUMMARY: concurrency=passed; reconciliation=passed; adjustment=passed; production-price=audited; payout-purpose=structured; hard-delete=blocked; reassignment=audited; reversal=passed; cost-redaction=passed");
   } finally {
     if (orderId) {
       const receiptDocuments = (await prisma.paymentReceipt.findMany({ where: { orderId }, select: { documentId: true } })).map((item) => item.documentId);

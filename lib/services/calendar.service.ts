@@ -3,14 +3,16 @@ import { decodeDateIdCursor, encodeDateIdCursor } from "@/lib/pagination/date-id
 import { prisma } from "@/lib/prisma";
 
 export type CalendarActor = { userId: number; role: Role; name: string };
-export type CalendarTaskInput = { title: string; description?: string | null; type: CalendarTaskType; dueAt: Date; priority: CalendarTaskPriority; assigneeId: number; clientId?: number | null; orderId?: number | null };
+export type CalendarTaskInput = { title: string; description?: string | null; type: CalendarTaskType; dueAt: Date; priority: CalendarTaskPriority; assigneeId: number; clientId?: number | null; orderId?: number | null; acknowledgementRequired?: boolean };
 
 const taskSelect = {
   id: true, title: true, description: true, type: true, dueAt: true, status: true, priority: true,
   assigneeId: true, creatorId: true, completedAt: true, cancelledAt: true, createdAt: true, updatedAt: true,
+  acknowledgementRequired: true, acknowledgedAt: true, acknowledgementComment: true, plannedCompletionAt: true, resultText: true, resultSubmittedAt: true,
   assignee: { select: { id: true, name: true, role: true } }, creator: { select: { id: true, name: true } },
   client: { select: { id: true, name: true, phone: true, whatsapp: true, city: true } },
   order: { select: { id: true, number: true, managerUserId: true, manager: true, client: { select: { id: true, name: true } } } },
+  resultAttachments: { select: { id: true, fileName: true, contentType: true, size: true, createdAt: true }, orderBy: { createdAt: "asc" as const } },
 } satisfies Prisma.CalendarTaskSelect;
 
 export function taskScope(actor: CalendarActor): Prisma.CalendarTaskWhereInput {
@@ -113,7 +115,7 @@ export async function createCalendarTask(actor: CalendarActor, input: CalendarTa
   return prisma.$transaction(async (tx) => {
     await validateRelations(tx, actor, input);
     const conflict = await tx.calendarTask.findFirst({ where: { assigneeId: input.assigneeId, dueAt: input.dueAt, status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } }, select: { id: true, title: true } });
-    const task = await tx.calendarTask.create({ data: { ...input, creatorId: actor.userId }, select: taskSelect });
+    const task = await tx.calendarTask.create({ data: { ...input, acknowledgementRequired: actor.role === Role.DIRECTOR && input.acknowledgementRequired === true, creatorId: actor.userId }, select: taskSelect });
     await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CREATED", actorId: actor.userId, after: { dueAt: input.dueAt, assigneeId: input.assigneeId, status: CalendarTaskStatus.PLANNED } } });
     return { task, conflict };
   });
@@ -125,7 +127,7 @@ export async function updateCalendarTask(actor: CalendarActor, id: number, input
     if (!current) throw new Error("NOT_FOUND");
     if (current.status === CalendarTaskStatus.COMPLETED || current.status === CalendarTaskStatus.CANCELLED) throw new Error("TERMINAL_TASK");
     await validateRelations(tx, actor, input);
-    const task = await tx.calendarTask.update({ where: { id }, data: input, select: taskSelect });
+    const task = await tx.calendarTask.update({ where: { id }, data: { ...input, acknowledgementRequired: actor.role === Role.DIRECTOR ? input.acknowledgementRequired === true : undefined }, select: taskSelect });
     const action = current.assigneeId !== input.assigneeId ? "REASSIGNED" : current.dueAt.getTime() !== input.dueAt.getTime() ? "RESCHEDULED" : "UPDATED";
     await tx.calendarTaskAudit.create({ data: { taskId: id, action, actorId: actor.userId, before: { dueAt: current.dueAt, assigneeId: current.assigneeId }, after: { dueAt: input.dueAt, assigneeId: input.assigneeId } } });
     return task;

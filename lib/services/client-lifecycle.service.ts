@@ -50,7 +50,7 @@ function assertDeleteAccess(
   client: { managerUserId: number | null },
 ) {
   if (
-    (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) ||
+    (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER) ||
     !canAccessLead(actor.role, actor.userId, client)
   )
     throw new ClientLifecycleError("NOT_FOUND");
@@ -186,7 +186,7 @@ export async function restoreClient(
   actor: ClientLifecycleActor,
   clientId: number,
 ) {
-  if (actor.role !== Role.DIRECTOR)
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new ClientLifecycleError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const client = await tx.client.findUnique({

@@ -1,5 +1,6 @@
-import { Prisma, Role } from "@prisma/client";
+import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
 
@@ -26,6 +27,7 @@ type CreateOperationInput = {
   author?: string;
   authorId?: number;
   adjustmentDirection?: AdjustmentDirection;
+  partnerPayoutPurpose?: PartnerPayoutPurpose;
   idempotencyKey?: string;
   requestHash?: string;
 };
@@ -137,6 +139,9 @@ export async function createFinanceOperation(input: CreateOperationInput) {
           amount: input.amount,
           type,
           method: input.method,
+          partnerPayoutPurpose: affectsPartner
+            ? input.partnerPayoutPurpose ?? PartnerPayoutPurpose.OTHER
+            : null,
           comment: input.comment,
           operationDate: input.operationDate,
           author: input.author,
@@ -152,7 +157,7 @@ export async function createFinanceOperation(input: CreateOperationInput) {
           entityType: "Payment",
           entityId: payment.id,
           before: Prisma.JsonNull,
-          after: { amount: String(payment.amount), partnerId, method: payment.method, operationDate: payment.operationDate.toISOString() },
+          after: { amount: String(payment.amount), partnerId, method: payment.method, purpose: payment.partnerPayoutPurpose, operationDate: payment.operationDate.toISOString() },
           reason: input.comment?.trim() || "Partner payout",
           authorId: input.authorId,
         } });
@@ -201,7 +206,7 @@ export async function reverseFinanceOperation(input: { paymentId: number; reason
       if (original.reversalOfId || await tx.payment.findUnique({ where: { reversalOfId: original.id } })) throw new Error("ALREADY_REVERSED");
       const kind = operationKind(original.type);
       const reverseType = kind === "CLIENT_PAYMENT" ? "REFUND" : kind === "REFUND" ? "CLIENT_PAYMENT" : kind === payoutType ? "PARTNER_PAYOUT_REVERSAL" : "REVERSAL";
-      const reversal = await tx.payment.create({ data: { orderId: original.orderId, partnerId: original.partnerId, amount: original.amount, type: reverseType, method: original.method, comment: `REVERSAL: ${input.reason.trim()}`, author: input.author, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, reversalOfId: original.id, reversalReason: input.reason.trim() } });
+      const reversal = await tx.payment.create({ data: { orderId: original.orderId, partnerId: original.partnerId, amount: original.amount, type: reverseType, method: original.method, partnerPayoutPurpose: original.partnerPayoutPurpose, comment: `REVERSAL: ${input.reason.trim()}`, author: input.author, idempotencyKey: input.idempotencyKey, requestHash: input.requestHash, reversalOfId: original.id, reversalReason: input.reason.trim() } });
       const mirrors = await calculatedMirrors(tx, original.orderId);
       const updated = await tx.order.update({ where: { id: original.orderId }, data: { prepayment: mirrors.paid, balance: mirrors.balance, partnerPaid: mirrors.partnerPaid, partnerBalance: mirrors.partnerBalance, companyProfit: mirrors.companyProfit } });
       await tx.financeAuditEvent.create({ data: { orderId: original.orderId, action: "FINANCIAL_REVERSAL", entityType: "Payment", entityId: original.id, before: { type: original.type, amount: String(original.amount) }, after: { reversalId: reversal.id, type: reversal.type, amount: String(reversal.amount) }, reason: input.reason.trim(), authorId: input.authorId } });
@@ -298,7 +303,7 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
   const rows = orders.map((order) => {
     const received = order.payments.reduce((sum, item) => { const kind = operationKind(item.type); return sum + (kind === "CLIENT_PAYMENT" ? Number(item.amount) : kind === "REFUND" ? -Number(item.amount) : 0); }, 0);
     const partnerPaid = order.payments.reduce((sum, item) => sum + (item.partnerId === order.partnerId && operationKind(item.type) === payoutType ? Number(item.amount) : item.partnerId === order.partnerId && item.type === "PARTNER_PAYOUT_REVERSAL" ? -Number(item.amount) : 0), 0);
-    const amount = Number(order.amount), priceSet = order.partnerAgreedAt !== null;
+    const amount = Number(order.amount), priceSet = hasProductionPrice(order.partnerPrice, order.partnerAgreedAt);
     const partnerPrice = priceSet ? Number(order.partnerPrice) : null;
     const rawBalance = amount - received, rawPartnerBalance = partnerPrice === null ? 0 : partnerPrice - partnerPaid;
     const payrollRemaining = (types: string[]) => order.payrollAccruals

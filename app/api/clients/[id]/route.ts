@@ -16,7 +16,7 @@ export async function GET(_: Request, { params }: Context) {
   const id = idOf((await params).id); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const client = await prisma.client.findUnique({ where: { id }, include: { orders: { where: { deletedAt: null }, include: { payments: { select: { amount: true } } }, orderBy: { createdAt: "desc" } }, interactions: { include: { author: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } }, attachments: { select: { id: true, clientId: true, fileName: true, contentType: true, size: true, createdAt: true, uploadedBy: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" } }, leadStatusHistory: { orderBy: { createdAt: "desc" } }, nextActions: { orderBy: { createdAt: "desc" } }, managerUser: { select: { id: true, name: true } }, deletedBy: { select: { id: true, name: true } } } });
   const role = auth.session!.user.role as Role;
-  if (!client || !canAccessLead(role, Number(auth.session!.user.id), client) || (client.deletedAt && role !== Role.DIRECTOR)) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
+  if (!client || !canAccessLead(role, Number(auth.session!.user.id), client) || (client.deletedAt && role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR)) return NextResponse.json({ error: "Заявка не найдена" }, { status: 404 });
   return NextResponse.json(client);
 }
 
@@ -39,7 +39,7 @@ export async function PATCH(request: Request, { params }: Context) {
 export async function DELETE(request: Request, { params }: Context) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = idOf((await params).id); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
