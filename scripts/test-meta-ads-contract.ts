@@ -2,12 +2,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { parseNbkRateXml } from "@/lib/integrations/nbk-rates";
+import { campaignIdsFromEnv, metaActionCounts, onlySelectedCampaigns } from "@/lib/integrations/meta-ads-metrics";
 import { effectiveMarketingMetrics } from "@/lib/marketing";
 
 const sample = `<?xml version="1.0"?><rss><channel><item><title>USD</title><pubDate>02.10.2026</pubDate><description>450.79</description><quant>1</quant></item><item><title>AMD</title><description>12.21</description><quant>10</quant></item></channel></rss>`;
 assert.deepEqual(parseNbkRateXml(sample, "USD"), { rate: 450.79, publishedFor: "02.10.2026" });
 assert.deepEqual(parseNbkRateXml(sample, "AMD"), { rate: 1.221, publishedFor: null });
 assert.equal(parseNbkRateXml(sample, "EUR"), null);
+assert.deepEqual(campaignIdsFromEnv("123, 456,123"), ["123", "456"]);
+assert.deepEqual(campaignIdsFromEnv("123,invalid"), []);
+assert.deepEqual(onlySelectedCampaigns([
+  { campaign_id: "123", name: "ALTYN SAPA" },
+  { campaign_id: "789", name: "Personal promotion" },
+], ["123"]).map((row) => row.name), ["ALTYN SAPA"]);
+assert.deepEqual(metaActionCounts([
+  { action_type: "onsite_conversion.messaging_conversation_started_7d", value: "145" },
+  { action_type: "onsite_conversion.messaging_first_reply", value: "140" },
+  { action_type: "onsite_conversion.lead_grouped", value: "2" },
+]), { conversations: 145, leadActions: 2 });
+assert.deepEqual(metaActionCounts([
+  { action_type: "onsite_conversion.messaging_first_reply", value: "12" },
+]), { conversations: 0, leadActions: 0 });
 assert.deepEqual(
   effectiveMarketingMetrics([
     { channel: "Facebook manual", note: null, spend: 10 },

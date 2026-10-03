@@ -189,7 +189,7 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof MetaAdsSyncError) {
       const messages: Record<string, string> = {
-        META_NOT_CONFIGURED: "Нужно один раз подключить служебный доступ Meta",
+        META_NOT_CONFIGURED: "Нужно подключить служебный доступ Meta и указать ID кампаний",
         META_EXCHANGE_RATE_UNAVAILABLE: "Не удалось получить курс валюты НБК",
         META_SYNC_FORBIDDEN: "Синхронизацию Meta запускает директор",
       };

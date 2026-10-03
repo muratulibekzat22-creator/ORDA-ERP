@@ -7,6 +7,19 @@ type Status = "TODO" | "IN_PROGRESS" | "REVIEW" | "DONE";
 type Task = { id: number; title: string; description: string | null; status: Status; priority: number; dueAt: string | null; assignee: { id: number; name: string } | null };
 type Metric = { id: number; metricMonth: string; channel: string; spend: string; leads: number; orders: number; revenue: string };
 type Vacancy = { id: number; title: string; status: "OPEN" | "INTERVIEW" | "OFFER" | "HIRED" | "PAUSED"; candidates: number; note: string | null };
+type MetaCampaignReport = {
+  key: string;
+  accountId: string;
+  accountTimezone: string | null;
+  currency: string;
+  selectedCampaignCount: number;
+  spend: number;
+  conversations: number;
+  leadActions: number;
+  linkClicks: number;
+  impressions: number;
+  campaigns: Array<{ id: string; name: string; spend: number; reach: number; impressions: number; linkClicks: number; conversations: number; leadActions: number }>;
+};
 type Data = {
   role: string;
   month: string;
@@ -14,7 +27,7 @@ type Data = {
   metrics: Metric[];
   vacancies: Vacancy[];
   assignees: Array<{ id: number; name: string; role: string }>;
-  integration: { configured: boolean; account: string | null; graphVersion: string; automatic: boolean; state: "NEEDS_SETUP" | "READY" | "ACTIVE"; lastSyncedAt: string | null };
+  integration: { configured: boolean; account: string | null; graphVersion: string; automatic: boolean; campaignCount: number; booksToLedger: boolean; state: "NEEDS_SETUP" | "READY" | "ACTIVE"; lastSyncedAt: string | null };
   summary: {
     spend: number;
     leads: number;
@@ -35,6 +48,7 @@ type Data = {
 };
 
 const money = (value: number | string) => `${Math.round(Number(value)).toLocaleString("ru-RU")} ₸`;
+const sourceMoney = (value: number, currency: string) => new Intl.NumberFormat("ru-RU", { style: "currency", currency }).format(value);
 const taskColumns: Array<[Status, string]> = [["TODO", "Нужно сделать"], ["IN_PROGRESS", "В работе"], ["REVIEW", "Проверка"], ["DONE", "Готово"]];
 const vacancyLabels: Record<Vacancy["status"], string> = { OPEN: "Открыта", INTERVIEW: "Собеседования", OFFER: "Оффер", HIRED: "Сотрудник найден", PAUSED: "Пауза" };
 const field = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white";
@@ -43,6 +57,8 @@ export default function MarketingManagementPage() {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [metaReport, setMetaReport] = useState<MetaCampaignReport | null>(null);
+  const [metaReportError, setMetaReportError] = useState("");
   const [task, setTask] = useState({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" });
   const [metricMonth, setMetricMonth] = useState(new Date().toISOString().slice(0, 7));
   const [vacancy, setVacancy] = useState({ title: "", note: "" });
@@ -58,6 +74,23 @@ export default function MarketingManagementPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  useEffect(() => {
+    if (!data?.integration.configured || data.month !== selectedMonth) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/marketing/meta-campaigns?month=${encodeURIComponent(selectedMonth)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("META_REPORT_FAILED");
+        const report = await response.json() as MetaCampaignReport;
+        if (!cancelled) { setMetaReport(report); setMetaReportError(""); }
+      } catch {
+        if (!cancelled) { setMetaReport(null); setMetaReportError("Не удалось загрузить детализацию кампаний Meta"); }
+      }
+    }, 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [data?.integration.configured, data?.integration.lastSyncedAt, data?.month, selectedMonth]);
 
   async function send(method: "POST" | "PATCH", body: Record<string, unknown>) {
     setError("");
@@ -77,6 +110,14 @@ export default function MarketingManagementPage() {
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
         <Stat label="Расход рекламы" value={data.summary.spendTracked ? money(data.summary.spend) : "—"}/><Stat label="Обращения" value={data.summary.leads}/><Stat label="Заказы" value={data.summary.orders}/><Stat label="Выручка" value={money(data.summary.revenue)}/><Stat label="Цена обращения" value={data.summary.cpl === null ? "—" : money(data.summary.cpl)}/><Stat label="Цена заказа" value={data.summary.cac === null ? "—" : money(data.summary.cac)}/><Stat label="ROAS" value={data.summary.roas === null ? "—" : `${data.summary.roas.toFixed(2)}×`}/><Stat label="Конверсия" value={data.summary.conversion === null ? "—" : `${data.summary.conversion.toFixed(1)}%`}/>
       </section>
+      {metaReportError && <p role="alert" className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">{metaReportError}</p>}
+      {metaReport && metaReport.key === selectedMonth && data.month === selectedMonth && <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4">
+        <h2 className="text-xl font-bold">Кампании Meta за {selectedMonth}</h2>
+        <p className="mt-1 text-sm text-slate-400">Аккаунт act_{metaReport.accountId} · {metaReport.accountTimezone ?? "часовой пояс аккаунта не указан"} · выбрано кампаний: {metaReport.selectedCampaignCount}</p>
+        <p className="mt-3 text-sm text-slate-300">Расход: {sourceMoney(metaReport.spend, metaReport.currency)} · начатые переписки: {metaReport.conversations} · события lead Meta: {metaReport.leadActions} · клики по ссылке: {metaReport.linkClicks.toLocaleString("ru-RU")} · показы: {metaReport.impressions.toLocaleString("ru-RU")}</p>
+        <p className="mt-2 text-xs text-amber-200">Начатая переписка Meta не означает подтверждённую заявку. Фактические обращения учитываются отдельно в CRM.</p>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Кампания", "Расход", "Переписки", "Lead Meta", "Клики", "Показы", "Охват"].map(label => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{metaReport.campaigns.map(row => <tr key={row.id}><td className="px-3 py-3"><span className="font-semibold text-white">{row.name}</span><span className="block text-xs text-slate-500">{row.id}</span></td><td className="px-3 py-3">{sourceMoney(row.spend, metaReport.currency)}</td><td className="px-3 py-3">{row.conversations}</td><td className="px-3 py-3">{row.leadActions}</td><td className="px-3 py-3">{row.linkClicks.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.impressions.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.reach.toLocaleString("ru-RU")}</td></tr>)}</tbody></table></div>
+      </section>}
 
       {!data.summary.spendTracked ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка уже считаются из CRM. Расход и стоимостные KPI появятся после подключения служебного доступа Meta.</p> : null}
 
@@ -89,10 +130,10 @@ export default function MarketingManagementPage() {
       <section className="grid gap-4 xl:grid-cols-3">
         <FormPanel title="Meta Ads — автоматически" subtitle="Без ручного переноса цифр директором">
           <div className={`rounded-xl border p-3 text-sm ${data.integration.state === "ACTIVE" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-amber-500/30 bg-amber-500/10 text-amber-100"}`}>
-            <p className="font-semibold">{data.integration.state === "ACTIVE" ? "Синхронизация работает" : data.integration.state === "READY" ? "Подключено, ждём первую синхронизацию" : "Нужно один раз подключить служебный доступ Meta"}</p>
-            <p className="mt-1 text-xs opacity-80">Аккаунт: {data.integration.account ?? "не задан"} · API {data.integration.graphVersion}{data.integration.lastSyncedAt ? ` · обновлено ${new Date(data.integration.lastSyncedAt).toLocaleString("ru-RU")}` : ""}</p>
+            <p className="font-semibold">{data.integration.state === "ACTIVE" ? "Синхронизация работает" : data.integration.state === "READY" ? "Подключено, ждём первую синхронизацию" : "Нужно подключить доступ Meta и указать ID кампаний"}</p>
+            <p className="mt-1 text-xs opacity-80">Аккаунт: {data.integration.account ?? "не задан"} · кампаний: {data.integration.campaignCount} · API {data.integration.graphVersion}{data.integration.lastSyncedAt ? ` · обновлено ${new Date(data.integration.lastSyncedAt).toLocaleString("ru-RU")}` : ""}</p>
           </div>
-          <p className="mt-3 text-sm leading-6 text-slate-400">Обращения, заказы и выручка считаются прямо из CRM. После подключения Meta ORDA также будет каждое утро получать рекламный расход; курс валюты берётся у Национального Банка Казахстана.</p>
+          <p className="mt-3 text-sm leading-6 text-slate-400">Обращения, заказы и выручка считаются прямо из CRM. После подключения Meta ORDA будет каждое утро получать рекламный расход и детализацию выбранных кампаний; курс валюты берётся у Национального Банка Казахстана. {data.integration.booksToLedger ? "Расход также записывается в финансовый журнал." : "В финансовый журнал расход не добавляется."}</p>
           <button type="button" disabled={!data.integration.configured || loading} onClick={() => void send("POST", { action: "sync-meta", month: selectedMonth })} className="mt-3 min-h-11 w-full rounded-xl bg-fuchsia-700 px-4 font-semibold disabled:cursor-not-allowed disabled:opacity-40">{loading ? "Обновляем…" : "Обновить сейчас"}</button>
         </FormPanel>
         <FormPanel title="Новая задача" subtitle="Попадёт в маркетинговый Kanban">
