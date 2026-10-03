@@ -104,8 +104,6 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const action = text(body.action, 40);
     if (action === "sync-meta") {
-      if (role !== Role.OPERATIONS_DIRECTOR && role !== Role.MARKETER)
-        return NextResponse.json({ error: "Синхронизацию Meta запускает директор" }, { status: 403 });
       const month = text(body.month, 7);
       return NextResponse.json(await syncMetaAdsMonth({ actorId: Number(auth.session!.user.id), month: month || undefined }));
     }
@@ -191,7 +189,7 @@ export async function POST(request: Request) {
       const messages: Record<string, string> = {
         META_NOT_CONFIGURED: "Нужно подключить служебный доступ Meta и указать ID кампаний",
         META_EXCHANGE_RATE_UNAVAILABLE: "Не удалось получить курс валюты НБК",
-        META_SYNC_FORBIDDEN: "Синхронизацию Meta запускает директор",
+        META_SYNC_FORBIDDEN: "Недостаточно прав для синхронизации Meta",
       };
       return NextResponse.json({ error: messages[error.message] ?? "Meta временно не отдала показатели" }, { status: error.message === "META_NOT_CONFIGURED" ? 503 : 502 });
     }

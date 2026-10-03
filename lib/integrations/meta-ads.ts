@@ -139,7 +139,7 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
   const month = input.month ?? marketingMonthRange(now).key;
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new MetaAdsSyncError("INVALID_MONTH");
   const actor = await prisma.user.findFirst({
-    where: { id: input.actorId, companyId, active: true, role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER] } },
+    where: { id: input.actorId, companyId, active: true, role: { in: [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MARKETER] } },
     select: { id: true },
   });
   if (!actor) throw new MetaAdsSyncError("META_SYNC_FORBIDDEN");
