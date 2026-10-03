@@ -32,7 +32,6 @@ import {
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
   isPayrollReconciled,
-  isPayrollPolicyReady,
   isTerminatedPayrollEmployee,
   isValidOptionalPaymentReference,
   MANAGER_ORDER_BONUS_HIGH,
@@ -68,7 +67,7 @@ const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => 
   return reason;
 };
 const director = (actor: PayrollActor) => {
-  if (actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.DIRECTOR)
     throw new PayrollError("FORBIDDEN");
 };
 const orderBonusManager = (actor: PayrollActor) => {
@@ -88,7 +87,7 @@ const salaryManager = (actor: PayrollActor) => {
 const payrollOperator = (actor: PayrollActor) => {
   if (
     actor.role !== Role.OPERATIONS_DIRECTOR &&
-    actor.role !== Role.ACCOUNTANT
+    actor.role !== Role.DIRECTOR
   )
     throw new PayrollError("FORBIDDEN");
 };
@@ -148,71 +147,6 @@ function payrollPolicyStateSignature(
       .sort((a, b) => a.orderId - b.orderId),
   };
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-async function managerWorkReadiness(
-  tx: Prisma.TransactionClient,
-  employee: {
-    userId: number | null;
-    position: string;
-    active: boolean;
-    terminatedAt?: Date | null;
-    user?: { role: Role; active?: boolean | null } | null;
-  },
-) {
-  const applies = employee.user?.role === Role.MANAGER || employee.position === Role.MANAGER;
-  if (employmentEnded(employee))
-    return { ready: true, orderIssues: 0, measurementsToClose: 0, openTasks: 0 };
-  if (!applies || !employee.userId)
-    return { ready: true, orderIssues: 0, measurementsToClose: 0, openTasks: 0 };
-  const companyId = requireTenantIdentity().companyId;
-  const [orders, measurementsToClose, openTasks] = await Promise.all([
-    tx.order.findMany({
-      where: {
-        companyId,
-        deletedAt: null,
-        managerUserId: employee.userId,
-        OR: [
-          { lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
-          { orderDateNeedsReview: true, lifecycle: { not: OrderLifecycle.CANCELLED } },
-        ],
-      },
-      select: {
-        orderDateNeedsReview: true,
-        managerUserId: true,
-        partnerId: true,
-        partnerPrice: true,
-        partnerAgreedAt: true,
-        promisedAt: true,
-        productionDeadline: true,
-        client: { select: { phone: true, city: true } },
-        installation: { select: { scheduledAt: true } },
-      },
-    }),
-    tx.measurement.count({
-      where: {
-        companyId,
-        visitDate: { lt: new Date() },
-        status: { in: [MeasurementStatus.ASSIGNED, MeasurementStatus.IN_PROGRESS] },
-        client: { managerUserId: employee.userId },
-      },
-    }),
-    tx.calendarTask.count({
-      where: {
-        companyId,
-        assigneeId: employee.userId,
-        workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
-        status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] },
-      },
-    }),
-  ]);
-  const orderIssues = orders.filter((order) => orderDataGaps(order).length > 0).length;
-  return {
-    ready: orderIssues === 0 && measurementsToClose === 0 && openTasks === 0,
-    orderIssues,
-    measurementsToClose,
-    openTasks,
-  };
 }
 
 export async function ensurePeriod(year: number, month: number) {
@@ -279,7 +213,7 @@ export async function upsertPayrollProfile(
 ) {
   salaryManager(actor);
   const salary = nonNegativeMoney(input.baseSalary);
-  const guaranteed = nonNegativeMoney(input.defaultGuaranteedBonus ?? 20000);
+  const guaranteed = nonNegativeMoney(input.defaultGuaranteedBonus ?? 0);
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { id: input.userId } });
     if (!user || user.role === Role.PARTNER)
@@ -295,6 +229,7 @@ export async function upsertPayrollProfile(
         email: user.email,
         hiredAt: input.hiredAt,
         baseSalary: salary,
+        salaryPlanEnabled: Number(salary) > 0,
         defaultGuaranteedBonus: guaranteed,
         comment: input.comment,
       },
@@ -305,6 +240,7 @@ export async function upsertPayrollProfile(
         email: user.email,
         payrollEnabled: true,
         active: true,
+        salaryPlanEnabled: Number(salary) > 0,
         defaultGuaranteedBonus: guaranteed,
         comment: input.comment,
       },
@@ -323,6 +259,7 @@ export async function upsertPayrollProfile(
         data: {
           employeeId: profile.id,
           amount: salary,
+          planEnabled: Number(salary) > 0,
           effectiveFrom: input.hiredAt,
           approvedById: actor.userId,
           comment: input.comment,
@@ -331,6 +268,11 @@ export async function upsertPayrollProfile(
       await tx.employeePayrollProfile.update({
         where: { id: profile.id },
         data: { baseSalary: salary },
+      });
+    } else if (current.planEnabled !== (Number(salary) > 0)) {
+      await tx.employeeSalaryRate.update({
+        where: { id: current.id },
+        data: { planEnabled: Number(salary) > 0 },
       });
     }
     await audit(tx, {
@@ -359,7 +301,7 @@ export async function changeSalary(
   actor: PayrollActor,
 ) {
   salaryManager(actor);
-  const salary = money(amount);
+  const salary = nonNegativeMoney(amount);
   const reason = requiredReason(comment);
   if (Number.isNaN(effectiveFrom.getTime())) throw new PayrollError("INVALID_DATE");
   return prisma.$transaction(async (tx) => {
@@ -423,6 +365,7 @@ export async function changeSalary(
         where: { id: current.id },
         data: {
           effectiveFrom: startsAt,
+          planEnabled: Number(salary) > 0,
           approvedById: actor.userId,
           comment: reason,
         },
@@ -440,6 +383,10 @@ export async function changeSalary(
           effectiveFrom: startsAt.toISOString(),
         },
         reason,
+      });
+      await tx.employeePayrollProfile.update({
+        where: { id: employeeId },
+        data: { salaryPlanEnabled: Number(salary) > 0 },
       });
       return corrected;
     }
@@ -459,6 +406,7 @@ export async function changeSalary(
       data: {
         employeeId,
         amount: salary,
+        planEnabled: Number(salary) > 0,
         effectiveFrom: startsAt,
         approvedById: actor.userId,
         comment: reason,
@@ -466,7 +414,7 @@ export async function changeSalary(
     });
     await tx.employeePayrollProfile.update({
       where: { id: employeeId },
-      data: { baseSalary: salary },
+      data: { baseSalary: salary, salaryPlanEnabled: Number(salary) > 0 },
     });
     await audit(tx, {
       action: "SALARY_CHANGED",
@@ -631,7 +579,7 @@ async function createAccrualInternal(
             (!rate.effectiveTo || rate.effectiveTo >= range.start),
         ) ?? salaryRates[0];
         const calculatedSalary = activeRate?.amount ?? employee.baseSalary;
-        if (!money(input.amount).equals(calculatedSalary))
+        if ((activeRate?.planEnabled ?? employee.salaryPlanEnabled) && !money(input.amount).equals(calculatedSalary))
           throw new PayrollError("SALARY_AMOUNT_MISMATCH");
         const existingSalary = await tx.payrollAccrual.findFirst({
           where: {
@@ -892,6 +840,7 @@ type PaymentInput = {
   externalReference?: string;
   comment?: string;
   relatedAccrualId?: number;
+  partialSalary?: boolean;
   reversalOfId?: number;
   reversalReason?: string;
   key: string;
@@ -948,7 +897,7 @@ async function managerPayrollPolicyState(
         row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
     )
     .reduce((sum, row) => sum + signed(row), 0);
-  const requiredSalary = employmentEnded(employee)
+  const requiredSalary = employmentEnded(employee) || !(activeRate?.planEnabled ?? employee.salaryPlanEnabled)
     ? Math.max(salaryPosted, 0)
     : Number(activeRate?.amount ?? employee.baseSalary);
   const periodOrders = await tx.order.findMany({
@@ -1054,10 +1003,7 @@ async function managerPayrollPolicyState(
     salaryDelta,
     orderBonusDelta,
     orderDeltas,
-    reconciled: isPayrollPolicyReady(
-      salaryDelta,
-      orderDeltas.map((row) => row.delta),
-    ) || manualApproved,
+    reconciled: isPayrollReconciled(salaryDelta) || manualApproved,
     manualApproved,
     signature,
   };
@@ -1072,7 +1018,7 @@ async function createPaymentTx(
   const finalSalaryPayment =
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
     input.type === PayrollPaymentType.FINAL_SETTLEMENT;
-  if (finalSalaryPayment && actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (finalSalaryPayment && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.DIRECTOR)
     throw new PayrollError("DIRECTOR_CONFIRMATION_REQUIRED");
   if (finalSalaryPayment && input.method !== "kaspi")
     throw new PayrollError("KASPI_METHOD_REQUIRED");
@@ -1106,9 +1052,6 @@ async function createPaymentTx(
     );
     if (reconciliation.applies && !reconciliation.reconciled)
       throw new PayrollError("PAYROLL_RECONCILIATION_REQUIRED");
-    const workReadiness = await managerWorkReadiness(tx, employee);
-    if (!workReadiness.ready)
-      throw new PayrollError("PAYROLL_WORK_INCOMPLETE");
   }
   if (
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
@@ -1116,15 +1059,25 @@ async function createPaymentTx(
   ) {
     const [accruals, previousPayments] = await Promise.all([
       tx.payrollAccrual.findMany({
-        where: { employeeId: input.employeeId, periodId: input.periodId },
-        select: { amount: true, direction: true },
+        where: {
+          employeeId: input.employeeId,
+          periodId: input.periodId,
+          reversalOfId: null,
+          reversedBy: { is: null },
+        },
+        select: { amount: true, direction: true, type: true, reason: true, order: { select: { manager: true } } },
       }),
       tx.payrollPayment.findMany({
         where: { employeeId: input.employeeId, periodId: input.periodId },
         select: { amount: true, type: true },
       }),
     ]);
-    const accrued = accruals.reduce(
+    const accrued = accruals.filter((row) =>
+      !(row.type === PayrollAccrualType.ORDER_BONUS &&
+        row.reason.startsWith(AUTOMATIC_ORDER_BONUS_REASON_PREFIX)) &&
+      !((row.type === PayrollAccrualType.ORDER_BONUS || row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS) &&
+        row.order && isCompanyResponsibleOrder({ managerName: row.order.manager })),
+    ).reduce(
       (sum, row) =>
         sum +
         Number(row.amount) *
@@ -1211,91 +1164,52 @@ async function assertPartialSalaryPaymentAvailable(
   tx: Prisma.TransactionClient,
   input: PaymentInput,
 ) {
-  const salaryAccrual = await tx.payrollAccrual.findFirst({
-    where: {
-      id: input.relatedAccrualId,
-      employeeId: input.employeeId,
-      periodId: input.periodId,
-      type: PayrollAccrualType.BASE_SALARY,
-      direction: PayrollDirection.INCREASE,
-      reversalOfId: null,
-      reversedBy: null,
-    },
-    select: { id: true, amount: true },
-  });
-  if (!salaryAccrual)
+  money(input.amount);
+  const [period, employee, paymentsTowardSalary] = await Promise.all([
+    tx.payrollPeriod.findUniqueOrThrow({ where: { id: input.periodId } }),
+    tx.employeePayrollProfile.findUnique({
+      where: { id: input.employeeId },
+      include: { salaryRates: { orderBy: { effectiveFrom: "desc" } } },
+    }),
+    tx.payrollPayment.findMany({
+      where: {
+        employeeId: input.employeeId,
+        periodId: input.periodId,
+        reversalOfId: null,
+        reversedAt: null,
+        type: { in: [...salaryPaymentTypes] },
+      },
+      select: { amount: true },
+    }),
+  ]);
+  if (!employee?.payrollEnabled)
     throw new PayrollError("PARTIAL_SALARY_ACCRUAL_REQUIRED");
-
-  const [paymentsTowardSalary, activeAccruals, activePayments] =
-    await Promise.all([
-      tx.payrollPayment.findMany({
-        where: {
-          employeeId: input.employeeId,
-          periodId: input.periodId,
-          reversalOfId: null,
-          reversedAt: null,
-          OR: [
-            { relatedAccrualId: salaryAccrual.id },
-            { type: { in: [...salaryPaymentTypes] } },
-          ],
-        },
-        select: { amount: true },
-      }),
-      tx.payrollAccrual.findMany({
-        where: {
-          employeeId: input.employeeId,
-          periodId: input.periodId,
-          reversalOfId: null,
-          reversedBy: null,
-        },
-        select: { amount: true, direction: true },
-      }),
-      tx.payrollPayment.findMany({
-        where: {
-          employeeId: input.employeeId,
-          periodId: input.periodId,
-          reversalOfId: null,
-          reversedAt: null,
-        },
-        select: { amount: true },
-      }),
-    ]);
-
-  const paidTowardSalary = paymentsTowardSalary.reduce(
-    (sum, row) => sum + Number(row.amount),
-    0,
-  );
-  const salaryRemaining = Number(salaryAccrual.amount) - paidTowardSalary;
-  if (Number(input.amount) > salaryRemaining + 0.01)
-    throw new PayrollError("PAYMENT_EXCEEDS_ACCRUAL");
-
-  const accrued = activeAccruals.reduce(
-    (sum, row) =>
-      sum +
-      Number(row.amount) *
-        (row.direction === PayrollDirection.INCREASE ? 1 : -1),
-    0,
-  );
-  const paid = activePayments.reduce(
-    (sum, row) => sum + Number(row.amount),
-    0,
-  );
-  if (Number(input.amount) > accrued - paid + 0.01)
+  const range = companyMonthRange(period.year, period.month);
+  const rate = employee.salaryRates.find((item) =>
+    item.effectiveFrom < range.end &&
+    (!item.effectiveTo || item.effectiveTo >= range.start),
+  ) ?? employee.salaryRates[0];
+  if (!(rate?.planEnabled ?? employee.salaryPlanEnabled))
+    throw new PayrollError("PARTIAL_SALARY_ACCRUAL_REQUIRED");
+  const salary = Number(rate?.amount ?? employee.baseSalary);
+  const paid = paymentsTowardSalary.reduce((sum, item) => sum + Number(item.amount), 0);
+  if (Number(input.amount) > salary - paid + 0.01)
     throw new PayrollError("PAYMENT_EXCEEDS_PAYABLE");
 }
 
 export async function createPayment(input: PaymentInput, actor: PayrollActor) {
   const founderPartialSalaryPayment =
-    actor.role === Role.DIRECTOR &&
+    (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) &&
     input.type === PayrollPaymentType.ADVANCE &&
-    input.relatedAccrualId != null;
+    (input.partialSalary === true || input.relatedAccrualId != null);
   if (!founderPartialSalaryPayment) payrollOperator(actor);
   if (input.type === PayrollPaymentType.EMPLOYEE_REFUND)
     throw new PayrollError("FORBIDDEN");
   if (
     (input.type === PayrollPaymentType.SALARY_PAYMENT ||
       input.type === PayrollPaymentType.FINAL_SETTLEMENT) &&
-    actor.role !== Role.OPERATIONS_DIRECTOR
+    actor.role !== Role.OPERATIONS_DIRECTOR &&
+    actor.role !== Role.DIRECTOR
   )
     throw new PayrollError("DIRECTOR_CONFIRMATION_REQUIRED");
   const finalSalaryPayment =
@@ -1750,6 +1664,12 @@ export async function transitionPeriod(
   actor: PayrollActor,
 ) {
   salaryManager(actor);
+  if (target === PayrollPeriodStatus.CLOSED) {
+    const statement = await payrollSummary(periodId, actor);
+    if (statement.rows.some((row) =>
+      row.calculation.amountToPay > 0.01 || row.totals.pending > 0.01,
+    )) throw new PayrollError("PAYROLL_NOT_FULLY_PAID");
+  }
   return prisma.$transaction(async (tx) => {
     const replay = await tx.payrollAuditEvent.findUnique({ where: { idempotencyKey: key } });
     if (replay?.periodId === periodId)
@@ -1839,6 +1759,7 @@ export async function payrollSummary(
               status: true,
               lifecycle: true,
               deletedAt: true,
+              manager: true,
               orderReceivedAt: true,
               completedAt: true,
               client: { select: { name: true, phone: true } },
@@ -1964,6 +1885,15 @@ export async function payrollSummary(
     const activeAccruals = employee.accruals.filter(
       (row) => !row.reversalOfId && !row.reversedBy,
     );
+    const validAccruals = activeAccruals.filter((row) =>
+      !(
+        row.order &&
+        isCompanyResponsibleOrder({ managerName: row.order.manager }) &&
+        (row.type === PayrollAccrualType.ORDER_BONUS ||
+          row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
+          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX))
+      ),
+    );
     const accrued = employee.accruals.reduce(
       (sum, row) => sum + signedAccrual(row),
       0,
@@ -1982,7 +1912,7 @@ export async function payrollSummary(
           row.type === PayrollPaymentType.ADVANCE,
       )
       .reduce((sum, row) => sum + Number(row.amount), 0);
-    const increase = (types: PayrollAccrualType[]) => activeAccruals
+    const increase = (types: PayrollAccrualType[]) => validAccruals
       .filter((row) => row.direction === PayrollDirection.INCREASE && types.includes(row.type))
       .reduce((sum, row) => sum + Number(row.amount), 0);
     const advancesPaid = employee.payments
@@ -2039,14 +1969,29 @@ export async function payrollSummary(
       )
       .reduce((sum, row) => sum + policySigned(row), 0);
     const configuredSalary = Number(activeRate?.amount ?? employee.baseSalary);
-    const statementSalary = employeeEmploymentEnded
+    const salaryPlanEnabled = activeRate?.planEnabled ?? employee.salaryPlanEnabled;
+    const statementSalary = employeeEmploymentEnded || !salaryPlanEnabled
       ? Math.max(baseSalaryPosted, 0)
-      : baseSalaryPosted > 0
-        ? Math.max(baseSalaryPosted, 0)
-        : configuredSalary;
-    const currentSalary = employeeEmploymentEnded
-      ? statementSalary
-      : configuredSalary;
+      : Math.max(configuredSalary, baseSalaryPosted, 0);
+    const currentSalary = salaryPlanEnabled && !employeeEmploymentEnded
+      ? configuredSalary
+      : 0;
+    const confirmedOtherAccruals = validAccruals
+      .filter((row) =>
+        row.type !== PayrollAccrualType.BASE_SALARY &&
+        !row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX) &&
+        !(row.type === PayrollAccrualType.ORDER_BONUS &&
+          row.reason.startsWith(AUTOMATIC_ORDER_BONUS_REASON_PREFIX)),
+      )
+      .reduce((sum, row) => sum + policySigned(row), 0);
+    const salaryPaid = employee.payments
+      .filter((payment) => salaryPaymentTypes.includes(payment.type as (typeof salaryPaymentTypes)[number]))
+      .reduce((sum, payment) => sum + signedPayment(payment), 0);
+    const confirmedAccrued = Math.max(
+      paid,
+      Math.max(salaryPosted, salaryPaid) + confirmedOtherAccruals,
+      0,
+    );
     const managerPolicyApplies = identity.role === Role.MANAGER;
     const assignedOrders = managerPolicyApplies
       ? periodOrders.filter(
@@ -2133,6 +2078,7 @@ export async function payrollSummary(
               .filter(
                 (row) =>
                   row.orderId &&
+                  !(row.order && isCompanyResponsibleOrder({ managerName: row.order.manager })) &&
                   !assignedOrderIds.has(row.orderId) &&
                   (row.type === PayrollAccrualType.ORDER_BONUS ||
                     row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
@@ -2197,6 +2143,9 @@ export async function payrollSummary(
       };
     });
     const allOrderBonusAudit = [...orderBonusAudit, ...orphanOrderAudit];
+    const suggestedOrderBonuses = orderBonusAudit
+      .filter((item) => item.eligible && item.recorded < 0.01)
+      .reduce((sum, item) => sum + item.expected, 0);
     const salaryDifference = managerPolicyApplies
       ? currentSalary - salaryPosted
       : 0;
@@ -2204,10 +2153,7 @@ export async function payrollSummary(
       (sum, row) => sum + row.ledgerDifference,
       0,
     );
-    const policyReady = isPayrollPolicyReady(
-      salaryDifference,
-      allOrderBonusAudit.map((row) => row.ledgerDifference),
-    );
+    const policyReady = isPayrollReconciled(salaryDifference);
     const policySignature = payrollPolicyStateSignature(
       salaryDifference,
       allOrderBonusAudit.map((row) => ({ orderId: row.orderId, delta: row.ledgerDifference })),
@@ -2233,7 +2179,7 @@ export async function payrollSummary(
     // The audit is a preview only. Amounts become payable only after people
     // create the actual accruals: salary by the director and order bonuses by
     // the manager.
-    const approvedAccrued = accrued;
+    const approvedAccrued = confirmedAccrued;
     const approvedPayable = approvedAccrued - paid;
     const personalCalculation = personalPayrollCalculation({
       salary: statementSalary,
@@ -2243,7 +2189,7 @@ export async function payrollSummary(
         PayrollAccrualType.MEASUREMENT_BONUS,
         PayrollAccrualType.EXTRA_BONUS,
         PayrollAccrualType.ADJUSTMENT_INCREASE,
-      ]),
+      ]) + suggestedOrderBonuses,
       premiums: increase([PayrollAccrualType.PREMIUM]),
       deductions: activeAccruals
         .filter((row) => row.direction === PayrollDirection.DECREASE)
@@ -2251,7 +2197,7 @@ export async function payrollSummary(
       advances: advancesPaid,
       otherPayments: paid - advancesPaid,
       pendingAdvances,
-      accrued,
+      accrued: confirmedAccrued,
     });
     const payments = employee.payments.map((payment) => ({
       ...payment,
@@ -2269,6 +2215,7 @@ export async function payrollSummary(
     }));
     return {
       ...employee,
+      salaryPlanEnabled,
       user: identity,
       payments,
       hasOrdaAccess: Boolean(employee.userId),
@@ -2339,7 +2286,7 @@ export async function payrollSummary(
             calculationReady: policyReady || manualApproved,
             manualApproved,
             workReadiness,
-            readyToPay: (policyReady || manualApproved) && workReadiness.ready,
+            readyToPay: policyReady || manualApproved,
             mismatches: allOrderBonusAudit,
           }
         : null,
@@ -2720,7 +2667,7 @@ export async function syncAutomaticOrderBonuses(
       return [];
     }
     const deferred = employmentEnded(profile);
-    if (!automaticPeriod && !deferred) return [];
+    if (!deferred) return [];
     const earnedAt = bonusEarnedInRange(order, profile, range);
     return earnedAt ? [{ order, profile, earnedAt, deferred }] : [];
   });

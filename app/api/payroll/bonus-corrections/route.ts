@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
-import { ensureUserEmployeeProfiles } from "@/lib/services/employee.service";
 import {
   correctOrderBonus,
   listOrderBonusesForCorrection,
@@ -60,7 +59,6 @@ export async function GET(request: Request) {
   const auth = await authBonusCorrection();
   if (auth.response) return auth.response;
   try {
-    await ensureUserEmployeeProfiles();
     const params = new URL(request.url).searchParams;
     return NextResponse.json(
       await listOrderBonusesForCorrection(
@@ -80,7 +78,6 @@ export async function POST(request: Request) {
   const key = readIdempotencyKey(request);
   if ("response" in key) return key.response;
   try {
-    await ensureUserEmployeeProfiles();
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? "");
     if (action === "sync")

@@ -230,6 +230,7 @@ export async function POST(request: Request) {
               body.relatedAccrualId == null
                 ? undefined
                 : Number(body.relatedAccrualId),
+            partialSalary: body.partialSalary === true,
             key: keyResult.key,
             requestHash: hash,
           },
