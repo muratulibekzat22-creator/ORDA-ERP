@@ -10,14 +10,9 @@ JOIN "Company" company ON company.id = profile."companyId"
 LEFT JOIN "User" account ON account.id = profile."userId"
 WHERE company.slug = 'altyn-sapa-company'
   AND (
-    (account.id IS NOT NULL AND account."role"::text = 'MEASURER')
-    OR (
-      account.id IS NULL
-      AND (
-        UPPER(BTRIM(profile."position")) = 'MEASURER'
-        OR LOWER(BTRIM(profile."position")) LIKE '%замер%'
-      )
-    )
+    account."role"::text = 'MEASURER'
+    OR UPPER(BTRIM(profile."position")) = 'MEASURER'
+    OR LOWER(BTRIM(profile."position")) LIKE '%замер%'
   );
 
 UPDATE "EmployeePayrollProfile" profile
