@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
-  isManagerOrderBonusAutomaticPeriod,
   managerOrderBonus,
   payrollRoleAccess,
 } from "@/lib/payroll-policy";
@@ -115,11 +114,13 @@ type PayrollRow = {
   position: string;
   hasOrdaAccess: boolean;
   baseSalary: string;
+  salaryPlanEnabled: boolean;
   defaultGuaranteedBonus: string;
   user: { id: number; name: string; role: string; active: boolean };
   salaryRates: Array<{
     id: number;
     amount: string;
+    planEnabled: boolean;
     effectiveFrom: string;
     effectiveTo?: string | null;
     comment?: string | null;
@@ -182,6 +183,24 @@ type ManagedOrderBonus = {
   editable: boolean;
   blockedReason?: string | null;
 };
+const bonusRowsFromStatement = (rows: PayrollRow[], periodStatus?: string): ManagedOrderBonus[] =>
+  rows.flatMap((row) => row.bonusAccruals
+    .filter((item) => item.type === "ORDER_BONUS" || item.type === "GUARANTEED_ORDER_BONUS")
+    .map((item) => ({
+      id: item.id,
+      employeeId: row.id,
+      employeeName: row.user.name,
+      orderId: item.orderId,
+      order: item.order,
+      type: item.type,
+      amount: item.amount,
+      policyAdjustment: 0,
+      effectiveAmount: item.amount,
+      paid: item.paid,
+      createdAt: item.accruedAt,
+      editable: periodStatus === "OPEN" && item.paid < 0.01,
+      blockedReason: periodStatus !== "OPEN" ? "PERIOD_NOT_OPEN" : item.paid > 0 ? "BONUS_PAYMENT_EXISTS" : null,
+    })));
 type BonusCorrection = {
   mode: "correct" | "cancel";
   item: ManagedOrderBonus;
@@ -301,24 +320,16 @@ const reversiblePayrollAccruals = (row: PayrollRow) =>
       ),
   );
 const partialSalaryAvailable = (row: PayrollRow) => {
-  const salaryAccrual = activeSalaryAccrual(row);
-  if (!salaryAccrual) return 0;
+  if (!row.salaryPlanEnabled || row.employmentEnded) return 0;
   const paidTowardSalary = row.payments
     .filter(
       (item) =>
         !item.reversalOfId &&
         !item.reversedAt &&
-        (item.relatedAccrualId === salaryAccrual.id ||
-          salaryPaymentTypes.has(item.type)),
+        salaryPaymentTypes.has(item.type),
     )
     .reduce((sum, item) => sum + Number(item.amount), 0);
-  return Math.max(
-    Math.min(
-      Number(salaryAccrual.amount) - paidTowardSalary,
-      row.totals.payable,
-    ),
-    0,
-  );
+  return Math.max(row.currentSalary - paidTowardSalary, 0);
 };
 const statementAccrued = (row: PayrollRow) => row.calculation.totalToAccrue;
 const statementPayable = (row: PayrollRow) => row.calculation.amountToPay;
@@ -326,6 +337,7 @@ const errorLabels: Record<string, string> = {
   FORBIDDEN: "Недостаточно прав для этой операции",
   PERIOD_CLOSED: "Закрытый месяц нельзя изменять",
   PERIOD_NOT_OPEN: "Период находится на проверке. Верните его в работу для изменений",
+  PAYROLL_NOT_FULLY_PAID: "Закрыть месяц можно после всех выплат и подтверждения авансов. Верните месяц в работу и завершите расчёты.",
   REASON_REQUIRED: "Укажите обязательную причину",
   INVALID_DATE: "Укажите корректную дату",
   INVALID_EFFECTIVE_DATE: "Дата нового оклада пересекается с уже сохранённой историей ставок",
@@ -412,7 +424,7 @@ export default function PayrollPage() {
     adminView = founder || operationsDirector || accountant,
     payrollAdministrator = founder || operationsDirector,
     salaryManager = payrollAdministrator,
-    director = operationsDirector,
+    director = payrollAdministrator,
     canAccrueSalary = payrollAdministrator,
     managerSelfService = role === "MANAGER" && !adminView,
     canCorrectOrderBonuses =
@@ -422,7 +434,7 @@ export default function PayrollPage() {
     locked = Boolean(data.period && data.period.status !== "OPEN");
   const salaryCandidates = data.rows.filter(
     (row) =>
-      !row.employmentEnded &&
+      row.salaryPlanEnabled &&
       row.currentSalary > 0 &&
       !row.accruals.some(
         (item) =>
@@ -447,52 +459,28 @@ export default function PayrollPage() {
       year: String(selected.year),
       month: String(selected.month),
     });
-    if (canCorrectOrderBonuses) {
-      const syncResponse = await fetch("/api/payroll/bonus-corrections", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
-        },
-        body: JSON.stringify({
-          action: "sync",
-          year: selected.year,
-          month: selected.month,
-        }),
-      });
-      if (!syncResponse.ok) {
-        const syncBody = await syncResponse.json().catch(() => ({}));
-        setError(
-          errorLabels[syncBody.error] ??
-            "Не удалось автоматически сформировать бонусы",
-        );
-      }
-    }
-    const [response, bonusResponse] = await Promise.all([
-      fetch(`${adminView ? "/api/payroll" : "/api/payroll/self"}?${query}`),
-      canCorrectOrderBonuses
-        ? fetch(`/api/payroll/bonus-corrections?${query}`)
-        : Promise.resolve(null),
-    ]);
+    try {
+    const response = await fetch(`${adminView ? "/api/payroll" : "/api/payroll/self"}?${query}`);
     const body = await response.json().catch(() => ({}));
     if (!response.ok)
       setError(errorLabels[body.error] ?? "Не удалось загрузить зарплату");
     else setData(body as Payload);
-    if (bonusResponse) {
-      const bonusBody = await bonusResponse.json().catch(() => ({}));
-      if (bonusResponse.ok)
-        setManagedBonuses(
-          Array.isArray(bonusBody.items) ? bonusBody.items : [],
-        );
-      else {
-        setManagedBonuses([]);
-        if (response.ok)
-          setError(
-            errorLabels[bonusBody.error] ?? "Не удалось загрузить бонусы",
-          );
+    if (canCorrectOrderBonuses && response.ok) {
+      try {
+        const bonusResponse = await fetch(`/api/payroll/bonus-corrections?${query}`);
+        const bonusBody = await bonusResponse.json().catch(() => ({}));
+        setManagedBonuses(bonusResponse.ok && Array.isArray(bonusBody.items)
+          ? bonusBody.items
+          : bonusRowsFromStatement((body as Payload).rows ?? [], body.period?.status));
+      } catch {
+        setManagedBonuses(bonusRowsFromStatement((body as Payload).rows ?? [], body.period?.status));
       }
     } else setManagedBonuses([]);
-    setLoading(false);
+    } catch {
+      setError("Не удалось загрузить ведомость. Повторите обновление страницы.");
+    } finally {
+      setLoading(false);
+    }
   }, [adminView, canCorrectOrderBonuses, selected.month, selected.year, sessionStatus]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -618,17 +606,9 @@ export default function PayrollPage() {
     accrual?: Accrual,
   ) => {
     const employee = row ?? details ?? data.rows[0] ?? null;
-    const salaryAccrual = employee ? activeSalaryAccrual(employee) : null;
     const editableAccrual =
       accrual ??
       (employee ? editablePayrollAccruals(employee)[0] : undefined);
-    if (next === "payment" && employee?.payrollAudit && !employee.payrollAudit.readyToPay) {
-      setDetails(employee);
-      setError(employee.payrollAudit.workReadiness.ready
-        ? "Сначала выберите расчёт системы или подтвердите ручной расчёт"
-        : "Сначала закройте замечания по заказам, просроченные замеры и контрольные задачи");
-      return;
-    }
     setOperation(next);
     setTarget(employee);
     setForm(next === "salary" && employee
@@ -639,12 +619,11 @@ export default function PayrollPage() {
           reason: "Изменение оклада",
         }
       : next === "salaryAccrual" && employee
-      ? { ...emptyForm(), amount: String(employee.currentSalary), reason: "Оклад за расчётный период" }
-      : next === "partialPayment" && employee && salaryAccrual
+      ? { ...emptyForm(), amount: employee.currentSalary > 0 ? String(employee.currentSalary) : "", reason: "Оклад за расчётный период" }
+      : next === "partialPayment" && employee
         ? {
             ...emptyForm(),
             type: "ADVANCE",
-            accrualId: String(salaryAccrual.id),
             method: "kaspi",
             reason: `Частичная оплата зарплаты за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
           }
@@ -716,6 +695,7 @@ export default function PayrollPage() {
         externalReference: form.externalReference,
         comment: form.reason,
         relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
+        partialSalary: operation === "partialPayment",
       };
     else if (operation === "editAccrual")
       body = {
@@ -854,6 +834,9 @@ export default function PayrollPage() {
     (sum, row) => sum + statementPayable(row),
     0,
   );
+  const unsettledRows = data.rows.filter((row) =>
+    statementPayable(row) > 0.01 || row.totals.pending > 0.01,
+  );
   const stats: Array<[string, number, LucideIcon, string]> = [
     ["Начислено", statementAccruedTotal, CircleDollarSign, "text-white"],
     ["Выплачено", data.breakdown.totalPaid, Check, "text-emerald-300"],
@@ -932,7 +915,7 @@ export default function PayrollPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               {!data.period && <button onClick={() => void run({ action: "create-period", ...selected }, "Месяц открыт")} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">Открыть месяц</button>}
               {data.period?.status === "OPEN" && <button onClick={() => void transitionPeriod("REVIEW")} className="min-h-11 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 font-semibold text-amber-200">На проверку</button>}
-              {data.period?.status === "REVIEW" && <><button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Вернуть в работу</button><button onClick={() => void transitionPeriod("CLOSED")} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300">Закрыть месяц</button></>}
+              {data.period?.status === "REVIEW" && <><button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Вернуть в работу</button><button onClick={() => void transitionPeriod("CLOSED")} disabled={unsettledRows.length > 0} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-300 disabled:cursor-not-allowed disabled:opacity-40">Закрыть месяц</button>{unsettledRows.length > 0 && <span className="self-center text-sm text-amber-200">Остались выплаты или неподтверждённые авансы: {unsettledRows.length} сотрудник(а). Сначала верните месяц в работу.</span>}</>}
               {data.period?.status === "CLOSED" && <button onClick={() => void transitionPeriod("OPEN")} className="min-h-11 rounded-xl border border-blue-500/40 bg-blue-500/10 px-4 font-semibold text-blue-200">Открыть месяц снова</button>}
             </div>
           </details>
@@ -957,8 +940,8 @@ export default function PayrollPage() {
         {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
-            <p className="mt-2 leading-6">ORDA автоматически формирует ведомость, берёт оклад из профиля и рассчитывает бонус по сумме заказа: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Активным менеджерам бонус относится к месяцу оформления заказа; уволенному менеджеру он начисляется только после фактического завершения заказа. Ручное изменение суммы требует причины, а исправление сохраняет историю.</p>
-            <p className="mt-2 leading-6">«Начислено» показывает полную сумму за месяц: оклад по профилю + фактически внесённые бонусы и премии − удержания. «К выплате» — это начислено минус все подтверждённые выплаты. Если оклад ещё не подтверждён в ведомости, останется статус «Не всё начислено» и кнопка «Начислить оклад»; референс перевода необязателен.</p>
+            <p className="mt-2 leading-6">Система предлагает бонус: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Итоговую сумму за заказ вводят менеджер, директор или основатель. Заказы с ответственным «Компания» не дают менеджерский бонус. Уволенному менеджеру бонус начисляется после завершения заказа.</p>
+            <p className="mt-2 leading-6">«Начислено» — полный расчёт за месяц: назначенный оклад, внесённые или предложенные бонусы, премии и удержания. «Выплачено» показывает фактические подтверждённые выплаты, а «К выплате» — остаток после их вычета. Оклад без назначения не создаёт долг.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
         )}
@@ -981,11 +964,7 @@ export default function PayrollPage() {
         {!adminView && data.rows[0] && (
           <PersonalPayrollReport
             row={data.rows[0]}
-            managerSelfService={managerSelfService}
-            automaticBonusMode={isManagerOrderBonusAutomaticPeriod(
-              selected.year,
-              selected.month,
-            )}
+            managerSelfService={managerSelfService && !locked}
             canReportAdvance={advanceSelfService && Boolean(data.period) && !locked}
             onOperation={openOperation}
             orderBonuses={managedBonuses.filter(
@@ -1082,6 +1061,7 @@ export default function PayrollPage() {
                       <Status
                         payable={statementPayable(row)}
                         paid={row.totals.paid}
+                        accrued={statementAccrued(row)}
                         calculationReady={row.payrollAudit?.calculationReady ?? true}
                       />
                     </div>
@@ -1113,7 +1093,7 @@ export default function PayrollPage() {
           director={director}
           canManageSalary={salaryManager}
           canManageAccruals={payrollAdministrator}
-          canReviewPayments={founder}
+          canReviewPayments={payrollAdministrator}
           canAccrueSalary={canAccrueSalary}
           orderBonuses={managedBonuses.filter(
             (item) => item.employeeId === details.id,
@@ -1146,7 +1126,11 @@ export default function PayrollPage() {
           row={target}
           rows={
             operation === "salaryAccrual"
-              ? salaryCandidates
+              ? data.rows.filter(
+                  (row) =>
+                    (!row.employmentEnded || row.currentSalary > 0) &&
+                    !activeSalaryAccrual(row),
+                )
               : operation === "partialPayment"
                 ? partialPaymentCandidates
                 : operation === "editAccrual"
@@ -1164,12 +1148,11 @@ export default function PayrollPage() {
                   reason: "Изменение оклада",
                 }
               : operation === "salaryAccrual"
-              ? { ...emptyForm(), amount: String(row.currentSalary), reason: "Оклад за расчётный период" }
+              ? { ...emptyForm(), amount: row.currentSalary > 0 ? String(row.currentSalary) : "", reason: "Оклад за расчётный период" }
               : operation === "partialPayment"
                 ? {
                     ...emptyForm(),
                     type: "ADVANCE",
-                    accrualId: String(activeSalaryAccrual(row)?.id ?? ""),
                     method: "kaspi",
                     reason: `Частичная оплата зарплаты за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
                   }
@@ -1255,7 +1238,7 @@ function PayrollTableRow({
         {currency(statementPayable(row))}
       </td>
       <td className="px-4 py-4">
-        <Status payable={statementPayable(row)} paid={row.totals.paid} calculationReady={row.payrollAudit?.calculationReady ?? true} />
+        <Status payable={statementPayable(row)} paid={row.totals.paid} accrued={statementAccrued(row)} calculationReady={row.payrollAudit?.calculationReady ?? true} />
       </td>
       <td className="px-4 py-4">
         <button
@@ -1269,12 +1252,12 @@ function PayrollTableRow({
     </tr>
   );
 }
-function Status({ payable, paid, calculationReady }: { payable: number; paid: number; calculationReady: boolean }) {
+function Status({ payable, paid, accrued, calculationReady }: { payable: number; paid: number; accrued: number; calculationReady: boolean }) {
   const value =
-    !calculationReady ? "Не всё начислено" : payable <= 0 ? "Выплачено" : paid > 0 ? "Частично" : "К выплате";
+    payable > 0 && paid > 0 ? "Частично" : payable <= 0 && paid <= 0 && accrued <= 0 ? "Нет начислений" : payable <= 0 ? "Выплачено" : !calculationReady ? "Не всё начислено" : "К выплате";
   return (
     <span
-      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${!calculationReady ? "bg-amber-500/15 text-amber-200" : payable <= 0 ? "bg-emerald-500/15 text-emerald-300" : paid > 0 ? "bg-amber-500/15 text-amber-300" : "bg-blue-500/15 text-blue-300"}`}
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${value === "Частично" || value === "Не всё начислено" ? "bg-amber-500/15 text-amber-200" : value === "Выплачено" ? "bg-emerald-500/15 text-emerald-300" : value === "Нет начислений" ? "bg-slate-700/50 text-slate-300" : "bg-blue-500/15 text-blue-300"}`}
     >
       {value}
     </span>
@@ -1326,10 +1309,10 @@ function PayrollOrderBonusAuditList({
         const difference = item.managerDifference;
         const mismatch =
           difference > 0
-            ? `лишнее ${currency(difference)}`
+            ? `выше подсказки на ${currency(difference)}`
             : difference < 0
-              ? `не хватает ${currency(Math.abs(difference))}`
-              : "верно";
+              ? `ниже подсказки на ${currency(Math.abs(difference))}`
+              : "совпадает с подсказкой";
         const existing = orderBonuses.find(
           (bonus) =>
             bonus.employeeId === employeeId && bonus.orderId === item.orderId,
@@ -1399,7 +1382,6 @@ function PayrollOrderBonusAuditList({
 function PersonalPayrollReport({
   row,
   managerSelfService,
-  automaticBonusMode,
   canReportAdvance,
   onOperation,
   orderBonuses,
@@ -1408,7 +1390,6 @@ function PersonalPayrollReport({
 }: {
   row: PayrollRow;
   managerSelfService: boolean;
-  automaticBonusMode: boolean;
   canReportAdvance: boolean;
   onOperation: (operation: Operation, row: PayrollRow) => void;
   orderBonuses: ManagedOrderBonus[];
@@ -1433,7 +1414,7 @@ function PersonalPayrollReport({
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <div className="rounded-xl bg-slate-950 p-3">
               <p className="text-xs text-slate-500">Начислено</p>
-              <p className="mt-1 text-lg font-bold text-white">{currency(calculation.totalToAccrue)}</p>
+              <p className="mt-1 text-lg font-bold text-white">{currency(calculation.accrued)}</p>
             </div>
             <div className="rounded-xl bg-slate-950 p-3">
               <p className="text-xs text-slate-500">Выплачено</p>
@@ -1456,9 +1437,7 @@ function PersonalPayrollReport({
           )}
           {managerSelfService && (
             <p className="mt-3 text-xs text-blue-200/80">
-              {automaticBonusMode
-                ? "Бонусы по заказам формируются автоматически. Ошибочную запись можно исправить или отменить ниже."
-                : "Выберите каждый свой заказ за месяц — сумму бонуса ORDA подставит автоматически. Ошибочную запись можно исправить или отменить ниже."}
+              Выберите свой заказ за месяц. ORDA предложит сумму бонуса; окончательную сумму можно изменить перед сохранением.
             </p>
           )}
           {managerSelfService && row.payrollAudit && (
@@ -1484,9 +1463,7 @@ function PersonalPayrollReport({
           )}
           {managerSelfService && (
             <>
-              {!automaticBonusMode && (
-                <button onClick={() => onOperation("bonus", row)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
-              )}
+              <button onClick={() => onOperation("bonus", row)} className="min-h-11 rounded-xl bg-blue-600 px-4 font-semibold">+ Бонус за заказ</button>
               <button onClick={() => onOperation("deduction", row)} className="min-h-11 rounded-xl border border-red-500/40 bg-red-500/10 px-4 font-semibold text-red-200">+ Штраф</button>
             </>
           )}
@@ -1517,7 +1494,7 @@ function OrderBonusCorrectionPanel({
             {title ?? (managerView ? "Мои бонусы за заказы" : "Бонусы менеджеров")}
           </h2>
           <p className="mt-1 text-sm text-slate-400">
-            Исправьте месяц или заказ одним действием. Система пересчитает сумму по заказу, а исходная запись останется в истории.
+            Исправьте месяц, заказ или итоговую сумму. Предложение системы служит подсказкой, исходная запись останется в истории.
           </p>
         </div>
         <span className="w-fit rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">
@@ -1697,8 +1674,7 @@ function EmployeeDrawer({
   );
   const canAccrueThisSalary =
     canAccrueSalary &&
-    !row.employmentEnded &&
-    row.currentSalary > 0 &&
+    (!row.employmentEnded || row.currentSalary > 0) &&
     !row.accruals.some(
       (item) =>
         item.type === "BASE_SALARY" &&
@@ -1737,12 +1713,13 @@ function EmployeeDrawer({
               </div>
               <p className="text-sm text-slate-400">
                 {employeePosition(row)}
-                {!row.employmentEnded && (
+                {!row.employmentEnded && row.salaryPlanEnabled && (
                   <>
                     {" "}· Оклад {currency(row.currentSalary)} · действует с{" "}
                     {dateLabel(row.salaryEffectiveFrom)}
                   </>
                 )}
+                {!row.employmentEnded && !row.salaryPlanEnabled && " · Оклад не назначен"}
               </p>
               <p className="text-sm text-slate-400">
                 {row.payrollAudit
@@ -1765,9 +1742,9 @@ function EmployeeDrawer({
           <Metric label="К выплате" value={statementPayable(row)} accent />
         </div>
         <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4">
-          <h3 className="font-semibold">Расчёт к выплате</h3>
+          <h3 className="font-semibold">План и остаток за месяц</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric label="За месяц" value={row.calculation.totalToAccrue} />
+            <Metric label="План за месяц" value={row.calculation.totalToAccrue} />
             <Metric label="Подтверждённые авансы" value={row.calculation.advances} />
             <Metric label="Авансы на подтверждении" value={row.calculation.pendingAdvances} />
             <Metric
@@ -1792,24 +1769,24 @@ function EmployeeDrawer({
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
-                {row.payrollAudit.readyToPay ? (row.payrollAudit.manualApproved ? "Исключение подтверждено" : "Начисления сверены") : row.payrollAudit.calculationReady ? "Работа не закрыта" : "Не всё начислено"}
+                {row.payrollAudit.readyToPay ? (row.payrollAudit.manualApproved ? "Ручной расчёт подтверждён" : "Оклад сверен") : "Не всё начислено"}
               </span>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <div className="rounded-xl bg-slate-950 p-2"><p className="text-[11px] text-slate-500">Заказов проверено</p><p className="mt-1 font-semibold">{row.payrollAudit.linkedOrders}</p></div>
               <Metric label="Внесено менеджером" value={row.payrollAudit.submittedOrderBonus} />
-              <Metric label="Требует система" value={row.payrollAudit.requiredOrderBonus} />
-              <Metric label="Расхождение" value={row.payrollAudit.managerDifference} accent={row.payrollAudit.managerDifference !== 0} />
+              <Metric label="Предлагает система" value={row.payrollAudit.requiredOrderBonus} />
+              <Metric label="Разница с подсказкой" value={row.payrollAudit.managerDifference} accent={row.payrollAudit.managerDifference !== 0} />
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {[
                 ["Оклад по профилю", row.payrollAudit.salaryRequired],
-                ["Бонусы по правилам", row.payrollAudit.requiredOrderBonus],
+                ["Предложение по бонусам", row.payrollAudit.requiredOrderBonus],
                 ["Дополнительная премия", row.payrollAudit.premiums],
                 ["Штрафы / удержания", -row.payrollAudit.deductions],
                 ["Авансы", -row.payrollAudit.advances],
                 ["Другие выплаты", -(row.payrollAudit.alreadyPaid - row.payrollAudit.advances)],
-                ["Контрольная сумма", row.payrollAudit.auditedAccrued],
+                ["Ориентир системы", row.payrollAudit.auditedAccrued],
               ].map(([label, amount], index) => (
                 <div key={String(label)} className={`flex justify-between rounded-xl px-3 py-2 text-sm ${index === 6 ? "bg-emerald-500/10 text-emerald-200" : "bg-slate-950"}`}>
                   <span>{String(label)}</span>
@@ -1819,10 +1796,10 @@ function EmployeeDrawer({
             </div>
             {!row.payrollAudit.calculationReady && (
               <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100">
-                Не все записи внесены: основатель вручную начисляет оклад, а менеджер проверяет бонусы по своим заказам. Осталось учесть {row.payrollAudit.ledgerDifference >= 0 ? "+" : "−"}{currency(Math.abs(row.payrollAudit.ledgerDifference))}.
+                Оклад ещё не подтверждён. Бонусы по заказам можно внести или изменить вручную; сумма системы служит подсказкой.
               </div>
             )}
-            {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-100"><b>Расчётный лист и выплата заблокированы до завершения работы.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
+            {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100"><b>Есть незакрытая работа — проверьте перед окончательным расчётом.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
             <div className="mt-3">
               <PayrollOrderBonusAuditList
                 items={row.payrollAudit.mismatches}
@@ -1888,7 +1865,7 @@ function EmployeeDrawer({
             <h3 className="mb-3 font-semibold">Действия</h3>
             <div className="grid grid-cols-2 gap-2">
               {canAccrueThisSalary && (
-                <Action label="Начислить оклад" onClick={() => onOperation("salaryAccrual", row)} />
+                <Action label={row.salaryPlanEnabled ? "Начислить оклад" : "Начислить сумму вручную"} onClick={() => onOperation("salaryAccrual", row)} />
               )}
               {canManageSalary && (
                 <Action label="Изменить оклад" onClick={() => onOperation("salary", row)} />
@@ -2076,7 +2053,7 @@ function EmployeeDrawer({
                       : " — сейчас"}
                     <small className="block text-slate-500">{rate.approvedBy?.name ?? "Система"}{rate.comment ? ` · ${rate.comment}` : ""}</small>
                   </span>
-                  <b>{currency(rate.amount)}</b>
+                  <b>{rate.planEnabled ? currency(rate.amount) : "Оклад не назначен"}</b>
                 </div>
               ))}
             </div>
@@ -2112,8 +2089,8 @@ function BonusCorrectionModal({
   const [orderId, setOrderId] = useState(
     item.orderId == null ? "" : String(item.orderId),
   );
-  const [manualOverride, setManualOverride] = useState(false);
-  const [amount, setAmount] = useState(String(initialAutomaticAmount));
+  const [manualOverride, setManualOverride] = useState(item.effectiveAmount !== initialAutomaticAmount);
+  const [amount, setAmount] = useState(String(item.effectiveAmount));
   const [reason, setReason] = useState("");
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2299,33 +2276,22 @@ function BonusCorrectionModal({
                     Заказ {currency(selectedOrder.amount ?? 0)}
                   </span>
                   <b className="text-blue-200">
-                    Бонус автоматически {currency(automaticAmount)}
+                    Предложение системы {currency(automaticAmount)}
                   </b>
                 </div>
-                <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={manualOverride}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      setManualOverride(checked);
-                      setAmount(String(automaticAmount));
-                    }}
-                    className="mt-1"
-                  />
-                  <span>Изменить сумму вручную</span>
-                </label>
-                {manualOverride && (
-                  <input
-                    autoFocus
-                    type="number"
-                    min="1"
-                    value={amount}
-                    onChange={(event) => setAmount(event.target.value)}
-                    className="control mt-3"
-                    aria-label="Сумма бонуса вручную"
-                  />
-                )}
+                <input
+                  autoFocus
+                  type="number"
+                  min="1"
+                  value={amount}
+                  onChange={(event) => {
+                    setAmount(event.target.value);
+                    setManualOverride(Number(event.target.value) !== automaticAmount);
+                  }}
+                  className="control mt-3"
+                  aria-label="Итоговый бонус, ₸"
+                />
+                <p className="mt-1 text-xs text-slate-400">Укажите окончательную сумму. Предложение системы можно менять.</p>
               </div>
             )}
           </div>
@@ -2606,20 +2572,22 @@ function OperationModal({
               </Field>
             </>
           ) : operation !== "bonus" ? (
-            <Field label="Сумма, ₸">
+            <Field label={operation === "salary" ? "Новый оклад, ₸ (0 — без оклада)" : "Сумма, ₸"}>
               <input
                 autoFocus
                 type="number"
-                min="1"
+                min={operation === "salary" ? "0" : "1"}
                 max={operation === "partialPayment" ? availablePartialSalary : undefined}
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                readOnly={operation === "salaryAccrual"}
+                readOnly={operation === "salaryAccrual" && row.salaryPlanEnabled}
                 className="control"
               />
               {operation === "salaryAccrual" && (
                 <span className="mt-1.5 block text-xs text-blue-300">
-                  Оклад начисляется полностью. После начисления можно отдельно провести частичную оплату зарплаты.
+                  {row.salaryPlanEnabled
+                    ? "Начислите оклад по утверждённой ставке. Аванс можно учесть отдельно до полного начисления."
+                    : "Оклад не назначен. Введите сумму вручную, если за этот месяц нужно начислить оклад."}
                 </span>
               )}
               {operation === "partialPayment" && (
@@ -2670,7 +2638,7 @@ function OperationModal({
             <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm text-emerald-100">
               <p className="font-semibold">Остаток после оплаты</p>
               <p className="mt-1 text-xs text-emerald-200/80">
-                {currency(availablePartialSalary)} − {currency(requestedPartialSalary)} = {currency(remainingAfterPartialSalary)}. Оклад сотрудника не изменится; выплата будет учтена как аванс.
+                {currency(availablePartialSalary)} − {currency(requestedPartialSalary)} = {currency(remainingAfterPartialSalary)}. Оклад сотрудника не изменится; выплата будет учтена как аванс и подтверждённая часть начисления.
               </p>
             </div>
           )}
@@ -2772,36 +2740,22 @@ function OperationModal({
                         Заказ {currency(selectedOrder.amount ?? 0)}
                       </span>
                       <b className="text-blue-200">
-                        Бонус автоматически {currency(automaticBonus)}
+                        Предложение системы {currency(automaticBonus)}
                       </b>
                     </div>
-                    <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={form.manualOverride}
-                        onChange={(event) =>
-                          setForm({
-                            ...form,
-                            manualOverride: event.target.checked,
-                            amount: String(automaticBonus),
-                          })
-                        }
-                        className="mt-1"
-                      />
-                      <span>Изменить сумму вручную</span>
-                    </label>
-                    {form.manualOverride && (
-                      <input
-                        type="number"
-                        min="1"
-                        value={form.amount}
-                        onChange={(event) =>
-                          setForm({ ...form, amount: event.target.value })
-                        }
-                        aria-label="Сумма бонуса вручную"
-                        className="control mt-3"
-                      />
-                    )}
+                    <input
+                      type="number"
+                      min="1"
+                      value={form.amount}
+                      onChange={(event) => setForm({
+                        ...form,
+                        amount: event.target.value,
+                        manualOverride: Number(event.target.value) !== automaticBonus,
+                      })}
+                      aria-label="Итоговый бонус, ₸"
+                      className="control mt-3"
+                    />
+                    <p className="mt-1 text-xs text-slate-400">Укажите окончательную сумму. Предложение системы можно менять.</p>
                   </div>
                 )}
               </div>
@@ -2872,13 +2826,12 @@ function OperationModal({
                 : operation === "editAccrual"
                   ? !form.accrualId || Number(form.amount) <= 0 || !form.reason.trim()
                 : operation === "salary"
-                  ? Number(form.amount) <= 0 || !form.date || !form.reason.trim()
+                  ? form.amount === "" || Number(form.amount) < 0 || !form.date || !form.reason.trim()
                 : operation === "allowance"
                   ? form.amount === "" || Number(form.amount) < 0
                   : Number(form.amount) <= 0 ||
                     (operation === "partialPayment" &&
-                      (!form.accrualId ||
-                        Number(form.amount) > availablePartialSalary)) ||
+                      Number(form.amount) > availablePartialSalary) ||
                     (operation === "salaryAccrual" &&
                       form.externalReference.trim().length > 0 &&
                       form.externalReference.trim().length < 3) ||

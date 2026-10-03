@@ -1557,6 +1557,7 @@ model EmployeePayrollProfile {
   terminatedAt           DateTime?
   payrollEnabled         Boolean                      @default(true)
   baseSalary             Decimal                      @default(0) @db.Decimal(14, 2)
+  salaryPlanEnabled      Boolean                      @default(false)
   defaultGuaranteedBonus Decimal                      @default(20000) @db.Decimal(14, 2)
   active                 Boolean                      @default(true)
   comment                String?
@@ -1578,6 +1579,7 @@ model EmployeeSalaryRate {
   employeeId    Int
   employee      EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   amount        Decimal                @db.Decimal(14, 2)
+  planEnabled   Boolean                @default(false)
   effectiveFrom DateTime
   effectiveTo   DateTime?
   approvedById  Int

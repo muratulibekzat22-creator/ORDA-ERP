@@ -319,7 +319,7 @@ assert.deepEqual(
     advances: 50_000,
     otherPayments: 0,
     pendingAdvances: 0,
-    accrued: 90_000,
+    accrued: 50_000,
   }),
   {
     salary: 200_000,
@@ -329,14 +329,37 @@ assert.deepEqual(
     advances: 50_000,
     otherPayments: 0,
     pendingAdvances: 0,
-    accrued: 90_000,
+    accrued: 50_000,
     totalToAccrue: 290_000,
-    remainingToAccrue: 200_000,
+    remainingToAccrue: 240_000,
     amountToPay: 240_000,
     amountToPayAfterPendingAdvances: 240_000,
   },
-  "Akbota statement must show 290,000 accrued, 50,000 paid and 240,000 payable",
+  "Akbota statement must distinguish 50,000 confirmed from 290,000 planned and 240,000 payable",
 );
+const alikhanSeptember = personalPayrollCalculation({
+  salary: 400_000,
+  bonuses: 0,
+  premiums: 0,
+  deductions: 0,
+  advances: 83_000,
+  otherPayments: 0,
+  pendingAdvances: 0,
+  accrued: 83_000,
+});
+assert.equal(alikhanSeptember.accrued, 83_000);
+assert.equal(alikhanSeptember.amountToPay, 317_000);
+const marketerWithoutSalary = personalPayrollCalculation({
+  salary: 0,
+  bonuses: 0,
+  premiums: 0,
+  deductions: 0,
+  advances: 0,
+  otherPayments: 0,
+  pendingAdvances: 0,
+  accrued: 0,
+});
+assert.equal(marketerWithoutSalary.amountToPay, 0);
 
 const gulsimOrders = [
   6_000_000,
@@ -449,6 +472,27 @@ const deferredTerminatedBonusMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const explicitSalaryPlansMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004100000_explicit_salary_plans/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const unassignedSalaryCleanupMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004100200_unassigned_salary_cleanup/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const companyBonusResweepMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004100500_company_bonus_resweep/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -469,7 +513,7 @@ assert.match(
 assert.match(payrollPageSource, /adminView = founder \|\| operationsDirector \|\| accountant/);
 assert.match(payrollPageSource, /statementAccrued/);
 assert.match(payrollPageSource, /statementPayable/);
-assert.match(payrollPageSource, /Начислено.*минус все подтверждённые выплаты/);
+assert.match(payrollPageSource, /«Начислено» — полный расчёт за месяц/);
 assert.match(payrollPageSource, /Частичная оплата зарплаты/);
 assert.match(payrollPageSource, /Оклад сотрудника не изменится; выплата будет учтена как аванс/);
 assert.match(payrollPageSource, /label="Изменить оклад"/);
@@ -481,23 +525,24 @@ assert.match(serviceSource, /export async function correctPayrollAccrual/);
 assert.match(serviceSource, /PAYROLL_ACCRUAL_CORRECTED/);
 assert.match(serviceSource, /else salaryManager\(actor\)/);
 assert.match(serviceSource, /payrollSalaryForPeriod/);
-assert.match(serviceSource, /const statementSalary = configuredSalary/);
+assert.match(serviceSource, /const statementSalary = salaryPlanEnabled/);
 assert.match(payrollPageSource, /Редактировать бонус/);
 assert.match(payrollPageSource, /Указать бонус/);
+assert.match(serviceSource, /activeRate\?\.planEnabled \?\?/);
 assert.match(serviceSource, /isValidOptionalPaymentReference/);
 assert.match(serviceSource, /PARTIAL_SALARY_PAYMENT_CREATED/);
 assert.match(serviceSource, /PARTIAL_SALARY_ACCRUAL_REQUIRED/);
 assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
-assert.match(serviceSource, /PAYROLL_WORK_INCOMPLETE/);
+assert.match(serviceSource, /PAYROLL_NOT_FULLY_PAID/);
 assert.match(serviceSource, /MANAGER_PAYROLL_MANUAL_APPROVED/);
 assert.match(payrollRouteSource, /approve-manager-payroll-manual/);
 assert.match(serviceSource, /managerPayrollPolicyState/);
 assert.match(serviceSource, /SALARY_ALREADY_ACCRUED/);
 assert.match(serviceSource, /SALARY_AMOUNT_MISMATCH/);
 assert.match(payrollRouteSource, /PAYROLL_PERIOD_NOT_STARTED/);
-assert.match(payrollPageSource, /readOnly=\{operation === "salaryAccrual"\}/);
-assert.match(payrollPageSource, /автоматически формирует ведомость/);
-assert.match(payrollPageSource, /Бонус автоматически/);
+assert.match(payrollPageSource, /readOnly=\{operation === "salaryAccrual" && row\.salaryPlanEnabled\}/);
+assert.match(payrollPageSource, /Система предлагает бонус/);
+assert.match(payrollPageSource, /Предложение системы/);
 assert.match(payrollPageSource, /Исправить бонус/);
 assert.match(payrollPageSource, /Отменить бонус/);
 assert.match(payrollPageSource, /Бонусы за заказы ·/);
@@ -512,7 +557,7 @@ assert.match(serviceSource, /expectedOrderBonus = managerOrderBonus/);
 assert.match(serviceSource, /BONUS_PAYMENT_EXISTS/);
 assert.match(serviceSource, /ORDER_BONUS_CORRECTED/);
 assert.match(serviceSource, /ORDER_BONUS_CANCELLED/);
-assert.match(serviceSource, /automatic-order-bonus:\$\{order\.id\}/);
+assert.match(serviceSource, /if \(!deferred\) return \[\]/);
 assert.match(serviceSource, /deferredCreated/);
 assert.match(serviceSource, /ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE/);
 assert.match(serviceSource, /accrueCompletedTerminatedManagerOrderBonus/);
@@ -522,7 +567,7 @@ assert.match(
   serviceSource,
   /actor\.role === Role\.MANAGER[\s\S]*original\.employee\.userId !== actor\.userId/,
 );
-assert.match(serviceSource, /const approvedAccrued = statementPosted/);
+assert.match(serviceSource, /const approvedAccrued = confirmedAccrued/);
 assert.match(
   serviceSource,
   /input\.type === PayrollAccrualType\.BASE_SALARY[\s\S]*actor\.role !== Role\.DIRECTOR[\s\S]*actor\.role !== Role\.OPERATIONS_DIRECTOR/,
@@ -552,5 +597,11 @@ assert.match(optionalAccrualReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS 
 assert.match(deferredTerminatedBonusMigrationSource, /TERMINATED_MANAGER_BONUS_DEFERRED/);
 assert.match(deferredTerminatedBonusMigrationSource, /customer_order\."lifecycle" = 'COMPLETED'/);
 assert.match(deferredTerminatedBonusMigrationSource, /employee\."terminatedAt" IS NOT NULL/);
+assert.match(explicitSalaryPlansMigrationSource, /TIMESTAMP '2026-10-01 00:00:00'/);
+assert.match(explicitSalaryPlansMigrationSource, /%еркебулан%/);
+assert.match(explicitSalaryPlansMigrationSource, /%нурасыл%/);
+assert.match(unassignedSalaryCleanupMigrationSource, /period\."month" = 9/);
+assert.match(unassignedSalaryCleanupMigrationSource, /%кокбай%/);
+assert.match(companyBonusResweepMigrationSource, /customer_order\."managerUserId" IS NULL/);
 
 console.log("Payroll policy tests passed");
