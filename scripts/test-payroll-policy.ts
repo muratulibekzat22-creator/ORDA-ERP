@@ -500,6 +500,13 @@ const payrollDataCorrectionMigrationSource = readFileSync(
   ),
   "utf8",
 );
+const septemberStartCleanupMigrationSource = readFileSync(
+  new URL(
+    "../prisma/migrations/20261004102500_september_start_cleanup/migration.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
 assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
 assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
@@ -613,5 +620,10 @@ assert.match(payrollDataCorrectionMigrationSource, /%нурасыл%/);
 assert.match(payrollDataCorrectionMigrationSource, /%кокбай%/);
 assert.match(payrollDataCorrectionMigrationSource, /customer_order\."managerUserId" IS NULL/);
 assert.match(payrollDataCorrectionMigrationSource, /salary-cleanup-restore:v2:/);
+assert.match(septemberStartCleanupMigrationSource, /period\."month" = 9/);
+assert.match(septemberStartCleanupMigrationSource, /%еркебулан%/);
+assert.match(septemberStartCleanupMigrationSource, /%нурасыл%/);
+assert.match(septemberStartCleanupMigrationSource, /%кокбай%/);
+assert.match(septemberStartCleanupMigrationSource, /september-start-salary:v1:/);
 
 console.log("Payroll policy tests passed");
