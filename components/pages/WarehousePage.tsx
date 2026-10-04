@@ -106,6 +106,11 @@ const materialBlank = {
   initialStock: "0",
   active: true,
 };
+const materialNumberLabels = {
+  minimumStock: "Минимальный остаток для уведомления",
+  purchasePrice: "Закупочная цена за единицу, ₸",
+  sellingPrice: "Продажная цена за единицу, ₸",
+} as const;
 const currentLocalDateTime = () => {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -402,40 +407,52 @@ export default function WarehousePage() {
                       "sellingPrice",
                       "supplier",
                     ] as const
-                  ).map((field) => (
-                    <input
-                      key={field}
-                      required={["name", "category", "unit"].includes(field)}
-                      type={
-                        ["minimumStock", "purchasePrice", "sellingPrice"].includes(field)
-                          ? "number"
-                          : "text"
-                      }
-                      min="0"
-                      step="any"
-                      value={material[field]}
-                      onChange={(event) =>
-                        setMaterial({
-                          ...material,
-                          [field]: event.target.value,
-                        })
-                      }
-                      placeholder={
-                        {
-                          name: "Название",
-                          model: "Модель / артикул",
-                          description: "Состав комплекта, например: пара = 2 шт.",
-                          category: "Категория",
-                          unit: "Единица",
-                          minimumStock: "Минимальный остаток",
-                          purchasePrice: "Закупочная цена",
-                          sellingPrice: "Продажная цена",
-                          supplier: "Поставщик",
-                        }[field]
-                      }
-                      className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-white"
-                    />
-                  ))}
+                  ).map((field) => {
+                    const visibleLabel = materialNumberLabels[field as keyof typeof materialNumberLabels];
+                    const input = (
+                      <input
+                        key={field}
+                        required={["name", "category", "unit"].includes(field)}
+                        type={
+                          ["minimumStock", "purchasePrice", "sellingPrice"].includes(field)
+                            ? "number"
+                            : "text"
+                        }
+                        min="0"
+                        step="any"
+                        value={material[field]}
+                        onChange={(event) =>
+                          setMaterial({
+                            ...material,
+                            [field]: event.target.value,
+                          })
+                        }
+                        placeholder={
+                          {
+                            name: "Название",
+                            model: "Модель / артикул",
+                            description: "Состав комплекта, например: пара = 2 шт.",
+                            category: "Категория",
+                            unit: "Единица",
+                            minimumStock: "Минимальный остаток",
+                            purchasePrice: "Закупочная цена",
+                            sellingPrice: "Продажная цена",
+                            supplier: "Поставщик",
+                          }[field]
+                        }
+                        aria-label={visibleLabel}
+                        className={`rounded-xl border border-slate-700 bg-slate-900 text-white ${visibleLabel ? "w-full px-3 pb-1 pt-5" : "p-3"}`}
+                      />
+                    );
+                    return visibleLabel ? (
+                      <label key={field} className="relative block">
+                        {input}
+                        <span className="pointer-events-none absolute left-3 top-1 text-[10px] font-medium leading-3 text-slate-400">
+                          {visibleLabel}
+                        </span>
+                      </label>
+                    ) : input;
+                  })}
                   {!editing && (
                     <input
                       type="number"
