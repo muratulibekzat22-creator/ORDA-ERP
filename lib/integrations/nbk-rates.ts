@@ -43,11 +43,21 @@ export async function officialCurrencyRateToKzt(currency: string, at: Date, fall
   const dated = new URL("https://nationalbank.kz/rss/get_rates.cfm");
   dated.searchParams.set("fdate", date);
   try {
-    return await Promise.any([
-      fetchNbkRate(dated, code, "NBK_DATED"),
-      fetchNbkRate("https://nationalbank.kz/rss/rates_all.xml", code, "NBK_CURRENT"),
-    ]);
+    return await fetchNbkRate(dated, code, "NBK_DATED");
   } catch {
+    const today = new Intl.DateTimeFormat("ru-RU", {
+      timeZone: "Asia/Almaty",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(new Date());
+    if (date === today) {
+      try {
+        return await fetchNbkRate("https://nationalbank.kz/rss/rates_all.xml", code, "NBK_CURRENT");
+      } catch {
+        // Continue to the configured fallback below.
+      }
+    }
     if (Number.isFinite(fallback) && fallback > 0)
       return { rate: fallback, publishedFor: null, source: "CONFIGURED_FALLBACK" };
     throw new Error("NBK_RATE_UNAVAILABLE");
