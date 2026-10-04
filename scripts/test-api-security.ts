@@ -274,10 +274,10 @@ async function main() {
     });
     const [firstOrder, secondOrder] = await Promise.all([
       prisma.order.create({
-        data: { number: `${tag}-first`, clientId: client.id, partnerId: firstPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100", prepayment: "0", balance: "100", partnerPrice: "40", partnerAgreedAt: new Date(), partnerPaid: "0", partnerBalance: "40", companyProfit: "60", manager: tag, status: "Монтаж" },
+        data: { number: `${tag}-first`, clientId: client.id, partnerId: firstPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100000", prepayment: "0", balance: "100000", partnerPrice: "40000", partnerAgreedAt: new Date(), partnerPaid: "0", partnerBalance: "40000", companyProfit: "60000", manager: tag, status: "Монтаж" },
       }),
       prisma.order.create({
-        data: { number: `${tag}-second`, clientId: client.id, partnerId: secondPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100", prepayment: "0", balance: "100", partnerPrice: "40", partnerAgreedAt: new Date(), partnerPaid: "0", partnerBalance: "40", companyProfit: "60", manager: tag, status: "Монтаж" },
+        data: { number: `${tag}-second`, clientId: client.id, partnerId: secondPartner.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100000", prepayment: "0", balance: "100000", partnerPrice: "40000", partnerAgreedAt: new Date(), partnerPaid: "0", partnerBalance: "40000", companyProfit: "60000", manager: tag, status: "Монтаж" },
       }),
     ]);
 
@@ -547,21 +547,22 @@ async function main() {
       address: "E2E order creation",
       staircase: "Straight",
       material: "Oak",
-      amount: 1000,
-      prepayment: 200,
-      partnerPrice: 400,
-      partnerPaid: 100,
+      amount: 100000,
+      prepayment: 20000,
+      partnerPrice: 40000,
+      partnerPaid: 10000,
     };
     await expectStatus("/api/orders", 403, orderBoundaryManagerCookie, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(orderCreationPayload),
     });
-    await expectStatus(`/api/orders/${firstOrder.id}`, 403, orderBoundaryManagerCookie, {
+    const managerPartnerAssignment = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, orderBoundaryManagerCookie, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "assignPartner", partnerId: firstPartner.id, partnerPrice: 1 }),
-    });
+      body: JSON.stringify({ action: "assignPartner", partnerId: firstPartner.id, partnerPrice: 40000 }),
+    })).json() as Record<string, unknown>;
+    assert(["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => !(field in managerPartnerAssignment)), "manager partner assignment exposed internal finances");
     const createdApiOrder = await (await expectStatus("/api/orders", 201, directorCookie, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` },
@@ -569,28 +570,28 @@ async function main() {
     })).json() as { id: number; number: string; partnerPrice: string; partnerBalance: string; companyProfit: string };
     generatedOrderIds.push(createdApiOrder.id);
     assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(createdApiOrder.number), "order creation did not generate a stable number");
-    assert(Number(createdApiOrder.partnerPrice) === 400 && Number(createdApiOrder.partnerBalance) === 300 && Number(createdApiOrder.companyProfit) === 600, "order creation calculated finances incorrectly");
+    assert(Number(createdApiOrder.partnerPrice) === 40000 && Number(createdApiOrder.partnerBalance) === 30000 && Number(createdApiOrder.companyProfit) === 60000, "order creation calculated finances incorrectly");
     const repeatedApiOrder = await (await expectStatus("/api/orders", 200, directorCookie, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` },
       body: JSON.stringify(orderCreationPayload),
     })).json() as { id: number };
     assert(repeatedApiOrder.id === createdApiOrder.id, "order idempotency created a duplicate");
-    await expectStatus("/api/orders", 409, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` }, body: JSON.stringify({ ...orderCreationPayload, amount: 1001 }) });
+    await expectStatus("/api/orders", 409, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-order` }, body: JSON.stringify({ ...orderCreationPayload, amount: 100001 }) });
     for (const invalidPayload of [
       { ...orderCreationPayload, clientId: 0 },
       { ...orderCreationPayload, amount: "NaN" },
       { ...orderCreationPayload, amount: -1 },
-      { ...orderCreationPayload, prepayment: 1001 },
-      { ...orderCreationPayload, partnerPaid: 401 },
+      { ...orderCreationPayload, prepayment: 100001 },
+      { ...orderCreationPayload, partnerPaid: 40001 },
     ]) await expectStatus("/api/orders", 400, directorCookie, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-invalid-${Math.random()}` },
       body: JSON.stringify(invalidPayload),
     });
     await expectStatus("/api/orders", 404, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-missing-client` }, body: JSON.stringify({ ...orderCreationPayload, clientId: 999999999 }) });
-    const parallelOrders = await Promise.all(["parallel-one", "parallel-two"].map(async (suffix) => {
-      const order = await (await expectStatus("/api/orders", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-${suffix}` }, body: JSON.stringify(orderCreationPayload) })).json() as { id: number; number: string };
+    const parallelOrders = await Promise.all(["parallel-one", "parallel-two"].map(async (suffix, index) => {
+      const order = await (await expectStatus("/api/orders", 201, directorCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-${suffix}` }, body: JSON.stringify({ ...orderCreationPayload, amount: 100010 + index }) })).json() as { id: number; number: string };
       generatedOrderIds.push(order.id);
       return order;
     }));
@@ -994,6 +995,7 @@ async function main() {
         await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.payment.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
       }
       await prisma.orderGateOverride.deleteMany({ where: { order: { number: { startsWith: tag } } } });
@@ -1016,6 +1018,7 @@ async function main() {
       await prisma.production.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.calendarTaskAudit.deleteMany({ where: { task: { order: { number: { startsWith: tag } } } } });
       await prisma.calendarTask.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.partnerAssignmentHistory.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.order.deleteMany({ where: { number: { startsWith: tag } } });
       await prisma.partner.deleteMany({ where: { name: { startsWith: tag } } });
       const leadIds = (await prisma.client.findMany({ where: { comment: { startsWith: tag } }, select: { id: true } })).map(({ id }) => id);
@@ -1029,6 +1032,7 @@ async function main() {
           await prisma.orderInstallation.deleteMany({ where: { orderId: { in: leadOrderIds } } });
           await prisma.orderEvent.deleteMany({ where: { orderId: { in: leadOrderIds } } });
           await prisma.orderCalculation.deleteMany({ where: { orderId: { in: leadOrderIds } } });
+          await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId: { in: leadOrderIds } } });
           await prisma.order.deleteMany({ where: { id: { in: leadOrderIds } } });
         }
         await prisma.commercialProposal.deleteMany({ where: { clientId: { in: leadIds } } });

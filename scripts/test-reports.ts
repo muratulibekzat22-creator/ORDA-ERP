@@ -34,7 +34,7 @@ assert.equal(paymentEffect("PARTNER_PAYOUT", 500), 0);
 const service = readFileSync(new URL("../lib/services/report.service.ts", import.meta.url), "utf8");
 const companyFinance = readFileSync(new URL("../lib/services/management-finance.service.ts", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/reports/route.ts", import.meta.url), "utf8");
-assert.match(service, /actor\.role === Role\.MANAGER\) scope = \{ managerUserId: actor\.id \}/, "manager scope must ignore spoofed managerId");
+assert.match(service, /if \(actor\.role === Role\.MANAGER\)[\s\S]*scope = \{ managerUserId: actor\.id, managerName: user\.name \}/, "manager scope must ignore spoofed managerId");
 assert.match(service, /lifecycle: \{ not: "CANCELLED" \}/, "cancelled orders must be excluded");
 assert.match(service, /leadership\(actor\.role\) \? \{ grossMargin, ordersWithMargin: pricedOrders\.length \} : \{\}/, "gross margin must be leadership-only");
 assert.match(service, /includeFullDetails = params\.get\("export"\) === "csv"/, "CSV export must keep complete report details");

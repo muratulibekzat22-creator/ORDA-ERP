@@ -201,7 +201,7 @@ async function main() {
     );
     await changeAllowance(profile.id, 20000, "Возврат гарантированного бонуса", directorActor);
     assert.equal(Number((await prisma.employeePayrollProfile.findUniqueOrThrow({ where: { id: profile.id } })).defaultGuaranteedBonus), 20000);
-    const periodYear = 3000 + (Date.now() % 100000);
+    const periodYear = 3000 + (Date.now() % 6000);
     const period = await ensurePeriod(periodYear, 8);
     const nextPeriod = await ensurePeriod(periodYear, 9);
     const formulaPeriod = await ensurePeriod(periodYear, 10);
@@ -274,6 +274,21 @@ async function main() {
       },
     });
     ids.orders.push(order.id);
+    const bonusOrder = await prisma.order.create({
+      data: {
+        number: `PAY-BONUS-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Test",
+        amount: 100000,
+        manager: manager.name,
+        managerUserId: manager.id,
+        status: "Оформлен",
+        orderReceivedAt: new Date(Date.UTC(periodYear, 7, 15, 12)),
+      },
+    });
+    ids.orders.push(bonusOrder.id);
     const base = { employeeId: profile.id, periodId: period.id };
     const beforeManualSalaryAccrual = await payrollSummary(
       period.id,
@@ -371,7 +386,7 @@ async function main() {
         ...base,
         type: PayrollAccrualType.ORDER_BONUS,
         amount: 30000,
-        orderId: order.id,
+        orderId: bonusOrder.id,
         reason: "Бонус за заказ",
         paymentMode: BonusPaymentMode.ACCUMULATE,
         key: key("order-bonus"),
@@ -385,7 +400,7 @@ async function main() {
           ...base,
           type: PayrollAccrualType.ORDER_BONUS,
           amount: 1,
-          orderId: order.id,
+          orderId: bonusOrder.id,
           reason: "Повторный бонус",
           key: key("duplicate-order-bonus"),
           requestHash: "duplicate-order-bonus",
@@ -490,7 +505,7 @@ async function main() {
       "FORBIDDEN",
     );
     const confirmationSalary = await createAccrual({ employeeId: profile.id, periodId: confirmationPeriod.id, type: PayrollAccrualType.BASE_SALARY, amount: 200000, reason: "Оклад", key: key("confirmation-salary"), requestHash: "confirmation-salary" }, directorActor);
-    const confirmationPayload = { periodId: confirmationPeriod.id, amount: 30000, type: PayrollPaymentType.SALARY_PAYMENT, claimedPaymentDate: new Date("2026-11-15"), method: "bank_transfer", comment: "Получено" };
+    const confirmationPayload = { periodId: confirmationPeriod.id, amount: 30000, type: PayrollPaymentType.SALARY_PAYMENT, claimedPaymentDate: new Date("2026-11-15"), method: "kaspi", comment: "Получено" };
     const confirmation = await requestPaymentConfirmation({ ...confirmationPayload, key: key("confirmation-request"), requestHash: createRequestHash(confirmationPayload) }, managerActor);
     let confirmationSummary = await payrollSummary(confirmationPeriod.id, directorActor);
     assert.deepEqual(confirmationSummary.totals, { accrued: 200000, paid: 0, pending: 30000, payable: 200000 }, "pending confirmation must not become paid");
@@ -558,7 +573,7 @@ async function main() {
         },
         founderActor,
       ),
-      "PAYMENT_EXCEEDS_ACCRUAL",
+      "PAYMENT_EXCEEDS_PAYABLE",
     );
     assert.equal(await prisma.payrollAuditEvent.count({ where: { employeeId: profile.id, action: "PAYROLL_PAYMENT_REVERSED" } }), 1, "payment reversal audit");
     const employeeAuditActions = new Set((await prisma.payrollAuditEvent.findMany({ where: { employeeId: profile.id }, select: { action: true } })).map((event) => event.action));
@@ -617,7 +632,7 @@ async function main() {
               : -Number(row.amount)),
           0,
         ),
-      600000,
+      700000,
       "payroll P&L expense duplicated",
     );
     assert.equal(
@@ -631,7 +646,7 @@ async function main() {
               : -Number(row.amount)),
           0,
         ),
-      140000,
+      190000,
       "cash payroll total",
     );
     const trackedOrder = await prisma.order.create({
@@ -717,7 +732,7 @@ async function main() {
         key: key("tracked-order-bonus-partial"),
         requestHash: "tracked-order-bonus-partial",
       },
-      accountantActor,
+      directorActor,
     );
     let bonusStatusSummary = await payrollSummary(bonusStatusPeriod.id, directorActor);
     let trackedBonusSummary = bonusStatusSummary.rows.find((row) => row.id === profile.id);
@@ -769,6 +784,18 @@ async function main() {
       )?.status,
       "PAID",
     );
+    await expectCode(() => closePeriod(period.id, key("unpaid-close"), directorActor), "PAYROLL_NOT_FULLY_PAID");
+    await createPayment({
+      employeeId: profile.id,
+      periodId: period.id,
+      amount: 180000,
+      type: PayrollPaymentType.SALARY_PAYMENT,
+      paymentDate: new Date(),
+      method: "kaspi",
+      comment: "Окончательная выплата перед закрытием месяца",
+      key: key("final-salary-payment"),
+      requestHash: "final-salary-payment",
+    }, directorActor);
     await transitionPeriod(period.id, PayrollPeriodStatus.REVIEW, "Проверка", key("review"), directorActor);
     await expectCode(
       () => createAccrual({ ...base, type: PayrollAccrualType.EXTRA_BONUS, amount: 1, reason: "Review", key: key("review-locked"), requestHash: "review-locked" }, directorActor),
@@ -965,7 +992,7 @@ async function main() {
       profile.id,
     );
     assert.equal(terminatedSummary.rows[0]?.employmentEnded, true);
-    assert.equal(terminatedSummary.rows[0]?.currentSalary, 0);
+    assert.equal(terminatedSummary.rows[0]?.currentSalary, 200000, "termination must preserve the historical salary for the worked month");
     assert(
       terminatedSummary.rows[0]?.bonusAccruals.some(
         (item) => item.id === deferredBonus.accrual.id,

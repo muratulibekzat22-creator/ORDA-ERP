@@ -69,7 +69,7 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
         OR: [{ terminatedAt: null }, { terminatedAt: { gte: period.start } }],
         ...(viewAll ? {} : { userId: actor.userId }),
       },
-      select: { id: true, userId: true, name: true, position: true, user: { select: { name: true, role: true, active: true } } },
+      select: { id: true, userId: true, name: true, position: true, active: true, terminatedAt: true, user: { select: { name: true, role: true, active: true } } },
       orderBy: { name: "asc" },
     }),
     prisma.employeeKpiTarget.findMany({
@@ -167,6 +167,7 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
       name: profile.user?.name || profile.name,
       position: profile.position || role || "Должность не указана",
       role,
+      active: profile.active && !profile.terminatedAt && profile.user?.active !== false,
       metrics,
       summary: {
         planned: planned.length,

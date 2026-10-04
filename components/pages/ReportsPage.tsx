@@ -12,7 +12,8 @@ export default function ReportsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [managerId, setManagerId] = useState("");
-  const [managerOptions, setManagerOptions] = useState<Array<{ id: number; name: string }>>([]);
+  const [managerStatus, setManagerStatus] = useState<"ALL" | "ACTIVE" | "TERMINATED">("ALL");
+  const [managerOptions, setManagerOptions] = useState<Array<{ id: number; name: string; active: boolean }>>([]);
   const [report, setReport] = useState<ReportsReadModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,19 +31,21 @@ export default function ReportsPage() {
       if (!response.ok) throw new Error();
       const data = await response.json() as ReportsReadModel;
       setReport(data);
-      if (!managerId) setManagerOptions(data.managers.map(({ id, name }) => ({ id, name })));
+      if (!managerId) setManagerOptions(data.managers.map(({ id, name, active }) => ({ id, name, active })));
     } catch { setError("Не удалось загрузить отчёт. Проверьте соединение и повторите попытку."); }
     finally { setLoading(false); }
   }, [dateFrom, dateTo, managerId, period, query]);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
   const empty = report && report.summary.leads.current === 0 && report.summary.orders.current === 0 && report.summary.received.current === 0 && (!report.finance || Object.values(report.finance).every((value) => value === 0));
+  const visibleManagers = report?.managers.filter((item) => managerStatus === "ALL" || (managerStatus === "ACTIVE" ? item.active : !item.active)) ?? [];
+  const visibleManagerOptions = managerOptions.filter((item) => managerStatus === "ALL" || (managerStatus === "ACTIVE" ? item.active : !item.active));
 
   return <section className="min-w-0 space-y-5 p-4 sm:p-6 xl:p-8">
     <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
       <div><p className="text-sm font-semibold uppercase tracking-[.2em] text-blue-400">Management reporting</p><h1 className="mt-1 text-3xl font-bold text-white">Отчёты</h1><p className="mt-1 text-sm text-slate-400">Управленческая сводка ALTYN SAPA COMPANY</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex max-w-full overflow-x-auto rounded-xl border border-slate-700 bg-slate-900 p-1">{([['today','Сегодня'],['week','Неделя'],['month','Месяц'],['quarter','Квартал'],['year','Год'],['custom','Произвольный']] as const).map(([key,label]) => <button key={key} type="button" onClick={() => setPeriod(key)} className={`min-h-10 whitespace-nowrap rounded-lg px-3 text-sm font-medium ${period === key ? "bg-blue-600 text-white" : "text-slate-300 hover:bg-slate-800"}`}>{label}</button>)}</div>
-        {report?.role !== "MANAGER" && <select aria-label="Менеджер" value={managerId} onChange={(event) => setManagerId(event.target.value)} className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-white"><option value="">Все менеджеры</option>{managerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
+        {report?.role !== "MANAGER" && <><select aria-label="Статус менеджера" value={managerStatus} onChange={(event) => { setManagerStatus(event.target.value as "ALL" | "ACTIVE" | "TERMINATED"); setManagerId(""); }} className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-white"><option value="ALL">Все сотрудники</option><option value="ACTIVE">Действующие</option><option value="TERMINATED">Бывшие</option></select><select aria-label="Менеджер" value={managerId} onChange={(event) => setManagerId(event.target.value)} className="min-h-11 rounded-xl border border-slate-700 bg-slate-900 px-3 text-sm text-white"><option value="">Все менеджеры</option>{visibleManagerOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></>}
         <a href={`/api/reports?${query}&export=csv`} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-500"><Download size={17}/>CSV</a>
       </div>
     </header>
@@ -50,8 +53,8 @@ export default function ReportsPage() {
     {loading && <Loading />}
     {error && <div role="alert" className="rounded-2xl border border-red-800 bg-red-950/40 p-8 text-center text-red-100"><p>{error}</p><button type="button" onClick={() => void load()} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl bg-red-700 px-4 font-semibold"><RefreshCw size={17}/>Повторить</button></div>}
     {!loading && !error && empty && <div className="rounded-2xl border border-slate-700 bg-slate-900 p-10 text-center text-slate-300">За выбранный период данных нет.</div>}
-    {!loading && !error && report && !empty && <ReportContent report={report} />}
-    {!loading && !error && report && <EmployeeKpiReport month={report.period.dateFrom.slice(0, 7)} monthly={report.period.preset === "month"} managerId={managerId} />}
+    {!loading && !error && report && !empty && <ReportContent report={{ ...report, managers: visibleManagers }} />}
+    {!loading && !error && report && <EmployeeKpiReport month={report.period.dateFrom.slice(0, 7)} monthly={report.period.preset === "month"} managerId={managerId} statusFilter={managerStatus} />}
   </section>;
 }
 
@@ -61,11 +64,12 @@ type EmployeeKpiSummary = {
     userId: number | null;
     name: string;
     position: string;
+    active: boolean;
     metrics: Array<{ code: string; title: string; unit: "COUNT" | "MONEY" | "PERCENT"; actual: number | null; target: number | null; completionPercent: number | null }>;
   }>;
 };
 
-function EmployeeKpiReport({ month, monthly, managerId }: { month: string; monthly: boolean; managerId: string }) {
+function EmployeeKpiReport({ month, monthly, managerId, statusFilter }: { month: string; monthly: boolean; managerId: string; statusFilter: "ALL" | "ACTIVE" | "TERMINATED" }) {
   const [data, setData] = useState<EmployeeKpiSummary | null>(null);
   const [loadedMonth, setLoadedMonth] = useState("");
   const [error, setError] = useState("");
@@ -86,13 +90,13 @@ function EmployeeKpiReport({ month, monthly, managerId }: { month: string; month
   }, [month, monthly]);
   if (!monthly) return <Panel title="KPI сотрудников"><p className="text-sm text-slate-400">KPI назначаются помесячно. Выберите период «Месяц» или откройте полный отчёт с фильтрами по сотруднику, роли и должности.</p><a href={`/kpi?month=${month}`} className="mt-3 inline-block font-semibold text-blue-300">Открыть KPI сотрудников</a></Panel>;
   const currentData = loadedMonth === month ? data : null;
-  const rows = currentData?.rows.filter((row) => !managerId || String(row.userId) === managerId) ?? [];
+  const rows = currentData?.rows.filter((row) => (!managerId || String(row.userId) === managerId) && (statusFilter === "ALL" || (statusFilter === "ACTIVE" ? row.active : !row.active))) ?? [];
   return <Panel title={`KPI всех сотрудников · ${month}`}>
     <div className="mb-3 flex flex-wrap justify-between gap-2 text-sm"><p className="text-slate-400">План назначает директор. Факты автоматических показателей берутся из рабочих разделов.</p><div className="flex gap-3"><a href={`/kpi?month=${month}`} className="font-semibold text-blue-300">Фильтры и редактирование KPI</a><a href={`/api/kpi?month=${month}&export=csv`} className="font-semibold text-emerald-300">CSV сотрудников</a></div></div>
     {error && <p role="alert" className="rounded-lg bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
     {!currentData && !error && <p className="text-sm text-slate-500">Загружаем сотрудников…</p>}
     {currentData && !rows.length && <p className="rounded-lg border border-dashed border-slate-700 p-5 text-sm text-slate-400">Сотрудников по выбранному фильтру нет.</p>}
-    {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm"><thead className="border-b border-slate-700 text-left text-slate-400"><tr>{["Сотрудник", "Должность", "Показатель", "План", "Факт", "Выполнение"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{rows.flatMap((row) => row.metrics.map((metric) => <tr key={`${row.employeeId}:${metric.code}`}><td className="px-3 py-2 font-semibold text-white">{row.name}</td><td className="px-3 py-2 text-slate-400">{row.position}</td><td className="px-3 py-2">{metric.title}</td><td className="px-3 py-2 tabular-nums">{metric.target === null ? "Не задан" : metric.unit === "MONEY" ? money(metric.target) : metric.target.toLocaleString("ru-RU")}</td><td className="px-3 py-2 tabular-nums">{metric.actual === null ? "—" : metric.unit === "MONEY" ? money(metric.actual) : metric.actual.toLocaleString("ru-RU")}</td><td className="px-3 py-2 font-semibold tabular-nums text-blue-200">{metric.completionPercent === null ? "—" : `${metric.completionPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`}</td></tr>))}</tbody></table></div>}
+    {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm"><thead className="border-b border-slate-700 text-left text-slate-400"><tr>{["Сотрудник", "Должность", "Показатель", "План", "Факт", "Выполнение"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{rows.flatMap((row) => row.metrics.map((metric) => <tr key={`${row.employeeId}:${metric.code}`}><td className="px-3 py-2 font-semibold text-white">{row.name}{!row.active && <span className="ml-2 text-xs font-normal text-amber-300">Бывший</span>}</td><td className="px-3 py-2 text-slate-400">{row.position}</td><td className="px-3 py-2">{metric.title}</td><td className="px-3 py-2 tabular-nums">{metric.target === null ? "Не задан" : metric.unit === "MONEY" ? money(metric.target) : metric.target.toLocaleString("ru-RU")}</td><td className="px-3 py-2 tabular-nums">{metric.actual === null ? "—" : metric.unit === "MONEY" ? money(metric.actual) : metric.actual.toLocaleString("ru-RU")}</td><td className="px-3 py-2 font-semibold tabular-nums text-blue-200">{metric.completionPercent === null ? "—" : `${metric.completionPercent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`}</td></tr>))}</tbody></table></div>}
   </Panel>;
 }
 

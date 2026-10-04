@@ -119,7 +119,7 @@ assert.match(routeShell, /accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /\/api\/session\/permissions/);
 assert.match(routeShell, /if \(!session\?\.user \|\| founder\) return/);
 assert.match(routeShell, /canManageSettings=\{canManageSettings\}/);
-assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar", "\/payroll"\]/);
+assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar", "\/payroll", "\/kpi"\]/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 

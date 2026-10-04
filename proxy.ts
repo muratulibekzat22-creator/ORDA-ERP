@@ -42,6 +42,8 @@ export async function proxy(request: NextRequest) {
     url.searchParams.set("reason", "SESSION_INVALID");
     return redirect(url);
   }
+  if (request.nextUrl.pathname.startsWith("/employee-handovers") && token.accountRole !== "DIRECTOR")
+    return redirect(new URL("/", request.url));
   if (
     token.mustChangePassword &&
     request.nextUrl.pathname !== "/change-password"

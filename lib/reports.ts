@@ -25,6 +25,7 @@ export type ReportSummary = {
 export type ManagerReportRow = {
   id: number;
   name: string;
+  active: boolean;
   leads: number;
   measurements: number;
   orders: number;

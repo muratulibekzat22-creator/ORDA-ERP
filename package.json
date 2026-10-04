@@ -60,6 +60,7 @@
     "test:payroll": "tsx scripts/test-payroll.ts",
     "test:payroll-policy": "tsx scripts/test-payroll-policy.ts",
     "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",
+    "test:employee-handover:e2e": "tsx scripts/test-employee-handover-e2e.ts",
     "test:order360": "tsx scripts/test-order360.ts",
     "test:whatsapp-order-status": "tsx scripts/test-whatsapp-order-status.ts",
     "prepare:whatsapp-partners:release": "tsx scripts/sync-whatsapp-partners.ts",

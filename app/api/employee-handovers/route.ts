@@ -3,13 +3,16 @@ import { NextResponse } from "next/server";
 
 import { requirePermission } from "@/lib/server-auth";
 import { confirmHandover, editHandover, HandoverError, listHandovers, listHandoverManagers, parseSelection, prepareHandover, previewHandover, rollbackHandover } from "@/lib/services/employee-handover.service";
+import { runWithTenant, type TenantIdentity } from "@/lib/tenant-context";
 
 async function authorize() {
   const auth = await requirePermission("employees");
-  if (auth.response) return { response: auth.response, actorId: 0 };
+  if (auth.response) return { response: auth.response, actorId: 0, tenant: null };
   if ((auth.session!.user.accountRole || auth.session!.user.role) !== Role.DIRECTOR)
-    return { response: NextResponse.json({ error: "Передачу дел подтверждает основатель" }, { status: 403 }), actorId: 0 };
-  return { response: null, actorId: Number(auth.session!.user.id) };
+    return { response: NextResponse.json({ error: "Передачу дел подтверждает основатель" }, { status: 403 }), actorId: 0, tenant: null };
+  const user = auth.session!.user;
+  const tenant: TenantIdentity = { companyId: Number(user.companyId), companySlug: String(user.companySlug), companyName: String(user.companyName), isDemo: user.isDemo === true };
+  return { response: null, actorId: Number(user.id), tenant };
 }
 
 function failure(error: unknown) {
@@ -27,11 +30,13 @@ export async function GET(request: Request) {
     let selected: unknown;
     try { selected = params.get("categories") ? JSON.parse(params.get("categories")!) : undefined; }
     catch { throw new HandoverError("Некорректный выбор категорий"); }
-    const preview = Number.isSafeInteger(fromUserId) && fromUserId > 0
-      ? await previewHandover(fromUserId, parseSelection(selected))
-      : null;
-    const [plans, managers] = await Promise.all([listHandovers(), listHandoverManagers()]);
-    return NextResponse.json({ plans, managers, preview }, { headers: { "Cache-Control": "private, no-store" } });
+    return await runWithTenant(auth.tenant!, async () => {
+      const preview = Number.isSafeInteger(fromUserId) && fromUserId > 0
+        ? await previewHandover(fromUserId, parseSelection(selected))
+        : null;
+      const [plans, managers] = await Promise.all([listHandovers(), listHandoverManagers()]);
+      return NextResponse.json({ plans, managers, preview }, { headers: { "Cache-Control": "private, no-store" } });
+    });
   } catch (error) { return failure(error); }
 }
 
@@ -43,7 +48,7 @@ export async function POST(request: Request) {
     const fromUserId = Number(body.fromUserId);
     const toUserId = Number(body.toUserId);
     if (!Number.isSafeInteger(fromUserId) || !Number.isSafeInteger(toUserId)) throw new HandoverError("Выберите сотрудников");
-    const result = await prepareHandover({ fromUserId, toUserId, scheduledAt: new Date(String(body.scheduledAt)), categories: parseSelection(body.categories), actorId: auth.actorId });
+    const result = await runWithTenant(auth.tenant!, () => prepareHandover({ fromUserId, toUserId, scheduledAt: new Date(String(body.scheduledAt)), categories: parseSelection(body.categories), actorId: auth.actorId }));
     return NextResponse.json(result, { status: 201 });
   } catch (error) { return failure(error); }
 }
@@ -55,12 +60,13 @@ export async function PATCH(request: Request) {
     const body = await request.json() as Record<string, unknown>;
     const id = Number(body.id);
     if (!Number.isSafeInteger(id) || id <= 0) throw new HandoverError("Передача не выбрана");
-    if (body.action === "confirm") return NextResponse.json(await confirmHandover(id, String(body.fingerprint ?? ""), auth.actorId));
-    if (body.action === "rollback") return NextResponse.json(await rollbackHandover(id, auth.actorId));
+    if (body.action === "confirm") return NextResponse.json(await runWithTenant(auth.tenant!, () => confirmHandover(id, String(body.fingerprint ?? ""), auth.actorId)));
+    if (body.action === "rollback") return NextResponse.json(await runWithTenant(auth.tenant!, () => rollbackHandover(id, auth.actorId)));
     if (body.action === "cancel" || body.action === "update") {
+      const action = body.action;
       const toUserId = body.toUserId === undefined ? undefined : Number(body.toUserId);
       if (toUserId !== undefined && !Number.isSafeInteger(toUserId)) throw new HandoverError("Неверный сотрудник");
-      return NextResponse.json(await editHandover(id, { action: body.action, scheduledAt: body.scheduledAt === undefined ? undefined : new Date(String(body.scheduledAt)), toUserId, categories: body.categories === undefined ? undefined : parseSelection(body.categories) }));
+      return NextResponse.json(await runWithTenant(auth.tenant!, () => editHandover(id, { action, scheduledAt: body.scheduledAt === undefined ? undefined : new Date(String(body.scheduledAt)), toUserId, categories: body.categories === undefined ? undefined : parseSelection(body.categories) })));
     }
     throw new HandoverError("Неизвестное действие");
   } catch (error) { return failure(error); }
