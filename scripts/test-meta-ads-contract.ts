@@ -42,9 +42,14 @@ assert.match(integration, /Authorization: `Bearer \$\{token\}`/);
 assert.match(integration, /source: "META_ADS"/);
 assert.match(integration, /companyId_metricMonth_channel/);
 assert.match(integration, /officialCurrencyRateToKzt/);
+assert.match(integration, /time_increment/);
+assert.match(integration, /ad_id,ad_name/);
+assert.match(integration, /LAST_SUCCESSFUL_SYNC/);
+assert.match(integration, /Math\.min\(insights\.end\.getTime\(\) - 1, now\.getTime\(\)\)/);
 assert.match(integration, /Заменено автоматической синхронизацией Meta/);
 assert.match(route, /ручной ввод отключён/);
 assert.match(daily, /syncMetaAdsMonth/);
-assert.match(page, /Meta Ads — автоматически/);
+assert.match(page, /Кампании и объявления/);
+assert.match(page, /Работа менеджеров продаж за вчера/);
 
 console.log("Meta Ads automatic sync and NBK exchange-rate contracts: OK");

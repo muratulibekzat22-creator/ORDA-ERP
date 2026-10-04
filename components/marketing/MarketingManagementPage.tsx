@@ -1,7 +1,7 @@
 "use client";
 
-import { BarChart3, BriefcaseBusiness, ClipboardCheck, KanbanSquare, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { BarChart3, BriefcaseBusiness, ChevronDown, ChevronRight, ClipboardCheck, Eye, KanbanSquare, MessageCircle, MousePointerClick, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Status = "TODO" | "IN_PROGRESS" | "REVIEW" | "DONE";
 type Task = { id: number; title: string; description: string | null; status: Status; priority: number; dueAt: string | null; assignee: { id: number; name: string } | null; createdBy: { id: number; name: string } };
@@ -33,13 +33,27 @@ type MetaCampaignReport = {
   accountTimezone: string | null;
   currency: string;
   selectedCampaignCount: number;
+  loadedAt: string;
   spend: number;
+  spendKzt: number | null;
+  exchangeRate: number | null;
+  exchangeRateSource: string | null;
+  exchangeRateFallback: "CONFIGURED" | "LAST_SUCCESSFUL_SYNC" | null;
   conversations: number;
   leadActions: number;
   linkClicks: number;
   impressions: number;
-  campaigns: Array<{ id: string; name: string; spend: number; reach: number; impressions: number; linkClicks: number; conversations: number; leadActions: number }>;
+  daily: MetaDaily[];
+  campaigns: Array<MetaMetrics & {
+    id: string;
+    name: string;
+    daily: MetaDaily[];
+    ads: Array<MetaMetrics & { id: string; name: string; daily: MetaDaily[] }>;
+  }>;
 };
+type MetaMetrics = { spend: number; reach: number; impressions: number; linkClicks: number; conversations: number; leadActions: number };
+type MetaDaily = MetaMetrics & { date: string };
+type AdPeriod = "TODAY" | "YESTERDAY" | "LAST_7_DAYS" | "MONTH";
 type Data = {
   role: string;
   month: string;
@@ -71,12 +85,34 @@ type Data = {
 
 const money = (value: number | string) => `${Math.round(Number(value)).toLocaleString("ru-RU")} ₸`;
 const sourceMoney = (value: number, currency: string) => new Intl.NumberFormat("ru-RU", { style: "currency", currency }).format(value);
+const number = (value: number) => Math.round(value).toLocaleString("ru-RU");
+const monthName = (key: string) => new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(new Date(`${key}-01T12:00:00+05:00`));
+const dateLabel = (key: string) => new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" }).format(new Date(`${key}T12:00:00+05:00`));
+const zeroMeta = (): MetaMetrics => ({ spend: 0, reach: 0, impressions: 0, linkClicks: 0, conversations: 0, leadActions: 0 });
+const sumMeta = (rows: MetaMetrics[]) => rows.reduce((total, row) => ({
+  spend: Math.round((total.spend + row.spend) * 100) / 100,
+  reach: total.reach + row.reach,
+  impressions: total.impressions + row.impressions,
+  linkClicks: total.linkClicks + row.linkClicks,
+  conversations: total.conversations + row.conversations,
+  leadActions: total.leadActions + row.leadActions,
+}), zeroMeta());
 const taskColumns: Array<[Status, string]> = [["TODO", "Нужно сделать"], ["IN_PROGRESS", "В работе"], ["REVIEW", "Проверка"], ["DONE", "Готово"]];
 const vacancyLabels: Record<Vacancy["status"], string> = { OPEN: "Открыта", INTERVIEW: "Собеседования", OFFER: "Оффер", HIRED: "Сотрудник найден", PAUSED: "Пауза" };
 const reportPeriodLabels: Record<MarketingReport["periodType"], string> = { DAILY: "День", WEEKLY: "Неделя", MONTHLY: "Месяц" };
 const reportStatusLabels: Record<MarketingReport["status"], string> = { SUBMITTED: "На проверке", NEEDS_REVISION: "На доработке", APPROVED: "Принят" };
 const field = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white";
-const today = new Date().toISOString().slice(0, 10);
+const businessDateKey = (value = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty", year: "numeric", month: "2-digit", day: "2-digit" }).format(value);
+const shiftDateKey = (key: string, days: number) => {
+  const value = new Date(`${key}T12:00:00+05:00`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return businessDateKey(value);
+};
+const monthEndKey = (month: string) => {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return businessDateKey(new Date(Date.UTC(year, monthNumber, 0, 7)));
+};
+const today = businessDateKey();
 
 export default function MarketingManagementPage() {
   const [data, setData] = useState<Data | null>(null);
@@ -89,8 +125,42 @@ export default function MarketingManagementPage() {
   const [reviewComments, setReviewComments] = useState<Record<number, string>>({});
   const [metricMonth, setMetricMonth] = useState(new Date().toISOString().slice(0, 7));
   const [vacancy, setVacancy] = useState({ title: "", note: "" });
+  const [adPeriod, setAdPeriod] = useState<AdPeriod>("MONTH");
+  const [campaignsOpen, setCampaignsOpen] = useState(false);
+  const [dailyOpen, setDailyOpen] = useState(false);
+  const [expandedCampaignId, setExpandedCampaignId] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState("");
   const selectedMonth = metricMonth;
   const canReview = data?.role === "DIRECTOR" || data?.role === "OPERATIONS_DIRECTOR";
+  const adRange = useMemo(() => {
+    const first = `${selectedMonth}-01`;
+    const currentMonth = today.slice(0, 7) === selectedMonth;
+    const end = currentMonth ? today : monthEndKey(selectedMonth);
+    const start = adPeriod === "TODAY" ? end
+      : adPeriod === "YESTERDAY" ? shiftDateKey(end, -1)
+        : adPeriod === "LAST_7_DAYS" ? shiftDateKey(end, -6)
+          : first;
+    const clampedStart = start < first ? first : start;
+    return {
+      start: clampedStart,
+      end: adPeriod === "YESTERDAY" ? shiftDateKey(end, -1) : end,
+      label: adPeriod === "TODAY" ? `Сегодня, ${dateLabel(end)}`
+        : adPeriod === "YESTERDAY" ? `Вчера, ${dateLabel(shiftDateKey(end, -1))}`
+          : adPeriod === "LAST_7_DAYS" ? `${dateLabel(clampedStart)} — ${dateLabel(end)}`
+            : monthName(selectedMonth),
+    };
+  }, [adPeriod, selectedMonth]);
+  const campaignRows = useMemo(() => (metaReport?.campaigns ?? []).map((campaign) => ({
+    ...campaign,
+    ...(adPeriod === "MONTH" ? campaign : sumMeta(campaign.daily.filter((row) => row.date >= adRange.start && row.date <= adRange.end))),
+    ads: campaign.ads.map((ad) => ({
+      ...ad,
+      ...(adPeriod === "MONTH" ? ad : sumMeta(ad.daily.filter((row) => row.date >= adRange.start && row.date <= adRange.end))),
+    })).filter((ad) => ad.spend > 0 || ad.impressions > 0),
+  })), [adPeriod, adRange.end, adRange.start, metaReport]);
+  const metaTotals = useMemo(() => sumMeta(campaignRows), [campaignRows]);
+  const metaDailyRows = useMemo(() => (metaReport?.daily ?? []).filter((row) => row.date >= adRange.start && row.date <= adRange.end), [adRange.end, adRange.start, metaReport]);
+  const metaSpendKzt = metaReport?.exchangeRate ? Math.round(metaTotals.spend * metaReport.exchangeRate) : null;
   const attentionItems: Array<{ title: string; fact: string; action: string }> = [];
   if (data && data.month === selectedMonth) {
     const overdueTasks = data.tasks.filter((item) => item.status !== "DONE" && item.dueAt && item.dueAt.slice(0, 10) < today).length;
@@ -107,6 +177,17 @@ export default function MarketingManagementPage() {
     else setError("Не удалось загрузить маркетинг");
     setLoading(false);
   }, [selectedMonth]);
+  const loadMeta = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/marketing/meta-campaigns?month=${encodeURIComponent(selectedMonth)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("META_REPORT_FAILED");
+      setMetaReport(await response.json() as MetaCampaignReport);
+      setMetaReportError("");
+    } catch {
+      setMetaReport(null);
+      setMetaReportError("Meta временно не отдала детализацию. Последние данные ORDA сохранены, попробуйте обновить позже.");
+    }
+  }, [selectedMonth]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
@@ -117,17 +198,10 @@ export default function MarketingManagementPage() {
     }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/marketing/meta-campaigns?month=${encodeURIComponent(selectedMonth)}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("META_REPORT_FAILED");
-        const report = await response.json() as MetaCampaignReport;
-        if (!cancelled) { setMetaReport(report); setMetaReportError(""); }
-      } catch {
-        if (!cancelled) { setMetaReport(null); setMetaReportError("Не удалось загрузить детализацию кампаний Meta"); }
-      }
+      if (!cancelled) await loadMeta();
     }, 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [data?.integration.configured, data?.integration.lastSyncedAt, data?.month, selectedMonth]);
+  }, [data?.integration.configured, data?.integration.lastSyncedAt, data?.month, loadMeta, selectedMonth]);
 
   async function send(method: "POST" | "PATCH" | "DELETE", body: Record<string, unknown>) {
     setError("");
@@ -137,6 +211,13 @@ export default function MarketingManagementPage() {
     await load(); return true;
   }
   async function addTask(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "task", ...task })) setTask({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" }); }
+  async function syncMeta() {
+    setSyncNotice("Обновляем данные Meta…");
+    const success = await send("POST", { action: "sync-meta", month: selectedMonth });
+    if (!success) { setSyncNotice(""); return; }
+    await loadMeta();
+    setSyncNotice("Данные Meta обновлены");
+  }
   async function addReport(event: FormEvent) {
     event.preventDefault();
     if (await send("POST", { action: "report", ...report })) setReport({ periodType: "WEEKLY", periodStart: today, periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
@@ -151,24 +232,45 @@ export default function MarketingManagementPage() {
   }
 
   return <main className="min-w-0 space-y-5 p-4 sm:p-6 xl:p-8">
-    <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-semibold uppercase tracking-[.18em] text-fuchsia-300">Director workspace</p><h1 className="mt-1 text-3xl font-bold">Маркетинг и вакансии</h1><p className="mt-1 max-w-3xl text-sm text-slate-400">Обращения, заказы и выручка считаются из CRM; рекламный расход загружается из Meta после подключения. Директор контролирует отклонения, а не переписывает цифры вручную.</p></div><div className="flex flex-wrap gap-2"><input aria-label="Месяц маркетинга" type="month" value={selectedMonth} onChange={(event)=>setMetricMonth(event.target.value)} className={field}/><a href="/reports" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold"><BarChart3 size={17}/>KPI менеджеров</a><a href="/finance" className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-semibold">Финансовые операции</a></div></header>
+    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-semibold uppercase tracking-[.18em] text-fuchsia-300">Кабинет собственника и директора</p><h1 className="mt-1 text-3xl font-bold">Результаты маркетинга</h1><p className="mt-1 max-w-3xl text-sm text-slate-400">Сначала факты Meta, затем результат CRM и работа команды. Автоматические цифры не нужно переносить вручную.</p></div><div className="flex flex-wrap items-end gap-2"><label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Месяц данных<input aria-label="Месяц маркетинга" type="month" value={selectedMonth} onChange={(event)=>{setMetricMonth(event.target.value);setAdPeriod("MONTH");setMetaReport(null);}} className={`${field} mt-1`}/></label><a href="/reports" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold"><BarChart3 size={17}/>KPI сотрудников</a><a href="/finance" className="inline-flex min-h-11 items-center rounded-xl bg-emerald-700 px-4 font-semibold">Финансы</a></div></header>
     {error && <p role="alert" className="rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-200">{error}</p>}
     {loading && !data ? <div className="grid place-items-center rounded-2xl border border-slate-800 p-16 text-slate-400"><RefreshCw className="animate-spin"/></div> : null}
     {data ? <>
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        <Stat label="Расход рекламы" value={data.summary.spendTracked ? money(data.summary.spend) : "—"}/><Stat label="Обращения" value={data.summary.leads}/><Stat label="Заказы" value={data.summary.orders}/><Stat label="Выручка" value={money(data.summary.revenue)}/><Stat label="Цена обращения" value={data.summary.cpl === null ? "—" : money(data.summary.cpl)}/><Stat label="Цена заказа" value={data.summary.cac === null ? "—" : money(data.summary.cac)}/><Stat label="ROAS" value={data.summary.roas === null ? "—" : `${data.summary.roas.toFixed(2)}×`}/><Stat label="Конверсия" value={data.summary.conversion === null ? "—" : `${data.summary.conversion.toFixed(1)}%`}/>
-      </section>
       {metaReportError && <p role="alert" className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">{metaReportError}</p>}
-      {metaReport && metaReport.key === selectedMonth && data.month === selectedMonth && <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4">
-        <h2 className="text-xl font-bold">Кампании Meta за {selectedMonth}</h2>
-        <p className="mt-1 text-sm text-slate-400">Аккаунт act_{metaReport.accountId} · {metaReport.accountTimezone ?? "часовой пояс аккаунта не указан"} · выбрано кампаний: {metaReport.selectedCampaignCount}</p>
-        <p className="mt-3 text-sm text-slate-300">Расход: {sourceMoney(metaReport.spend, metaReport.currency)} · начатые переписки: {metaReport.conversations} · события lead Meta: {metaReport.leadActions} · клики по ссылке: {metaReport.linkClicks.toLocaleString("ru-RU")} · показы: {metaReport.impressions.toLocaleString("ru-RU")}</p>
-        <p className="mt-2 text-xs text-amber-200">Начатая переписка Meta не означает подтверждённую заявку. Фактические обращения учитываются отдельно в CRM.</p>
-        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Кампания", "Расход", "Переписки", "Lead Meta", "Клики", "Показы", "Охват"].map(label => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{metaReport.campaigns.map(row => <tr key={row.id}><td className="px-3 py-3"><span className="font-semibold text-white">{row.name}</span><span className="block text-xs text-slate-500">{row.id}</span></td><td className="px-3 py-3">{sourceMoney(row.spend, metaReport.currency)}</td><td className="px-3 py-3">{row.conversations}</td><td className="px-3 py-3">{row.leadActions}</td><td className="px-3 py-3">{row.linkClicks.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.impressions.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.reach.toLocaleString("ru-RU")}</td></tr>)}</tbody></table></div>
-      </section>}
+      <section className="overflow-hidden rounded-2xl border border-fuchsia-500/20 bg-[#101827]">
+        <div className="border-b border-slate-800 p-4 sm:p-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div><div className="flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold">Meta Ads</h2><span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-200">Автоматически</span></div><p className="mt-1 text-sm text-slate-400">{adRange.label} · 5 рабочих кампаний ORDA{metaReport?.loadedAt ? ` · получено из Meta ${new Date(metaReport.loadedAt).toLocaleString("ru-RU")}` : ""}</p></div>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-950 p-1 sm:grid-cols-4">{([["TODAY","Сегодня"],["YESTERDAY","Вчера"],["LAST_7_DAYS","7 дней"],["MONTH","Месяц"]] as Array<[AdPeriod,string]>).map(([value,label])=><button key={value} type="button" onClick={()=>setAdPeriod(value)} className={`min-h-10 rounded-lg px-3 text-sm font-semibold ${adPeriod===value?"bg-fuchsia-700 text-white":"text-slate-400 hover:text-white"}`}>{label}</button>)}</div>
+          </div>
+          {metaReport && metaReport.key === selectedMonth && data.month === selectedMonth ? <>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              <OwnerMetric icon={<BarChart3 size={19}/>} label="Общий расход" value={metaSpendKzt === null ? sourceMoney(metaTotals.spend, metaReport.currency) : money(metaSpendKzt)} note={`${sourceMoney(metaTotals.spend, metaReport.currency)}${metaReport.exchangeRate ? ` · курс ${metaReport.exchangeRate.toFixed(2)} ₸` : ""}`}/>
+              <OwnerMetric icon={<MessageCircle size={19}/>} label="Начатые переписки" value={number(metaTotals.conversations)} note={metaTotals.conversations && metaSpendKzt !== null ? `${money(metaSpendKzt/metaTotals.conversations)} за переписку` : "Ответы и заявки проверяются в CRM"}/>
+              <OwnerMetric icon={<MousePointerClick size={19}/>} label="Клики по ссылке" value={number(metaTotals.linkClicks)} note={metaTotals.linkClicks && metaSpendKzt !== null ? `${money(metaSpendKzt/metaTotals.linkClicks)} за клик` : "Переходы из объявлений"}/>
+              <OwnerMetric icon={<Eye size={19}/>} label="Показы" value={number(metaTotals.impressions)} note="Сколько раз показана реклама"/>
+              <OwnerMetric icon={<Eye size={19}/>} label="Охват кампаний" value={number(metaTotals.reach)} note="Сумма охвата по кампаниям"/>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={()=>setCampaignsOpen(value=>!value)} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 font-semibold">{campaignsOpen?<ChevronDown size={18}/>:<ChevronRight size={18}/>}Кампании и объявления ({campaignRows.length})</button>
+              <button type="button" onClick={()=>setDailyOpen(value=>!value)} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 font-semibold">{dailyOpen?<ChevronDown size={18}/>:<ChevronRight size={18}/>}Расход по дням</button>
+              <button type="button" disabled={loading} onClick={()=>void syncMeta()} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-fuchsia-700 px-4 font-semibold disabled:opacity-50"><RefreshCw size={17} className={loading?"animate-spin":""}/>Обновить из Meta</button>
+              {syncNotice&&<span className="text-sm text-emerald-300">{syncNotice}</span>}
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">ORDA загружает свежую детализацию при открытии страницы и выполняет ежедневную автоматическую сверку. Переписка Meta ещё не является подтверждённым обращением CRM. {metaReport.exchangeRateFallback==="LAST_SUCCESSFUL_SYNC"?"Если НБК временно недоступен, используется последний успешно полученный курс.":""}</p>
+          </> : <div className="mt-5 flex min-h-36 items-center justify-center rounded-xl border border-dashed border-slate-700 text-slate-400"><RefreshCw className="mr-2 animate-spin" size={18}/>Получаем свежие данные Meta…</div>}
+        </div>
 
-      {!data.summary.spendTracked ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка уже считаются из CRM. Расход появится после подключения служебного доступа Meta.</p> : null}
-      {data.summary.metaAttributionMissing ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения и заказы CRM пока не связаны с конкретными кампаниями Meta. Поэтому цена обращения, цена заказа и ROAS не рассчитываются по общим данным всех источников.</p> : null}
+        {campaignsOpen && metaReport && <div className="border-b border-slate-800 p-4 sm:p-5"><div className="overflow-x-auto"><table className="w-full min-w-[950px] text-sm"><thead className="text-left text-slate-500"><tr>{["Кампания / объявление","Расход","Переписки","Цена переписки","Клики","Показы","Охват"].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{campaignRows.map(row=><Fragment key={row.id}><tr><td className="px-3 py-3"><button type="button" onClick={()=>setExpandedCampaignId(value=>value===row.id?null:row.id)} className="flex items-start gap-2 text-left">{expandedCampaignId===row.id?<ChevronDown className="mt-0.5 shrink-0" size={16}/>:<ChevronRight className="mt-0.5 shrink-0" size={16}/>}<span><strong className="text-white">{row.name}</strong><span className="block text-xs text-slate-500">Кампания · {row.id} · объявлений: {row.ads.length}</span></span></button></td><td className="px-3 py-3"><strong>{metaReport.exchangeRate?money(row.spend*metaReport.exchangeRate):sourceMoney(row.spend,metaReport.currency)}</strong><span className="block text-xs text-slate-500">{sourceMoney(row.spend,metaReport.currency)}</span></td><td className="px-3 py-3">{number(row.conversations)}</td><td className="px-3 py-3">{row.conversations&&metaReport.exchangeRate?money(row.spend*metaReport.exchangeRate/row.conversations):"—"}</td><td className="px-3 py-3">{number(row.linkClicks)}</td><td className="px-3 py-3">{number(row.impressions)}</td><td className="px-3 py-3">{number(row.reach)}</td></tr>{expandedCampaignId===row.id&&<tr><td colSpan={7} className="bg-slate-950/60 px-6 py-4"><p className="mb-3 text-xs font-semibold uppercase tracking-wide text-fuchsia-300">Объявления внутри кампании</p>{row.ads.length?<div className="overflow-x-auto"><table className="w-full min-w-[780px] text-xs"><tbody className="divide-y divide-slate-800">{row.ads.map(ad=><tr key={ad.id}><td className="py-2 pr-3"><strong className="text-slate-200">{ad.name}</strong><span className="block text-slate-600">{ad.id}</span></td><td className="px-3 py-2">{metaReport.exchangeRate?money(ad.spend*metaReport.exchangeRate):sourceMoney(ad.spend,metaReport.currency)}</td><td className="px-3 py-2">Переписки: {number(ad.conversations)}</td><td className="px-3 py-2">Клики: {number(ad.linkClicks)}</td><td className="px-3 py-2">Показы: {number(ad.impressions)}</td><td className="px-3 py-2">Охват: {number(ad.reach)}</td></tr>)}</tbody></table></div>:<p className="text-slate-500">У Meta нет расходов по отдельным объявлениям за выбранный период.</p>}</td></tr>}</Fragment>)}</tbody></table></div></div>}
+
+        {dailyOpen && metaReport && <div className="p-4 sm:p-5"><h3 className="font-bold">Динамика по дням</h3><p className="mt-1 text-sm text-slate-500">Общий расход пяти кампаний, переписки и клики за каждый день.</p><div className="mt-4 space-y-2">{metaDailyRows.map(row=>{const max=Math.max(...metaDailyRows.map(item=>item.spend),1);return <div key={row.date} className="grid gap-2 rounded-xl border border-slate-800 p-3 sm:grid-cols-[110px_1fr_130px_110px_110px] sm:items-center"><strong>{dateLabel(row.date)}</strong><div className="h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-fuchsia-500" style={{width:`${Math.max(2,row.spend/max*100)}%`}}/></div><span className="font-semibold">{metaReport.exchangeRate?money(row.spend*metaReport.exchangeRate):sourceMoney(row.spend,metaReport.currency)}</span><span className="text-sm text-slate-400">{row.conversations} переписок</span><span className="text-sm text-slate-400">{row.linkClicks} кликов</span></div>})}{!metaDailyRows.length&&<p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-slate-500">За этот период расходов не было.</p>}</div></div>}
+      </section>
+
+      <section className="rounded-2xl border border-blue-500/20 bg-[#101827] p-4 sm:p-5">
+        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-blue-300">Результат CRM за {monthName(selectedMonth)}</p><h2 className="mt-1 text-xl font-bold">Все каналы продаж</h2><p className="mt-1 text-sm text-slate-400">Сюда входят обращения из WhatsApp, звонков, Instagram, Meta и других источников. Это не только лиды рекламы Meta.</p></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><OwnerMetric label="Все новые обращения CRM" value={number(data.summary.leads)} note="Созданы в CRM за месяц"/><OwnerMetric label="Заказы CRM" value={number(data.summary.orders)} note="Оформлены за месяц"/><OwnerMetric label="Сумма заказов" value={money(data.summary.revenue)} note="Не равно полученной оплате"/><OwnerMetric label="Конверсия в заказ" value={data.summary.conversion===null?"—":`${data.summary.conversion.toFixed(1)}%`} note="Заказы / обращения"/></div>
+        {data.summary.metaAttributionMissing?<p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Часть обращений CRM ещё не связана с конкретной кампанией Meta. Поэтому ORDA не смешивает все источники и пока не показывает недостоверный ROAS по рекламе.</p>:null}
+      </section>
 
       <section className="rounded-2xl border border-amber-500/20 bg-[#101827] p-4">
         <h2 className="text-xl font-bold text-amber-100">Требует внимания</h2>
@@ -176,9 +278,9 @@ export default function MarketingManagementPage() {
       </section>
 
       <section className="rounded-2xl border border-cyan-500/20 bg-[#101827] p-4">
-        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">CRM за предыдущий день</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Показывает фактическую обработку обращений менеджерами; расход Meta синхронизируется системой отдельно.</p></div>
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7"><Stat label="Новые заявки" value={data.dailyCrm.totals.leadsReceived}/><Stat label="Есть контакт" value={data.dailyCrm.totals.contacted}/><Stat label="Заинтересованы" value={data.dailyCrm.totals.interested}/><Stat label="Замеры назначены" value={data.dailyCrm.totals.measurementsScheduled}/><Stat label="Замеры завершены" value={data.dailyCrm.totals.measurementsCompleted}/><Stat label="Заказы" value={data.dailyCrm.totals.ordersCreated}/><Stat label="Продажи" value={money(data.dailyCrm.totals.revenue)}/></div>
-        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[800px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер","Заявки","Контакт","Интерес","Замеры","Заказы","Продажи","Отчёт"].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{data.dailyCrm.managers.map(row=><tr key={row.managerId}><td className="px-3 py-3 font-semibold text-white">{row.manager}</td><td className="px-3 py-3">{row.leadsReceived}</td><td className="px-3 py-3">{row.contacted}</td><td className="px-3 py-3">{row.interested}</td><td className="px-3 py-3">{row.measurementsScheduled} / {row.measurementsCompleted}</td><td className="px-3 py-3">{row.ordersCreated}</td><td className="px-3 py-3">{money(row.revenue)}</td><td className={`px-3 py-3 font-semibold ${row.reportStatus==="SENT"?"text-emerald-300":row.reportStatus==="ACKNOWLEDGED"?"text-blue-300":"text-amber-300"}`}>{row.reportStatus==="SENT"?"Отправлен":row.reportStatus==="ACKNOWLEDGED"?"Ознакомлен":"Ждёт отчёта"}</td></tr>)}</tbody></table></div>
+        <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Работа менеджеров продаж за вчера</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Только менеджеры продаж. Замерщики здесь не оцениваются; их работа контролируется в разделе замеров.</p></div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6"><Stat label="Новые обращения" value={data.dailyCrm.totals.leadsReceived}/><Stat label="Зафиксирован контакт" value={data.dailyCrm.totals.contacted}/><Stat label="Квалифицированы" value={data.dailyCrm.totals.interested}/><Stat label="Заказы" value={data.dailyCrm.totals.ordersCreated}/><Stat label="Сумма заказов" value={money(data.dailyCrm.totals.revenue)}/><Stat label="Без контакта" value={Math.max(0,data.dailyCrm.totals.leadsReceived-data.dailyCrm.totals.contacted)}/></div>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер","Обращения","Контакт","Квалифицированы","Заказы","Сумма заказов","Ежедневный отчёт"].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{data.dailyCrm.managers.map(row=><tr key={row.managerId}><td className="px-3 py-3 font-semibold text-white">{row.manager}</td><td className="px-3 py-3">{row.leadsReceived}</td><td className="px-3 py-3">{row.contacted}</td><td className="px-3 py-3">{row.interested}</td><td className="px-3 py-3">{row.ordersCreated}</td><td className="px-3 py-3">{money(row.revenue)}</td><td className={`px-3 py-3 font-semibold ${row.reportStatus==="SENT"?"text-emerald-300":row.reportStatus==="ACKNOWLEDGED"?"text-blue-300":"text-amber-300"}`}>{row.reportStatus==="SENT"?"Отправлен":row.reportStatus==="ACKNOWLEDGED"?"Ознакомлен":"Не отправлен"}</td></tr>)}</tbody></table></div>
       </section>
 
       <section className="rounded-2xl border border-violet-500/20 bg-[#101827] p-4">
@@ -216,15 +318,7 @@ export default function MarketingManagementPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <FormPanel title="Meta Ads — автоматически" subtitle="Без ручного переноса цифр директором">
-          <div className={`rounded-xl border p-3 text-sm ${data.integration.state === "ACTIVE" || metaReport?.key === selectedMonth ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-100" : "border-amber-500/30 bg-amber-500/10 text-amber-100"}`}>
-            <p className="font-semibold">{data.integration.state === "ACTIVE" || metaReport?.key === selectedMonth ? "Синхронизация работает" : data.integration.state === "READY" ? "Подключено, ждём первую синхронизацию" : "Нужно подключить доступ Meta и указать ID кампаний"}</p>
-            <p className="mt-1 text-xs opacity-80">Аккаунт: {data.integration.account ?? "не задан"} · кампаний: {data.integration.campaignCount} · API {data.integration.graphVersion}{data.integration.lastSyncedAt ? ` · обновлено ${new Date(data.integration.lastSyncedAt).toLocaleString("ru-RU")}` : ""}</p>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-slate-400">Обращения, заказы и выручка считаются прямо из CRM. После подключения Meta ORDA будет каждое утро получать рекламный расход, а детализацию выбранных кампаний загружать при открытии страницы; курс валюты берётся у Национального Банка Казахстана. {data.integration.booksToLedger ? "Расход также записывается в финансовый журнал." : "В финансовый журнал расход не добавляется."}</p>
-          <button type="button" disabled={!data.integration.configured || loading} onClick={() => void send("POST", { action: "sync-meta", month: selectedMonth })} className="mt-3 min-h-11 w-full rounded-xl bg-fuchsia-700 px-4 font-semibold disabled:cursor-not-allowed disabled:opacity-40">{loading ? "Обновляем…" : "Обновить сейчас"}</button>
-        </FormPanel>
+      <section className="grid gap-4 xl:grid-cols-2">
         <FormPanel title="Новая задача" subtitle="Попадёт в маркетинговый Kanban">
           <form onSubmit={addTask} className="grid gap-3"><Input label="Что сделать" value={task.title} onChange={(value)=>setTask({...task,title:value})}/><TextArea label="Ожидаемый результат и критерий готовности" value={task.description} onChange={(value)=>setTask({...task,description:value})}/><div className="grid gap-3 sm:grid-cols-3"><Input label="Срок" type="date" value={task.dueAt} onChange={(value)=>setTask({...task,dueAt:value})}/><label className="text-sm text-slate-300">Ответственный<select className={`${field} mt-1`} value={task.assigneeId} onChange={(e)=>setTask({...task,assigneeId:e.target.value})}><option value="">Не назначен</option>{data.assignees.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label className="text-sm text-slate-300">Приоритет<select className={`${field} mt-1`} value={task.priority} onChange={(e)=>setTask({...task,priority:e.target.value})}><option value="1">Обычный</option><option value="2">Важный</option><option value="3">Срочный</option></select></label></div><button className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold"><Plus size={16} className="mr-2 inline"/>Добавить задачу</button></form>
         </FormPanel>
@@ -241,6 +335,7 @@ export default function MarketingManagementPage() {
 }
 
 function Stat({label,value}:{label:string;value:string|number}) { return <div className="min-w-0 rounded-2xl border border-slate-800 bg-[#101827] p-4"><p className="truncate text-xs text-slate-500">{label}</p><p className="mt-2 truncate text-xl font-bold">{value}</p></div>; }
+function OwnerMetric({label,value,note,icon}:{label:string;value:string|number;note:string;icon?:React.ReactNode}) { return <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950/60 p-4"><div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{icon&&<span className="text-fuchsia-300">{icon}</span>}{label}</div><p className="mt-2 truncate text-2xl font-bold text-white">{value}</p><p className="mt-1 min-h-8 text-xs leading-4 text-slate-500">{note}</p></div>; }
 function FormPanel({title,subtitle,children}:{title:string;subtitle:string;children:React.ReactNode}) { return <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4"><h2 className="font-bold">{title}</h2><p className="mb-4 text-xs text-slate-500">{subtitle}</p>{children}</section>; }
 function Input({label,value,onChange,type="text"}:{label:string;value:string;onChange:(value:string)=>void;type?:string}) { return <label className="text-sm text-slate-300">{label}<input required type={type} min={type==="number"?0:undefined} value={value} onChange={(e)=>onChange(e.target.value)} className={`${field} mt-1`}/></label>; }
 function TextArea({label,value,onChange}:{label:string;value:string;onChange:(value:string)=>void}) { return <label className="text-sm text-slate-300">{label}<textarea required rows={3} value={value} onChange={(event)=>onChange(event.target.value)} className={`${field} mt-1 py-3`}/></label>; }

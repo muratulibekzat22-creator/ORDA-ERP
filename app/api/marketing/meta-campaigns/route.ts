@@ -1,7 +1,7 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { loadMetaAdsCampaignReport, MetaAdsSyncError } from "@/lib/integrations/meta-ads";
+import { currencyToKzt, loadMetaAdsCampaignReport, MetaAdsSyncError } from "@/lib/integrations/meta-ads";
 import { requirePermission } from "@/lib/server-auth";
 
 export async function GET(request: Request) {
@@ -14,7 +14,15 @@ export async function GET(request: Request) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   try {
-    return NextResponse.json(await loadMetaAdsCampaignReport(month), {
+    const report = await loadMetaAdsCampaignReport(month);
+    const exchange = await currencyToKzt(report.currency, new Date(Math.min(report.end.getTime() - 1, Date.now()))).catch(() => null);
+    return NextResponse.json({
+      ...report,
+      spendKzt: exchange ? Math.round(report.spend * exchange.rate * 100) / 100 : null,
+      exchangeRate: exchange?.rate ?? null,
+      exchangeRateSource: exchange?.source ?? null,
+      exchangeRateFallback: exchange?.fallbackKind ?? null,
+    }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
