@@ -147,15 +147,7 @@ export async function searchOrderOptions(
   options: OrderSearchOptions = {},
 ) {
   const managerRoleScope: Prisma.OrderWhereInput = options.payrollBonusEligible
-    ? { OR: [
-        { managerUserId: actor.userId },
-        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
-        {
-          managerUserId: null,
-          manager: "",
-          leadConversion: { managerId: actor.userId },
-        },
-      ] }
+    ? { managerUserId: actor.userId }
     : { OR: [
         { managerUserId: actor.userId },
         { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
@@ -177,6 +169,7 @@ export async function searchOrderOptions(
   const monthRange = period ? companyMonthRange(period.year, period.month) : null;
   const payrollBonusScope: Prisma.OrderWhereInput = options.payrollBonusEligible
     ? {
+        managerUserId: { not: null },
         NOT: [
           { manager: { equals: "Компания", mode: "insensitive" } },
           { manager: { equals: "Company", mode: "insensitive" } },
@@ -195,32 +188,12 @@ export async function searchOrderOptions(
       lifecycle: { not: "CANCELLED" },
       ...(monthRange ? {
         orderDateNeedsReview: false,
-        ...(options.payrollBonusEligible
-          ? {
-              OR: [
-                {
-                  orderReceivedAt: {
-                    gte: monthRange.start,
-                    lt: monthRange.end,
-                  },
-                },
-                {
-                  lifecycle: OrderLifecycle.COMPLETED,
-                  completedAt: {
-                    gte: monthRange.start,
-                    lt: monthRange.end,
-                  },
-                },
-              ],
-            }
-          : {
-              orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
-            }),
+        orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
       } : {}),
       AND: [roleScope, payrollBonusScope, searchWhere],
     },
-    select: { id: true, number: true, amount: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: { id: true, number: true, amount: true, orderReceivedAt: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
+    orderBy: [{ orderReceivedAt: "desc" }, { id: "desc" }],
     take: Math.min(50, Math.max(1, Math.trunc(limit))),
   });
 }

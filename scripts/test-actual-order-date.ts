@@ -14,6 +14,10 @@ const salesPlan = read("lib/services/sales-plan.service.ts");
 const dashboard = read("lib/services/dashboard.service.ts");
 const report = read("lib/services/report.service.ts");
 const payroll = read("lib/services/payroll.service.ts");
+const payrollOrderSearch = orderService.slice(
+  orderService.indexOf("export async function searchOrderOptions"),
+  orderService.indexOf("export function countOrders"),
+);
 const dailyOperations = read("lib/services/daily-operations.service.ts");
 const order360 = read("lib/services/order360.service.ts");
 
@@ -46,6 +50,17 @@ for (const source of [salesPlan, dashboard, report, payroll])
     /orderDateNeedsReview: false|!order\.orderDateNeedsReview/,
     "monthly business calculations must exclude unconfirmed order dates",
   );
+
+assert.match(
+  payrollOrderSearch,
+  /orderReceivedAt: \{ gte: monthRange\.start, lt: monthRange\.end \}/,
+  "payroll order picker must use the confirmed factual order month",
+);
+assert.doesNotMatch(
+  payrollOrderSearch,
+  /completedAt/,
+  "completion date must not move a factual September order into October",
+);
 
 assert.match(dailyOperations, /Дата, когда карточку внесли в ORDA, датой продажи не считается/);
 assert.match(dailyOperations, /расчётный лист и окончательная выплата зарплаты не формируются/);

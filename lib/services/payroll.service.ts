@@ -40,6 +40,7 @@ import {
   PAYROLL_POLICY_ADJUSTMENT_PREFIX,
   PAYROLL_SALARY_ADJUSTMENT_PREFIX,
   personalPayrollCalculation,
+  payrollSalaryForPeriod,
   payrollPaymentPurpose,
   payrollPaymentReference,
 } from "@/lib/payroll-policy";
@@ -564,22 +565,40 @@ async function createAccrualInternal(
         );
         if (
           !employee?.payrollEnabled ||
-          (employmentEnded(employee) && !(isOrderBonus && terminatedManager))
+          (employmentEnded(employee) &&
+            !(isOrderBonus && terminatedManager) &&
+            input.type !== PayrollAccrualType.BASE_SALARY)
         )
           throw new PayrollError("EMPLOYEE_NOT_FOUND");
-      if (input.type === PayrollAccrualType.BASE_SALARY) {
+        if (input.type === PayrollAccrualType.BASE_SALARY) {
         const range = companyMonthRange(period.year, period.month);
         const salaryRates = await tx.employeeSalaryRate.findMany({
           where: { employeeId: input.employeeId },
           orderBy: { effectiveFrom: "desc" },
         });
+        const periodSalary = payrollSalaryForPeriod({
+          hiredAt: employee.hiredAt,
+          terminatedAt: employee.terminatedAt,
+          baseSalary: employee.baseSalary,
+          salaryRates,
+          periodStart: range.start,
+          periodEnd: range.end,
+        });
+        if (!periodSalary.employedInPeriod)
+          throw new PayrollError("EMPLOYEE_NOT_FOUND");
         const activeRate = salaryRates.find(
           (rate) =>
             rate.effectiveFrom < range.end &&
-            (!rate.effectiveTo || rate.effectiveTo >= range.start),
-        ) ?? salaryRates[0];
-        const calculatedSalary = activeRate?.amount ?? employee.baseSalary;
-        if ((activeRate?.planEnabled ?? employee.salaryPlanEnabled) && !money(input.amount).equals(calculatedSalary))
+            (!rate.effectiveTo || rate.effectiveTo > range.start),
+        );
+        const salaryPlanEnabled =
+          periodSalary.employedInPeriod &&
+          (activeRate?.planEnabled ??
+            (salaryRates.length === 0 && employee.salaryPlanEnabled));
+        if (
+          salaryPlanEnabled &&
+          !money(input.amount).equals(periodSalary.amount)
+        )
           throw new PayrollError("SALARY_AMOUNT_MISMATCH");
         const existingSalary = await tx.payrollAccrual.findFirst({
           where: {
@@ -676,7 +695,8 @@ async function createAccrualInternal(
           !bonusEarnedInRange(order, employee, monthRange)
         )
           throw new PayrollError(
-            terminatedManager
+            terminatedManager &&
+              (order.lifecycle !== OrderLifecycle.COMPLETED || !order.completedAt)
               ? "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE"
               : "ORDER_OUTSIDE_PERIOD",
           );
@@ -879,11 +899,14 @@ async function managerPayrollPolicyState(
     };
 
   const range = companyMonthRange(period.year, period.month);
-  const activeRate = employee.salaryRates.find(
-    (rate) =>
-      rate.effectiveFrom < range.end &&
-      (!rate.effectiveTo || rate.effectiveTo >= range.start),
-  ) ?? employee.salaryRates[0];
+  const periodSalary = payrollSalaryForPeriod({
+    hiredAt: employee.hiredAt,
+    terminatedAt: employee.terminatedAt,
+    baseSalary: employee.baseSalary,
+    salaryRates: employee.salaryRates,
+    periodStart: range.start,
+    periodEnd: range.end,
+  });
   const activeAccruals = employee.accruals.filter(
     (row) => !row.reversalOfId && !row.reversedBy,
   );
@@ -897,20 +920,23 @@ async function managerPayrollPolicyState(
         row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
     )
     .reduce((sum, row) => sum + signed(row), 0);
-  const requiredSalary = employmentEnded(employee) || !(activeRate?.planEnabled ?? employee.salaryPlanEnabled)
-    ? Math.max(salaryPosted, 0)
-    : Number(activeRate?.amount ?? employee.baseSalary);
+  const activeRate = employee.salaryRates.find(
+    (rate) =>
+      rate.effectiveFrom < range.end &&
+      (!rate.effectiveTo || rate.effectiveTo > range.start),
+  );
+  const salaryPlanEnabled =
+    periodSalary.employedInPeriod &&
+    (activeRate?.planEnabled ??
+      (employee.salaryRates.length === 0 && employee.salaryPlanEnabled));
+  const requiredSalary = salaryPlanEnabled
+    ? periodSalary.amount
+    : Math.max(salaryPosted, 0);
   const periodOrders = await tx.order.findMany({
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
-      OR: [
-        { orderReceivedAt: { gte: range.start, lt: range.end } },
-        {
-          lifecycle: OrderLifecycle.COMPLETED,
-          completedAt: { gte: range.start, lt: range.end },
-        },
-      ],
+      orderReceivedAt: { gte: range.start, lt: range.end },
       AND: [{ OR: [
         ...(employee.userId ? [{ managerUserId: employee.userId }] : []),
         {
@@ -1065,19 +1091,37 @@ async function createPaymentTx(
           reversalOfId: null,
           reversedBy: { is: null },
         },
-        select: { amount: true, direction: true, type: true, reason: true, order: { select: { manager: true } } },
+        select: {
+          amount: true,
+          direction: true,
+          type: true,
+          reason: true,
+          order: { select: { manager: true, managerUserId: true } },
+        },
       }),
       tx.payrollPayment.findMany({
         where: { employeeId: input.employeeId, periodId: input.periodId },
         select: { amount: true, type: true },
       }),
     ]);
-    const accrued = accruals.filter((row) =>
-      !(row.type === PayrollAccrualType.ORDER_BONUS &&
-        row.reason.startsWith(AUTOMATIC_ORDER_BONUS_REASON_PREFIX)) &&
-      !((row.type === PayrollAccrualType.ORDER_BONUS || row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS) &&
-        row.order && isCompanyResponsibleOrder({ managerName: row.order.manager })),
-    ).reduce(
+    const accrued = accruals.filter((row) => {
+      const automaticProposal =
+        row.type === PayrollAccrualType.ORDER_BONUS &&
+        row.reason.startsWith(AUTOMATIC_ORDER_BONUS_REASON_PREFIX);
+      const orderBonusEntry =
+        row.type === PayrollAccrualType.ORDER_BONUS ||
+        row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
+        ((row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+          row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX));
+      const companyOrder =
+        row.order &&
+        isCompanyResponsibleOrder({
+          managerName: row.order.manager,
+          managerUserId: row.order.managerUserId,
+        });
+      return !automaticProposal && !(companyOrder && orderBonusEntry);
+    }).reduce(
       (sum, row) =>
         sum +
         Number(row.amount) *
@@ -1185,13 +1229,25 @@ async function assertPartialSalaryPaymentAvailable(
   if (!employee?.payrollEnabled)
     throw new PayrollError("PARTIAL_SALARY_ACCRUAL_REQUIRED");
   const range = companyMonthRange(period.year, period.month);
+  const periodSalary = payrollSalaryForPeriod({
+    hiredAt: employee.hiredAt,
+    terminatedAt: employee.terminatedAt,
+    baseSalary: employee.baseSalary,
+    salaryRates: employee.salaryRates,
+    periodStart: range.start,
+    periodEnd: range.end,
+  });
   const rate = employee.salaryRates.find((item) =>
     item.effectiveFrom < range.end &&
-    (!item.effectiveTo || item.effectiveTo >= range.start),
-  ) ?? employee.salaryRates[0];
-  if (!(rate?.planEnabled ?? employee.salaryPlanEnabled))
+    (!item.effectiveTo || item.effectiveTo > range.start),
+  );
+  const salaryPlanEnabled =
+    periodSalary.employedInPeriod &&
+    (rate?.planEnabled ??
+      (employee.salaryRates.length === 0 && employee.salaryPlanEnabled));
+  if (!salaryPlanEnabled || periodSalary.amount <= 0)
     throw new PayrollError("PARTIAL_SALARY_ACCRUAL_REQUIRED");
-  const salary = Number(rate?.amount ?? employee.baseSalary);
+  const salary = periodSalary.amount;
   const paid = paymentsTowardSalary.reduce((sum, item) => sum + Number(item.amount), 0);
   if (Number(input.amount) > salary - paid + 0.01)
     throw new PayrollError("PAYMENT_EXCEEDS_PAYABLE");
@@ -1759,9 +1815,10 @@ export async function payrollSummary(
               status: true,
               lifecycle: true,
               deletedAt: true,
-              manager: true,
               orderReceivedAt: true,
               completedAt: true,
+              manager: true,
+              managerUserId: true,
               client: { select: { name: true, phone: true } },
             },
           },
@@ -1784,18 +1841,10 @@ export async function payrollSummary(
     where: {
       companyId: requireTenantIdentity().companyId,
       orderDateNeedsReview: false,
-      OR: [
-        {
-          orderReceivedAt: {
-            gte: periodRange.start,
-            lt: periodRange.end,
-          },
-        },
-        {
-          lifecycle: OrderLifecycle.COMPLETED,
-          completedAt: { gte: periodRange.start, lt: periodRange.end },
-        },
-      ],
+      orderReceivedAt: {
+        gte: periodRange.start,
+        lt: periodRange.end,
+      },
     },
     select: {
       id: true,
@@ -1886,16 +1935,26 @@ export async function payrollSummary(
     const activeAccruals = employee.accruals.filter(
       (row) => !row.reversalOfId && !row.reversedBy,
     );
-    const validAccruals = activeAccruals.filter((row) =>
-      !(
-        row.order &&
-        isCompanyResponsibleOrder({ managerName: row.order.manager }) &&
-        (row.type === PayrollAccrualType.ORDER_BONUS ||
-          row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
-          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX))
-      ),
-    );
+    const statementAccruals = activeAccruals.filter((row) => {
+      const companyOrder = row.order
+        ? isCompanyResponsibleOrder({
+            managerName: row.order.manager,
+            managerUserId: row.order.managerUserId,
+          })
+        : false;
+      const orderBonusEntry =
+        row.type === PayrollAccrualType.ORDER_BONUS ||
+        row.type === PayrollAccrualType.GUARANTEED_ORDER_BONUS ||
+        ((row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
+          row.type === PayrollAccrualType.ADJUSTMENT_DECREASE) &&
+          row.reason.startsWith(PAYROLL_POLICY_ADJUSTMENT_PREFIX));
+      return !(companyOrder && orderBonusEntry);
+    });
     const accrued = employee.accruals.reduce(
+      (sum, row) => sum + signedAccrual(row),
+      0,
+    );
+    const statementPosted = statementAccruals.reduce(
       (sum, row) => sum + signedAccrual(row),
       0,
     );
@@ -1913,23 +1972,27 @@ export async function payrollSummary(
           row.type === PayrollPaymentType.ADVANCE,
       )
       .reduce((sum, row) => sum + Number(row.amount), 0);
-    const increase = (types: PayrollAccrualType[]) => validAccruals
+    const increase = (types: PayrollAccrualType[]) => statementAccruals
       .filter((row) => row.direction === PayrollDirection.INCREASE && types.includes(row.type))
       .reduce((sum, row) => sum + Number(row.amount), 0);
     const advancesPaid = employee.payments
       .filter((row) => row.type === PayrollPaymentType.ADVANCE)
       .reduce((sum, row) => sum + signedPayment(row), 0);
-    const activeRate = employee.salaryRates.find((rate) =>
-      rate.effectiveFrom < periodRange.end &&
-      (!rate.effectiveTo || rate.effectiveTo >= periodRange.start),
-    ) ?? employee.salaryRates[0];
+    const periodSalary = payrollSalaryForPeriod({
+      hiredAt: employee.hiredAt,
+      terminatedAt: employee.terminatedAt,
+      baseSalary: employee.baseSalary,
+      salaryRates: employee.salaryRates,
+      periodStart: periodRange.start,
+      periodEnd: periodRange.end,
+    });
     const bonusTypes = new Set<PayrollAccrualType>([
       PayrollAccrualType.GUARANTEED_ORDER_BONUS,
       PayrollAccrualType.ORDER_BONUS,
       PayrollAccrualType.MEASUREMENT_BONUS,
       PayrollAccrualType.EXTRA_BONUS,
     ]);
-    const bonusAccruals = activeAccruals
+    const bonusAccruals = statementAccruals
       .filter(
         (row) =>
           row.direction === PayrollDirection.INCREASE && bonusTypes.has(row.type),
@@ -1959,9 +2022,6 @@ export async function payrollSummary(
     const policySigned = (row: (typeof activeAccruals)[number]) =>
       Number(row.amount) *
       (row.direction === PayrollDirection.INCREASE ? 1 : -1);
-    const baseSalaryPosted = activeAccruals
-      .filter((row) => row.type === PayrollAccrualType.BASE_SALARY)
-      .reduce((sum, row) => sum + policySigned(row), 0);
     const salaryPosted = activeAccruals
       .filter(
         (row) =>
@@ -1969,15 +2029,24 @@ export async function payrollSummary(
           row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX),
       )
       .reduce((sum, row) => sum + policySigned(row), 0);
-    const configuredSalary = Number(activeRate?.amount ?? employee.baseSalary);
-    const salaryPlanEnabled = activeRate?.planEnabled ?? employee.salaryPlanEnabled;
-    const statementSalary = employeeEmploymentEnded || !salaryPlanEnabled
-      ? Math.max(baseSalaryPosted, 0)
-      : Math.max(configuredSalary, baseSalaryPosted, 0);
-    const currentSalary = salaryPlanEnabled && !employeeEmploymentEnded
-      ? configuredSalary
-      : 0;
-    const confirmedOtherAccruals = validAccruals
+    const baseSalaryPosted = activeAccruals
+      .filter((row) => row.type === PayrollAccrualType.BASE_SALARY)
+      .reduce((sum, row) => sum + policySigned(row), 0);
+    const activeRate = employee.salaryRates.find(
+      (rate) =>
+        rate.effectiveFrom < periodRange.end &&
+        (!rate.effectiveTo || rate.effectiveTo > periodRange.start),
+    );
+    const configuredSalary = periodSalary.amount;
+    const salaryPlanEnabled =
+      periodSalary.employedInPeriod &&
+      (activeRate?.planEnabled ??
+        (employee.salaryRates.length === 0 && employee.salaryPlanEnabled));
+    const statementSalary = salaryPlanEnabled
+      ? Math.max(configuredSalary, baseSalaryPosted, 0)
+      : Math.max(baseSalaryPosted, 0);
+    const currentSalary = salaryPlanEnabled ? configuredSalary : 0;
+    const confirmedOtherAccruals = statementAccruals
       .filter((row) =>
         row.type !== PayrollAccrualType.BASE_SALARY &&
         !row.reason.startsWith(PAYROLL_SALARY_ADJUSTMENT_PREFIX) &&
@@ -2010,7 +2079,7 @@ export async function payrollSummary(
       : [];
     const orderBonusAudit = managerPolicyApplies
       ? assignedOrders.map((order) => {
-            const primaryBonuses = activeAccruals.filter(
+            const primaryBonuses = statementAccruals.filter(
               (row) =>
                 row.orderId === order.id &&
                 row.direction === PayrollDirection.INCREASE &&
@@ -2020,7 +2089,7 @@ export async function payrollSummary(
             const manualBonus = primaryBonuses.find(
               (row) => row.type === PayrollAccrualType.ORDER_BONUS,
             );
-            const policyAdjustments = activeAccruals.filter(
+            const policyAdjustments = statementAccruals.filter(
               (row) =>
                 row.orderId === order.id &&
                 (row.type === PayrollAccrualType.ADJUSTMENT_INCREASE ||
@@ -2042,6 +2111,7 @@ export async function payrollSummary(
               status: order.status,
               deletedAt: order.deletedAt,
               managerName: order.manager,
+              managerUserId: order.managerUserId,
               submitted,
               recorded,
             });
@@ -2075,7 +2145,7 @@ export async function payrollSummary(
     const orphanOrderIds = managerPolicyApplies
       ? [
           ...new Set(
-            activeAccruals
+            statementAccruals
               .filter(
                 (row) =>
                   row.orderId &&
@@ -2092,7 +2162,7 @@ export async function payrollSummary(
         ]
       : [];
     const orphanOrderAudit = orphanOrderIds.map((orderId) => {
-      const rows = activeAccruals.filter((row) => row.orderId === orderId);
+      const rows = statementAccruals.filter((row) => row.orderId === orderId);
       const primaryBonuses = rows.filter(
         (row) =>
           row.direction === PayrollDirection.INCREASE &&
@@ -2147,8 +2217,11 @@ export async function payrollSummary(
     const suggestedOrderBonuses = orderBonusAudit
       .filter((item) => item.eligible && item.recorded < 0.01)
       .reduce((sum, item) => sum + item.expected, 0);
+    const policySalaryRequired = salaryPlanEnabled
+      ? configuredSalary
+      : Math.max(salaryPosted, 0);
     const salaryDifference = managerPolicyApplies
-      ? currentSalary - salaryPosted
+      ? policySalaryRequired - salaryPosted
       : 0;
     const bonusLedgerDifference = allOrderBonusAudit.reduce(
       (sum, row) => sum + row.ledgerDifference,
@@ -2179,7 +2252,8 @@ export async function payrollSummary(
         }
       : { orderIssues: 0, measurementsToClose: 0, openTasks: 0, ready: true };
     workReadiness.ready = workReadiness.orderIssues === 0 && workReadiness.measurementsToClose === 0 && workReadiness.openTasks === 0;
-    const auditedAccrued = accrued + salaryDifference + bonusLedgerDifference;
+    const auditedAccrued =
+      statementPosted + salaryDifference + bonusLedgerDifference;
     // The audit is a preview only. Amounts become payable only after people
     // create the actual accruals: salary by the director and order bonuses by
     // the manager.
@@ -2195,7 +2269,7 @@ export async function payrollSummary(
         PayrollAccrualType.ADJUSTMENT_INCREASE,
       ]) + suggestedOrderBonuses,
       premiums: increase([PayrollAccrualType.PREMIUM]),
-      deductions: activeAccruals
+      deductions: statementAccruals
         .filter((row) => row.direction === PayrollDirection.DECREASE)
         .reduce((sum, row) => sum + Number(row.amount), 0),
       advances: advancesPaid,
@@ -2225,7 +2299,8 @@ export async function payrollSummary(
       hasOrdaAccess: Boolean(employee.userId),
       employmentEnded: employeeEmploymentEnded,
       currentSalary,
-      salaryEffectiveFrom: activeRate?.effectiveFrom ?? employee.hiredAt,
+      salaryEffectiveFrom:
+        periodSalary.effectiveFrom ?? employee.hiredAt,
       breakdown: {
         salaryAccrued: increase([PayrollAccrualType.BASE_SALARY]),
         bonusesAccrued: increase([
@@ -2267,7 +2342,7 @@ export async function payrollSummary(
               (sum, row) => sum + row.managerDifference,
               0,
             ),
-            salaryRequired: currentSalary,
+            salaryRequired: policySalaryRequired,
             salaryPosted,
             salaryDifference,
             premiums: increase([
@@ -2381,6 +2456,9 @@ export async function listOrderBonusesForCorrection(
           id: true,
           number: true,
           amount: true,
+          manager: true,
+          managerUserId: true,
+          orderReceivedAt: true,
           client: { select: { name: true, phone: true } },
         },
       },
@@ -2391,14 +2469,24 @@ export async function listOrderBonusesForCorrection(
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
   });
+  const visibleRows = rows.filter(
+    (row) =>
+      !row.order ||
+      !isCompanyResponsibleOrder({
+        managerName: row.order.manager,
+        managerUserId: row.order.managerUserId,
+      }),
+  );
   const orderIds = [
     ...new Set(
-      rows
+      visibleRows
         .map((row) => row.orderId)
         .filter((orderId): orderId is number => Boolean(orderId)),
     ),
   ];
-  const employeeIds = [...new Set(rows.map((row) => row.employeeId))];
+  const employeeIds = [
+    ...new Set(visibleRows.map((row) => row.employeeId)),
+  ];
   const policyAdjustments =
     orderIds.length > 0 && employeeIds.length > 0
       ? await prisma.payrollAccrual.findMany({
@@ -2442,7 +2530,7 @@ export async function listOrderBonusesForCorrection(
   }
   return {
     period,
-    items: rows.map((row) => {
+    items: visibleRows.map((row) => {
       const paid = row.payments.reduce(
         (sum, payment) => sum + Number(payment.amount),
         0,
@@ -2541,6 +2629,7 @@ export async function syncAutomaticOrderBonuses(
       order: {
         select: {
           manager: true,
+          managerUserId: true,
           orderReceivedAt: true,
           completedAt: true,
           lifecycle: true,
@@ -2560,15 +2649,17 @@ export async function syncAutomaticOrderBonuses(
       continue;
     const companyResponsible = isCompanyResponsibleOrder({
       managerName: bonus.order.manager,
+      managerUserId: bonus.order.managerUserId,
     });
-    const prematureTerminatedBonus =
+    const outsideFactualOrderMonth =
       !companyResponsible &&
-      employmentEnded(bonus.employee) &&
       !bonusEarnedInRange(bonus.order, bonus.employee, range);
-    if (!companyResponsible && !prematureTerminatedBonus) continue;
+    if (!companyResponsible && !outsideFactualOrderMonth) continue;
     const reason = companyResponsible
       ? "Заказ оформлен с ответственным «Компания»: менеджерский бонус не начисляется"
-      : "Начисление уволенного сотрудника отложено до завершения заказа";
+      : employmentEnded(bonus.employee) && bonus.order.lifecycle !== OrderLifecycle.COMPLETED
+        ? "Начисление уволенного сотрудника отложено до завершения заказа"
+        : "Бонус относится к месяцу фактической даты заказа";
     const requestHash = createHash("sha256")
       .update(JSON.stringify({ accrualId: bonus.id, action: "cancel", reason }))
       .digest("hex");
@@ -2579,7 +2670,7 @@ export async function syncAutomaticOrderBonuses(
         reason,
         key: companyResponsible
           ? `company-responsible-order-bonus:${bonus.id}`
-          : `terminated-manager-order-bonus-deferred:${bonus.id}`,
+          : `factual-order-month-bonus:${bonus.id}`,
         requestHash,
       },
       actor,
@@ -2609,13 +2700,7 @@ export async function syncAutomaticOrderBonuses(
         companyId,
         deletedAt: null,
         orderDateNeedsReview: false,
-        OR: [
-          { orderReceivedAt: { gte: range.start, lt: range.end } },
-          {
-            lifecycle: OrderLifecycle.COMPLETED,
-            completedAt: { gte: range.start, lt: range.end },
-          },
-        ],
+        orderReceivedAt: { gte: range.start, lt: range.end },
         ...(managerOwnOnly
           ? {
               AND: [
@@ -2815,7 +2900,7 @@ export async function accrueCompletedTerminatedManagerOrderBonus(
   if (!profile)
     return { created: false, skipped: true, reason: "EMPLOYEE_NOT_TERMINATED" };
 
-  const earnedPeriod = companyYearMonth(order.completedAt);
+  const earnedPeriod = companyYearMonth(order.orderReceivedAt);
   const period = await ensurePeriod(earnedPeriod.year, earnedPeriod.month);
   if (period.status !== PayrollPeriodStatus.OPEN)
     return { created: false, skipped: true, reason: "PERIOD_NOT_OPEN" };
@@ -2852,7 +2937,7 @@ export async function accrueCompletedTerminatedManagerOrderBonus(
             : "SOURCE_PERIOD_NOT_OPEN",
       };
     const reason =
-      "Начисление уволенного сотрудника перенесено в месяц завершения заказа";
+      "Начисление уволенного сотрудника перенесено в месяц фактической даты заказа";
     const cancellationHash = createHash("sha256")
       .update(
         JSON.stringify({
@@ -2881,7 +2966,8 @@ export async function accrueCompletedTerminatedManagerOrderBonus(
         orderId: order.id,
         periodId: period.id,
         amount,
-        earnedAt: order.completedAt.toISOString(),
+        earnedAt: order.orderReceivedAt.toISOString(),
+        unlockedAt: order.completedAt.toISOString(),
       }),
     )
     .digest("hex");
@@ -3116,7 +3202,9 @@ export async function correctOrderBonus(
           throw new PayrollError("ORDER_OUTSIDE_PERIOD");
         if (!bonusEarnedInRange(targetOrder, original.employee, range))
           throw new PayrollError(
-            originalEmploymentEnded
+            originalEmploymentEnded &&
+              (targetOrder.lifecycle !== OrderLifecycle.COMPLETED ||
+                !targetOrder.completedAt)
               ? "ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE"
               : "ORDER_OUTSIDE_PERIOD",
           );

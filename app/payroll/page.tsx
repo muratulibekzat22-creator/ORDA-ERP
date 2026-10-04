@@ -166,6 +166,7 @@ type OrderOption = {
   id: number;
   number: string;
   amount?: number | string;
+  orderReceivedAt?: string;
   client: { id?: number; name: string; phone?: string | null };
 };
 type ManagedOrderBonus = {
@@ -275,7 +276,7 @@ const labels: Record<string, string> = {
 const currency = (value: number | string) =>
   `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₸`;
 const dateLabel = (value: string) =>
-  new Date(value).toLocaleDateString("ru-RU");
+  new Date(value).toLocaleDateString("ru-RU", { timeZone: "Asia/Almaty" });
 const employeePosition = (row: PayrollRow) =>
   row.position || roleNames[row.user.role] || row.user.role || "Сотрудник";
 const salaryPaymentTypes = new Set([
@@ -331,7 +332,7 @@ const partialSalaryAvailable = (row: PayrollRow) => {
     .reduce((sum, item) => sum + Number(item.amount), 0);
   return Math.max(row.currentSalary - paidTowardSalary, 0);
 };
-const statementAccrued = (row: PayrollRow) => row.calculation.accrued;
+const statementAccrued = (row: PayrollRow) => row.calculation.totalToAccrue;
 const statementPayable = (row: PayrollRow) => row.calculation.amountToPay;
 const errorLabels: Record<string, string> = {
   FORBIDDEN: "Недостаточно прав для этой операции",
@@ -434,7 +435,6 @@ export default function PayrollPage() {
     locked = Boolean(data.period && data.period.status !== "OPEN");
   const salaryCandidates = data.rows.filter(
     (row) =>
-      !row.employmentEnded &&
       row.salaryPlanEnabled &&
       row.currentSalary > 0 &&
       !row.accruals.some(
@@ -567,6 +567,40 @@ export default function PayrollPage() {
     await load();
     return true;
   };
+  const editOrderBonusFromAudit = (
+    employee: PayrollRow,
+    audit: PayrollAuditOrder,
+  ) => {
+    const existing = managedBonuses.find(
+      (item) =>
+        item.employeeId === employee.id && item.orderId === audit.orderId,
+    );
+    if (existing) {
+      if (!existing.editable) {
+        setError(
+          existing.blockedReason === "BONUS_PAYMENT_EXISTS"
+            ? "Этот бонус уже выплачен. Сначала сторнируйте связанную выплату."
+            : existing.blockedReason === "BONUS_POLICY_ADJUSTED"
+              ? "Этот бонус уже исправлен системой и сохранён в истории."
+              : "Расчётный месяц закрыт для изменений.",
+        );
+        return;
+      }
+      setBonusCorrection({ mode: "correct", item: existing });
+      return;
+    }
+    if (!audit.eligible) {
+      setError("Этот заказ не участвует в бонусе выбранного месяца.");
+      return;
+    }
+    setTarget(employee);
+    setOperation("bonus");
+    setForm({
+      ...emptyForm(),
+      orderId: String(audit.orderId),
+      amount: String(audit.expected),
+    });
+  };
   const openOperation = (
     next: Operation,
     row?: PayrollRow,
@@ -603,7 +637,7 @@ export default function PayrollPage() {
       : next === "payment" && employee
         ? {
             ...emptyForm(),
-            amount: String(Math.max(employee.payrollAudit?.approvedPayable ?? employee.totals.payable, 0)),
+            amount: String(Math.max(employee.calculation.amountToPay, 0)),
             method: "kaspi",
             reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
           }
@@ -907,8 +941,8 @@ export default function PayrollPage() {
         {canAccrueSalary && (
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
-            <p className="mt-2 leading-6">Система предлагает бонус: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Итоговую сумму за заказ вводят менеджер, директор или основатель. Заказы с ответственным «Компания» не дают менеджерский бонус. Уволенному менеджеру бонус начисляется после завершения заказа.</p>
-            <p className="mt-2 leading-6">«Начислено» — подтверждённая часть расчёта, включая уже выданные авансы. «К выплате» — плановая сумма за месяц за вычетом подтверждённых выплат. Оклад без назначения не создаёт долг. Сначала проводите выплаты и начисления, затем отправляйте месяц на проверку и закрывайте его после полного расчёта.</p>
+            <p className="mt-2 leading-6">Система предлагает бонус: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Итоговую сумму за заказ вводят менеджер, директор или основатель. Заказы с ответственным «Компания» не дают менеджерский бонус. Расчётный месяц всегда определяется фактической датой заказа; уволенному менеджеру бонус становится доступен только после завершения заказа.</p>
+            <p className="mt-2 leading-6">«Начислено» — полный расчёт за месяц: назначенный оклад, внесённые или предложенные бонусы, премии и удержания. «Выплачено» показывает фактические подтверждённые выплаты, а «К выплате» — остаток после их вычета. Оклад без назначения не создаёт долг.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
         )}
@@ -934,6 +968,13 @@ export default function PayrollPage() {
             managerSelfService={managerSelfService && !locked}
             canReportAdvance={advanceSelfService && Boolean(data.period) && !locked}
             onOperation={openOperation}
+            orderBonuses={managedBonuses.filter(
+              (item) => item.employeeId === data.rows[0].id,
+            )}
+            canEditOrderBonuses={canCorrectOrderBonuses && !locked}
+            onEditOrderBonus={(item) =>
+              editOrderBonusFromAudit(data.rows[0], item)
+            }
           />
         )}
         {canCorrectOrderBonuses && data.period && (
@@ -1072,6 +1113,12 @@ export default function PayrollPage() {
           onCancelBonus={(item) =>
             setBonusCorrection({ mode: "cancel", item })
           }
+          onEditAuditBonus={(item) =>
+            editOrderBonusFromAudit(
+              data.rows.find((row) => row.id === details.id) ?? details,
+              item,
+            )
+          }
         />
       )}{" "}
       {operation && target && data.period && (
@@ -1080,7 +1127,11 @@ export default function PayrollPage() {
           row={target}
           rows={
             operation === "salaryAccrual"
-              ? data.rows.filter((row) => !row.employmentEnded && !activeSalaryAccrual(row))
+              ? data.rows.filter(
+                  (row) =>
+                    (!row.employmentEnded || row.currentSalary > 0) &&
+                    !activeSalaryAccrual(row),
+                )
               : operation === "partialPayment"
                 ? partialPaymentCandidates
                 : operation === "editAccrual"
@@ -1115,7 +1166,7 @@ export default function PayrollPage() {
               : operation === "payment"
                 ? {
                     ...emptyForm(),
-                    amount: String(Math.max(row.payrollAudit?.approvedPayable ?? row.totals.payable, 0)),
+                    amount: String(Math.max(row.calculation.amountToPay, 0)),
                     method: "kaspi",
                     reason: `Заработная плата за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
                   }
@@ -1233,16 +1284,118 @@ function Metric({
     </div>
   );
 }
+
+function PayrollOrderBonusAuditList({
+  items,
+  employeeId,
+  orderBonuses,
+  canEdit,
+  onEdit,
+}: {
+  items: PayrollAuditOrder[];
+  employeeId: number;
+  orderBonuses: ManagedOrderBonus[];
+  canEdit: boolean;
+  onEdit: (item: PayrollAuditOrder) => void;
+}) {
+  if (items.length === 0)
+    return (
+      <p className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+        Заказов менеджера в выбранном месяце нет.
+      </p>
+    );
+  return (
+    <div className="space-y-2">
+      {items.map((item) => {
+        const difference = item.managerDifference;
+        const mismatch =
+          difference > 0
+            ? `выше подсказки на ${currency(difference)}`
+            : difference < 0
+              ? `ниже подсказки на ${currency(Math.abs(difference))}`
+              : "совпадает с подсказкой";
+        const existing = orderBonuses.find(
+          (bonus) =>
+            bonus.employeeId === employeeId && bonus.orderId === item.orderId,
+        );
+        const editable =
+          canEdit &&
+          (item.eligible || Boolean(existing)) &&
+          (!existing || existing.editable);
+        const blocked = existing?.blockedReason;
+        return (
+          <div
+            key={`${item.orderId}-${item.accrualId}`}
+            className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm"
+          >
+            <div className="flex flex-wrap justify-between gap-2">
+              <span>
+                <b>{item.orderNumber}</b> · {item.clientName}
+              </span>
+              <b>{currency(item.orderAmount)}</b>
+            </div>
+            <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
+              <span>
+                Факт заказа {dateLabel(item.earnedAt)} · внесено {currency(item.submitted)} · система {currency(item.expected)}
+              </span>
+              <span
+                className={
+                  difference === 0 ? "text-emerald-300" : "text-amber-300"
+                }
+              >
+                {item.eligible
+                  ? mismatch
+                  : "не участвует в этом расчётном периоде"}
+                {item.appliedAdjustment
+                  ? ` · исправлено ${currency(item.appliedAdjustment)}`
+                  : ""}
+              </span>
+            </div>
+            {(item.eligible || existing) && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!editable}
+                  onClick={() => onEdit(item)}
+                  className="flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Pencil size={15} />
+                  {existing ? "Редактировать бонус" : "Указать бонус"}
+                </button>
+                {!editable && blocked && (
+                  <span className="text-xs text-amber-200">
+                    {blocked === "BONUS_PAYMENT_EXISTS"
+                      ? "Бонус уже выплачен"
+                      : blocked === "BONUS_POLICY_ADJUSTED"
+                        ? "Исправление уже сохранено"
+                        : "Месяц закрыт"}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function PersonalPayrollReport({
   row,
   managerSelfService,
   canReportAdvance,
   onOperation,
+  orderBonuses,
+  canEditOrderBonuses,
+  onEditOrderBonus,
 }: {
   row: PayrollRow;
   managerSelfService: boolean;
   canReportAdvance: boolean;
   onOperation: (operation: Operation, row: PayrollRow) => void;
+  orderBonuses: ManagedOrderBonus[];
+  canEditOrderBonuses: boolean;
+  onEditOrderBonus: (item: PayrollAuditOrder) => void;
 }) {
   const calculation = row.calculation;
   return (
@@ -1287,6 +1440,20 @@ function PersonalPayrollReport({
             <p className="mt-3 text-xs text-blue-200/80">
               Выберите свой заказ за месяц. ORDA предложит сумму бонуса; окончательную сумму можно изменить перед сохранением.
             </p>
+          )}
+          {managerSelfService && row.payrollAudit && (
+            <div className="mt-4">
+              <h3 className="mb-2 text-sm font-semibold text-white">
+                Мои заказы и бонусы
+              </h3>
+              <PayrollOrderBonusAuditList
+                items={row.payrollAudit.mismatches}
+                employeeId={row.id}
+                orderBonuses={orderBonuses}
+                canEdit={canEditOrderBonuses}
+                onEdit={onEditOrderBonus}
+              />
+            </div>
           )}
         </div>
         <div className="flex flex-wrap gap-2 xl:max-w-sm xl:justify-end">
@@ -1450,6 +1617,7 @@ function EmployeeDrawer({
   onApproveManual,
   onCorrectBonus,
   onCancelBonus,
+  onEditAuditBonus,
 }: {
   row: PayrollRow;
   director: boolean;
@@ -1472,6 +1640,7 @@ function EmployeeDrawer({
   onApproveManual: (row: PayrollRow) => Promise<unknown>;
   onCorrectBonus: (item: ManagedOrderBonus) => void;
   onCancelBonus: (item: ManagedOrderBonus) => void;
+  onEditAuditBonus: (item: PayrollAuditOrder) => void;
 }) {
   const accrualTotal = (types: string[]) =>
     row.accruals
@@ -1506,7 +1675,7 @@ function EmployeeDrawer({
   );
   const canAccrueThisSalary =
     canAccrueSalary &&
-    !row.employmentEnded &&
+    (!row.employmentEnded || row.currentSalary > 0) &&
     !row.accruals.some(
       (item) =>
         item.type === "BASE_SALARY" &&
@@ -1597,7 +1766,7 @@ function EmployeeDrawer({
               <div>
                 <h3 className="font-semibold">Автоматическая проверка зарплаты</h3>
                 <p className="mt-1 text-xs text-slate-400">
-                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Момент начисления: {row.employmentEnded ? "заказ завершён в выбранном месяце" : "заказ принят в выбранном месяце"}.
+                  До {currency(row.payrollAudit.policy.threshold)} включительно — {currency(row.payrollAudit.policy.belowOrEqual)}, выше — {currency(row.payrollAudit.policy.above)} за заказ. Расчётный месяц — по фактической дате заказа{row.employmentEnded ? "; начисление доступно после завершения заказа" : ""}.
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${row.payrollAudit.readyToPay ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
@@ -1632,29 +1801,14 @@ function EmployeeDrawer({
               </div>
             )}
             {!row.payrollAudit.workReadiness.ready && <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-sm text-amber-100"><b>Есть незакрытая работа — проверьте перед окончательным расчётом.</b><p className="mt-1">Заказы с замечаниями: {row.payrollAudit.workReadiness.orderIssues} · замеры требуют закрытия: {row.payrollAudit.workReadiness.measurementsToClose} · открытые контрольные задачи: {row.payrollAudit.workReadiness.openTasks}.</p><div className="mt-2 flex flex-wrap gap-3"><Link href="/orders?attention=incomplete" className="font-semibold text-blue-200">Открыть заказы</Link><Link href="/measurements?filter=needs-closing" className="font-semibold text-blue-200">Открыть замеры</Link><Link href="/calendar" className="font-semibold text-blue-200">Открыть задачи</Link></div></div>}
-            <div className="mt-3 space-y-2">
-              {row.payrollAudit.mismatches.map((item) => {
-                const difference = item.managerDifference;
-                const mismatch = difference > 0
-                  ? `выше подсказки на ${currency(difference)}`
-                  : difference < 0
-                    ? `ниже подсказки на ${currency(Math.abs(difference))}`
-                    : "совпадает с подсказкой";
-                return (
-                  <div key={item.accrualId} className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-sm">
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <span><b>{item.orderNumber}</b> · {item.clientName}</span>
-                      <b>{currency(item.orderAmount)}</b>
-                    </div>
-                    <div className="mt-1 flex flex-wrap justify-between gap-2 text-xs text-slate-400">
-                      <span>Внесено {currency(item.submitted)} · система {currency(item.expected)}</span>
-                      <span className={difference === 0 ? "text-emerald-300" : "text-amber-300"}>
-                        {item.eligible ? mismatch : "не участвует в этом расчётном периоде"}{item.appliedAdjustment ? ` · исправлено ${currency(item.appliedAdjustment)}` : ""}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="mt-3">
+              <PayrollOrderBonusAuditList
+                items={row.payrollAudit.mismatches}
+                employeeId={row.id}
+                orderBonuses={orderBonuses}
+                canEdit={canCorrectOrderBonuses && !closed}
+                onEdit={onEditAuditBonus}
+              />
             </div>
             {director && !closed && !row.payrollAudit.calculationReady && <div className="mt-4"><button onClick={() => void onApproveManual(row)} className="min-h-11 rounded-xl border border-slate-600 px-4 font-semibold">Подтвердить исключение вручную</button></div>}
           </section>
@@ -2106,6 +2260,7 @@ function BonusCorrectionModal({
                   {orders.map((order) => (
                     <option key={order.id} value={order.id}>
                       {order.number} · {order.client.name}
+                      {order.orderReceivedAt ? ` · факт ${dateLabel(order.orderReceivedAt)}` : ""}
                     </option>
                   ))}
                 </select>
@@ -2240,7 +2395,21 @@ function OperationModal({
   );
   const orderOperation = operation === "bonus" || operation === "deduction";
   const [orderQuery, setOrderQuery] = useState("");
-  const [orders, setOrders] = useState<OrderOption[]>([]);
+  const preselectedAuditOrder = row.payrollAudit?.mismatches.find(
+    (item) => item.orderId === Number(form.orderId),
+  );
+  const [orders, setOrders] = useState<OrderOption[]>(() =>
+    preselectedAuditOrder
+      ? [
+          {
+            id: preselectedAuditOrder.orderId,
+            number: preselectedAuditOrder.orderNumber,
+            amount: preselectedAuditOrder.orderAmount,
+            client: { name: preselectedAuditOrder.clientName },
+          },
+        ]
+      : [],
+  );
   const [ordersLoading, setOrdersLoading] = useState(false);
   const selectedOrder = orders.find(
     (item) => item.id === Number(form.orderId),
@@ -2272,7 +2441,27 @@ function OperationModal({
           signal: controller.signal,
         });
         const body = await response.json().catch(() => ({}));
-        if (response.ok) setOrders(Array.isArray(body.items) ? body.items : []);
+        if (response.ok) {
+          const loaded = Array.isArray(body.items)
+            ? (body.items as OrderOption[])
+            : [];
+          setOrders(
+            preselectedAuditOrder &&
+              !loaded.some(
+                (item) => item.id === preselectedAuditOrder.orderId,
+              )
+              ? [
+                  {
+                    id: preselectedAuditOrder.orderId,
+                    number: preselectedAuditOrder.orderNumber,
+                    amount: preselectedAuditOrder.orderAmount,
+                    client: { name: preselectedAuditOrder.clientName },
+                  },
+                  ...loaded,
+                ]
+              : loaded,
+          );
+        }
       } finally {
         if (!controller.signal.aborted) setOrdersLoading(false);
       }
@@ -2281,7 +2470,7 @@ function OperationModal({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [orderOperation, orderQuery, period.month, period.year]);
+  }, [orderOperation, orderQuery, period.month, period.year, preselectedAuditOrder]);
   return (
     <div
       className="fixed inset-0 z-[90] grid place-items-center overflow-y-auto bg-black/75 p-4"
@@ -2529,7 +2718,7 @@ function OperationModal({
                   <option value="">{ordersLoading ? "Загрузка заказов…" : operation === "bonus" ? "Выберите заказ" : "Без привязки к заказу"}</option>
                   {orders.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.number} · {item.client.name}{item.client.phone ? ` · ${item.client.phone}` : ""}
+                      {item.number} · {item.client.name}{item.client.phone ? ` · ${item.client.phone}` : ""}{item.orderReceivedAt ? ` · факт ${dateLabel(item.orderReceivedAt)}` : ""}
                     </option>
                   ))}
                 </select>

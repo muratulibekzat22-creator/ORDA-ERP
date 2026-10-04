@@ -13,12 +13,6 @@ function run(script) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-if (process.env.DATABASE_URL?.trim()) {
-  run("prisma:migrate:deploy");
-} else {
-  console.log("DATABASE_URL is not configured; skipping database migrations for this preview build.");
-}
-
 run("prisma:generate");
 
 if (process.env.DATABASE_URL?.trim() && process.env.RUN_RELEASE_PREPARATION === "true") {

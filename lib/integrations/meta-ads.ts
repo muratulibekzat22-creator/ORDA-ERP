@@ -1,26 +1,21 @@
 import { LeadSource, OrderLifecycle, Prisma, Role } from "@prisma/client";
 
 import { marketingMonthRange } from "@/lib/marketing";
+import { campaignIdsFromEnv, metaActionCounts, onlySelectedCampaigns, type MetaAction } from "@/lib/integrations/meta-ads-metrics";
 import { officialCurrencyRateToKzt } from "@/lib/integrations/nbk-rates";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
 const META_CHANNEL = "Instagram / Meta";
 const DEFAULT_GRAPH_VERSION = "v26.0";
-const MESSAGE_ACTION_TYPES = [
-  "onsite_conversion.messaging_conversation_started_7d",
-  "messaging_conversation_started_7d",
-  "onsite_conversion.messaging_first_reply",
-  "onsite_conversion.lead_grouped",
-  "lead",
-];
-
-type MetaAction = { action_type?: string; value?: string };
 type MetaInsight = {
   account_currency?: string;
   campaign_id?: string;
   campaign_name?: string;
   spend?: string;
+  reach?: string;
+  impressions?: string;
+  inline_link_clicks?: string;
   actions?: MetaAction[];
 };
 type MetaInsightsResponse = {
@@ -35,19 +30,19 @@ function configuration() {
   const accountId = (process.env.META_AD_ACCOUNT_ID ?? "").replace(/^act_/, "").trim();
   const accessToken = process.env.META_ACCESS_TOKEN?.trim() ?? "";
   const graphVersion = process.env.META_GRAPH_API_VERSION?.trim() || DEFAULT_GRAPH_VERSION;
-  const campaignFilters = (process.env.META_CAMPAIGN_NAME_FILTER ?? "")
-    .split(",")
-    .map((value) => value.trim().toLocaleLowerCase("ru-RU"))
-    .filter(Boolean);
-  return { accountId, accessToken, graphVersion, campaignFilters };
+  const campaignIds = campaignIdsFromEnv(process.env.META_CAMPAIGN_IDS ?? "");
+  const booksToLedger = process.env.META_POST_TO_LEDGER === "true";
+  return { accountId, accessToken, graphVersion, campaignIds, booksToLedger };
 }
 
 export function metaAdsIntegrationStatus() {
   const config = configuration();
   return {
-    configured: Boolean(/^\d+$/.test(config.accountId) && config.accessToken),
+    configured: Boolean(/^\d+$/.test(config.accountId) && config.accessToken && config.campaignIds.length),
     account: config.accountId ? `act_••••${config.accountId.slice(-4)}` : null,
     graphVersion: config.graphVersion,
+    campaignCount: config.campaignIds.length,
+    booksToLedger: config.booksToLedger,
     automatic: true,
   };
 }
@@ -76,14 +71,19 @@ async function metaFetch<T>(url: URL | string, token: string): Promise<T> {
   return body;
 }
 
-async function loadInsights(month: string) {
+function nonNegativeNumber(value: string | undefined) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+export async function loadMetaAdsCampaignReport(month: string) {
   const config = configuration();
-  if (!/^\d+$/.test(config.accountId) || !config.accessToken)
+  if (!/^\d+$/.test(config.accountId) || !config.accessToken || !config.campaignIds.length)
     throw new MetaAdsSyncError("META_NOT_CONFIGURED");
   const period = monthDateRange(month);
   const url = new URL(`https://graph.facebook.com/${config.graphVersion}/act_${config.accountId}/insights`);
   url.searchParams.set("level", "campaign");
-  url.searchParams.set("fields", "campaign_id,campaign_name,account_currency,spend,actions");
+  url.searchParams.set("fields", "campaign_id,campaign_name,account_currency,spend,reach,impressions,inline_link_clicks,actions");
   url.searchParams.set("time_range", JSON.stringify({ since: period.since, until: period.until }));
   url.searchParams.set("limit", "500");
   const rows: MetaInsight[] = [];
@@ -93,23 +93,34 @@ async function loadInsights(month: string) {
     rows.push(...(response.data ?? []));
     next = response.paging?.next;
   }
-  const filtered = config.campaignFilters.length
-    ? rows.filter((row) => config.campaignFilters.some((filter) => (row.campaign_name ?? "").toLocaleLowerCase("ru-RU").includes(filter)))
-    : rows;
-  const spend = filtered.reduce((sum, row) => sum + Number(row.spend ?? 0), 0);
-  const leads = filtered.reduce((sum, row) => {
-    const values = new Map((row.actions ?? []).map((action) => [action.action_type ?? "", Number(action.value ?? 0)]));
-    return sum + Math.max(0, ...MESSAGE_ACTION_TYPES.map((type) => values.get(type) ?? 0));
-  }, 0);
-  let currency = filtered.find((row) => row.account_currency)?.account_currency?.toUpperCase();
-  if (!currency) {
-    const accountUrl = new URL(`https://graph.facebook.com/${config.graphVersion}/act_${config.accountId}`);
-    accountUrl.searchParams.set("fields", "currency");
-    const account = await metaFetch<{ currency?: string }>(accountUrl, config.accessToken);
-    currency = account.currency?.toUpperCase();
-  }
+  if (next) throw new MetaAdsSyncError("META_PAGINATION_LIMIT");
+  const campaigns = onlySelectedCampaigns(rows, config.campaignIds).map((row) => ({
+    id: row.campaign_id!,
+    name: row.campaign_name ?? row.campaign_id!,
+    spend: Math.round(nonNegativeNumber(row.spend) * 100) / 100,
+    reach: Math.round(nonNegativeNumber(row.reach)),
+    impressions: Math.round(nonNegativeNumber(row.impressions)),
+    linkClicks: Math.round(nonNegativeNumber(row.inline_link_clicks)),
+    ...metaActionCounts(row.actions),
+  })).sort((a, b) => b.spend - a.spend);
+  const accountUrl = new URL(`https://graph.facebook.com/${config.graphVersion}/act_${config.accountId}`);
+  accountUrl.searchParams.set("fields", "currency,timezone_name");
+  const account = await metaFetch<{ currency?: string; timezone_name?: string }>(accountUrl, config.accessToken);
+  const currency = account.currency?.toUpperCase();
   if (!currency) throw new MetaAdsSyncError("META_CURRENCY_MISSING");
-  return { ...period, accountId: config.accountId, spend, leads: Math.round(leads), currency, campaigns: filtered.length };
+  return {
+    ...period,
+    accountId: config.accountId,
+    accountTimezone: account.timezone_name ?? null,
+    currency,
+    selectedCampaignCount: config.campaignIds.length,
+    campaigns,
+    spend: Math.round(campaigns.reduce((sum, row) => sum + row.spend, 0) * 100) / 100,
+    conversations: campaigns.reduce((sum, row) => sum + row.conversations, 0),
+    leadActions: campaigns.reduce((sum, row) => sum + row.leadActions, 0),
+    linkClicks: campaigns.reduce((sum, row) => sum + row.linkClicks, 0),
+    impressions: campaigns.reduce((sum, row) => sum + row.impressions, 0),
+  };
 }
 
 async function currencyToKzt(currency: string, at: Date) {
@@ -123,16 +134,17 @@ async function currencyToKzt(currency: string, at: Date) {
 
 export async function syncMetaAdsMonth(input: { actorId: number; month?: string; now?: Date }) {
   const { companyId } = requireTenantIdentity();
+  const config = configuration();
   const now = input.now ?? new Date();
   const month = input.month ?? marketingMonthRange(now).key;
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new MetaAdsSyncError("INVALID_MONTH");
   const actor = await prisma.user.findFirst({
-    where: { id: input.actorId, companyId, active: true, role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER] } },
+    where: { id: input.actorId, companyId, active: true, role: { in: [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MARKETER] } },
     select: { id: true },
   });
   if (!actor) throw new MetaAdsSyncError("META_SYNC_FORBIDDEN");
-  const insights = await loadInsights(month);
-  const exchange = await currencyToKzt(insights.currency, now);
+  const insights = await loadMetaAdsCampaignReport(month);
+  const exchange = await currencyToKzt(insights.currency, new Date(insights.end.getTime() - 1));
   const spendKzt = Math.round(insights.spend * exchange.rate * 100) / 100;
   const sourceClients = await prisma.client.findMany({
     where: {
@@ -167,7 +179,9 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
     `act_${insights.accountId}`,
     `${insights.spend.toFixed(2)} ${insights.currency} × ${exchange.rate.toFixed(4)} KZT`,
     `курс: ${exchange.source}${exchange.publishedFor ? ` (${exchange.publishedFor})` : ""}`,
-    `${insights.campaigns} кампаний`,
+    `${insights.campaigns.length} кампаний`,
+    `${insights.conversations} начатых переписок`,
+    `${insights.leadActions} событий lead в Meta`,
     `обновлено ${now.toISOString()}`,
   ].join(" · ");
   return prisma.$transaction(async (tx) => {
@@ -178,7 +192,7 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
         metricMonth: insights.start,
         channel: META_CHANNEL,
         spend: new Prisma.Decimal(spendKzt.toFixed(2)),
-        leads: insights.leads,
+        leads: insights.leadActions,
         orders: crmOrders.length,
         revenue: new Prisma.Decimal(revenue.toFixed(2)),
         note,
@@ -186,13 +200,13 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
       },
       update: {
         spend: new Prisma.Decimal(spendKzt.toFixed(2)),
-        leads: insights.leads,
+        leads: insights.leadActions,
         orders: crmOrders.length,
         revenue: new Prisma.Decimal(revenue.toFixed(2)),
         note,
       },
     });
-    const supersededMetrics = await tx.managementMarketingMetric.findMany({
+    const supersededMetrics = config.booksToLedger ? await tx.managementMarketingMetric.findMany({
       where: {
         companyId,
         metricMonth: insights.start,
@@ -205,13 +219,13 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
         ],
       },
       select: { id: true },
-    });
-    if (supersededMetrics.length)
+    }) : [];
+    if (config.booksToLedger && supersededMetrics.length)
       await tx.companyLedgerEntry.updateMany({
         where: { companyId, idempotencyKey: { in: supersededMetrics.map((item) => `marketing-metric:${item.id}`) }, voidedAt: null },
         data: { voidedAt: now, voidReason: `Заменено автоматической синхронизацией Meta · показатель ${metric.id}` },
       });
-    await tx.companyLedgerEntry.upsert({
+    if (config.booksToLedger) await tx.companyLedgerEntry.upsert({
       where: { idempotencyKey: `marketing-metric:${metric.id}` },
       create: {
         companyId,
@@ -245,10 +259,11 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
       currency: insights.currency,
       exchangeRate: exchange.rate,
       exchangeRateSource: exchange.source,
-      leads: insights.leads,
+      leadActions: insights.leadActions,
+      conversations: insights.conversations,
       orders: crmOrders.length,
       revenue,
-      campaigns: insights.campaigns,
+      campaigns: insights.campaigns.length,
       supersededManualMetrics: supersededMetrics.length,
       syncedAt: now.toISOString(),
     };
