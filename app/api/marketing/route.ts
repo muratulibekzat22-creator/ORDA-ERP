@@ -11,6 +11,7 @@ import { effectiveMarketingMetrics, marketingMonthRange } from "@/lib/marketing"
 import { requirePermission } from "@/lib/server-auth";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
+import { getManagerMonthlySales } from "@/lib/services/manager-monthly-sales.service";
 
 const canUseMarketing = (role: Role) =>
   role === Role.DIRECTOR ||
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   const month = marketingMonthRange(requestedMonth);
   const companyId = Number(auth.session!.user.companyId);
-  const [tasks, metrics, vacancies, assignees, dailyCrm] = await Promise.all([
+  const [tasks, metrics, vacancies, assignees, dailyCrm, managerSales] = await Promise.all([
     prisma.managementMarketingTask.findMany({
       where: { companyId },
       include: { assignee: { select: { id: true, name: true } } },
@@ -62,6 +63,7 @@ export async function GET(request: Request) {
       orderBy: { name: "asc" },
     }),
     getDailyCrmSnapshot(),
+    getManagerMonthlySales({ companyId, start: month.start, end: month.end }),
   ]);
   const effectiveMetrics = effectiveMarketingMetrics(metrics);
   const summary = await getMarketingAnalytics({
@@ -79,6 +81,7 @@ export async function GET(request: Request) {
     vacancies,
     assignees,
     dailyCrm,
+    managerSales,
     integration: {
       ...integrationStatus,
       state: !integrationStatus.configured

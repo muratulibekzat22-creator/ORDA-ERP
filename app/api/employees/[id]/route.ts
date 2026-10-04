@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
+import { positionByRole } from "@/lib/services/employee.service";
 
 const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
 const idFrom = (value: string) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
@@ -52,7 +53,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         data: {
           ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
           ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}),
-          ...(role ? { position: role } : {}),
+          ...(role ? { position: positionByRole[role] ?? role } : {}),
         },
       });
       if (result.role === Role.MEASURER && result.active)

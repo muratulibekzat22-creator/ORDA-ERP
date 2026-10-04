@@ -20,6 +20,7 @@ import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/financ
 import { splitDashboardReceipts } from "@/lib/finance/dashboard-receipts";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
+import { getManagerMonthlySales } from "@/lib/services/manager-monthly-sales.service";
 import { payrollSummary } from "@/lib/services/payroll.service";
 
 type DashboardScope = {
@@ -156,7 +157,7 @@ async function managementProjection(scope: DashboardScope) {
     select: typeof orderEconomySelect;
   }>;
 
-  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm, weeklyOrders, weeklyPayments, weeklyLeads] = await Promise.all([
+  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm, weeklyOrders, weeklyPayments, weeklyLeads, managerSales] = await Promise.all([
     prisma.order.findMany({
       where: {
         companyId,
@@ -238,7 +239,7 @@ async function managementProjection(scope: DashboardScope) {
     }),
     prisma.user.findMany({
       where: { companyId, active: true, role: { in: [Role.OPERATIONS_DIRECTOR, Role.MARKETER, Role.MANAGER] } },
-      select: { id: true, name: true, role: true, lastLogin: true },
+      select: { id: true, name: true, role: true, lastLogin: true, payrollProfile: { select: { position: true } } },
       orderBy: [{ role: "asc" }, { name: "asc" }],
     }),
     prisma.authAuditEvent.findMany({
@@ -316,6 +317,7 @@ async function managementProjection(scope: DashboardScope) {
         createdAt: { gte: week.start, lt: week.end },
       },
     }),
+    getManagerMonthlySales({ companyId, start: period.start, end: period.end }),
   ]);
 
   const [payrollStatement, payrollPayments, customerBalance] = await Promise.all([
@@ -429,14 +431,15 @@ async function managementProjection(scope: DashboardScope) {
   }
   const countByUser = (rows: Array<{ managerUserId?: number | null; assigneeId?: number | null; _count: { _all: number } }>, userId: number) =>
     rows.find((row) => (row.managerUserId ?? row.assigneeId) === userId)?._count._all ?? 0;
-  const team = teamUsers.map((user) => ({
+  const team = teamUsers.filter((user) => !/замер/i.test(user.payrollProfile?.position ?? "")).map((user) => ({
     id: user.id,
     name: user.name,
     role: user.role,
     lastLogin: user.lastLogin,
     activeDays: loginDays.get(user.id)?.size ?? 0,
-    leads: countByUser(teamLeads, user.id),
-    orders: countByUser(teamOrders, user.id),
+    leads: user.role === Role.MANAGER ? (managerSales.rows.find((row) => row.userId === user.id)?.leads ?? 0) : countByUser(teamLeads, user.id),
+    orders: user.role === Role.MANAGER ? (managerSales.rows.find((row) => row.userId === user.id)?.orders ?? 0) : countByUser(teamOrders, user.id),
+    sales: managerSales.rows.find((row) => row.userId === user.id)?.sales ?? 0,
     completedTasks: countByUser(completedTasks, user.id),
     overdueTasks: countByUser(overdueTasks, user.id),
   }));

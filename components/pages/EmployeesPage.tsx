@@ -78,6 +78,8 @@ export default function EmployeesPage() {
   const [accessEmployee, setAccessEmployee] = useState<Employee | null>(null);
   const [accessForm, setAccessForm] = useState({ email: "", password: "", role: Role.MANAGER });
   const [passwordEmployee, setPasswordEmployee] = useState<Employee | null>(null);
+  const [roleEmployee, setRoleEmployee] = useState<Employee | null>(null);
+  const [roleChoice, setRoleChoice] = useState<Role>(Role.MANAGER);
   const [passwordForm, setPasswordForm] = useState({ newPassword: "", confirmPassword: "" });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -143,6 +145,21 @@ export default function EmployeesPage() {
       body: JSON.stringify({ active: !employee.accountActive }),
     });
     if (!response.ok) return setError(((await response.json()) as { error?: string }).error ?? "Не удалось изменить доступ");
+    await load(employeeFilter);
+  };
+
+  const changeRole = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!roleEmployee?.userId) return;
+    setError("");
+    const response = await fetch(`/api/employees/${roleEmployee.userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: roleChoice }),
+    });
+    if (!response.ok) return setError(((await response.json()) as { error?: string }).error ?? "Не удалось изменить роль");
+    setRoleEmployee(null);
+    setNotice(`Роль ${roleEmployee.name} изменена на «${roleNames[roleChoice]}»`);
     await load(employeeFilter);
   };
 
@@ -264,6 +281,7 @@ export default function EmployeesPage() {
             {!employee.protectedAccount && <button type="button" onClick={() => startEdit(employee)} className="min-h-11 rounded-lg bg-slate-700 px-3 text-white">Изменить</button>}
             {!employee.protectedAccount && <button type="button" onClick={() => void updateProfile(employee, { active: !employee.active })} className="min-h-11 rounded-lg bg-amber-800 px-3 text-white">{employee.active ? "Деактивировать" : "Активировать"}</button>}
             {!employee.hasOrdaAccess ? <button type="button" onClick={() => { setAccessEmployee(employee); setAccessForm({ email: employee.email ?? "", password: "", role: Role.MANAGER }); }} className="col-span-2 min-h-11 rounded-lg bg-blue-700 px-3 text-white">Создать доступ в ORDA</button> : <>
+              {!employee.protectedAccount && <button type="button" onClick={() => { setRoleEmployee(employee); setRoleChoice(employee.role ?? Role.MANAGER); setError(""); }} className="col-span-2 min-h-11 rounded-lg border border-blue-500/40 px-3 text-blue-200">Изменить роль в ORDA</button>}
               {(!employee.protectedAccount || founder) && <button type="button" onClick={() => setPasswordEmployee(employee)} className={`${employee.protectedAccount ? "col-span-2" : ""} min-h-11 rounded-lg bg-blue-700 px-3 text-white`}>Изменить пароль</button>}
               {!employee.protectedAccount && <button type="button" onClick={() => void updateAccess(employee)} className="min-h-11 rounded-lg border border-slate-600 px-3 text-white">{employee.accountActive ? "Отключить доступ" : "Включить доступ"}</button>}
             </>}
@@ -277,6 +295,14 @@ export default function EmployeesPage() {
           <label className="block text-sm text-slate-300">Роль<select className="control mt-1" value={accessForm.role} onChange={(event) => setAccessForm({ ...accessForm, role: event.target.value as Role })}>{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select></label>
           <label className="block text-sm text-slate-300">Временный пароль<div className="mt-1 flex gap-2"><input required minLength={12} type="text" className="control" value={accessForm.password} onChange={(event) => setAccessForm({ ...accessForm, password: event.target.value })} /><button type="button" onClick={() => setAccessForm({ ...accessForm, password: generatedPassword() })} className="shrink-0 rounded-xl bg-slate-700 px-3">Создать</button></div></label>
           <button className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white">Создать доступ</button>
+        </form>
+      </Modal>}
+
+      {roleEmployee && <Modal title="Роль в ORDA" subtitle={`${roleEmployee.name}. Роль определяет доступ к разделам и участие в отчётах менеджеров.`} onClose={() => setRoleEmployee(null)}>
+        <form onSubmit={changeRole} className="space-y-4">
+          <label className="block text-sm text-slate-300">Новая роль<select autoFocus className="control mt-1" value={roleChoice} onChange={(event) => setRoleChoice(event.target.value as Role)}>{employeeRoles.map((role) => <option key={role} value={role}>{roleNames[role]}</option>)}</select></label>
+          <p className="text-xs leading-5 text-slate-400">Изменение роли завершит текущую сессию сотрудника. Зарплатные начисления и история заказов сохранятся.</p>
+          <button className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold text-white">Сохранить роль</button>
         </form>
       </Modal>}
 

@@ -41,7 +41,7 @@ assert(vercel.crons?.some((item) => item.path === "/api/cron/daily-operations" &
 assert.match(buildScript, /RUN_RELEASE_PREPARATION === "true"/, "ordinary deployments must not mutate staff tasks or payroll");
 assert.doesNotMatch(buildScript, /prisma:migrate:deploy/, "Vercel builds must not run concurrent database migrations");
 assert.match(dashboard, /Ежедневный CRM-контроль/, "manager/director CRM summary is missing");
-assert.match(founderControl, /Сводных групп:/, "founder control must show consolidated groups");
+assert.match(founderControl, /data\.issues\.map\(\(group\)/, "founder control must show consolidated groups");
 assert.doesNotMatch(founderControl, /Отклонений:.*summary\.total/, "founder control must not lead with hundreds of raw exceptions");
 assert.match(marketing, /CRM за предыдущий день/, "marketing CRM summary is missing");
 assert.match(legacyCrm, /redirect\("\/clients"\)/, "legacy demo CRM route must redirect to the live clients workspace");

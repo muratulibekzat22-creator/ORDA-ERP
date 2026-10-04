@@ -135,6 +135,7 @@ type ManagementPayload = {
     activeDays: number;
     leads: number;
     orders: number;
+    sales: number;
     completedTasks: number;
     overdueTasks: number;
   }>;
@@ -426,16 +427,16 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
       <section className="rounded-2xl border border-blue-500/25 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Недельный отчёт собственника</h2><p className="text-sm text-slate-400">Сформирован автоматически за последние 7 дней · без ручного ввода</p></div><span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{date(data.weekly.from)} — {date(data.weekly.to)}</span></div>
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint={`${data.weekly.orders} заказов`} />
-          <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint="Фактические поступления минус возвраты" />
-          <FounderEfficiency label="Обращения в CRM" value={String(data.weekly.leads)} hint="Новые заявки за 7 дней" href="/clients" />
-          <FounderEfficiency label="Цена производства заполнена" value={`${data.weekly.ordersWithProductionPrice} / ${data.weekly.orders}`} hint="По новым заказам недели" />
+          <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint={`${data.weekly.orders} заказов по дате заказа`} tone="blue" />
+          <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint="Фактические поступления минус возвраты" tone="emerald" />
+          <FounderEfficiency label="Обращения в CRM" value={String(data.weekly.leads)} hint="Новые заявки за 7 дней" href="/clients" tone="blue" />
+          <FounderEfficiency label="Цена производства заполнена" value={`${data.weekly.ordersWithProductionPrice} / ${data.weekly.orders}`} hint="По новым заказам недели" tone={data.weekly.ordersWithProductionPrice < data.weekly.orders ? "amber" : "neutral"} />
         </div>
         <p className="mt-4 text-sm font-semibold text-white">Открытые вопросы директору сейчас</p>
         <div className="mt-2 grid gap-3 sm:grid-cols-3">
-          <FounderEfficiency label="Просроченные заказы" value={String(data.weekly.overdueOrders)} hint="Открыть список заказов" href="/orders?tab=active&attention=overdue" />
-          <FounderEfficiency label="Нужно дополнить" value={String(data.weekly.incompleteOrders)} hint="Открыть неполные карточки" href="/orders?tab=active&attention=incomplete" />
-          <FounderEfficiency label="Просроченные задачи" value={String(data.weekly.overdueTeamTasks)} hint="Открыть просроченные задачи" href="/calendar?state=overdue" />
+          <FounderEfficiency label="Просроченные заказы" value={String(data.weekly.overdueOrders)} hint="Открыть список заказов →" href="/orders?tab=active&attention=overdue" tone={data.weekly.overdueOrders ? "red" : "neutral"} />
+          <FounderEfficiency label="Нужно дополнить" value={String(data.weekly.incompleteOrders)} hint="Открыть неполные карточки →" href="/orders?tab=active&attention=incomplete" tone={data.weekly.incompleteOrders ? "amber" : "neutral"} />
+          <FounderEfficiency label="Просроченные задачи" value={String(data.weekly.overdueTeamTasks)} hint="Открыть просроченные задачи →" href="/calendar?state=overdue" tone={data.weekly.overdueTeamTasks ? "red" : "neutral"} />
         </div>
         <p className="mt-3 text-xs leading-5 text-slate-400">Эти три показателя показывают состояние на сейчас. В карточке «Контроль исполнения» видны конкретные замечания и ответственные.</p>
       </section>
@@ -496,7 +497,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Users size={20} className="text-blue-300"/><div><h2 className="text-lg font-bold text-white">Команда и рабочая активность</h2><p className="text-sm text-slate-400">Входы и реальные действия сотрудников в ORDA</p></div></div><Link href="/employees" className="text-sm font-semibold text-blue-300">Сотрудники</Link></div>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><FounderEfficiency label="Сотрудников" value={String(data.team.length)} hint="В контролируемой команде"/><FounderEfficiency label="Активны в месяце" value={`${activeEmployees} / ${data.team.length}`} hint="Есть входы в ORDA"/><FounderEfficiency label="Задач выполнено" value={String(completedTasks)} hint="Фактический результат"/><FounderEfficiency label="Просрочено задач" value={String(overdueTasks)} hint={overdueTasks ? "Нужно вмешательство" : "Просрочек нет"}/></div>
-        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="text-left text-slate-500"><tr>{["Сотрудник", "Активных дней", "Заявки", "Заказы", "Выполнено", "Просрочено", "Последний вход"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((employee) => <tr key={employee.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{employee.name}</b><span className="block text-xs text-slate-500">{roleLabel[employee.role] ?? employee.role}</span></td><td className="px-3">{employee.activeDays}</td><td className="px-3">{employee.leads}</td><td className="px-3">{employee.orders}</td><td className="px-3 text-emerald-300">{employee.completedTasks}</td><td className={employee.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{employee.overdueTasks}</td><td className="px-3 text-slate-400">{employee.lastLogin ? date(employee.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Сотрудник", "Активных дней", "Заявки", "Заказы", "Продажи", "Выполнено", "Просрочено", "Последний вход"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((employee) => <tr key={employee.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{employee.name}</b><span className="block text-xs text-slate-500">{roleLabel[employee.role] ?? employee.role}</span></td><td className="px-3">{employee.activeDays}</td><td className="px-3">{employee.leads}</td><td className="px-3">{employee.orders}</td><td className="px-3 tabular-nums text-emerald-200">{employee.role === "MANAGER" ? money(employee.sales) : "—"}</td><td className="px-3 text-emerald-300">{employee.completedTasks}</td><td className={employee.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{employee.overdueTasks}</td><td className="px-3 text-slate-400">{employee.lastLogin ? date(employee.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
@@ -504,8 +505,8 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
           <FounderEfficiency label="Расход рекламы" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint={data.marketing.spendTracked ? "В аналитике маркетинга" : "Доступ Meta не подключён"}/>
           <FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Все новые заявки CRM"/>
-          <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По новым заявкам CRM"/>
-          <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="По заказам из CRM"/>
+          <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По дате заказа за месяц"/>
+          <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="Продажи заказов месяца"/>
           <FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint={data.marketing.metaAttributionMissing ? "Нужна связь с рекламой" : "Расход / обращения"}/>
           <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint={data.marketing.metaAttributionMissing ? "Нужна связь с рекламой" : "Расход / заказы"}/>
           <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint={data.marketing.metaAttributionMissing ? "Нужна связь с рекламой" : "Выручка / расход"}/>
@@ -602,9 +603,11 @@ function FounderProcessRow({ label, value, href, warning = false }: { label: str
   return <Link href={href} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-900"><span className="text-sm text-slate-300">{label}</span><span className={`text-lg font-bold tabular-nums ${warning ? "text-amber-300" : "text-white"}`}>{value}</span></Link>;
 }
 
-function FounderEfficiency({ label, value, hint, href }: { label: string; value: string; hint: string; href?: string }) {
-  const className = `rounded-xl bg-slate-950/60 p-4 ${href ? "block hover:bg-slate-800" : ""}`;
-  const content = <><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p></>;
+function FounderEfficiency({ label, value, hint, href, tone = "neutral" }: { label: string; value: string; hint: string; href?: string; tone?: "neutral" | "blue" | "emerald" | "amber" | "red" }) {
+  const toneClasses = { neutral: "border-slate-800", blue: "border-blue-500/40", emerald: "border-emerald-500/40", amber: "border-amber-500/50", red: "border-red-500/50" };
+  const valueClasses = { neutral: "text-white", blue: "text-blue-100", emerald: "text-emerald-100", amber: "text-amber-200", red: "text-red-200" };
+  const className = `rounded-xl border bg-slate-950/45 p-4 ${toneClasses[tone]} ${href ? "block hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-blue-400" : ""}`;
+  const content = <><p className="text-sm font-medium text-slate-300">{label}</p><p className={`mt-2 break-words text-2xl font-bold tabular-nums ${valueClasses[tone]}`}>{value}</p><p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p></>;
   return href ? <Link href={href} className={className}>{content}</Link> : <article className={className}>{content}</article>;
 }
 
@@ -650,8 +653,8 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
       <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
         <FounderEfficiency label="Расход" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint="В аналитике маркетинга" />
         <FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Все новые заявки CRM" />
-        <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По новым заявкам CRM" />
-        <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="По заказам из CRM" />
+        <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По дате заказа за месяц" />
+        <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="Продажи заказов месяца" />
         <FounderEfficiency label="Цена лида" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / лиды" />
         <FounderEfficiency label="Цена клиента" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы" />
         <FounderEfficiency label="Конверсия" value={percent(data.marketing.qualifiedShare)} hint="Лид → заказ" />
@@ -663,7 +666,7 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
     </section>
     <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
       <div className="flex items-center gap-2"><Users size={20} className="text-blue-300"/><div><h2 className="text-xl font-bold">Рабочая активность команды</h2><p className="text-sm text-slate-400">Только проверяемые действия в ORDA — без придуманной оценки</p></div></div>
-      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead className="text-left text-slate-500"><tr>{["Сотрудник", "Дней входа", "Заявки", "Заказы", "Задач выполнено", "Просрочено", "Последний вход"].map((label)=><th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((item)=><tr key={item.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{item.name}</b><span className="block text-xs text-slate-500">{roleLabel[item.role] ?? item.role}</span></td><td className="px-3">{item.activeDays}</td><td className="px-3">{item.leads}</td><td className="px-3">{item.orders}</td><td className="px-3 text-emerald-300">{item.completedTasks}</td><td className={item.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{item.overdueTasks}</td><td className="px-3 text-slate-400">{item.lastLogin ? date(item.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
+      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Сотрудник", "Дней входа", "Заявки", "Заказы", "Продажи", "Задач выполнено", "Просрочено", "Последний вход"].map((label)=><th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((item)=><tr key={item.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{item.name}</b><span className="block text-xs text-slate-500">{roleLabel[item.role] ?? item.role}</span></td><td className="px-3">{item.activeDays}</td><td className="px-3">{item.leads}</td><td className="px-3">{item.orders}</td><td className="px-3 tabular-nums text-emerald-200">{item.role === "MANAGER" ? money(item.sales) : "—"}</td><td className="px-3 text-emerald-300">{item.completedTasks}</td><td className={item.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{item.overdueTasks}</td><td className="px-3 text-slate-400">{item.lastLogin ? date(item.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
       {founder && <p className="mt-3 text-xs text-slate-500">Входы показывают интерес к работе только как факт активности. Штрафы не начисляются автоматически: решение всегда принимает основатель.</p>}
     </section>
   </>;

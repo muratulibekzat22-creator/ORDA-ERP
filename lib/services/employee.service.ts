@@ -31,7 +31,7 @@ type EmployeeWithAccount = Prisma.EmployeePayrollProfileGetPayload<{
 
 export class EmployeeError extends Error {}
 
-const positionByRole: Partial<Record<Role, string>> = {
+export const positionByRole: Partial<Record<Role, string>> = {
   [Role.DIRECTOR]: "Основатель / CEO",
   [Role.OPERATIONS_DIRECTOR]: "Директор",
   [Role.MARKETER]: "Маркетолог",

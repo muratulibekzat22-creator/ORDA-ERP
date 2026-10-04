@@ -54,6 +54,7 @@ export async function getDailyCrmSnapshot(input: { dateKey?: string; managerId?:
     companyId,
     active: true,
     role: Role.MANAGER,
+    NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } },
     ...(input.managerId ? { id: input.managerId } : {}),
   };
   const managers = await prisma.user.findMany({ where: managerWhere, select: { id: true, name: true }, orderBy: { name: "asc" } });

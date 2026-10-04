@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     const duplicate = await prisma.client.findFirst({ where: { active: true, deletedAt: null, OR: [{ phone: normalized }, { whatsapp: normalized }] }, select: { id: true, name: true, phone: true, stage: true } });
     if (duplicate && body.allowDuplicate !== true) return NextResponse.json({ error: "Клиент с таким телефоном уже существует", code: "DUPLICATE_PHONE", existingClient: duplicate }, { status: 409 });
     const managerUserId = role === Role.MANAGER ? Number(auth.session!.user.id) : Number(body.managerUserId ?? auth.session!.user.id);
-    const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] } }, select: { id: true, name: true } });
+    const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] }, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } }, select: { id: true, name: true } });
     if (!managerUser) return NextResponse.json({ error: "Некорректный ответственный менеджер" }, { status: 400 });
     const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source);
     if (!sourceCode) return NextResponse.json({ error: "Выберите источник заявки" }, { status: 400 });

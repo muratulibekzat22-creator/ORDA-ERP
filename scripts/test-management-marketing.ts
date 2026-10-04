@@ -92,6 +92,8 @@ async function main() {
           balance: 350_000,
           manager: director.name,
           managerUserId: director.id,
+          orderReceivedAt: new Date("2097-01-12T09:00:00+05:00"),
+          orderDateNeedsReview: false,
         },
       });
       const january = marketingMonthRange("2097-01");

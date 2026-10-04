@@ -28,9 +28,9 @@ export type MarketingAnalytics = {
 
 /**
  * Marketing spend is taken from recorded channel metrics. Inquiries, orders and
- * revenue are taken from the full CRM acquisition cohort so those totals keep
- * working even when the Meta service token is unavailable. The CRM cohort is
- * not attributed to ad campaigns, so ad efficiency ratios stay empty whenever
+ * revenue are taken from CRM by their own event dates in the selected month,
+ * matching the business dashboard. CRM activity is not attributed to ad
+ * campaigns, so ad efficiency ratios stay empty whenever
  * these totals are mixed with automatic Meta spend.
  */
 export async function getMarketingAnalytics(input: {
@@ -73,19 +73,18 @@ export async function getMarketingAnalytics(input: {
     },
     select: { id: true },
   });
-  const crmOrders = crmClients.length
-    ? await prisma.order.findMany({
-        where: {
-          companyId: input.companyId,
-          clientId: { in: crmClients.map((client) => client.id) },
-          deletedAt: null,
-          lifecycle: { not: OrderLifecycle.CANCELLED },
-        },
-        select: { amount: true },
-      })
-    : [];
+  const crmOrders = await prisma.order.findMany({
+    where: {
+      companyId: input.companyId,
+      orderReceivedAt: { gte: input.start, lt: input.end },
+      orderDateNeedsReview: false,
+      deletedAt: null,
+      lifecycle: { not: OrderLifecycle.CANCELLED },
+    },
+    select: { amount: true },
+  });
 
-  const crmTracked = crmClients.length > 0;
+  const crmTracked = crmClients.length > 0 || crmOrders.length > 0;
   const spendTracked = effectiveMetrics.length > 0;
   const automaticMetaTracked = effectiveMetrics.some(
     (metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"),

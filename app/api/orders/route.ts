@@ -292,7 +292,7 @@ export async function POST(request: Request) {
 
     const [manager, partner] = await Promise.all([
       prisma.user.findFirst({
-        where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] } },
+        where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] }, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } },
         select: { id: true, name: true },
       }),
       partnerId

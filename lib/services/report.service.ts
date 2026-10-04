@@ -22,7 +22,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   if (actor.role === Role.MANAGER) scope = { managerUserId: actor.id };
   else if (requestedManager) {
     const managerId = Number(requestedManager);
-    if (!Number.isInteger(managerId) || managerId <= 0 || !await prisma.user.findFirst({ where: { id: managerId, role: Role.MANAGER, active: true }, select: { id: true } })) throw new Error("INVALID_MANAGER");
+    if (!Number.isInteger(managerId) || managerId <= 0 || !await prisma.user.findFirst({ where: { id: managerId, role: Role.MANAGER, active: true, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } }, select: { id: true } })) throw new Error("INVALID_MANAGER");
     scope = { managerUserId: managerId };
   }
   const orderScope: Prisma.OrderWhereInput = { deletedAt: null, ...(scope.managerUserId ? { managerUserId: scope.managerUserId } : {}) };
@@ -38,7 +38,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     prisma.payment.findMany({ where: { operationDate: range(period.start, period.end), order: activeOrder }, select: { amount: true, type: true, operationDate: true, order: { select: { managerUserId: true } } } }),
     prisma.payment.findMany({ where: { operationDate: range(period.previousStart, period.previousEnd), order: activeOrder }, select: { amount: true, type: true } }),
     prisma.production.groupBy({ by: ["stage"], where: { order: { ...orderScope, lifecycle: { not: "CANCELLED" }, orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) } }, _count: { _all: true }, orderBy: { stage: "asc" } }),
-    leadership(actor.role) || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
+    leadership(actor.role) || actor.role === Role.ACCOUNTANT ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : prisma.user.findMany({ where: { id: actor.id }, select: { id: true, name: true } }),
     prisma.order.count({ where: { ...orderScope, lifecycle: "COMPLETED", completedAt: range(period.start, period.end) } }),
   ]);
   const internalFinance = leadership(actor.role) || actor.role === Role.ACCOUNTANT;
