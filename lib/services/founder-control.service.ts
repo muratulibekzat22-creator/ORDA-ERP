@@ -4,23 +4,26 @@ import { requireTenantIdentity } from "@/lib/tenant-context";
 import { detectControlIssues } from "@/lib/control/rules";
 
 async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) {
+  const companyId = requireTenantIdentity().companyId;
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000);
   const [leads, orders, users, tasks] = await Promise.all([
-    db.client.findMany({ where: { active: true, deletedAt: null, stage: { notIn: ["WON", "LOST"] } }, select: {
+    db.client.findMany({ where: { companyId, active: true, deletedAt: null, stage: { notIn: ["WON", "LOST"] } }, select: {
       id: true, name: true, managerUserId: true, createdAt: true, nextContactAt: true,
       nextActions: { select: { nextActionAt: true, completedAt: true, resultComment: true, nextActionType: true } },
       interactions: { take: 1, orderBy: { createdAt: "desc" }, select: { createdAt: true } },
     } }),
-    db.order.findMany({ where: { deletedAt: null, lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } }, select: {
+    db.order.findMany({ where: { companyId, deletedAt: null, lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } }, select: {
       id: true, number: true, clientId: true, managerUserId: true, partnerId: true,
       partnerPrice: true, partnerAgreedAt: true, promisedAt: true, productionDeadline: true, lifecycle: true,
       client: { select: { phone: true, city: true } },
     } }),
-    db.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true } }),
-    db.calendarTask.findMany({ where: { OR: [
+    db.user.findMany({ where: { companyId, active: true }, select: { id: true, name: true, role: true } }),
+    db.calendarTask.findMany({ where: { companyId, OR: [
       { controlKey: { not: null } },
       { workflow: { in: [CalendarTaskWorkflow.PAYMENT_COLLECTION, CalendarTaskWorkflow.DAILY_CRM_REPORT, CalendarTaskWorkflow.ORDER_DATA_COMPLETION] }, status: { in: ["PLANNED", "IN_PROGRESS"] } },
+      { workflow: { in: [CalendarTaskWorkflow.PAYMENT_COLLECTION, CalendarTaskWorkflow.DAILY_CRM_REPORT, CalendarTaskWorkflow.ORDER_DATA_COMPLETION] }, status: "COMPLETED", completedAt: { gte: sevenDaysAgo } },
     ] }, select: {
-      id: true, controlKey: true, workflow: true, expectedAmount: true, assigneeId: true, status: true, dueAt: true, acknowledgedAt: true,
+      id: true, title: true, controlKey: true, workflow: true, expectedAmount: true, assigneeId: true, status: true, dueAt: true, completedAt: true, acknowledgedAt: true,
       resultSubmittedAt: true, controlVerifiedAt: true, controlRemindedAt: true, createdAt: true,
       orderId: true, clientId: true, order: { select: { number: true, client: { select: { name: true } } } },
     } }),
@@ -53,6 +56,11 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
 
 export async function getFounderControl() {
   const snapshot = await inspect();
+  const userNames = new Map(snapshot.users.map((user) => [user.id, user.name]));
+  const sevenDaysAgo = new Date(new Date(snapshot.checkedAt).getTime() - 7 * 86400000);
+  const completedTasks = snapshot.tasks
+    .filter((task) => task.status === "COMPLETED" && task.completedAt && task.completedAt >= sevenDaysAgo)
+    .sort((left, right) => Number(right.completedAt) - Number(left.completedAt));
   const issueGroups = [
     {
       key: "group:lead-follow-up",
@@ -94,6 +102,28 @@ export async function getFounderControl() {
     assigneeId: operationsDirector?.id ?? null,
     priority: group.rows.some((issue) => issue.priority === "URGENT") ? "URGENT" : "IMPORTANT",
     task: null,
+    details: group.rows.map((issue) => {
+      const linkedTask = snapshot.tasks.find((task) =>
+        ["PLANNED", "IN_PROGRESS"].includes(task.status) && (
+          ("taskId" in issue && task.id === issue.taskId) ||
+          (issue.key.endsWith(":data") && issue.orderId && task.orderId === issue.orderId && task.workflow === CalendarTaskWorkflow.ORDER_DATA_COMPLETION)
+        ),
+      );
+      return {
+        key: issue.key,
+        title: issue.title,
+        reason: issue.reason,
+        action: issue.action,
+        href: issue.href,
+        priority: issue.priority,
+        assignee: issue.assigneeId ? userNames.get(issue.assigneeId) ?? "Ответственный не найден" : "Ответственный не назначен",
+        status: linkedTask?.status === "IN_PROGRESS"
+          ? "В работе"
+          : linkedTask?.acknowledgedAt
+            ? "Ознакомлен"
+            : "Ожидает исправления",
+      };
+    }),
   })), summary: {
     total: snapshot.issues.length,
     groups: issueGroups.length,
@@ -102,7 +132,14 @@ export async function getFounderControl() {
     unacknowledged: snapshot.tasks.filter(t => !t.acknowledgedAt && !["COMPLETED", "CANCELLED"].includes(t.status) && (t.workflow !== CalendarTaskWorkflow.PAYMENT_COLLECTION || t.dueAt <= new Date())).length,
     overdue: snapshot.tasks.filter(t => t.dueAt < new Date() && !t.controlVerifiedAt && t.status !== "CANCELLED" && t.status !== "COMPLETED").length,
     verified: snapshot.tasks.filter(t => t.controlVerifiedAt).length,
-  } };
+    completedLast7Days: completedTasks.length,
+  }, recentCompleted: completedTasks.slice(0, 10).map((task) => ({
+    id: task.id,
+    title: task.title,
+    completedAt: task.completedAt,
+    href: task.orderId ? `/orders/${task.orderId}` : task.clientId ? `/clients/${task.clientId}` : "/calendar",
+    assignee: userNames.get(task.assigneeId) ?? "Сотрудник",
+  })) };
 }
 
 export async function runFounderControl(actorId: number, keys?: string[], now = new Date()) {

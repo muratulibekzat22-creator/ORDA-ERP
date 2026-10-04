@@ -32,6 +32,7 @@ type ManagementPayload = {
     from: string;
     to: string;
     orders: number;
+    leads: number;
     revenue: number;
     received: number;
     ordersWithProductionPrice: number;
@@ -43,6 +44,16 @@ type ManagementPayload = {
   finance: {
     revenue: number;
     received: number;
+    receivedForPeriodOrders: number;
+    receivedFromOtherOrders: number;
+    customerPayments: Array<{
+      id: number;
+      orderId: number | null;
+      orderNumber: string;
+      operationDate: string;
+      amount: number;
+      fromPeriodOrder: boolean;
+    }>;
     directExpenses: number;
     additionalIncome: number;
     operatingExpenses: number;
@@ -59,6 +70,14 @@ type ManagementPayload = {
     activeProductionCost: number;
     activeOrdersWithProductionPrice: number;
     pendingOrderDates: number;
+    productionCostOrders: Array<{ id: number; number: string; amount: number }>;
+    operatingExpenseEntries: Array<{
+      id: number;
+      category: string;
+      amount: number;
+      operationDate: string;
+      comment: string | null;
+    }>;
   };
   orders: {
     active: number;
@@ -230,8 +249,18 @@ const incomeCategories = [
 const expenseLabel = Object.fromEntries(expenseCategories);
 const money = (value: number) =>
   `${Math.round(value).toLocaleString("ru-RU")} ₸`;
-const today = () => new Date().toISOString().slice(0, 10);
-const currentMonth = () => new Date().toISOString().slice(0, 7);
+const companyToday = () => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Almaty",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+};
+const today = () => companyToday();
+const currentMonth = () => companyToday().slice(0, 7);
 const date = (value: string | null) =>
   value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Без срока";
 
@@ -361,10 +390,16 @@ function percent(value: number | null) {
 }
 
 function FounderDashboard({ data }: { data: ManagementPayload }) {
+  const [detailsOpen, setDetailsOpen] = useState<"cash" | "costs" | "profit" | null>(null);
+  const revealDetails = (view: "cash" | "costs" | "profit") => {
+    setDetailsOpen(view);
+    window.setTimeout(() => document.getElementById("founder-finance-details")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
   const totalOrders = data.finance.ordersWithMargin + data.finance.ordersWithoutMargin;
   const averageOrder = totalOrders > 0 ? data.finance.revenue / totalOrders : null;
-  const collectionRate = data.finance.revenue > 0 ? data.finance.received / data.finance.revenue * 100 : null;
   const totalExpenses = data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued;
+  const monthLabel = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "Asia/Almaty" })
+    .format(new Date(`${data.month}-15T12:00:00Z`));
   const outstanding = data.finance.customerOutstanding;
   const profitLabel = "Чистая прибыль";
   const activeEmployees = data.team.filter((employee) => employee.activeDays > 0).length;
@@ -390,23 +425,29 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint={`${data.weekly.orders} заказов`} />
           <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint="Фактические поступления минус возвраты" />
+          <FounderEfficiency label="Обращения в CRM" value={String(data.weekly.leads)} hint="Новые заявки за 7 дней" href="/clients" />
           <FounderEfficiency label="Цена производства заполнена" value={`${data.weekly.ordersWithProductionPrice} / ${data.weekly.orders}`} hint="По новым заказам недели" />
-          <FounderEfficiency label="Исключения директору" value={String(data.weekly.overdueOrders + data.weekly.incompleteOrders + data.weekly.overdueTeamTasks)} hint={`${data.weekly.overdueOrders} заказов просрочено · ${data.weekly.incompleteOrders} нужно дополнить · ${data.weekly.overdueTeamTasks} задач просрочено`} />
         </div>
-        <p className="mt-3 text-xs leading-5 text-slate-400">Основатель утверждает только исключения выше согласованного лимита. Ежедневное исправление карточек, сроки и дисциплина команды — ответственность директора.</p>
-        <p className="mt-2 text-xs leading-5 text-slate-500">Отложено по решению основателя: полная доработка калькулятора и отдельное подключение бухгалтера. Эти пункты не блокируют текущую автоматизацию.</p>
+        <p className="mt-4 text-sm font-semibold text-white">Открытые вопросы директору сейчас</p>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          <FounderEfficiency label="Просроченные заказы" value={String(data.weekly.overdueOrders)} hint="Открыть список заказов" href="/orders?tab=active&attention=overdue" />
+          <FounderEfficiency label="Нужно дополнить" value={String(data.weekly.incompleteOrders)} hint="Открыть неполные карточки" href="/orders?tab=active&attention=incomplete" />
+          <FounderEfficiency label="Просроченные задачи" value={String(data.weekly.overdueTeamTasks)} hint="Открыть просроченные задачи" href="/calendar?state=overdue" />
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-400">Эти три показателя показывают состояние на сейчас. В карточке «Контроль исполнения» видны конкретные замечания и ответственные.</p>
       </section>
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-xl font-bold text-white">Главная картина бизнеса</h2><p className="text-sm text-slate-400">Деньги и результат за выбранный месяц</p></div>
+          <div><h2 className="text-xl font-bold text-white">Главная картина бизнеса</h2><p className="text-sm text-slate-400">Деньги и результат за {monthLabel}</p></div>
           <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${attention.length ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>{attention.length ? `Требуют внимания: ${attention.length}` : "Всё под контролем"}</span>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
           <FounderKpi label="Оборот компании" value={money(data.finance.revenue)} hint={`${totalOrders} заказов · средний чек ${averageOrder === null ? "—" : money(averageOrder)}`} tone="blue" />
-          <FounderKpi label="Получено денег" value={money(data.finance.received)} hint={`${percent(collectionRate)} от оборота`} tone="cyan" />
-          <FounderKpi label="Все учтённые расходы" value={money(totalExpenses)} hint="Производство + операционные + зарплата" tone="amber" />
-          <FounderKpi label={profitLabel} value={data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных"} hint={data.finance.dataComplete ? `Маржа ${percent(data.finance.netMargin)} · рентабельность ${percent(data.finance.businessProfitability)}` : "Заполните подтверждённую цену производства по всем заказам периода"} tone={data.finance.dataComplete ? "emerald" : "amber"} />
+          <FounderKpi label="Получено денег" value={money(data.finance.received)} hint={`По заказам месяца ${money(data.finance.receivedForPeriodOrders)} · открыть платежи`} tone="cyan" onClick={() => setDetailsOpen(detailsOpen === "cash" ? null : "cash")} />
+          <FounderKpi label="Затраты и расходы месяца" value={money(totalExpenses)} hint="Цены производства заказов месяца + расходы + начисленная зарплата · открыть состав" tone="amber" onClick={() => setDetailsOpen(detailsOpen === "costs" ? null : "costs")} />
+          <FounderKpi label={profitLabel} value={data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных"} hint={data.finance.dataComplete ? `Маржа ${percent(data.finance.netMargin)} · открыть расчёт` : "Открыть расчёт и заполнить цены производства"} tone={data.finance.dataComplete ? "emerald" : "amber"} onClick={() => setDetailsOpen(detailsOpen === "profit" ? null : "profit")} />
         </div>
+        {detailsOpen && <FounderFinanceDetails data={data} view={detailsOpen} monthLabel={monthLabel} />}
         {attention.length ? <div className="mt-4 flex flex-wrap gap-2">{attention.map((item) => <span key={item} className="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">{item}</span>)}</div> : null}
       </section>
 
@@ -418,18 +459,20 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
           <div className="mt-4 overflow-hidden rounded-xl border border-slate-800">
             <table className="w-full text-sm"><tbody>
               <FounderFinanceRow label="Оборот по заказам" value={data.finance.revenue} />
-              <FounderFinanceRow label="Поступило от клиентов" value={data.finance.received} />
-              <FounderFinanceRow label="Осталось получить по заказам" value={outstanding} warning={outstanding > 0} />
-              <FounderFinanceRow label="Цена производства активных заказов" value={data.finance.activeProductionCost} />
+              <FounderFinanceRow label="Поступило от клиентов" value={data.finance.received} onClick={() => revealDetails("cash")} />
+              <FounderFinanceRow label="По заказам выбранного месяца" value={data.finance.receivedForPeriodOrders} />
+              <FounderFinanceRow label="По заказам вне оборота месяца" value={data.finance.receivedFromOtherOrders} />
+              <FounderFinanceRow label="Осталось получить по всем активным заказам" value={outstanding} warning={outstanding > 0} />
+              <FounderFinanceRow label="Цена производства всех активных заказов" value={data.finance.activeProductionCost} />
               <FounderFinanceRow label="Прочие доходы" value={data.finance.additionalIncome} />
               <FounderFinanceRow label="Цена производства заказов месяца" value={data.finance.directExpenses} expense />
-              <FounderFinanceRow label="Операционные расходы" value={data.finance.operatingExpenses} expense />
+              <FounderFinanceRow label="Операционные расходы по дате операции" value={data.finance.operatingExpenses} expense />
               <FounderFinanceRow label="Начисленная зарплата" value={data.finance.payrollAccrued} expense />
-              <FounderFinanceRow label="Итого учтённых расходов" value={totalExpenses} expense strong />
-              {data.finance.dataComplete ? <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit /> : <tr className="border-t-2 border-slate-700"><td className="px-4 py-3">{profitLabel}</td><td className="px-4 py-3 text-right text-amber-200">Недостаточно данных</td></tr>}
+              <FounderFinanceRow label="Затраты и расходы месяца" value={totalExpenses} expense strong onClick={() => revealDetails("costs")} />
+              {data.finance.dataComplete ? <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit onClick={() => revealDetails("profit")} /> : <tr className="border-t-2 border-slate-700"><td className="px-4 py-3">{profitLabel}</td><td className="px-4 py-3 text-right text-amber-200">Недостаточно данных</td></tr>}
             </tbody></table>
           </div>
-          {totalOrders === 0 ? <p className="mt-3 text-xs leading-5 text-slate-400">В выбранном месяце нет продаж по подтверждённой фактической дате. Поступления могут относиться к договорам прошлых месяцев; текущий долг клиентов и цена производства активных заказов показаны отдельно.</p> : null}
+          <p className="mt-3 text-xs leading-5 text-slate-400">Поступления считаются по дате платежа, оборот — по дате заказа. Поэтому деньги по старым заказам могут быть больше оборота этого месяца. Цена производства — затрата по заказам месяца, даже если фактическая выплата цеху была в другой день.</p>
           {data.finance.pendingOrderDates > 0 ? <p className="mt-3 text-xs leading-5 text-amber-200">Ещё {data.finance.pendingOrderDates} заказов не входят в отчёт месяца, пока менеджеры не подтвердят фактическую дату заказа.</p> : null}
           {!data.finance.dataComplete ? <p className="mt-3 text-xs leading-5 text-amber-200">Прибыль не рассчитана: цена производства заполнена по {data.finance.ordersWithMargin} из {totalOrders} заказов. Учтённые расходы показаны отдельно и не означают полноту данных.</p> : null}
         </article>
@@ -442,7 +485,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
             <FounderProcessRow label="Передано и в работе" value={data.orders.transferredToWorkshop + data.orders.inWork} href="/orders?tab=active&status=IN_WORK" />
             <FounderProcessRow label="Готово и на монтаже" value={data.orders.readyForInstallation + data.orders.installation} href="/orders?tab=active&status=INSTALLATION" />
             <FounderProcessRow label="Просрочено" value={data.orders.overdue} href="/orders?tab=active&attention=overdue" warning={data.orders.overdue > 0} />
-            <FounderProcessRow label="Нужно дополнить" value={data.orders.incompleteData} href="/orders?tab=active" warning={data.orders.incompleteData > 0} />
+            <FounderProcessRow label="Нужно дополнить" value={data.orders.incompleteData} href="/orders?tab=active&attention=incomplete" warning={data.orders.incompleteData > 0} />
           </div>
         </article>
       </section>
@@ -466,28 +509,98 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
   );
 }
 
-function FounderKpi({ label, value, hint, tone }: { label: string; value: string; hint: string; tone: "blue" | "cyan" | "amber" | "emerald" }) {
-  const tones = { blue: "border-blue-500/25 bg-blue-500/5 text-blue-200", cyan: "border-cyan-500/25 bg-cyan-500/5 text-cyan-200", amber: "border-amber-500/25 bg-amber-500/5 text-amber-200", emerald: "border-emerald-500/25 bg-emerald-500/5 text-emerald-200" };
-  return <article className={`rounded-xl border p-4 ${tones[tone]}`}><p className="text-sm">{label}</p><p className="mt-2 break-words text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p></article>;
+function FounderFinanceDetails({ data, view, monthLabel }: { data: ManagementPayload; view: "cash" | "costs" | "profit"; monthLabel: string }) {
+  const finance = data.finance;
+  return (
+    <section id="founder-finance-details" className="mt-4 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+      <h3 className="font-bold text-white">
+        {view === "cash" ? "Поступления" : view === "costs" ? "Состав затрат и расходов" : "Расчёт чистой прибыли"} · {monthLabel}
+      </h3>
+      {view === "cash" ? (
+        <>
+          <p className="mt-2 text-sm text-slate-300">Платежи привязаны к месяцу по дате получения. Оборот учитывает заказы с подтверждённой датой выбранного месяца. Поэтому поступления по старым заказам или заказам без подтверждённой даты могут быть больше оборота.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <MetricLine label="Все поступления" value={finance.received} />
+            <MetricLine label="Заказы этого месяца" value={finance.receivedForPeriodOrders} />
+            <MetricLine label="Заказы вне оборота месяца" value={finance.receivedFromOtherOrders} />
+          </div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+            {finance.customerPayments.map((payment) => (
+              <Link key={payment.id} href={payment.orderId ? `/orders/${payment.orderId}` : "/finance"} className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800">
+                <span>{date(payment.operationDate)} · {payment.orderNumber} <small className="text-slate-500">{payment.fromPeriodOrder ? "в обороте месяца" : "вне оборота месяца"}</small></span>
+                <b className={payment.amount < 0 ? "text-red-300" : "text-emerald-300"}>{money(payment.amount)}</b>
+              </Link>
+            ))}
+            {!finance.customerPayments.length && <p className="text-sm text-slate-400">Поступлений за этот месяц нет.</p>}
+          </div>
+        </>
+      ) : (
+        <>
+          {view === "profit" && (
+            <div className="mt-3 space-y-1 rounded-lg bg-slate-900 p-3 text-sm">
+              <MetricLine label="Продажи с подтверждённой ценой производства" value={finance.pricedRevenue} />
+              <MetricLine label="Прочие доходы месяца" value={finance.additionalIncome} />
+              <MetricLine label="Цена производства заказов месяца" value={-finance.directExpenses} />
+              <MetricLine label="Операционные расходы по дате операции" value={-finance.operatingExpenses} />
+              <MetricLine label="Начисленная зарплата месяца" value={-finance.payrollAccrued} />
+              <MetricLine label={finance.dataComplete ? "Чистая прибыль" : "Промежуточный итог по заполненным заказам"} value={finance.netProfit} strong />
+              {!finance.dataComplete && <p className="pt-2 text-amber-200">Расчёт неполный: {finance.ordersWithoutMargin} заказ(а) без подтверждённой цены производства.</p>}
+            </div>
+          )}
+          <p className="mt-3 text-sm text-slate-300">Цена производства относится к заказам {monthLabel}, операционные расходы — к фактической дате записи, зарплата — к расчётному месяцу. Расходы сентября не переносятся в октябрь автоматически.</p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div>
+              <h4 className="text-sm font-semibold text-white">Производство по заказам · {money(finance.directExpenses)}</h4>
+              <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                {finance.productionCostOrders.map((order) => <Link key={order.id} href={`/orders/${order.id}`} className="flex justify-between rounded-lg bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"><span>{order.number}</span><b>{money(order.amount)}</b></Link>)}
+                {!finance.productionCostOrders.length && <p className="text-sm text-slate-500">Заказов с подтверждённой ценой нет.</p>}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-white">Операционные расходы · {money(finance.operatingExpenses)}</h4>
+              <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                {finance.operatingExpenseEntries.map((entry) => <div key={entry.id} className="flex justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm"><span>{date(entry.operationDate)} · {expenseLabel[entry.category] ?? entry.category}{entry.comment ? ` · ${entry.comment}` : ""}</span><b className="shrink-0">{money(entry.amount)}</b></div>)}
+                {!finance.operatingExpenseEntries.length && <p className="text-sm text-slate-500">Операционных расходов за месяц нет.</p>}
+              </div>
+            </div>
+          </div>
+          <Link href="/payroll" className="mt-3 inline-block text-sm font-semibold text-blue-300">Начисленная зарплата · {money(finance.payrollAccrued)} → открыть ведомость</Link>
+        </>
+      )}
+    </section>
+  );
 }
 
-function FounderFinanceRow({ label, value, expense = false, warning = false, strong = false, profit = false }: { label: string; value: number; expense?: boolean; warning?: boolean; strong?: boolean; profit?: boolean }) {
-  return <tr className={strong ? "border-t-2 border-slate-700 bg-slate-900/70" : "border-t border-slate-800 first:border-0"}><td className={`px-4 py-3 ${strong ? "font-semibold text-white" : "text-slate-300"}`}>{label}</td><td className={`px-4 py-3 text-right tabular-nums ${profit ? value >= 0 ? "font-bold text-emerald-300" : "font-bold text-red-300" : warning ? "font-semibold text-amber-300" : expense ? "text-slate-200" : "font-semibold text-white"}`}>{expense && value > 0 ? "− " : ""}{money(value)}</td></tr>;
+function MetricLine({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+  return <div className={`flex justify-between gap-3 py-1 ${strong ? "border-t border-slate-700 pt-2 font-bold text-white" : "text-slate-300"}`}><span>{label}</span><b className="shrink-0 tabular-nums">{money(value)}</b></div>;
+}
+
+function FounderKpi({ label, value, hint, tone, onClick }: { label: string; value: string; hint: string; tone: "blue" | "cyan" | "amber" | "emerald"; onClick?: () => void }) {
+  const tones = { blue: "border-blue-500/25 bg-blue-500/5 text-blue-200", cyan: "border-cyan-500/25 bg-cyan-500/5 text-cyan-200", amber: "border-amber-500/25 bg-amber-500/5 text-amber-200", emerald: "border-emerald-500/25 bg-emerald-500/5 text-emerald-200" };
+  const className = `rounded-xl border p-4 text-left ${tones[tone]} ${onClick ? "cursor-pointer hover:border-white/50" : ""}`;
+  const content = <><p className="text-sm">{label}</p><p className="mt-2 break-words text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p></>;
+  return onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>;
+}
+
+function FounderFinanceRow({ label, value, expense = false, warning = false, strong = false, profit = false, onClick }: { label: string; value: number; expense?: boolean; warning?: boolean; strong?: boolean; profit?: boolean; onClick?: () => void }) {
+  return <tr className={strong ? "border-t-2 border-slate-700 bg-slate-900/70" : "border-t border-slate-800 first:border-0"}><td className={`px-4 py-3 ${strong ? "font-semibold text-white" : "text-slate-300"}`}>{onClick ? <button type="button" onClick={onClick} className="text-left underline decoration-dotted underline-offset-4 hover:text-blue-200">{label}</button> : label}</td><td className={`px-4 py-3 text-right tabular-nums ${profit ? value >= 0 ? "font-bold text-emerald-300" : "font-bold text-red-300" : warning ? "font-semibold text-amber-300" : expense ? "text-slate-200" : "font-semibold text-white"}`}>{expense && value > 0 ? "− " : ""}{money(value)}</td></tr>;
 }
 
 function FounderProcessRow({ label, value, href, warning = false }: { label: string; value: number; href: string; warning?: boolean }) {
   return <Link href={href} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-900"><span className="text-sm text-slate-300">{label}</span><span className={`text-lg font-bold tabular-nums ${warning ? "text-amber-300" : "text-white"}`}>{value}</span></Link>;
 }
 
-function FounderEfficiency({ label, value, hint }: { label: string; value: string; hint: string }) {
-  return <article className="rounded-xl bg-slate-950/60 p-4"><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p></article>;
+function FounderEfficiency({ label, value, hint, href }: { label: string; value: string; hint: string; href?: string }) {
+  const className = `rounded-xl bg-slate-950/60 p-4 ${href ? "block hover:bg-slate-800" : ""}`;
+  const content = <><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p></>;
+  return href ? <Link href={href} className={className}>{content}</Link> : <article className={className}>{content}</article>;
 }
 
 function OperationsDashboard({ data }: { data: OperationsPayload }) {
   const cards = [
     ["Активные заказы", data.orders.active, "/orders?tab=active"],
     ["Просроченные", data.orders.overdue, "/orders?tab=active&attention=overdue"],
-    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active"],
+    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active&attention=incomplete"],
     ["Передано в цех", data.orders.transferredToWorkshop + data.orders.inWork, "/orders?tab=active&status=IN_WORK"],
   ] as const;
   return <>
@@ -584,7 +697,7 @@ function ManagementDashboard({
     ["На монтаже", data.orders.installation, "/orders?tab=active&status=INSTALLATION"],
     ["Просрочено", data.orders.overdue, "/orders?tab=active&attention=overdue"],
     ["Без цены производства", data.orders.missingProductionPrice, "/orders?tab=active&attention=missing-production-price"],
-    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active"],
+    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active&attention=incomplete"],
   ] as const;
   return (
     <>

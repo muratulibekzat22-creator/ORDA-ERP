@@ -18,6 +18,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
+import { splitDashboardReceipts } from "@/lib/finance/dashboard-receipts";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
 
@@ -157,7 +158,7 @@ async function managementProjection(scope: DashboardScope) {
     select: typeof orderEconomySelect;
   }>;
 
-  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm, weeklyOrders, weeklyPayments] = await Promise.all([
+  const [orders, payments, ledgerEntries, payrollPeriod, marketingMetrics, teamUsers, loginEvents, teamLeads, teamOrders, completedTasks, overdueTasks, designLeads, dailyCrm, weeklyOrders, weeklyPayments, weeklyLeads] = await Promise.all([
     prisma.order.findMany({
       where: {
         companyId,
@@ -174,8 +175,7 @@ async function managementProjection(scope: DashboardScope) {
       select: orderEconomySelect,
       orderBy: [{ promisedAt: "asc" }, { createdAt: "desc" }],
     }) as Promise<DashboardOrder[]>,
-    prisma.payment.groupBy({
-      by: ["type"],
+    prisma.payment.findMany({
       where: {
         operationDate: { gte: period.start, lt: period.end },
         type: {
@@ -193,7 +193,15 @@ async function managementProjection(scope: DashboardScope) {
           lifecycle: { not: OrderLifecycle.CANCELLED },
         },
       },
-      _sum: { amount: true },
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        orderId: true,
+        operationDate: true,
+        order: { select: { number: true } },
+      },
+      orderBy: [{ operationDate: "desc" }, { id: "desc" }],
     }),
     prisma.companyLedgerEntry.findMany({
       where: {
@@ -302,6 +310,14 @@ async function managementProjection(scope: DashboardScope) {
       },
       _sum: { amount: true },
     }),
+    prisma.client.count({
+      where: {
+        companyId,
+        active: true,
+        deletedAt: null,
+        createdAt: { gte: week.start, lt: week.end },
+      },
+    }),
   ]);
 
   const [payrollAccruals, payrollPayments, customerBalance] = await Promise.all([
@@ -364,10 +380,9 @@ async function managementProjection(scope: DashboardScope) {
     economy: economyFor(order),
   }));
   const revenue = periodOrders.reduce((sum, order) => sum + Number(order.amount), 0);
-  const received = payments.reduce((sum, row) => {
-    const amount = Number(row._sum.amount ?? 0);
-    return sum + (row.type === "REFUND" ? -amount : amount);
-  }, 0);
+  const periodOrderIds = new Set(periodOrders.map((order) => order.id));
+  const receipts = splitDashboardReceipts(payments, periodOrderIds);
+  const { received, receivedForPeriodOrders, receivedFromOtherOrders } = receipts;
   const pricedEconomies = periodEconomies.filter(
     ({ order }) =>
       Number(order.amount) > 0 &&
@@ -513,6 +528,7 @@ async function managementProjection(scope: DashboardScope) {
       from: week.start,
       to: week.end,
       orders: weeklyOrders.length,
+      leads: weeklyLeads,
       revenue: weeklyRevenue,
       received: weeklyReceived,
       ordersWithProductionPrice: weeklyPricedOrders.length,
@@ -524,6 +540,16 @@ async function managementProjection(scope: DashboardScope) {
     finance: {
       revenue,
       received,
+      receivedForPeriodOrders,
+      receivedFromOtherOrders,
+      customerPayments: receipts.classified.map(({ payment, amount, fromPeriodOrder }) => ({
+        id: payment.id,
+        orderId: payment.orderId,
+        orderNumber: payment.order?.number ?? "Без номера заказа",
+        operationDate: payment.operationDate,
+        amount,
+        fromPeriodOrder,
+      })),
       directExpenses,
       additionalIncome,
       operatingExpenses,
@@ -540,6 +566,18 @@ async function managementProjection(scope: DashboardScope) {
       activeProductionCost,
       activeOrdersWithProductionPrice: activeOrdersWithProductionPrice.length,
       pendingOrderDates,
+      productionCostOrders: pricedEconomies.map(({ order }) => ({
+        id: order.id,
+        number: order.number,
+        amount: Number(order.partnerPrice),
+      })),
+      operatingExpenseEntries: operatingEntries.map((entry) => ({
+        id: entry.id,
+        category: entry.category,
+        amount: Number(entry.amount),
+        operationDate: entry.operationDate,
+        comment: entry.comment,
+      })),
     },
     orders: {
       active: activeOrders.length,
