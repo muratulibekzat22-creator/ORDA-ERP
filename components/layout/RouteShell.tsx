@@ -150,7 +150,8 @@ export default function RouteShell({
       marketing: "marketing",
     };
     const permission = required[first];
-    if (permission && !(first === "sales-plan" && role === "MANAGER") && !grantedPermissions.includes(permission)) router.replace("/");
+    const selfPayroll = first === "payroll" && accountRole !== "PARTNER";
+    if (permission && !selfPayroll && !(first === "sales-plan" && role === "MANAGER") && !grantedPermissions.includes(permission)) router.replace("/");
   }, [accountRole, founder, grantedPermissions, pathname, role, router]);
   useEffect(() => {
     if (!open) return;
