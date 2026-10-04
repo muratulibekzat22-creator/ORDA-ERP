@@ -110,12 +110,7 @@ export async function getCalendarMeta(actor: CalendarActor) {
     ...(actor.role === Role.DIRECTOR
       ? {}
       : actor.role === Role.MANAGER
-        ? {
-            OR: [
-              { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId },
-              { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: null, manager: actor.name },
-            ],
-          }
+        ? { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId }
         : { id: -1 }),
   };
   const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };

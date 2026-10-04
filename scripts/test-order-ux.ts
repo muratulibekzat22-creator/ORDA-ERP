@@ -249,7 +249,7 @@ assert.match(
 );
 assert.match(
   reportService,
-  /item\.responsibleType === OrderResponsibleType\.EMPLOYEE && item\.managerUserId/,
+  /order\.responsibleType === OrderResponsibleType\.COMPANY \? null : ownerAt/,
   "company-owned orders must not increase manager report metrics",
 );
 assert.match(
