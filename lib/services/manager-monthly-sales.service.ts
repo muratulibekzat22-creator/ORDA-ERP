@@ -2,6 +2,7 @@ import { OrderLifecycle, Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { hasProductionPrice } from "@/lib/orders/production-price";
+import { loadOwnershipChanges, ownerAt } from "@/lib/services/handover-attribution";
 
 export type ManagerMonthlySalesRow = {
   userId: number;
@@ -26,13 +27,12 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
   const [users, leads, orders, plan] = await Promise.all([
     prisma.user.findMany({
       where: { companyId: input.companyId, role: Role.MANAGER },
-      select: { id: true, name: true, active: true, payrollProfile: { select: { position: true } } },
+      select: { id: true, name: true, active: true, payrollProfile: { select: { position: true, hiredAt: true, terminatedAt: true } } },
       orderBy: { name: "asc" },
     }),
-    prisma.client.groupBy({
-      by: ["managerUserId"],
+    prisma.client.findMany({
       where: { companyId: input.companyId, active: true, deletedAt: null, createdAt: { gte: input.start, lt: input.end }, managerUserId: { not: null } },
-      _count: { _all: true },
+      select: { id: true, managerUserId: true, createdAt: true },
     }),
     prisma.order.findMany({
       where: {
@@ -42,12 +42,16 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
         orderDateNeedsReview: false,
         orderReceivedAt: { gte: input.start, lt: input.end },
       },
-      select: { managerUserId: true, manager: true, amount: true, partnerPrice: true, partnerAgreedAt: true },
+      select: { id: true, managerUserId: true, manager: true, amount: true, partnerPrice: true, partnerAgreedAt: true, orderReceivedAt: true },
     }),
     prisma.salesPlan.findUnique({
       where: { companyId_year_month: { companyId: input.companyId, year: localStart.getUTCFullYear(), month: localStart.getUTCMonth() + 1 } },
       select: { managerTargets: { select: { managerId: true, revenueTarget: true, orderTarget: true } } },
     }),
+  ]);
+  const [leadChanges, orderChanges] = await Promise.all([
+    loadOwnershipChanges(input.companyId, "clients", leads.map((lead) => lead.id)),
+    loadOwnershipChanges(input.companyId, "orders", orders.map((order) => order.id)),
   ]);
   const rows: ManagerMonthlySalesRow[] = users
     .filter((user) => !/замер/i.test(user.payrollProfile?.position ?? ""))
@@ -55,7 +59,7 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
       userId: user.id,
       name: user.name,
       active: user.active,
-      leads: leads.find((lead) => lead.managerUserId === user.id)?._count._all ?? 0,
+      leads: leads.filter((lead) => ownerAt(lead.managerUserId, lead.createdAt, leadChanges.get(lead.id)) === user.id).length,
       orders: 0,
       sales: 0,
       pricedOrders: 0,
@@ -72,7 +76,8 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
   let otherOrders = 0;
   let otherSales = 0;
   for (const order of orders) {
-    const row = (order.managerUserId ? byId.get(order.managerUserId) : undefined)
+    const historicalOwner = ownerAt(order.managerUserId, order.orderReceivedAt, orderChanges.get(order.id));
+    const row = (historicalOwner ? byId.get(historicalOwner) : undefined)
       ?? (!order.managerUserId ? byName.get(order.manager.trim().toLocaleLowerCase("ru")) : undefined);
     if (row) {
       row.orders += 1;
@@ -95,7 +100,11 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
       : null;
   }
   return {
-    rows: rows.filter((row) => row.active || row.orders > 0 || row.leads > 0 || row.planOrders !== null || row.planSales !== null),
+    rows: rows.filter((row) => {
+      const profile = users.find((user) => user.id === row.userId)?.payrollProfile;
+      const workedInPeriod = Boolean(profile && profile.hiredAt < input.end && (!profile.terminatedAt || profile.terminatedAt >= input.start));
+      return row.active || workedInPeriod || row.orders > 0 || row.leads > 0;
+    }),
     otherOrders,
     otherSales,
   };

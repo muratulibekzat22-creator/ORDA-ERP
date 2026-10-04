@@ -135,6 +135,7 @@ model Company {
   salesPlans                    SalesPlan[]
   employeeKpiTargets            EmployeeKpiTarget[]
   employeeKpiRequests           EmployeeKpiRequest[]
+  employeeHandovers             EmployeeHandover[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -599,6 +600,11 @@ model User {
   responsibleRecruitmentCandidates  RecruitmentCandidate[]         @relation("RecruitmentCandidateResponsible")
   createdSalesPlans                 SalesPlan[]                    @relation("SalesPlanCreator")
   salesPlanTargets                  SalesPlanManagerTarget[]
+  handoversFrom                   EmployeeHandover[]            @relation("HandoverFrom")
+  handoversTo                     EmployeeHandover[]            @relation("HandoverTo")
+  handoversPrepared               EmployeeHandover[]            @relation("HandoverPreparedBy")
+  handoversConfirmed              EmployeeHandover[]            @relation("HandoverConfirmedBy")
+  handoverNotices                 EmployeeHandoverNotice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -623,6 +629,70 @@ model AuthAuditEvent {
   @@index([ipHash, createdAt])
   @@index([accountIdentifierHash, ipHash, createdAt])
   @@index([userId, createdAt])
+}
+
+enum EmployeeHandoverStatus {
+  PREPARED
+  CANCELLED
+  COMPLETED
+  ROLLED_BACK
+}
+
+model EmployeeHandover {
+  id            Int                    @id @default(autoincrement())
+  companyId     Int
+  company       Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  fromUserId    Int
+  fromUser      User                   @relation("HandoverFrom", fields: [fromUserId], references: [id], onDelete: Restrict)
+  toUserId      Int
+  toUser        User                   @relation("HandoverTo", fields: [toUserId], references: [id], onDelete: Restrict)
+  scheduledAt   DateTime
+  categories    Json
+  status        EmployeeHandoverStatus @default(PREPARED)
+  preparedById  Int
+  preparedBy    User                   @relation("HandoverPreparedBy", fields: [preparedById], references: [id], onDelete: Restrict)
+  confirmedById Int?
+  confirmedBy   User?                  @relation("HandoverConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
+  confirmedAt   DateTime?
+  cancelledAt   DateTime?
+  rolledBackAt  DateTime?
+  report        Json?
+  items         EmployeeHandoverItem[]
+  notices       EmployeeHandoverNotice[]
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  @@index([companyId, status, scheduledAt])
+  @@index([fromUserId, status])
+  @@index([toUserId, status])
+}
+
+model EmployeeHandoverItem {
+  id          Int              @id @default(autoincrement())
+  handoverId  Int
+  handover    EmployeeHandover @relation(fields: [handoverId], references: [id], onDelete: Restrict)
+  kind        String
+  entityId    Int
+  oldName     String?
+  newName     String?
+  snapshot    Json?
+  transferredAt DateTime       @default(now())
+
+  @@unique([handoverId, kind, entityId])
+  @@index([kind, entityId])
+}
+
+model EmployeeHandoverNotice {
+  id         Int              @id @default(autoincrement())
+  handoverId Int
+  handover   EmployeeHandover @relation(fields: [handoverId], references: [id], onDelete: Restrict)
+  userId     Int
+  user       User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  text       String
+  readAt     DateTime?
+  createdAt  DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt])
 }
 
 model Client {
@@ -833,6 +903,8 @@ model LeadFollowUp {
   channel       String
   managerUserId Int
   managerName   String
+  createdByUserId Int?
+  createdByName   String?
   nextActionAt  DateTime
   completedAt   DateTime?
   createdAt     DateTime  @default(now())
@@ -851,6 +923,8 @@ model PriceApprovalRequest {
   proposal           CommercialProposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
   managerUserId      Int
   managerName        String
+  requestedByUserId  Int?
+  requestedByName    String?
   standardSalePrice  Decimal             @db.Decimal(12, 2)
   currentSalePrice   Decimal             @db.Decimal(12, 2)
   requestedSalePrice Decimal             @db.Decimal(12, 2)

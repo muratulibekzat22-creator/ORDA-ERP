@@ -41,6 +41,7 @@ type Task = {
   plannedCompletionAt: string | null;
   resultText: string | null;
   resultSubmittedAt: string | null;
+  handover: { oldName: string | null; newName: string | null; handover: { status: string; confirmedAt: string | null; confirmedBy: { name: string } | null } } | null;
   resultAttachments: Array<{
     id: number;
     fileName: string;
@@ -471,6 +472,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
                           {task.client?.city ? ` · ${task.client.city}` : ""} ·{" "}
                           {task.assignee.name}
                         </p>
+                        {task.handover?.handover.confirmedAt && <p className="mt-1 text-xs text-amber-200">Ранее ответственный — {task.handover.oldName}; передано {task.handover.newName} сотрудником {task.handover.handover.confirmedBy?.name ?? "директор"}, {display(task.handover.handover.confirmedAt, { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}{task.handover.handover.status === "ROLLED_BACK" ? " · передача отменена" : ""}</p>}
                         <div className="mt-2 flex flex-wrap gap-3 text-sm">
                           {task.client && (
                             <Link

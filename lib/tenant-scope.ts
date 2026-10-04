@@ -55,6 +55,7 @@ export const TENANT_MODELS = new Set([
   "SalesPlan",
   "EmployeeKpiTarget",
   "EmployeeKpiRequest",
+  "EmployeeHandover",
 ]);
 
 const WHERE_OPERATIONS = new Set([

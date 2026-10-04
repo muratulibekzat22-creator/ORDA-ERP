@@ -1,6 +1,7 @@
 import { CalendarTaskPriority, CalendarTaskStatus, CalendarTaskType, Prisma, Role } from "@prisma/client";
 import { decodeDateIdCursor, encodeDateIdCursor } from "@/lib/pagination/date-id-cursor";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export type CalendarActor = { userId: number; role: Role; name: string };
 export type CalendarTaskInput = { title: string; description?: string | null; type: CalendarTaskType; dueAt: Date; priority: CalendarTaskPriority; assigneeId: number; clientId?: number | null; orderId?: number | null; acknowledgementRequired?: boolean };
@@ -84,9 +85,12 @@ export async function listCalendarTasks(actor: CalendarActor, filters: CalendarL
   const rows = await prisma.calendarTask.findMany({ where, select: taskSelect, orderBy: [{ dueAt: "asc" }, { id: "asc" }], take: limit + 1 });
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
+  const handovers = page.length ? await prisma.employeeHandoverItem.findMany({ where: { kind: "tasks", entityId: { in: page.map((task) => task.id) }, handover: { companyId: requireTenantIdentity().companyId, status: { in: ["COMPLETED", "ROLLED_BACK"] } } }, select: { entityId: true, oldName: true, newName: true, handover: { select: { status: true, confirmedAt: true, confirmedBy: { select: { name: true } } } } }, orderBy: { transferredAt: "desc" } }) : [];
+  const handoverByTask = new Map<number, typeof handovers[number]>();
+  for (const item of handovers) if (!handoverByTask.has(item.entityId)) handoverByTask.set(item.entityId, item);
   const last = page.at(-1);
   return {
-    tasks: page.map((task) => ({ ...task, overdue: task.dueAt < new Date() && task.status !== CalendarTaskStatus.COMPLETED && task.status !== CalendarTaskStatus.CANCELLED })),
+    tasks: page.map((task) => ({ ...task, handover: handoverByTask.get(task.id) ?? null, overdue: task.dueAt < new Date() && task.status !== CalendarTaskStatus.COMPLETED && task.status !== CalendarTaskStatus.CANCELLED })),
     pagination: {
       limit,
       hasMore,

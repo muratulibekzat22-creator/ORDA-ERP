@@ -43,7 +43,7 @@ const sections = [
 const founderSections = [
   { title: "Главное", items: [["/", "Картина бизнеса", LayoutDashboard]] },
   { title: "Контроль", items: [["/sales-plan", "План продаж", TrendingUp], ["/orders", "Заказы", ClipboardList], ["/clients", "Заявки", Users]] },
-  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/kpi", "KPI сотрудников", BarChart3], ["/employees", "Сотрудники", UserCog], ["/vacancies", "Вакансии", BriefcaseBusiness], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/kpi", "KPI сотрудников", BarChart3], ["/employees", "Сотрудники", UserCog], ["/employee-handovers", "Передача дел", Users], ["/vacancies", "Вакансии", BriefcaseBusiness], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
@@ -83,6 +83,7 @@ export default function RouteShell({
     "/reports": "reports",
     "/calendar": "calendar",
     "/employees": "employees",
+    "/employee-handovers": "employees",
     "/vacancies": "employees",
     "/payroll": "payroll",
     "/settings": "settings",

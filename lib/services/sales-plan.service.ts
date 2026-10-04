@@ -5,6 +5,7 @@ import { effectiveMarketingMetrics } from "@/lib/marketing";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { getManagerMonthlySales } from "@/lib/services/manager-monthly-sales.service";
+import { loadOwnershipChanges, ownerAt } from "@/lib/services/handover-attribution";
 
 export type SalesPlanActor = { userId: number; role: Role };
 
@@ -269,6 +270,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
         amount: true,
         orderReceivedAt: true,
         manager: true,
+        managerUserId: true,
         managerUser: { select: { name: true } },
         client: { select: { name: true } },
       },
@@ -284,6 +286,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     }),
     getManagerMonthlySales({ companyId, start: period.start, end: period.end }),
   ]);
+  const ledgerOwnership = await loadOwnershipChanges(companyId, "orders", ledgerOrders.map((order) => order.id));
   const now = new Date();
   const localNow = new Date(now.getTime() + ALMATY_OFFSET_MS);
   const isCurrent =
@@ -309,7 +312,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
       id: order.id,
       number: order.number,
       client: order.client.name,
-      manager: order.managerUser?.name ?? order.manager ?? "Не назначен",
+      manager: monthlyManagers.rows.find((person) => person.userId === ownerAt(order.managerUserId, order.orderReceivedAt, ledgerOwnership.get(order.id)))?.name ?? order.managerUser?.name ?? order.manager ?? "Не назначен",
       amount: Number(order.amount),
     });
     ledgerByDay.set(key, row);

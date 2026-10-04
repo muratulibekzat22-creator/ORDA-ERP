@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Building2, ChevronDown, Clock3, KeyRound, LogOut, Menu, Settings, SlidersHorizontal, UserCircle } from "lucide-react";
+import { ArrowLeft, Bell, Building2, ChevronDown, Clock3, KeyRound, LogOut, Menu, Settings, SlidersHorizontal, UserCircle } from "lucide-react";
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
@@ -20,6 +20,7 @@ export default function Header({
   const router = useRouter();
   const [time, setTime] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [handoverNotices, setHandoverNotices] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
     const update = () => setTime(new Date().toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }));
@@ -30,6 +31,13 @@ export default function Header({
 
   const role = session?.user?.role as Role | undefined;
   const accountRole = (session?.user?.accountRole || role) as Role | undefined;
+
+  useEffect(() => {
+    if (accountRole !== "MANAGER") return;
+    void fetch("/api/employee-handover-notices", { cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() as Promise<{ id: number; text: string }[]> : [])
+      .then(setHandoverNotices).catch(() => undefined);
+  }, [accountRole]);
 
   return (
     <header className="sticky top-0 z-40 flex min-h-16 items-center justify-between gap-3 border-b border-slate-800 bg-[#0f172a]/95 px-3 py-2 backdrop-blur md:px-6">
@@ -42,6 +50,7 @@ export default function Header({
         </div>
       </div>
       <div className="flex min-w-0 items-center gap-2">
+        {handoverNotices.length > 0 && <div className="relative group"><button type="button" aria-label="Уведомления о передаче дел" className="grid size-11 place-items-center rounded-xl border border-amber-500/50 bg-amber-950/30 text-amber-200"><Bell size={19} /></button><div className="invisible absolute right-0 top-full z-50 w-72 rounded-xl border border-amber-700 bg-slate-900 p-3 text-sm text-white shadow-xl group-focus-within:visible group-hover:visible">{handoverNotices.map((notice) => <div key={notice.id} className="border-b border-slate-700 py-2"><p>{notice.text}</p><button type="button" className="mt-2 text-blue-300" onClick={() => { void fetch("/api/employee-handover-notices", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: notice.id }) }).then((response) => { if (response.ok) setHandoverNotices((current) => current.filter((item) => item.id !== notice.id)); }); }}>Прочитано</button></div>)}</div></div>}
         <div className="hidden items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 xl:flex"><Clock3 size={18}/><span className="text-sm text-slate-300">{time}</span></div>
         <div className="relative">
           <button type="button" aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)} className="flex min-h-11 min-w-0 items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-2 py-2 text-left sm:px-3">

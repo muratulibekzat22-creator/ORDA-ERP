@@ -65,7 +65,7 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
     prisma.employeePayrollProfile.findMany({
       where: {
         companyId,
-        active: true,
+        hiredAt: { lt: period.end },
         OR: [{ terminatedAt: null }, { terminatedAt: { gte: period.start } }],
         ...(viewAll ? {} : { userId: actor.userId }),
       },
