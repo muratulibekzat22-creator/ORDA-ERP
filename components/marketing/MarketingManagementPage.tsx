@@ -121,7 +121,7 @@ export default function MarketingManagementPage() {
   const [metaReport, setMetaReport] = useState<MetaCampaignReport | null>(null);
   const [metaReportError, setMetaReportError] = useState("");
   const [task, setTask] = useState({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" });
-  const [report, setReport] = useState({ periodType: "WEEKLY", periodStart: today, periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
+  const [report, setReport] = useState({ periodType: "WEEKLY", periodStart: shiftDateKey(today, -6), periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
   const [reviewComments, setReviewComments] = useState<Record<number, string>>({});
   const [metricMonth, setMetricMonth] = useState(new Date().toISOString().slice(0, 7));
   const [vacancy, setVacancy] = useState({ title: "", note: "" });
@@ -220,7 +220,7 @@ export default function MarketingManagementPage() {
   }
   async function addReport(event: FormEvent) {
     event.preventDefault();
-    if (await send("POST", { action: "report", ...report })) setReport({ periodType: "WEEKLY", periodStart: today, periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
+    if (await send("POST", { action: "report", ...report })) setReport({ periodType: "WEEKLY", periodStart: shiftDateKey(today, -6), periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
   }
   async function addVacancy(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "vacancy", ...vacancy })) setVacancy({ title: "", note: "" }); }
   async function remove(action: "task" | "report" | "vacancy", id: number, title: string) {
@@ -285,6 +285,7 @@ export default function MarketingManagementPage() {
 
       <section className="rounded-2xl border border-violet-500/20 bg-[#101827] p-4">
         <div className="flex items-start gap-3"><ClipboardCheck className="mt-1 text-violet-300"/><div><h2 className="text-xl font-bold">Отчёт маркетолога</h2><p className="mt-1 text-sm text-slate-400">Человеческая часть отчёта: выполненная работа, качество обращений, лучший результат, проблемы и следующий план. Расход, показы, клики и CRM система уже считает автоматически.</p></div></div>
+        <div className="mt-4 rounded-xl border border-violet-500/15 bg-violet-500/5 p-3 text-sm text-slate-300"><strong className="text-violet-200">Что заполняет человек:</strong> опубликованные креативы, качество обращений, вывод по лучшей гипотезе, причины проблем и конкретный план с ответственным и сроком. Расход, переписки, клики, показы и охват переносить вручную не нужно.</div>
         <form onSubmit={addReport} className="mt-5 grid gap-3">
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="text-sm text-slate-300">Период<select className={`${field} mt-1`} value={report.periodType} onChange={(event)=>setReport({...report,periodType:event.target.value})}>{Object.entries(reportPeriodLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
