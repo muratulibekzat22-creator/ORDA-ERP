@@ -3,7 +3,7 @@ import "./require-test-database";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
-import { Role } from "@prisma/client";
+import { OrderResponsibleType, Role } from "@prisma/client";
 
 import { prisma } from "../lib/prisma";
 import { getFinanceJournal } from "../lib/services/finance-journal.service";
@@ -25,7 +25,13 @@ const sum = (values: number[]) => values.reduce((total, value) => total + value,
 async function main() {
   const financeUi = readFileSync("components/finance/FinanceJournalPage.tsx", "utf8");
   const financeService = readFileSync("lib/services/payment.service.ts", "utf8");
-  for (const field of ["+ Доход", "+ Расход", "Разница доходов и расходов", "Доходы по категориям", "Расходы по категориям"])
+  for (const field of [
+    "+ Доход",
+    "+ Расход",
+    "Чистый денежный поток",
+    "Откуда пришли деньги",
+    "Кому и за что выплатили",
+  ])
     assert(financeUi.includes(field), `Finance journal UI is missing ${field}`);
   for (const field of ["managerBonusPayable", "measurerBonusPayable"])
     assert(financeService.includes(field), `Finance aggregation is missing ${field}`);
@@ -49,7 +55,7 @@ async function main() {
       });
       ids.clients.push(client.id);
       const order = await prisma.order.create({
-        data: { number: `${tag}-order-${index}`, clientId: client.id, address: "TEST", staircase: "Straight", material: "Oak", amount: amounts[index], balance: amounts[index], manager: manager.name, managerUserId: manager.id, status: "New" },
+        data: { number: `${tag}-order-${index}`, clientId: client.id, address: "TEST", staircase: "Straight", material: "Oak", amount: amounts[index], balance: amounts[index], responsibleType: OrderResponsibleType.EMPLOYEE, manager: manager.name, managerUserId: manager.id, status: "New" },
       });
       ids.orders.push(order.id);
       await assignPartnerToOrder({ orderId: order.id, partnerId: partner.id, partnerPrice: agreed[index], manager: manager.name, authorId: director.id, reason: "Signed workshop agreement" });

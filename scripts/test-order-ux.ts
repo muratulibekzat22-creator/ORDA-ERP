@@ -56,6 +56,7 @@ assert.equal(
 );
 assert.deepEqual(
   orderDataGaps({
+    responsibleType: "EMPLOYEE",
     managerUserId: null,
     partnerId: null,
     partnerPrice: 0,
@@ -76,6 +77,20 @@ assert.deepEqual(
 );
 assert.equal(
   orderDataGaps({
+    responsibleType: "COMPANY",
+    managerUserId: null,
+    partnerId: 1,
+    partnerPrice: 500_000,
+    partnerAgreedAt: new Date(),
+    promisedAt: new Date(),
+    client: { phone: "77000000000", city: "Караганда" },
+  }).includes("Назначить ответственного менеджера"),
+  false,
+  "a COMPANY order must not be marked incomplete for lacking managerUserId",
+);
+assert.equal(
+  orderDataGaps({
+    responsibleType: "EMPLOYEE",
     managerUserId: 1,
     partnerId: 1,
     partnerPrice: 500_000,
@@ -116,7 +131,11 @@ const orderProcess = readFileSync("components/orders/OrderProcess.tsx", "utf8");
 const orderKanban = readFileSync("components/orders/OrderKanban.tsx", "utf8");
 const orderBoard = readFileSync("lib/orders/board.ts", "utf8");
 const dashboardService = readFileSync("lib/services/dashboard.service.ts", "utf8");
+const orderDeletionService = readFileSync("lib/services/order-deletion.service.ts", "utf8");
 const reportService = readFileSync("lib/services/report.service.ts", "utf8");
+const paymentsRoute = readFileSync("app/api/payments/route.ts", "utf8");
+const paymentService = readFileSync("lib/services/payment.service.ts", "utf8");
+const paymentReceiptService = readFileSync("lib/services/payment-receipt.service.ts", "utf8");
 
 assert.match(rootLayout, /RouteShell/);
 assert.match(routeShell, /const founder = accountRole === "DIRECTOR"/);
@@ -177,8 +196,77 @@ assert.match(order360, /code: "PRODUCTION_PRICE"[\s\S]*Не указана су�
 assert.match(order360, /target === OrderLifecycle\.PREPARATION[\s\S]*PARTNER_REQUIRED[\s\S]*PARTNER_COST_REQUIRED/);
 assert.match(order360, /WORKSHOP_ASSIGNMENT_CLEARED/);
 assert.match(order360, /ROLLBACK_BLOCKED/);
+const order360Access = order360.slice(
+  order360.indexOf("export async function canAccessOrder360"),
+  order360.indexOf("async function assertAccess"),
+);
+assert.match(
+  order360Access,
+  /order\.responsibleType === OrderResponsibleType\.EMPLOYEE[\s\S]*order\.managerUserId === actor\.userId/,
+  "Order360 manager access must use the current normalized responsibility",
+);
+assert.doesNotMatch(
+  order360Access,
+  /leadConversion|order\.manager === actor\.name/,
+  "Order360 access must not load or trust historical lead ownership or display names",
+);
+assert.match(
+  order360,
+  /order\.responsibleType === OrderResponsibleType\.EMPLOYEE[\s\S]*\? order\.managerUserId[\s\S]*: null;[\s\S]*masterUserId: currentResponsibleUserId/,
+  "company-owned orders must not assign workflow work to a stale employee",
+);
+assert.match(
+  order360,
+  /manager: order\.responsibleType === OrderResponsibleType\.COMPANY[\s\S]*\{ id: null, name: "Компания" \}/,
+  "order overview must project the current company responsibility",
+);
 assert.match(ordersPage, /missing-production-price/);
 assert.match(ordersApi, /!isDirector\(role\) && role !== Role\.MANAGER/);
+assert.match(
+  dashboardService,
+  /responsibleType: OrderResponsibleType\.EMPLOYEE,[\s\S]*managerUserId: scope\.userId/,
+  "manager dashboard must use the current normalized order responsibility",
+);
+assert.doesNotMatch(
+  dashboardService.slice(dashboardService.indexOf("async function managerProjection")),
+  /leadConversion:\s*\{\s*managerId:/,
+  "manager dashboard still trusts historical lead ownership",
+);
+assert.match(
+  orderDeletionService,
+  /order\.responsibleType === OrderResponsibleType\.EMPLOYEE[\s\S]*order\.managerUserId === actor\.userId/,
+  "manager deletion must use the current normalized order responsibility",
+);
+assert.doesNotMatch(
+  orderDeletionService,
+  /leadConversion|order\.manager === actor\.name/,
+  "manager deletion still trusts historical lead ownership or a display name",
+);
+assert.match(
+  reportService,
+  /responsibleType: OrderResponsibleType\.EMPLOYEE,[\s\S]*managerUserId: scope\.managerUserId/,
+  "manager report scope must use current normalized order responsibility",
+);
+assert.match(
+  reportService,
+  /item\.responsibleType === OrderResponsibleType\.EMPLOYEE && item\.managerUserId/,
+  "company-owned orders must not increase manager report metrics",
+);
+assert.match(
+  paymentsRoute,
+  /role === Role\.MANAGER \? \{ responsibleType: OrderResponsibleType\.EMPLOYEE, managerUserId:/,
+  "manager payment writes must require current employee responsibility",
+);
+assert.match(
+  paymentService,
+  /order: \{ responsibleType: OrderResponsibleType\.EMPLOYEE, managerUserId: filters\.managerUserId/,
+  "manager payment reads must exclude company-owned orders",
+);
+assert.match(
+  paymentReceiptService,
+  /order\.responsibleType !== OrderResponsibleType\.EMPLOYEE/,
+  "a stale employee id on a COMPANY order must not authorize a receipt",
+);
 for (const source of [dashboardService, reportService])
   assert.match(source, /hasProductionPrice\(.*partnerPrice, .*partnerAgreedAt\)/, "management calculation bypasses the production-price rule");
 for (const field of ["partnerId", "partnerPrice", "partnerPaid", "companyProfit"])

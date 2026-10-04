@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { OrderResponsibleType, Prisma, Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
@@ -13,12 +13,11 @@ export class OrderDeletionError extends Error {}
 const deletionSelect = {
   id: true,
   number: true,
-  manager: true,
+  responsibleType: true,
   managerUserId: true,
   lifecycle: true,
   deletedAt: true,
   deletedById: true,
-  leadConversion: { select: { managerId: true } },
   productions: {
     select: {
       id: true,
@@ -48,17 +47,15 @@ const deletionSelect = {
 function canDelete(
   actor: OrderDeletionActor,
   order: {
+    responsibleType: OrderResponsibleType;
     managerUserId: number | null;
-    manager: string;
-    leadConversion: { managerId: number | null } | null;
   },
 ) {
   if (actor.role === Role.DIRECTOR) return true;
   if (actor.role !== Role.MANAGER) return false;
   return (
-    order.managerUserId === actor.userId ||
-    order.leadConversion?.managerId === actor.userId ||
-    (!order.managerUserId && order.manager === actor.name)
+    order.responsibleType === OrderResponsibleType.EMPLOYEE &&
+    order.managerUserId === actor.userId
   );
 }
 

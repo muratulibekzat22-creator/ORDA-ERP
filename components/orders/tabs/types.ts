@@ -27,6 +27,8 @@ export type OrderTabData = {
   designNotes: string;
   paymentMethod: string;
   manager: string;
+  managerUserId: number | null;
+  responsibleType: "EMPLOYEE" | "COMPANY";
   amount: NumericValue;
   prepayment: NumericValue;
   balance: NumericValue;

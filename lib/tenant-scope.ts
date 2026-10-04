@@ -25,6 +25,8 @@ export const TENANT_MODELS = new Set([
   "BankStatementRule",
   "EmployeePayrollProfile",
   "PayrollPeriod",
+  "PayrollOrderBonusDecision",
+  "PayrollCalculationSnapshot",
   "PersonalLedgerEntry",
   "Document",
   "Attachment",

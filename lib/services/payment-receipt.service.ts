@@ -6,6 +6,7 @@ import {
   DocumentStatus,
   DocumentType,
   PaymentReceiptStatus,
+  OrderResponsibleType,
   Prisma,
   Role,
 } from "@prisma/client";
@@ -193,7 +194,12 @@ export async function createPaymentReceiptRecord(
     throw new Error("CONFIRMED_CLIENT_PAYMENT_REQUIRED");
   const order = payment.order;
   const manager = order.managerUser;
-  if (!manager || !manager.active || manager.role !== Role.MANAGER)
+  if (
+    order.responsibleType !== OrderResponsibleType.EMPLOYEE ||
+    !manager ||
+    !manager.active ||
+    manager.role !== Role.MANAGER
+  )
     throw new Error("RESPONSIBLE_MANAGER_REQUIRED");
   const employeeCode = await ensureEmployeeCode(tx, manager.id);
   const actualRegisteredById = registeredByUserId ?? manager.id;
@@ -533,7 +539,12 @@ export async function getPaymentReceiptPdf(
     actor.role === Role.ACCOUNTANT ||
     (actor.role === Role.MANAGER &&
       (await prisma.order.count({
-        where: { id: receipt.orderId, managerUserId: actor.userId, deletedAt: null },
+        where: {
+          id: receipt.orderId,
+          responsibleType: OrderResponsibleType.EMPLOYEE,
+          managerUserId: actor.userId,
+          deletedAt: null,
+        },
       })) === 1);
   if (!allowed) return null;
   const version = receipt.document.versions.find(

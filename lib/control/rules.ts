@@ -13,6 +13,7 @@ export type ControlLead = {
 };
 export type ControlOrder = {
   id: number; number: string; clientId: number; managerUserId: number | null;
+  responsibleType: "EMPLOYEE" | "COMPANY";
   partnerId: number | null; partnerPrice: unknown; partnerAgreedAt: Date | null;
   promisedAt: Date | null; productionDeadline: Date | null; lifecycle: string;
   client: { phone: string; city: string };
@@ -34,8 +35,12 @@ export function detectControlIssues(leads: ControlLead[], orders: ControlOrder[]
       href: `/clients/${lead.id}`, priority: overdue || noContact ? "URGENT" : "IMPORTANT" });
   }
   for (const order of orders) {
+    const assigneeId = order.responsibleType === "EMPLOYEE"
+      ? order.managerUserId
+      : null;
     const gaps: string[] = [];
-    if (!order.managerUserId) gaps.push("ответственный менеджер");
+    if (order.responsibleType === "EMPLOYEE" && !order.managerUserId)
+      gaps.push("ответственный менеджер");
     if (!order.client.phone.trim()) gaps.push("телефон клиента");
     if (!order.client.city.trim()) gaps.push("город клиента");
     const deadline = order.promisedAt ?? order.productionDeadline;
@@ -43,11 +48,11 @@ export function detectControlIssues(leads: ControlLead[], orders: ControlOrder[]
     if (!order.partnerId) gaps.push("цех");
     if (!hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)) gaps.push("подтверждённая цена производства для расчёта маржи");
     if (gaps.length) issues.push({ key: `order:${order.id}:data`, clientId: order.clientId, orderId: order.id,
-      assigneeId: order.managerUserId, title: `${order.number}: заполнить данные`, reason: `Не заполнены: ${gaps.join(", ")}.`,
+      assigneeId, title: `${order.number}: заполнить данные`, reason: `Не заполнены: ${gaps.join(", ")}.`,
       action: "Заполните недостающие поля подтверждёнными данными. Если требуется решение директора, укажите конкретный вопрос и срок.",
       href: `/orders/${order.id}`, priority: "IMPORTANT" });
     if (deadline && deadline < now) issues.push({ key: `order:${order.id}:deadline`, clientId: order.clientId, orderId: order.id,
-      assigneeId: order.managerUserId, title: `${order.number}: просрочен срок`, reason: `Срок в карточке: ${deadline.toISOString().slice(0,10)}.`,
+      assigneeId, title: `${order.number}: просрочен срок`, reason: `Срок в карточке: ${deadline.toISOString().slice(0,10)}.`,
       action: "Проверьте фактический этап. Зафиксируйте причину задержки, согласованный с клиентом план и подтверждённый срок. Не переносите дату без согласования.",
       href: `/orders/${order.id}`, priority: "URGENT" });
   }

@@ -5,7 +5,7 @@ import {
   getPayments,
 } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
-import { Role } from "@prisma/client";
+import { OrderResponsibleType, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, createRequestHash, idempotencyConflict, isPrismaUniqueConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
@@ -35,7 +35,11 @@ export async function GET() {
           },
           orderBy: { operationDate: "desc" },
         })
-      : await getPayments();
+      : await getPayments(
+          auth.session!.user.role === Role.MANAGER
+            ? { managerUserId: Number(auth.session!.user.id) }
+            : {},
+        );
 
     return NextResponse.json(payments);
   } catch (error) {
@@ -96,7 +100,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const ownedOrder = await prisma.order.findFirst({ where: { id: orderId, deletedAt: null, ...(role === Role.MANAGER ? { managerUserId: Number(session.user.id) } : {}) }, select: { id: true } });
+    const ownedOrder = await prisma.order.findFirst({ where: { id: orderId, deletedAt: null, ...(role === Role.MANAGER ? { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: Number(session.user.id) } : {}) }, select: { id: true } });
     if (!ownedOrder) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
 
     if (values.type !== "Предоплата" && values.type !== "Доплата") {

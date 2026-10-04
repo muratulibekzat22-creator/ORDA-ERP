@@ -37,7 +37,7 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
     [], ["Что нужно дополнить", "Менеджер", "Заказ", "Клиент"],
     ...report.dataQuality.tasks.map((item) => [item.missingFields.join(", "), item.manager, item.number, item.client]),
     [], ["№ заказа", "Клиент", "Менеджер", "Сумма", "Цена производства", "Маржа", "Зарплата по заказу", "Получено", "Остаток", "Статус"],
-    ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.productionPrice ?? "Не заполнена", item.grossMargin ?? "—", item.payrollAccrued, item.received, item.remaining, item.status]),
+    ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.productionPrice ?? "Не заполнена", item.grossMargin ?? "—", item.payrollAccrued ?? "Не распределено", item.received, item.remaining, item.status]),
   ];
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
 }

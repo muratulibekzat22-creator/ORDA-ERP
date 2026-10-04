@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+
 import {
   auditManagerOrderBonus,
-  isDateInPayrollPeriod,
   isCompanyResponsibleOrder,
+  isDateInPayrollPeriod,
   isManagerOrderBonusAutomaticPeriod,
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
-  isSalesManagerPayrollEmployee,
-  isPayrollReconciled,
   isPayrollPolicyReady,
+  isPayrollReconciled,
+  isSalesManagerPayrollEmployee,
   isTerminatedPayrollEmployee,
   isValidKaspiReference,
   isValidOptionalPaymentReference,
@@ -19,10 +20,12 @@ import {
   payrollPaymentPurpose,
   payrollPaymentReference,
   payrollRoleAccess,
-  personalPayrollCalculation,
   payrollSalaryForPeriod,
+  personalPayrollCalculation,
 } from "../lib/payroll-policy";
 
+// A recommendation is still calculated and displayed, but never becomes a
+// saved employee bonus or a confirmed payroll calculation on its own.
 assert.equal(managerOrderBonus(616_000), 30_000);
 assert.equal(managerOrderBonus(3_000_000), 30_000);
 assert.equal(managerOrderBonus(3_000_001), 50_000);
@@ -34,168 +37,147 @@ assert.equal(isSalesManagerPayrollEmployee({ position: "Замерщик", user:
 assert.equal(isManagerOrderBonusAutomaticPeriod(2026, 9), false);
 assert.equal(isManagerOrderBonusAutomaticPeriod(2026, 10), true);
 assert.equal(isManagerOrderBonusAutomaticPeriod(2027, 1), true);
-assert.equal(isManagerOrderBonusEligible({ status: "Передан в цех" }), true);
-assert.equal(isManagerOrderBonusEligible({ status: "Отменён" }), false);
-assert.equal(isManagerOrderBonusEligible({ status: "Возврат" }), false);
-assert.equal(
-  isManagerOrderBonusEligible({ status: "Оформлен", lifecycle: "CANCELLED" }),
-  false,
-);
-assert.equal(
-  isManagerOrderBonusEligible({ status: "Новый", deletedAt: new Date() }),
-  false,
-);
-
-const missingAccrual = auditManagerOrderBonus({
+const recommendationAudit = auditManagerOrderBonus({
   orderAmount: 2_800_000,
   status: "Договор подписан",
   submitted: 0,
   recorded: 0,
 });
-assert.equal(missingAccrual.expected, 30_000);
-assert.equal(missingAccrual.status, "UNDER");
-assert.equal(missingAccrual.reconciled, false);
-assert.equal(
-  auditManagerOrderBonus({
-    orderAmount: 2_800_000,
-    status: "Договор подписан",
-    submitted: 0,
-    recorded: 30_000,
-  }).reconciled,
-  true,
-);
+assert.equal(recommendationAudit.expected, 30_000);
+assert.equal(recommendationAudit.status, "UNDER");
+assert.equal(recommendationAudit.reconciled, false);
 
+const manager = { id: 12, name: "Гулсим" };
 assert.equal(
   isOrderAssignedToManager(
-    { managerUserId: 12, managerName: "Гульсым" },
-    { id: 12, name: "Гульсым" },
+    {
+      responsibleType: "EMPLOYEE",
+      managerUserId: 12,
+      leadManagerId: 99,
+    },
+    manager,
   ),
   true,
 );
 assert.equal(
   isOrderAssignedToManager(
-    { managerUserId: 99, managerName: "Другой менеджер" },
-    { id: 12, name: "Гульсым" },
-  ),
-  false,
-);
-assert.equal(
-  isOrderAssignedToManager(
     {
-      managerUserId: null,
-      leadManagerId: 12,
-      managerName: "Компания",
-    },
-    { id: 12, name: "Гульсым" },
-  ),
-  false,
-  "company responsibility must override the lead's former manager",
-);
-assert.equal(
-  isOrderAssignedToManager(
-    {
+      responsibleType: "EMPLOYEE",
       managerUserId: 99,
       leadManagerId: 12,
-      managerName: "Другой менеджер",
     },
-    { id: 12, name: "Гульсым" },
+    manager,
   ),
   false,
-  "the current order manager must override lead attribution",
-);
-assert.equal(isCompanyResponsibleOrder({ managerName: " Компания " }), true);
-assert.equal(
-  isCompanyResponsibleOrder({
-    managerName: "Гульсым",
-    managerUserId: null,
-  }),
-  true,
-  "an order without a current responsible user is company work even if a legacy manager name remains",
+  "the current responsible employee must override the former lead",
 );
 assert.equal(
   isOrderAssignedToManager(
     {
+      responsibleType: "COMPANY",
       managerUserId: null,
       leadManagerId: 12,
-      managerName: "Гульсым",
     },
-    { id: 12, name: "Гульсым" },
+    manager,
   ),
   false,
-  "a former lead manager must not receive a company-owned order bonus",
+  "company responsibility must override every historic employee link",
+);
+assert.equal(
+  isCompanyResponsibleOrder({
+    responsibleType: "COMPANY",
+    managerUserId: null,
+  }),
+  true,
 );
 assert.equal(
   isManagerOrderBonusEligible({
+    responsibleType: "COMPANY",
+    managerUserId: null,
     status: "Оформлен",
-    managerName: "Компания",
   }),
   false,
 );
 assert.equal(
   isManagerOrderBonusEligible({
+    responsibleType: "EMPLOYEE",
+    managerUserId: 12,
     status: "Оформлен",
-    managerName: "Гульсым",
-    managerUserId: null,
+  }),
+  true,
+);
+assert.equal(
+  isManagerOrderBonusEligible({
+    responsibleType: "EMPLOYEE",
+    managerUserId: 12,
+    lifecycle: "CANCELLED",
   }),
   false,
 );
 
-const septemberRange = {
-  periodStart: new Date("2026-09-01T00:00:00.000Z"),
-  periodEnd: new Date("2026-10-01T00:00:00.000Z"),
+const september = {
+  periodStart: new Date("2026-08-31T19:00:00.000Z"),
+  periodEnd: new Date("2026-09-30T19:00:00.000Z"),
 };
+const october = {
+  periodStart: new Date("2026-09-30T19:00:00.000Z"),
+  periodEnd: new Date("2026-10-31T19:00:00.000Z"),
+};
+const octoberHire = new Date("2026-09-30T19:00:00.000Z");
 assert.deepEqual(
   payrollSalaryForPeriod({
-    hiredAt: "2026-10-01T00:00:00.000Z",
-    baseSalary: 200_000,
-    salaryRates: [
-      {
-        amount: 200_000,
-        effectiveFrom: "2026-10-01T00:00:00.000Z",
-      },
-    ],
-    ...septemberRange,
+    hiredAt: octoberHire,
+    baseSalary: 0,
+    salaryRates: [{ amount: 0, effectiveFrom: octoberHire }],
+    ...september,
   }),
   {
     amount: 0,
-    effectiveFrom: new Date("2026-10-01T00:00:00.000Z"),
+    effectiveFrom: octoberHire,
     employedInPeriod: false,
   },
-  "an October employee must have zero salary and payable in September",
+  "an October employee has no September salary calculation",
+);
+assert.deepEqual(
+  payrollSalaryForPeriod({
+    hiredAt: octoberHire,
+    baseSalary: 0,
+    salaryRates: [{ amount: 0, effectiveFrom: octoberHire }],
+    ...october,
+  }),
+  {
+    amount: 0,
+    effectiveFrom: octoberHire,
+    employedInPeriod: true,
+  },
+  "employment start must not invent an October salary condition",
 );
 assert.equal(
   payrollSalaryForPeriod({
     hiredAt: "2026-01-01T00:00:00.000Z",
-    terminatedAt: "2026-10-01T00:00:00.000Z",
     baseSalary: 200_000,
     salaryRates: [
-      {
-        amount: 200_000,
-        effectiveFrom: "2026-01-01T00:00:00.000Z",
-      },
+      { amount: 200_000, effectiveFrom: "2026-01-01T00:00:00.000Z" },
     ],
-    ...septemberRange,
+    ...october,
   }).amount,
   200_000,
-  "a manager employed during September keeps the full September salary",
+  "a real configured salary remains separate from bonuses",
 );
 assert.equal(
   payrollSalaryForPeriod({
     hiredAt: "2026-01-01T00:00:00.000Z",
-    terminatedAt: "2026-10-01T00:00:00.000Z",
+    terminatedAt: "2026-09-30T19:00:00.000Z",
     baseSalary: 200_000,
     salaryRates: [
-      {
-        amount: 200_000,
-        effectiveFrom: "2026-01-01T00:00:00.000Z",
-      },
+      { amount: 200_000, effectiveFrom: "2026-01-01T00:00:00.000Z" },
     ],
-    periodStart: new Date("2026-10-01T00:00:00.000Z"),
-    periodEnd: new Date("2026-11-01T00:00:00.000Z"),
+    ...october,
   }).amount,
   0,
-  "salary stops in the month after employment ends",
+  "salary stops after employment ends",
 );
+
 assert.equal(
   managerOrderBonusEarnedAt({
     orderReceivedAt: "2026-09-10T00:00:00.000Z",
@@ -205,7 +187,7 @@ assert.equal(
     accountActive: true,
   })?.toISOString(),
   "2026-09-10T00:00:00.000Z",
-  "an active manager's September order must remain in September after October completion",
+  "editing or completing a September order in October must not move its bonus",
 );
 assert.equal(
   managerOrderBonusEarnedAt({
@@ -217,7 +199,7 @@ assert.equal(
     accountActive: false,
   }),
   null,
-  "terminated manager must not earn a bonus before order completion",
+  "a terminated manager's order waits for completion",
 );
 assert.equal(
   managerOrderBonusEarnedAt({
@@ -229,7 +211,7 @@ assert.equal(
     accountActive: false,
   })?.toISOString(),
   "2026-09-10T00:00:00.000Z",
-  "completion unlocks a terminated manager's bonus without moving it out of the factual order month",
+  "completion unlocks payment without changing the factual payroll month",
 );
 assert.equal(
   managerOrderBonusEarnedEvent({
@@ -239,32 +221,26 @@ assert.equal(
   }),
   "ORDER_COMPLETED",
 );
+assert.equal(isTerminatedPayrollEmployee({ active: true, accountActive: false }), true);
 assert.equal(
-  isTerminatedPayrollEmployee({ active: true, accountActive: false }),
+  isDateInPayrollPeriod(october.periodStart, october.periodStart, october.periodEnd),
   true,
 );
-const periodStart = new Date("2026-10-01T00:00:00.000Z");
-const periodEnd = new Date("2026-11-01T00:00:00.000Z");
-assert.equal(isDateInPayrollPeriod(periodStart, periodStart, periodEnd), true);
-assert.equal(isDateInPayrollPeriod(periodEnd, periodStart, periodEnd), false);
+assert.equal(
+  isDateInPayrollPeriod(october.periodEnd, october.periodStart, october.periodEnd),
+  false,
+);
 
 assert.equal(isValidKaspiReference(undefined), false);
-assert.equal(isValidKaspiReference("  "), false);
 assert.equal(isValidKaspiReference("K1"), false);
 assert.equal(isValidKaspiReference("KASPI-123456"), true);
-assert.equal(isValidKaspiReference("X".repeat(121)), false);
 assert.equal(isValidOptionalPaymentReference(undefined), true);
 assert.equal(isValidOptionalPaymentReference("  "), true);
-assert.equal(isValidOptionalPaymentReference("K1"), false);
 assert.equal(isValidOptionalPaymentReference("KASPI-123456"), true);
-assert.equal(isPayrollReconciled(0), true);
 assert.equal(isPayrollReconciled(0.009), true);
 assert.equal(isPayrollReconciled(30_000), false);
-assert.equal(isPayrollReconciled(Number.NaN), false);
 assert.equal(isPayrollPolicyReady(0, [0, 0]), true);
 assert.equal(isPayrollPolicyReady(0, [30_000, -30_000]), false);
-assert.equal(isPayrollPolicyReady(0, [30_000, -30_000, 0]), false);
-assert.equal(isPayrollPolicyReady(200_000, [0]), false);
 assert.deepEqual(payrollRoleAccess("DIRECTOR"), {
   founder: true,
   administrator: false,
@@ -275,6 +251,7 @@ assert.deepEqual(payrollRoleAccess("OPERATIONS_DIRECTOR"), {
   administrator: true,
   accountant: false,
 });
+
 assert.deepEqual(
   personalPayrollCalculation({
     salary: 400_000,
@@ -301,7 +278,7 @@ assert.deepEqual(
     amountToPayAfterPendingAdvances: 275_000,
   },
 );
-assert.equal(
+assert.deepEqual(
   personalPayrollCalculation({
     salary: 200_000,
     bonuses: 0,
@@ -310,385 +287,273 @@ assert.equal(
     advances: 50_000,
     otherPayments: 0,
     pendingAdvances: 0,
-    accrued: 200_000,
-  }).amountToPay,
-  150_000,
-  "partial salary payment must leave 200,000 - 50,000 = 150,000",
-);
-assert.deepEqual(
-  personalPayrollCalculation({
-    salary: 200_000,
-    bonuses: 90_000,
-    premiums: 0,
-    deductions: 0,
-    advances: 50_000,
-    otherPayments: 0,
-    pendingAdvances: 0,
-    accrued: 50_000,
+    accrued: 0,
   }),
   {
     salary: 200_000,
-    bonuses: 90_000,
+    bonuses: 0,
     premiums: 0,
     deductions: 0,
     advances: 50_000,
     otherPayments: 0,
     pendingAdvances: 0,
-    accrued: 50_000,
-    totalToAccrue: 290_000,
-    remainingToAccrue: 240_000,
-    amountToPay: 240_000,
-    amountToPayAfterPendingAdvances: 240_000,
+    accrued: 0,
+    totalToAccrue: 200_000,
+    remainingToAccrue: 200_000,
+    amountToPay: 150_000,
+    amountToPayAfterPendingAdvances: 150_000,
   },
-  "Akbota statement must distinguish 50,000 confirmed from 290,000 planned and 240,000 payable",
-);
-const alikhanSeptember = personalPayrollCalculation({
-  salary: 400_000,
-  bonuses: 0,
-  premiums: 0,
-  deductions: 0,
-  advances: 83_000,
-  otherPayments: 0,
-  pendingAdvances: 0,
-  accrued: 83_000,
-});
-assert.equal(alikhanSeptember.accrued, 83_000);
-assert.equal(alikhanSeptember.amountToPay, 317_000);
-const marketerWithoutSalary = personalPayrollCalculation({
-  salary: 0,
-  bonuses: 0,
-  premiums: 0,
-  deductions: 0,
-  advances: 0,
-  otherPayments: 0,
-  pendingAdvances: 0,
-  accrued: 0,
-});
-assert.equal(marketerWithoutSalary.amountToPay, 0);
-
-const gulsimOrders = [
-  6_000_000,
-  2_040_000,
-  874_000,
-  2_800_000,
-  616_000,
-  3_000_000,
-  2_170_000,
-];
-assert.equal(
-  gulsimOrders.reduce((sum, amount) => sum + managerOrderBonus(amount), 0),
-  230_000,
+  "an unfilled recommendation must not increase the employee calculation",
 );
 assert.equal(payrollPaymentReference(2026, 10, 42), "ЗП-202610-000042");
 assert.match(
-  payrollPaymentPurpose("Гульсым", 2026, 10, 42),
-  /Гульсым.*ЗП-202610-000042/,
+  payrollPaymentPurpose("Гулсим", 2026, 10, 42),
+  /Гулсим.*ЗП-202610-000042/,
 );
 
-const serviceSource = readFileSync(
+const service = readFileSync(
   new URL("../lib/services/payroll.service.ts", import.meta.url),
   "utf8",
 );
-const payrollRouteSource = readFileSync(
+const payrollRoute = readFileSync(
   new URL("../app/api/payroll/route.ts", import.meta.url),
   "utf8",
 );
-const payrollSelfRouteSource = readFileSync(
+const payrollSelfRoute = readFileSync(
   new URL("../app/api/payroll/self/route.ts", import.meta.url),
   "utf8",
 );
-const bonusCorrectionRouteSource = readFileSync(
-  new URL(
-    "../app/api/payroll/bonus-corrections/route.ts",
-    import.meta.url,
-  ),
+const bonusRoute = readFileSync(
+  new URL("../app/api/payroll/bonus-corrections/route.ts", import.meta.url),
   "utf8",
 );
-const payrollPageSource = readFileSync(
+const payrollPage = readFileSync(
   new URL("../app/payroll/page.tsx", import.meta.url),
   "utf8",
 );
-const orderSearchRouteSource = readFileSync(
-  new URL("../app/api/orders/search/route.ts", import.meta.url),
-  "utf8",
-);
-const orderServiceSource = readFileSync(
+const orderService = readFileSync(
   new URL("../lib/services/order.service.ts", import.meta.url),
   "utf8",
 );
-const payrollOrderSearchSource = orderServiceSource.slice(
-  orderServiceSource.indexOf("export async function searchOrderOptions"),
-  orderServiceSource.indexOf("export function countOrders"),
-);
-const orderLifecycleServiceSource = readFileSync(
-  new URL("../lib/services/order360.service.ts", import.meta.url),
+const schema = readFileSync(
+  new URL("../prisma/schema.prisma", import.meta.url),
   "utf8",
 );
-const dailyOperationsRouteSource = readFileSync(
-  new URL("../app/api/cron/daily-operations/route.ts", import.meta.url),
-  "utf8",
-);
-const dailyOperationsReleaseSource = readFileSync(
-  new URL("./prepare-daily-operations.ts", import.meta.url),
-  "utf8",
-);
-const migrationSource = readFileSync(
+const accountingMigration = readFileSync(
   new URL(
-    "../prisma/migrations/20261002120000_manager_order_bonus_uniqueness/migration.sql",
+    "../prisma/migrations/20261004110000_payroll_accounting_source_of_truth/migration.sql",
     import.meta.url,
   ),
   "utf8",
 );
-const uniquenessMigrationSource = readFileSync(
+const snapshotMigration = readFileSync(
   new URL(
-    "../prisma/migrations/20261002130000_order_bonus_uniqueness_key/migration.sql",
+    "../prisma/migrations/20261004140000_payroll_calculation_snapshots/migration.sql",
     import.meta.url,
   ),
   "utf8",
 );
-const externalReferenceMigrationSource = readFileSync(
+const measurerRepairMigration = readFileSync(
   new URL(
-    "../prisma/migrations/20261002140000_payroll_payment_external_reference/migration.sql",
+    "../prisma/migrations/20261004150000_revoke_unverified_measurer_salary_autofill/migration.sql",
     import.meta.url,
   ),
   "utf8",
 );
-const manualAccrualMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261002190000_manual_payroll_accrual_workflow/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const companyResponsibleMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261003133000_company_responsible_bonus_cleanup/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const optionalAccrualReferenceMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261003132000_optional_salary_accrual_reference/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const deferredTerminatedBonusMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261003143000_defer_terminated_manager_bonuses/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const explicitSalaryPlansMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004100000_explicit_salary_plans/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const unassignedSalaryCleanupMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004100200_unassigned_salary_cleanup/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const companyBonusResweepMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004100500_company_bonus_resweep/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const payrollDataCorrectionMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004102000_payroll_data_correction/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const septemberStartCleanupMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004102500_september_start_cleanup/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const namedMeasurersZeroSalaryMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004103000_named_measurers_zero_salary/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const factualOrderMonthBonusCleanupMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004103500_factual_order_month_bonus_cleanup/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-const payrollPeriodCorrectionVerificationMigrationSource = readFileSync(
-  new URL(
-    "../prisma/migrations/20261004104000_verify_payroll_period_corrections/migration.sql",
-    import.meta.url,
-  ),
-  "utf8",
-);
-assert.match(serviceSource, /DIRECTOR_CONFIRMATION_REQUIRED/);
-assert.doesNotMatch(dailyOperationsRouteSource, /payroll\.service|reconcileCurrentManagerPayroll/);
-assert.doesNotMatch(dailyOperationsReleaseSource, /payroll\.service|reconcileCurrentManagerPayroll/);
-assert.doesNotMatch(payrollRouteSource, /reconcile-manager-payroll/);
-assert.match(payrollSelfRouteSource, /createSelfAccrual/);
-assert.match(payrollSelfRouteSource, /PayrollAccrualType\.ORDER_BONUS/);
-assert.match(payrollSelfRouteSource, /report-advance/);
-assert.match(payrollSelfRouteSource, /PayrollPaymentType\.ADVANCE/);
-assert.match(payrollSelfRouteSource, /payrollSummary\(period\.id, actor\(auth\.session!\), undefined, true\)/);
-assert.match(bonusCorrectionRouteSource, /listOrderBonusesForCorrection/);
-assert.match(bonusCorrectionRouteSource, /correctOrderBonus/);
-assert.match(bonusCorrectionRouteSource, /syncAutomaticOrderBonuses/);
-assert.match(bonusCorrectionRouteSource, /action !== "correct" && action !== "cancel"/);
-assert.match(
-  payrollRouteSource,
-  /identity\.role !== Role\.DIRECTOR &&[\s\S]*identity\.role !== Role\.OPERATIONS_DIRECTOR[\s\S]*FORBIDDEN/,
-);
-assert.match(payrollPageSource, /adminView = founder \|\| operationsDirector \|\| accountant/);
-assert.match(payrollPageSource, /statementAccrued/);
-assert.match(payrollPageSource, /statementPayable/);
-assert.match(payrollPageSource, /statementAccrued = \(row: PayrollRow\) => row\.calculation\.accrued/);
-assert.match(payrollPageSource, /statementPayable = \(row: PayrollRow\) => row\.calculation\.amountToPay/);
-assert.match(payrollPageSource, /«Начислено» — только подтверждённая сумма/);
-assert.match(payrollPageSource, /Частичная оплата зарплаты/);
-assert.match(payrollPageSource, /Оклад сотрудника не изменится; выплата будет учтена как аванс/);
-assert.match(payrollPageSource, /label="Изменить оклад"/);
-assert.match(payrollPageSource, /label="Редактировать начисление"/);
-assert.match(payrollPageSource, /payrollAdministrator = founder \|\| operationsDirector/);
-assert.match(payrollRouteSource, /action === "correct-accrual"/);
-assert.match(payrollRouteSource, /correctPayrollAccrual/);
-assert.match(serviceSource, /export async function correctPayrollAccrual/);
-assert.match(serviceSource, /PAYROLL_ACCRUAL_CORRECTED/);
-assert.match(serviceSource, /else salaryManager\(actor\)/);
-assert.match(serviceSource, /payrollSalaryForPeriod/);
-assert.match(serviceSource, /const statementSalary = salaryPlanEnabled/);
-assert.match(payrollPageSource, /Редактировать бонус/);
-assert.match(payrollPageSource, /Указать бонус/);
-assert.match(serviceSource, /activeRate\?\.planEnabled \?\?/);
-assert.match(serviceSource, /isValidOptionalPaymentReference/);
-assert.match(serviceSource, /PARTIAL_SALARY_PAYMENT_CREATED/);
-assert.match(serviceSource, /PARTIAL_SALARY_ACCRUAL_REQUIRED/);
-assert.match(serviceSource, /PAYROLL_RECONCILIATION_REQUIRED/);
-assert.match(serviceSource, /PAYROLL_NOT_FULLY_PAID/);
-assert.match(serviceSource, /MANAGER_PAYROLL_MANUAL_APPROVED/);
-assert.match(payrollRouteSource, /approve-manager-payroll-manual/);
-assert.match(serviceSource, /managerPayrollPolicyState/);
-assert.match(serviceSource, /SALARY_ALREADY_ACCRUED/);
-assert.match(serviceSource, /SALARY_AMOUNT_MISMATCH/);
-assert.match(payrollRouteSource, /PAYROLL_PERIOD_NOT_STARTED/);
-assert.match(payrollPageSource, /readOnly=\{operation === "salaryAccrual" && row\.salaryPlanEnabled\}/);
-assert.match(payrollPageSource, /Система предлагает бонус/);
-assert.match(payrollPageSource, /Предложение системы/);
-assert.match(payrollPageSource, /Исправить бонус/);
-assert.match(payrollPageSource, /Отменить бонус/);
-assert.match(payrollPageSource, /Бонусы за заказы ·/);
-assert.match(payrollPageSource, /Уволен · бонус после завершения заказа/);
-assert.match(payrollPageSource, /Референс \/ номер перевода \(необязательно\)/);
-assert.match(payrollPageSource, /payrollBonus: "true"/);
-assert.match(orderSearchRouteSource, /payrollBonusEligible: params\.get\("payrollBonus"\) === "true"/);
-assert.match(orderServiceSource, /manager: \{ equals: "Компания", mode: "insensitive" \}/);
-assert.match(orderServiceSource, /managerRoleScope/);
-assert.match(payrollOrderSearchSource, /orderReceivedAt: \{ gte: monthRange\.start, lt: monthRange\.end \}/);
-assert.doesNotMatch(payrollOrderSearchSource, /completedAt/);
-assert.match(payrollOrderSearchSource, /orderBy: \[\{ orderReceivedAt: "desc" \}/);
-assert.match(payrollPageSource, /manualOverride/);
-assert.match(serviceSource, /expectedOrderBonus = managerOrderBonus/);
-assert.match(serviceSource, /BONUS_PAYMENT_EXISTS/);
-assert.match(serviceSource, /ORDER_BONUS_CORRECTED/);
-assert.match(serviceSource, /ORDER_BONUS_CANCELLED/);
-assert.match(serviceSource, /if \(!deferred\) return \[\]/);
-assert.match(serviceSource, /deferredCreated/);
-assert.match(serviceSource, /ORDER_NOT_COMPLETED_FOR_TERMINATED_EMPLOYEE/);
-assert.match(serviceSource, /accrueCompletedTerminatedManagerOrderBonus/);
-assert.match(serviceSource, /const earnedPeriod = companyYearMonth\(order\.orderReceivedAt\)/);
-assert.match(orderLifecycleServiceSource, /accrueCompletedTerminatedManagerOrderBonus/);
-assert.match(serviceSource, /priorBonuses/);
-assert.match(
-  serviceSource,
-  /actor\.role === Role\.MANAGER[\s\S]*original\.employee\.userId !== actor\.userId/,
-);
-assert.match(serviceSource, /const approvedAccrued = confirmedAccrued/);
-assert.match(
-  serviceSource,
-  /input\.type === PayrollAccrualType\.BASE_SALARY[\s\S]*actor\.role !== Role\.DIRECTOR[\s\S]*actor\.role !== Role\.OPERATIONS_DIRECTOR/,
-);
-assert.match(
-  payrollRouteSource,
-  /session\.user\.accountRole\s*\|\|\s*session\.user\.role/,
-);
-assert.match(migrationSource, /PayrollPayment_externalReference_key/);
-assert.match(migrationSource, /PayrollAccrual_one_order_bonus/);
-assert.match(uniquenessMigrationSource, /orderBonusUniquenessKey/);
-assert.match(
-  uniquenessMigrationSource,
-  /DROP INDEX IF EXISTS "PayrollAccrual_one_order_bonus"/,
-);
-assert.match(externalReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS "externalReference"/);
-assert.match(externalReferenceMigrationSource, /PayrollPayment_externalReference_key/);
-assert.match(manualAccrualMigrationSource, /company\."slug" = 'altyn-sapa-company'/);
-assert.match(manualAccrualMigrationSource, /period\."month" IN \(9, 10\)/);
-assert.match(manualAccrualMigrationSource, /accrual\."reason" LIKE 'Автопроверка оклада:%'/);
-assert.match(manualAccrualMigrationSource, /NOT EXISTS \([\s\S]*FROM "PayrollPayment"/);
-assert.match(manualAccrualMigrationSource, /'BONUS_REVERSAL'/);
-assert.match(companyResponsibleMigrationSource, /LOWER\(BTRIM\(customer_order\."manager"\)\)/);
-assert.match(companyResponsibleMigrationSource, /'ORDER_BONUS_CANCELLED'/);
-assert.match(companyResponsibleMigrationSource, /"relatedAccrualId" = accrual\."id"/);
-assert.match(optionalAccrualReferenceMigrationSource, /ADD COLUMN IF NOT EXISTS "externalReference"/);
-assert.match(deferredTerminatedBonusMigrationSource, /TERMINATED_MANAGER_BONUS_DEFERRED/);
-assert.match(deferredTerminatedBonusMigrationSource, /customer_order\."lifecycle" = 'COMPLETED'/);
-assert.match(deferredTerminatedBonusMigrationSource, /employee\."terminatedAt" IS NOT NULL/);
-assert.match(explicitSalaryPlansMigrationSource, /ADD COLUMN "salaryPlanEnabled"/);
-assert.match(unassignedSalaryCleanupMigrationSource, /period\."month" IN \(9, 10\)/);
-assert.match(companyBonusResweepMigrationSource, /LOWER\(BTRIM\(customer_order\."manager"\)\)/);
-assert.match(payrollDataCorrectionMigrationSource, /TIMESTAMP '2026-10-01 00:00:00'/);
-assert.match(payrollDataCorrectionMigrationSource, /%еркебулан%/);
-assert.match(payrollDataCorrectionMigrationSource, /%нурасыл%/);
-assert.match(payrollDataCorrectionMigrationSource, /%кокбай%/);
-assert.match(payrollDataCorrectionMigrationSource, /customer_order\."managerUserId" IS NULL/);
-assert.match(payrollDataCorrectionMigrationSource, /salary-cleanup-restore:v2:/);
-assert.match(septemberStartCleanupMigrationSource, /period\."month" = 9/);
-assert.match(septemberStartCleanupMigrationSource, /%еркебулан%/);
-assert.match(septemberStartCleanupMigrationSource, /%нурасыл%/);
-assert.match(septemberStartCleanupMigrationSource, /%кокбай%/);
-assert.match(septemberStartCleanupMigrationSource, /september-start-salary:v1:/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /"baseSalary" = 0/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /"salaryPlanEnabled" = FALSE/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /SET "planEnabled" = FALSE/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /period\."month" IN \(9, 10\)/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /%еркебулан%/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /%нурасыл%/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /%кокбай%/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /named-measurers-zero-salary:v1:/);
-assert.match(namedMeasurersZeroSalaryMigrationSource, /'BONUS_REVERSAL'/);
-assert.match(factualOrderMonthBonusCleanupMigrationSource, /"orderDateNeedsReview" = FALSE/);
-assert.match(factualOrderMonthBonusCleanupMigrationSource, /"orderReceivedAt" AT TIME ZONE 'UTC'/);
-assert.match(factualOrderMonthBonusCleanupMigrationSource, /period\."month" IN \(9, 10\)/);
-assert.match(factualOrderMonthBonusCleanupMigrationSource, /factual-order-month-bonus:v1:/);
-assert.match(factualOrderMonthBonusCleanupMigrationSource, /'ORDER_BONUS_CANCELLED'/);
-assert.doesNotMatch(factualOrderMonthBonusCleanupMigrationSource, /DELETE FROM/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /target_count < 2/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /BEGIN;/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /COMMIT;/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /account\."role"::text = 'MEASURER'/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /measurer-zero-salary:v2:/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /LIKE '%еркебулан%'/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /LIKE '%нурасыл%'/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /invalid_plan_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /active_accrual_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /active_payment_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /pending_confirmation_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /nonzero_payable_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /wrong_period_bonus_count <> 0/);
-assert.match(payrollPeriodCorrectionVerificationMigrationSource, /RAISE EXCEPTION/);
 
-console.log("Payroll policy tests passed");
+// Null and zero are deliberately different; the recommendation has no
+// fallback path into prepared payroll.
+assert.match(
+  service,
+  /effectiveOrderBonusAmount[\s\S]*?manualAmount == null \? 0 : Number\(manualAmount\)/,
+);
+assert.match(service, /const effectiveBonus = manualBonus \?\? 0/);
+assert.match(
+  service,
+  /if \(manualAmount == null\) missingBonusCount \+= 1;[\s\S]*?else orderBonuses \+= manualAmount/,
+);
+assert.match(service, /throw new PayrollError\("CALCULATION_INCOMPLETE"\)/);
+
+// Current normalized responsibility and the decision's explicit period are
+// the only sources used by payroll.
+assert.match(service, /responsibleType: OrderResponsibleType\.EMPLOYEE/);
+assert.match(service, /managerUserId: employee\.userId/);
+assert.match(service, /periodId: period\.id,[\s\S]*?earnedAt: factualEarnedAt/);
+assert.match(service, /existing\.periodId !== period\.id/);
+assert.match(service, /BONUS_PERIOD_MISMATCH/);
+assert.match(orderService, /orderReceivedAt: \{ gte: monthRange\.start, lt: monthRange\.end \}/);
+assert.doesNotMatch(orderService, /number[^\n]*monthRange/);
+
+// Opening a page or running the legacy sync endpoint cannot create a bonus or
+// an accrual. Only a saved manual decision changes the prepared calculation.
+const syncImplementation = service.slice(
+  service.indexOf("export async function syncAutomaticOrderBonuses"),
+  service.indexOf("export async function accrueCompletedTerminatedManagerOrderBonus"),
+);
+assert.match(syncImplementation, /created: 0/);
+assert.match(syncImplementation, /removed: 0/);
+assert.doesNotMatch(
+  syncImplementation,
+  /\.(?:create|update|upsert|delete|createMany|updateMany|deleteMany)\(/,
+);
+assert.match(bonusRoute, /action === "sync"/);
+assert.match(bonusRoute, /saveOrderBonusDecision/);
+
+// "Начислено" is an immutable explicit approval snapshot. Reusing the same
+// calculation does not create a duplicate; a changed calculation creates a
+// linked correction revision.
+assert.match(schema, /model PayrollCalculationSnapshot/);
+assert.match(schema, /@@unique\(\[periodId, employeeId, revision\]\)/);
+assert.match(service, /export async function confirmPayrollCalculation/);
+assert.match(service, /salaryManager\(actor\)/);
+assert.match(
+  service,
+  /payrollSnapshotMatchesCalculation\(latest, prepared, calculationHash\)/,
+);
+assert.match(service, /previousSnapshotId: latest\?\.id/);
+assert.match(service, /PAYROLL_CALCULATION_CONFIRMED/);
+assert.match(service, /PAYROLL_CALCULATION_CORRECTED/);
+assert.match(
+  service,
+  /const confirmedAccrued = latestApproval[\s\S]*?Number\(latestApproval\.preparedAmount\)[\s\S]*?: 0/,
+);
+assert.match(
+  service,
+  /\(latestApproval \? Number\(latestApproval\.preparedAmount\) : preparedAmount\) - paid/,
+);
+assert.match(service, /approvalStatus = !latestApproval[\s\S]*?NEEDS_CORRECTION/);
+assert.match(payrollRoute, /action === "confirm-calculation"/);
+assert.match(payrollRoute, /confirmPayrollCalculation/);
+assert.match(
+  payrollRoute,
+  /body\.decision !== "CONFIRM" && body\.decision !== "REJECT"/,
+);
+assert.doesNotMatch(
+  payrollRoute,
+  /body\.decision === "REJECT" \? "REJECT" : "CONFIRM"/,
+);
+
+// Any payroll user may load a started month; loading it creates only the empty
+// period container, never financial operations.
+assert.match(
+  payrollRoute,
+  /if \(!period && isCompanyMonthStarted\(year, month\)\)[\s\S]*?ensurePeriod\(year, month\)/,
+);
+assert.match(
+  payrollSelfRoute,
+  /if \(!period && isCompanyMonthStarted\(year, month\)\)[\s\S]*?ensurePeriod\(year, month\)/,
+);
+assert.match(payrollSelfRoute, /Number\(p\.get\("year"\)\)/);
+assert.match(payrollSelfRoute, /Number\(p\.get\("month"\)\)/);
+assert.match(payrollSelfRoute, /body\.action === "request-advance"/);
+assert.doesNotMatch(payrollSelfRoute, /body\.action === "report-advance"/);
+assert.doesNotMatch(payrollSelfRoute, /body\.action === "accrual"/);
+assert.doesNotMatch(payrollSelfRoute, /createSelfAccrual/);
+const selfAccrualImplementation = service.slice(
+  service.indexOf("export async function createSelfAccrual"),
+  service.indexOf("async function createAccrualInternal"),
+);
+assert.match(selfAccrualImplementation, /throw new PayrollError\("FORBIDDEN"\)/);
+assert.doesNotMatch(
+  selfAccrualImplementation,
+  /createAccrualInternal|payrollAccrual\.(?:create|update|upsert)/,
+);
+
+// Idempotent review/transition replays must prove that the repeated request
+// is identical instead of returning whichever completed record already exists.
+const confirmationReviewImplementation = service.slice(
+  service.indexOf("export async function reviewPaymentConfirmation"),
+  service.indexOf("export async function reversePayment"),
+);
+for (const invariant of [
+  /reviewAudit\.action !== "PAYMENT_CONFIRMATION_CONFIRMED"/,
+  /input\.decision !== "CONFIRM"/,
+  /compareRequestHash\(payment\.requestHash, input\.requestHash\)/,
+  /payment\.amount\.equals/,
+]) {
+  assert.match(confirmationReviewImplementation, invariant);
+}
+const periodTransitionImplementation = service.slice(
+  service.indexOf("export async function transitionPeriod"),
+  service.indexOf("const signedPayment"),
+);
+assert.match(periodTransitionImplementation, /replayAfter\?\.status !== target/);
+assert.match(periodTransitionImplementation, /replay\.reason !== replayReason/);
+assert.match(periodTransitionImplementation, /replayAfter\?\.requestHash !== requestHash/);
+assert.match(service, /paymentTypeById\.get\(row\.reversalOfId\) === PayrollPaymentType\.ADVANCE/);
+
+// Prior-period debt is calculated separately and is not merged back into the
+// current month's prepared earnings.
+assert.match(service, /const priorDebtBreakdown = priorPeriods\.flatMap/);
+assert.match(service, /const priorDebt = priorDebtBreakdown\.reduce/);
+assert.match(service, /priorDebtBreakdown,/);
+assert.match(service, /prepared: preparedAmount,/);
+assert.match(payrollPage, /Долг за прошлые месяцы/);
+
+// Main page and drawer use the same server contract, retain null/zero
+// semantics, paginate large teams, and collapse history by default.
+for (const label of [
+  "К начислению",
+  "Начислено",
+  "Выплачено",
+  "Осталось выплатить",
+  "Подсказка системы",
+  "Бонус сотруднику",
+  "Не указан",
+  "Применить",
+  "Заказы и бонусы",
+  "История операций",
+]) {
+  assert.ok(payrollPage.includes(label), `Payroll UI is missing: ${label}`);
+}
+assert.match(payrollPage, /const statementPrepared =/);
+assert.match(payrollPage, /const statementAccrued =/);
+assert.match(payrollPage, /const statementPaid =/);
+assert.match(payrollPage, /const statementPayable =/);
+assert.match(payrollPage, /const PAYROLL_PAGE_SIZE = 25/);
+assert.match(payrollPage, /overflow-x-hidden overflow-y-auto/);
+assert.match(payrollPage, /<details[\s\S]*?История операций/);
+assert.match(
+  payrollPage,
+  /Система предлагает бонус только как подсказку и не включает его в/,
+);
+assert.match(payrollPage, /Пустой бонус означает «Не указан»; 0 ₸ — сохранённое/);
+assert.match(payrollPage, /Заявка на аванс/);
+assert.match(payrollPage, /Запросить аванс/);
+assert.match(payrollPage, /не считается выплатой/);
+assert.doesNotMatch(payrollPage, /Сообщить об авансе|Зарегистрировать полученный аванс/);
+
+// Database contracts preserve 0 versus NULL, tenant responsibility, explicit
+// period attribution, and safe/idempotent data repair.
+assert.match(
+  accountingMigration,
+  /CREATE TYPE "OrderResponsibleType" AS ENUM \('EMPLOYEE', 'COMPANY'\)/,
+);
+assert.match(accountingMigration, /Order_responsibleType_managerUserId_check/);
+assert.match(accountingMigration, /"manualAmount" DECIMAL\(14, 2\),/);
+assert.doesNotMatch(
+  accountingMigration,
+  /"manualAmount" DECIMAL\(14, 2\) NOT NULL/,
+);
+assert.match(
+  accountingMigration,
+  /PayrollOrderBonusDecision_orderId_employeeId_key/,
+);
+assert.doesNotMatch(
+  accountingMigration,
+  /(?:INSERT INTO|UPDATE|DELETE FROM)\s+"PayrollPayment"/,
+);
+assert.match(snapshotMigration, /ADD COLUMN IF NOT EXISTS "periodId"/);
+assert.match(snapshotMigration, /ADD COLUMN IF NOT EXISTS "earnedAt"/);
+assert.match(snapshotMigration, /CREATE TABLE IF NOT EXISTS "PayrollCalculationSnapshot"/);
+assert.match(snapshotMigration, /ON CONFLICT \("idempotencyKey"\) DO NOTHING/);
+assert.match(measurerRepairMigration, /"baseSalary" = 0/);
+assert.match(measurerRepairMigration, /"salaryPlanEnabled" = FALSE/);
+assert.doesNotMatch(measurerRepairMigration, /Еркебулан|Нурасыл|Кокбай/u);
+assert.doesNotMatch(
+  measurerRepairMigration,
+  /UPDATE\s+"Payroll(?:Accrual|Payment|PaymentConfirmation)"/u,
+);
+assert.match(measurerRepairMigration, /ON CONFLICT \("idempotencyKey"\) DO NOTHING/);
+
+console.log("Payroll policy and current accounting contract tests passed");

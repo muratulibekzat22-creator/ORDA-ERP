@@ -1,6 +1,6 @@
 import {
   OrderLifecycle,
-  PayrollPaymentType,
+  OrderResponsibleType,
   Prisma,
   Role,
 } from "@prisma/client";
@@ -21,7 +21,10 @@ import { splitDashboardReceipts } from "@/lib/finance/dashboard-receipts";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
 import { getManagerMonthlySales } from "@/lib/services/manager-monthly-sales.service";
-import { payrollSummary } from "@/lib/services/payroll.service";
+import {
+  latestApprovedPayrollSnapshots,
+  signedConfirmedPayrollPayment,
+} from "@/lib/services/payroll-accounting-read";
 
 type DashboardScope = {
   role: Role;
@@ -76,32 +79,11 @@ const orderEconomySelect = {
   orderReceivedAt: true,
   orderDateNeedsReview: true,
   manager: true,
+  responsibleType: true,
   managerUserId: true,
   client: { select: { name: true, phone: true, city: true } },
   installation: { select: { scheduledAt: true } },
   commercialAdjustments: { select: { balanceImpact: true } },
-  payrollAccruals: {
-    select: {
-      type: true,
-      direction: true,
-      amount: true,
-      reversalOfId: true,
-      reversedBy: { select: { id: true } },
-      employee: {
-        select: {
-          position: true,
-          user: { select: { role: true } },
-        },
-      },
-      payments: {
-        select: {
-          amount: true,
-          reversalOfId: true,
-          reversedAt: true,
-        },
-      },
-    },
-  },
   companyLedgerEntries: {
     select: {
       direction: true,
@@ -135,14 +117,14 @@ function economyFor(order: Prisma.OrderGetPayload<{ select: typeof orderEconomyS
     partnerAgreedAt: order.partnerAgreedAt,
     partnerDueAt: order.partnerPlannedReadyAt,
     clientDueAt: order.promisedAt,
-    payrollAccruals: order.payrollAccruals,
+    // An approved payroll calculation is an employee-period aggregate. It has
+    // no reliable order-cost allocation, so legacy order accrual rows must not
+    // be reintroduced as if they were part of the approved calculation.
+    payrollAccruals: [],
     ledgerEntries: order.companyLedgerEntries,
     calculation: order.calculations[0] ?? null,
   });
 }
-
-const signedPayment = (row: { amount: Prisma.Decimal; type: PayrollPaymentType }) =>
-  Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1);
 
 async function managementProjection(scope: DashboardScope) {
   const companyId = requireTenantIdentity().companyId;
@@ -258,7 +240,7 @@ async function managementProjection(scope: DashboardScope) {
     }),
     prisma.order.groupBy({
       by: ["managerUserId"],
-      where: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, orderDateNeedsReview: false, orderReceivedAt: { gte: period.start, lt: period.end }, managerUserId: { not: null } },
+      where: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, orderDateNeedsReview: false, orderReceivedAt: { gte: period.start, lt: period.end }, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: { not: null } },
       _count: { _all: true },
     }),
     prisma.calendarTask.groupBy({
@@ -320,21 +302,33 @@ async function managementProjection(scope: DashboardScope) {
     getManagerMonthlySales({ companyId, start: period.start, end: period.end }),
   ]);
 
-  const [payrollStatement, payrollPayments, customerBalance] = await Promise.all([
+  const [payrollSnapshots, payrollPayments, customerBalance] = await Promise.all([
     payrollPeriod
-      ? payrollSummary(payrollPeriod.id, { userId: scope.userId, role: scope.role, name: "Сводка компании" })
-      : Promise.resolve(null),
-    payrollPeriod
-      ? prisma.payrollPayment.findMany({
-          where: {
-            periodId: payrollPeriod.id,
-            paymentDate: { gte: period.start, lt: period.end },
-            reversalOfId: null,
-            reversedAt: null,
+      ? prisma.payrollCalculationSnapshot.findMany({
+          where: { companyId, periodId: payrollPeriod.id },
+          select: {
+            id: true,
+            employeeId: true,
+            periodId: true,
+            revision: true,
+            preparedAmount: true,
           },
-          select: { amount: true, type: true },
         })
       : Promise.resolve([]),
+    prisma.payrollPayment.findMany({
+      where: {
+        employee: { companyId },
+        paymentDate: { gte: period.start, lt: period.end },
+        reversalOfId: null,
+        reversedAt: null,
+      },
+      select: {
+        employeeId: true,
+        periodId: true,
+        amount: true,
+        type: true,
+      },
+    }),
     prisma.order.aggregate({
       where: {
         companyId,
@@ -389,12 +383,10 @@ async function managementProjection(scope: DashboardScope) {
     (sum, { order }) => sum + Number(order.partnerPrice),
     0,
   );
-  const payrollAccrued = payrollStatement?.rows.reduce(
-    (sum, row) => sum + row.calculation.accrued,
-    0,
-  ) ?? 0;
+  const payrollAccrued = latestApprovedPayrollSnapshots(payrollSnapshots)
+    .reduce((sum, row) => sum + Number(row.preparedAmount), 0);
   const payrollPaid = payrollPayments.reduce(
-    (sum, row) => sum + signedPayment(row),
+    (sum, row) => sum + signedConfirmedPayrollPayment(row),
     0,
   );
   const operatingEntries = ledgerEntries.filter(isOperatingProfitExpense);
@@ -626,10 +618,8 @@ async function managerProjection(scope: DashboardScope) {
   const where: Prisma.OrderWhereInput = {
     deletedAt: null,
     lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
-    OR: [
-      { managerUserId: scope.userId },
-      { leadConversion: { managerId: scope.userId } },
-    ],
+    responsibleType: OrderResponsibleType.EMPLOYEE,
+    managerUserId: scope.userId,
   };
   const [orders, paymentFollowUps, dailyCrm] = await Promise.all([
     prisma.order.findMany({
@@ -644,6 +634,7 @@ async function managerProjection(scope: DashboardScope) {
         balance: true,
         partnerPrice: true,
         partnerAgreedAt: true,
+        responsibleType: true,
         managerUserId: true,
         partnerId: true,
         client: { select: { name: true, phone: true, city: true } },
@@ -657,7 +648,12 @@ async function managerProjection(scope: DashboardScope) {
         assigneeId: scope.userId,
         workflow: "PAYMENT_COLLECTION",
         status: { in: ["PLANNED", "IN_PROGRESS"] },
-        order: { deletedAt: null, lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } },
+        order: {
+          deletedAt: null,
+          lifecycle: { notIn: ["COMPLETED", "CANCELLED"] },
+          responsibleType: OrderResponsibleType.EMPLOYEE,
+          managerUserId: scope.userId,
+        },
       },
       select: {
         id: true,

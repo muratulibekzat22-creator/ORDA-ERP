@@ -1,4 +1,9 @@
-import { OrderLifecycle, Prisma, Role } from "@prisma/client";
+import {
+  OrderLifecycle,
+  OrderResponsibleType,
+  Prisma,
+  Role,
+} from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
 import { companyMonthRange } from "@/lib/company-calendar";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
@@ -147,11 +152,15 @@ export async function searchOrderOptions(
   options: OrderSearchOptions = {},
 ) {
   const managerRoleScope: Prisma.OrderWhereInput = options.payrollBonusEligible
-    ? { managerUserId: actor.userId }
+    ? {
+        responsibleType: OrderResponsibleType.EMPLOYEE,
+        managerUserId: actor.userId,
+      }
     : { OR: [
-        { managerUserId: actor.userId },
-        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
-        { leadConversion: { managerId: actor.userId } },
+        {
+          responsibleType: OrderResponsibleType.EMPLOYEE,
+          managerUserId: actor.userId,
+        },
       ] };
   const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
     ? managerRoleScope
@@ -169,11 +178,8 @@ export async function searchOrderOptions(
   const monthRange = period ? companyMonthRange(period.year, period.month) : null;
   const payrollBonusScope: Prisma.OrderWhereInput = options.payrollBonusEligible
     ? {
+        responsibleType: OrderResponsibleType.EMPLOYEE,
         managerUserId: { not: null },
-        NOT: [
-          { manager: { equals: "Компания", mode: "insensitive" } },
-          { manager: { equals: "Company", mode: "insensitive" } },
-        ],
       }
     : {};
   const searchWhere: Prisma.OrderWhereInput = search ? { OR: [
@@ -321,7 +327,12 @@ async function createLegacyOrder(data: {
   status: string;
 }) {
   const order = await prisma.order.create({
-    data,
+    data: {
+      ...data,
+      responsibleType: data.managerUserId
+        ? OrderResponsibleType.EMPLOYEE
+        : OrderResponsibleType.COMPANY,
+    },
   });
 
   await prisma.orderEvent.create({
@@ -605,6 +616,9 @@ export async function createOrder(data: CreateOrderInput) {
               companyProfit: money(companyProfit),
               manager: data.manager,
               managerUserId: data.managerUserId,
+              responsibleType: data.managerUserId
+                ? OrderResponsibleType.EMPLOYEE
+                : OrderResponsibleType.COMPANY,
               status: "Новая заявка",
             },
           });

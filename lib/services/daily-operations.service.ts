@@ -1,4 +1,4 @@
-import { CalendarTaskStatus, CalendarTaskWorkflow, Prisma, Role } from "@prisma/client";
+import { CalendarTaskStatus, CalendarTaskWorkflow, OrderResponsibleType, Prisma, Role } from "@prisma/client";
 
 import { orderDataGaps } from "@/lib/orders/completeness";
 import { prisma } from "@/lib/prisma";
@@ -86,7 +86,7 @@ export async function getDailyCrmSnapshot(input: { dateKey?: string; managerId?:
       select: { id: true, createdAt: true, completedAt: true, client: { select: { managerUserId: true } } },
     }),
     prisma.order.findMany({
-      where: { companyId, deletedAt: null, lifecycle: { not: "CANCELLED" }, orderDateNeedsReview: false, managerUserId: { in: ids }, orderReceivedAt: { gte: start, lt: end } },
+      where: { companyId, deletedAt: null, lifecycle: { not: "CANCELLED" }, orderDateNeedsReview: false, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: { in: ids }, orderReceivedAt: { gte: start, lt: end } },
       select: { managerUserId: true, amount: true },
     }),
     prisma.calendarTask.findMany({
@@ -217,6 +217,7 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
       where: {
         companyId,
         deletedAt: null,
+        responsibleType: OrderResponsibleType.EMPLOYEE,
         managerUserId: { not: null },
         OR: [
           { lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } },

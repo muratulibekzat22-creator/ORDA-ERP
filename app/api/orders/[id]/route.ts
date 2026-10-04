@@ -1,4 +1,11 @@
-import { Prisma, Role } from "@prisma/client";
+import {
+  OrderResponsibleType,
+  PayrollAccrualType,
+  PayrollDirection,
+  PayrollPeriodStatus,
+  Prisma,
+  Role,
+} from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import {
@@ -7,6 +14,7 @@ import {
   idempotencyConflict,
   readIdempotencyKey,
 } from "@/lib/idempotency";
+import { companyYearMonth } from "@/lib/company-calendar";
 import {
   canTransitionOrderStatus,
   normalizeOrderStatus,
@@ -298,7 +306,6 @@ export async function PATCH(request: Request, { params }: Context) {
     const commandOnly = [
       "lifecycle",
       "version",
-      "managerUserId",
       "contractConfirmedAt",
       "controlMeasurementCompletedAt",
       "drawingApprovedAt",
@@ -464,6 +471,38 @@ export async function PATCH(request: Request, { params }: Context) {
         { error: "Фактическую дату заказа подтверждает менеджер или директор" },
         { status: 403 },
       );
+    const changesResponsible =
+      Object.hasOwn(body, "responsibleType") ||
+      Object.hasOwn(body, "managerUserId");
+    if (changesResponsible && !isDirector(role))
+      return NextResponse.json(
+        { error: "Ответственного меняет директор" },
+        { status: 403 },
+      );
+    const requestedResponsibleType = changesResponsible
+      ? String(body.responsibleType ?? "")
+      : null;
+    const requestedManagerUserId =
+      changesResponsible && body.managerUserId != null
+        ? Number(body.managerUserId)
+        : null;
+    if (
+      changesResponsible &&
+      requestedResponsibleType !== OrderResponsibleType.COMPANY &&
+      requestedResponsibleType !== OrderResponsibleType.EMPLOYEE
+    )
+      return NextResponse.json(
+        { error: "Укажите тип ответственного" },
+        { status: 400 },
+      );
+    if (
+      requestedResponsibleType === OrderResponsibleType.EMPLOYEE &&
+      (!Number.isInteger(requestedManagerUserId) || requestedManagerUserId! <= 0)
+    )
+      return NextResponse.json(
+        { error: "Выберите ответственного сотрудника" },
+        { status: 400 },
+      );
     const nextOrderDate = changesOrderDate
       ? dateValue(body.orderReceivedAt)
       : null;
@@ -519,6 +558,8 @@ export async function PATCH(request: Request, { params }: Context) {
       designNotes: body.designNotes ?? null,
       orderReceivedAt: nextOrderDate?.toISOString() ?? null,
       promisedAt: nextPromisedAt?.toISOString() ?? null,
+      responsibleType: requestedResponsibleType,
+      managerUserId: requestedManagerUserId,
     };
     const requestHash = createRequestHash(payload);
     const historyKey =
@@ -535,12 +576,16 @@ export async function PATCH(request: Request, { params }: Context) {
     const promisedAtKey = changesPromisedAt
       ? `order-promised-at:${id}:${idempotency.key}`
       : null;
+    const responsibleKey = changesResponsible
+      ? `order-responsible:${id}:${idempotency.key}`
+      : null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
         where: { id },
         select: {
           status: true,
+          companyId: true,
           clientId: true,
           amount: true,
           prepayment: true,
@@ -549,6 +594,9 @@ export async function PATCH(request: Request, { params }: Context) {
           companyProfit: true,
           orderReceivedAt: true,
           promisedAt: true,
+          manager: true,
+          managerUserId: true,
+          responsibleType: true,
         },
       });
       if (!current) return null;
@@ -596,6 +644,17 @@ export async function PATCH(request: Request, { params }: Context) {
           return tx.order.findUnique({ where: { id }, include });
         }
       }
+      if (responsibleKey) {
+        const existing = await tx.orderEvent.findUnique({
+          where: { idempotencyKey: responsibleKey },
+          select: { requestHash: true },
+        });
+        if (existing) {
+          if (existing.requestHash !== requestHash)
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return tx.order.findUnique({ where: { id }, include });
+        }
+      }
       const data: Prisma.OrderUpdateInput = {};
       if (role !== Role.PARTNER && "clientName" in body) {
         const clientName = text(body.clientName, 200);
@@ -615,10 +674,31 @@ export async function PATCH(request: Request, { params }: Context) {
           "address",
           "material",
           "staircase",
-          "manager",
         ] as const)
           if (typeof body[key] === "string")
             data[key] = text(body[key], 500) ?? "";
+      if (changesResponsible) {
+        if (requestedResponsibleType === OrderResponsibleType.COMPANY) {
+          data.responsibleType = OrderResponsibleType.COMPANY;
+          data.manager = "Компания";
+          data.managerUser = { disconnect: true };
+        } else {
+          const responsible = await tx.user.findFirst({
+            where: {
+              id: requestedManagerUserId!,
+              active: true,
+              role: {
+                in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR],
+              },
+            },
+            select: { id: true, name: true },
+          });
+          if (!responsible) throw new Error("RESPONSIBLE_NOT_FOUND");
+          data.responsibleType = OrderResponsibleType.EMPLOYEE;
+          data.manager = responsible.name;
+          data.managerUser = { connect: { id: responsible.id } };
+        }
+      }
       if (role !== Role.PARTNER && "paymentMethod" in body) {
         const paymentMethod = text(body.paymentMethod, 40);
         if (!paymentMethod || !paymentMethods.has(paymentMethod))
@@ -630,8 +710,183 @@ export async function PATCH(request: Request, { params }: Context) {
       if (role !== Role.PARTNER && typeof body.designNotes === "string")
         data.designNotes = text(body.designNotes, 2000) ?? "";
       if (role !== Role.PARTNER && changesOrderDate && nextOrderDate) {
+        if (
+          role === Role.MANAGER &&
+          (current.responsibleType !== OrderResponsibleType.EMPLOYEE ||
+            current.managerUserId !== Number(auth.session!.user.id))
+        )
+          throw new Error("FORBIDDEN");
         data.orderReceivedAt = nextOrderDate;
         data.orderDateNeedsReview = false;
+        if (current.orderReceivedAt.getTime() !== nextOrderDate.getTime()) {
+          const decisions = await tx.payrollOrderBonusDecision.findMany({
+            where: { orderId: id, companyId: current.companyId },
+            select: {
+              id: true,
+              employeeId: true,
+              periodId: true,
+              earnedAt: true,
+              manualAmount: true,
+              period: { select: { status: true, year: true, month: true } },
+            },
+            orderBy: { id: "asc" },
+          });
+          const measurementBonuses = await tx.payrollAccrual.findMany({
+            where: {
+              orderId: id,
+              type: PayrollAccrualType.MEASUREMENT_BONUS,
+              reversalOfId: null,
+              reversedBy: null,
+              employee: { companyId: current.companyId },
+            },
+            select: {
+              id: true,
+              employeeId: true,
+              periodId: true,
+              amount: true,
+              period: { select: { status: true, year: true, month: true } },
+            },
+            orderBy: { id: "asc" },
+          });
+          if (decisions.length || measurementBonuses.length) {
+            const targetMonth = companyYearMonth(nextOrderDate);
+            const targetPeriod = await tx.payrollPeriod.upsert({
+              where: {
+                companyId_year_month: {
+                  companyId: current.companyId,
+                  year: targetMonth.year,
+                  month: targetMonth.month,
+                },
+              },
+              create: {
+                companyId: current.companyId,
+                year: targetMonth.year,
+                month: targetMonth.month,
+              },
+              update: {},
+              select: { id: true, status: true, year: true, month: true },
+            });
+            if (role === Role.MANAGER) {
+              const protectedCalculation =
+                await tx.payrollCalculationSnapshot.findFirst({
+                  where: {
+                    companyId: current.companyId,
+                    employeeId: {
+                      in: [
+                        ...decisions.map((decision) => decision.employeeId),
+                        ...measurementBonuses.map((accrual) => accrual.employeeId),
+                      ],
+                    },
+                    periodId: {
+                      in: [
+                        targetPeriod.id,
+                        ...decisions.map((decision) => decision.periodId),
+                        ...measurementBonuses.map((accrual) => accrual.periodId),
+                      ],
+                    },
+                  },
+                  select: { id: true },
+                });
+              if (
+                targetPeriod.status !== PayrollPeriodStatus.OPEN ||
+                decisions.some(
+                  (decision) =>
+                    decision.period.status !== PayrollPeriodStatus.OPEN,
+                ) ||
+                measurementBonuses.some(
+                  (accrual) =>
+                    accrual.period.status !== PayrollPeriodStatus.OPEN,
+                ) ||
+                protectedCalculation
+              )
+                throw new Error("FORBIDDEN");
+            }
+            for (const decision of decisions) {
+              await tx.payrollOrderBonusDecision.update({
+                where: { id: decision.id },
+                data: {
+                  periodId: targetPeriod.id,
+                  earnedAt: nextOrderDate,
+                  updatedById: Number(auth.session!.user.id),
+                },
+              });
+              await tx.payrollAuditEvent.create({
+                data: {
+                  action: "ORDER_BONUS_PERIOD_REALIGNED",
+                  actorId: Number(auth.session!.user.id),
+                  periodId: targetPeriod.id,
+                  employeeId: decision.employeeId,
+                  before: {
+                    orderId: id,
+                    decisionId: decision.id,
+                    year: decision.period.year,
+                    month: decision.period.month,
+                    periodId: decision.periodId,
+                    earnedAt: decision.earnedAt.toISOString(),
+                    manualBonus:
+                      decision.manualAmount == null
+                        ? null
+                        : Number(decision.manualAmount),
+                  },
+                  after: {
+                    orderId: id,
+                    decisionId: decision.id,
+                    year: targetPeriod.year,
+                    month: targetPeriod.month,
+                    periodId: targetPeriod.id,
+                    earnedAt: nextOrderDate.toISOString(),
+                    manualBonus:
+                      decision.manualAmount == null
+                        ? null
+                        : Number(decision.manualAmount),
+                    requestHash,
+                  },
+                  reason:
+                    "Фактическая дата заказа изменена; бонус перенесён в фактический расчётный период",
+                  idempotencyKey: `${orderDateKey}:payroll-bonus-period:${decision.id}`,
+                },
+              });
+            }
+            for (const accrual of measurementBonuses) {
+              await tx.payrollAccrual.update({
+                where: { id: accrual.id },
+                data: {
+                  periodId: targetPeriod.id,
+                  earnedPeriodId: targetPeriod.id,
+                },
+              });
+              await tx.payrollAuditEvent.create({
+                data: {
+                  action: "MEASUREMENT_BONUS_PERIOD_REALIGNED",
+                  actorId: Number(auth.session!.user.id),
+                  periodId: targetPeriod.id,
+                  employeeId: accrual.employeeId,
+                  before: {
+                    orderId: id,
+                    accrualId: accrual.id,
+                    year: accrual.period.year,
+                    month: accrual.period.month,
+                    periodId: accrual.periodId,
+                    amount: Number(accrual.amount),
+                  },
+                  after: {
+                    orderId: id,
+                    accrualId: accrual.id,
+                    year: targetPeriod.year,
+                    month: targetPeriod.month,
+                    periodId: targetPeriod.id,
+                    earnedAt: nextOrderDate.toISOString(),
+                    amount: Number(accrual.amount),
+                    requestHash,
+                  },
+                  reason:
+                    "Фактическая дата заказа изменена; бонус замерщика перенесён в фактический расчётный период",
+                  idempotencyKey: `${orderDateKey}:measurement-bonus-period:${accrual.id}`,
+                },
+              });
+            }
+          }
+        }
       }
       if (role !== Role.PARTNER && changesPromisedAt && nextPromisedAt) {
         const effectiveOrderDate = nextOrderDate ?? current.orderReceivedAt;
@@ -717,6 +972,154 @@ export async function PATCH(request: Request, { params }: Context) {
         data.readyForInstallation = body.readyForInstallation;
       if (typeof body.installationCompleted === "boolean")
         data.installationCompleted = body.installationCompleted;
+      const nextResponsibleManagerId =
+        requestedResponsibleType === OrderResponsibleType.EMPLOYEE
+          ? requestedManagerUserId
+          : null;
+      const responsibilityActuallyChanged =
+        changesResponsible &&
+        (current.responsibleType !== requestedResponsibleType ||
+          current.managerUserId !== nextResponsibleManagerId);
+      if (responsibilityActuallyChanged) {
+        // A bonus decision belongs to the assignment that produced it. Remove
+        // that binding when the current responsible changes so it cannot be
+        // resurrected by later assigning the order back to the same person.
+        // The immutable audit row retains the complete financial history.
+        const staleDecisions = await tx.payrollOrderBonusDecision.findMany({
+          where: { orderId: id },
+          select: {
+            id: true,
+            employeeId: true,
+            periodId: true,
+            earnedAt: true,
+            manualAmount: true,
+          },
+          orderBy: { id: "asc" },
+        });
+        for (const decision of staleDecisions) {
+          await tx.payrollAuditEvent.create({
+            data: {
+              action: "ORDER_BONUS_DECISION_INVALIDATED",
+              actorId: Number(auth.session!.user.id),
+              periodId: decision.periodId,
+              employeeId: decision.employeeId,
+              before: {
+                orderId: id,
+                decisionId: decision.id,
+                periodId: decision.periodId,
+                earnedAt: decision.earnedAt.toISOString(),
+                manualBonus:
+                  decision.manualAmount == null
+                    ? null
+                    : Number(decision.manualAmount),
+                effectiveBonus:
+                  decision.manualAmount == null
+                    ? 0
+                    : Number(decision.manualAmount),
+                responsibleType: current.responsibleType,
+                managerUserId: current.managerUserId,
+              },
+              after: {
+                orderId: id,
+                decisionId: null,
+                manualBonus: null,
+                effectiveBonus: 0,
+                responsibleType: requestedResponsibleType,
+                managerUserId: nextResponsibleManagerId,
+                requestHash,
+              },
+              reason:
+                "Ответственный заказа изменён; прежнее решение по бонусу исключено из зарплаты",
+              idempotencyKey: `${responsibleKey}:payroll-bonus:${decision.id}`,
+            },
+          });
+        }
+        if (staleDecisions.length)
+          await tx.payrollOrderBonusDecision.deleteMany({
+            where: { id: { in: staleDecisions.map((row) => row.id) } },
+          });
+
+        const staleMeasurementBonuses = requestedResponsibleType ===
+          OrderResponsibleType.COMPANY
+          ? await tx.payrollAccrual.findMany({
+          where: {
+            orderId: id,
+            type: PayrollAccrualType.MEASUREMENT_BONUS,
+            reversalOfId: null,
+            reversedBy: null,
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            periodId: true,
+            amount: true,
+            approvedById: true,
+            createdById: true,
+          },
+          orderBy: { id: "asc" },
+        })
+          : [];
+        for (const original of staleMeasurementBonuses) {
+          const reversalKey = `${responsibleKey}:measurement-bonus:${original.id}`;
+          const reversal = await tx.payrollAccrual.create({
+            data: {
+              employeeId: original.employeeId,
+              periodId: original.periodId,
+              earnedPeriodId: original.periodId,
+              type: PayrollAccrualType.BONUS_REVERSAL,
+              direction: PayrollDirection.DECREASE,
+              amount: original.amount,
+              orderId: id,
+              reason:
+                "Ответственный заказа изменён; бонус замерщика исключён из зарплаты",
+              approvedById: Number(auth.session!.user.id),
+              createdById: Number(auth.session!.user.id),
+              reversalOfId: original.id,
+              idempotencyKey: reversalKey,
+              requestHash,
+            },
+          });
+          await tx.companyLedgerEntry.create({
+            data: {
+              type: "PAYROLL_ACCRUAL",
+              category: "SALARY",
+              direction: "INCOME",
+              amount: reversal.amount,
+              operationDate: reversal.createdAt,
+              comment: reversal.reason,
+              orderId: id,
+              employeeId: original.employeeId,
+              authorId: Number(auth.session!.user.id),
+              idempotencyKey: `payroll-accrual:${reversal.id}`,
+              requestHash,
+              affectsProfit: false,
+              payrollAccrualId: reversal.id,
+            },
+          });
+          await tx.payrollAuditEvent.create({
+            data: {
+              action: "MEASUREMENT_BONUS_INVALIDATED",
+              actorId: Number(auth.session!.user.id),
+              periodId: original.periodId,
+              employeeId: original.employeeId,
+              before: {
+                accrualId: original.id,
+                orderId: id,
+                amount: Number(original.amount),
+                responsibleType: current.responsibleType,
+              },
+              after: {
+                reversalId: reversal.id,
+                responsibleType: requestedResponsibleType,
+                requestHash,
+              },
+              reason:
+                "Ответственный заказа изменён; бонус замерщика исключён из зарплаты",
+              idempotencyKey: `${reversalKey}:audit`,
+            },
+          });
+        }
+      }
       await tx.order.update({ where: { id }, data });
       if (orderDateKey && nextOrderDate) {
         const format = (value: Date) =>
@@ -746,6 +1149,25 @@ export async function PATCH(request: Request, { params }: Context) {
             description: `${current.promisedAt ? `${format(current.promisedAt)} → ` : ""}${format(nextPromisedAt)}. Контроль срока заказа обновлён.`,
             user: auth.session!.user.name ?? "Сотрудник",
             idempotencyKey: promisedAtKey,
+            requestHash,
+          },
+        });
+      }
+      if (responsibleKey) {
+        const nextManager =
+          requestedResponsibleType === OrderResponsibleType.COMPANY
+            ? "Компания"
+            : await tx.user.findUnique({
+                where: { id: requestedManagerUserId! },
+                select: { name: true },
+              });
+        await tx.orderEvent.create({
+          data: {
+            orderId: id,
+            title: "Ответственный изменён",
+            description: `${current.manager || "Не назначен"} → ${typeof nextManager === "string" ? nextManager : nextManager?.name ?? "Сотрудник"}`,
+            user: auth.session!.user.name ?? "Система",
+            idempotencyKey: responsibleKey,
             requestHash,
           },
         });
@@ -834,10 +1256,20 @@ export async function PATCH(request: Request, { params }: Context) {
   } catch (error) {
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT")
       return idempotencyConflict();
+    if (error instanceof Error && error.message === "FORBIDDEN")
+      return NextResponse.json(
+        { error: "Подтверждённый или закрытый расчёт может исправлять только руководитель" },
+        { status: 403 },
+      );
     if (error instanceof Error && error.message === "TRANSITION_FORBIDDEN")
       return NextResponse.json(
         { error: "Переход статуса запрещён" },
         { status: 409 },
+      );
+    if (error instanceof Error && error.message === "RESPONSIBLE_NOT_FOUND")
+      return NextResponse.json(
+        { error: "Ответственный сотрудник не найден" },
+        { status: 400 },
       );
     if (
       error instanceof Error &&

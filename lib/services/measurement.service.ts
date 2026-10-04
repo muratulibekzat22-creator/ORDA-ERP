@@ -14,6 +14,7 @@ import {
   LeadSource,
   LeadStage,
   MeasurementClientOutcome,
+  OrderResponsibleType,
 } from "@prisma/client";
 import { createRequestHash } from "@/lib/idempotency";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
@@ -2093,8 +2094,19 @@ export async function ensureMeasurerBonusForOrder(
   actor: MeasurementActor,
 ) {
   const order = await tx.order.findFirst({
-    where: { id: orderId, deletedAt: null },
-    select: { id: true, clientId: true, createdAt: true, lifecycle: true },
+    where: {
+      id: orderId,
+      deletedAt: null,
+      responsibleType: OrderResponsibleType.EMPLOYEE,
+      managerUserId: { not: null },
+      orderDateNeedsReview: false,
+    },
+    select: {
+      id: true,
+      clientId: true,
+      orderReceivedAt: true,
+      lifecycle: true,
+    },
   });
   if (!order || order.lifecycle === "CANCELLED")
     return { created: false, reason: "ORDER_NOT_ELIGIBLE" as const };
@@ -2154,7 +2166,7 @@ export async function ensureMeasurerBonusForOrder(
     timeZone: BUSINESS_TIME_ZONE,
     year: "numeric",
     month: "numeric",
-  }).formatToParts(order.createdAt);
+  }).formatToParts(order.orderReceivedAt);
   const year = Number(parts.find((item) => item.type === "year")?.value),
     month = Number(parts.find((item) => item.type === "month")?.value);
   const period = await tx.payrollPeriod.upsert({
@@ -2179,6 +2191,7 @@ export async function ensureMeasurerBonusForOrder(
     data: {
       employeeId: profile.id,
       periodId: period.id,
+      earnedPeriodId: period.id,
       type: PayrollAccrualType.MEASUREMENT_BONUS,
       direction: PayrollDirection.INCREASE,
       amount: settings.measurerOrderBonus,
@@ -2205,10 +2218,11 @@ export async function ensureMeasurerBonusForOrder(
       operationDate: accrual.createdAt,
       comment: accrual.reason,
       orderId: order.id,
+      employeeId: profile.id,
       authorId: actor.userId,
       idempotencyKey: `payroll-accrual:${accrual.id}`,
       requestHash,
-      affectsProfit: true,
+      affectsProfit: false,
       payrollAccrualId: accrual.id,
     },
   });
@@ -2256,27 +2270,6 @@ export async function reverseMeasurerBonusForCancelledOrder(
     },
   });
   if (!originals.length) return { created: 0 };
-  const now = new Date(),
-    bounds = monthBounds(now);
-  let year = bounds.year,
-    month = bounds.month;
-  let period = await tx.payrollPeriod.upsert({
-    where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
-    create: { year, month },
-    update: {},
-  });
-  if (period.status === "CLOSED") {
-    month += 1;
-    if (month === 13) {
-      month = 1;
-      year += 1;
-    }
-    period = await tx.payrollPeriod.upsert({
-      where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
-      create: { year, month },
-      update: {},
-    });
-  }
   let created = 0;
   for (const original of originals) {
     const key = `measurement-bonus-reversal:${original.id}:${orderId}`;
@@ -2290,7 +2283,7 @@ export async function reverseMeasurerBonusForCancelledOrder(
     const reversal = await tx.payrollAccrual.create({
       data: {
         employeeId: original.employeeId,
-        periodId: period.id,
+        periodId: original.periodId,
         earnedPeriodId: original.periodId,
         type: PayrollAccrualType.BONUS_REVERSAL,
         direction: PayrollDirection.DECREASE,
@@ -2316,7 +2309,7 @@ export async function reverseMeasurerBonusForCancelledOrder(
         authorId: actor.userId,
         idempotencyKey: `payroll-accrual:${reversal.id}`,
         requestHash,
-        affectsProfit: true,
+        affectsProfit: false,
         payrollAccrualId: reversal.id,
       },
     });
@@ -2324,7 +2317,7 @@ export async function reverseMeasurerBonusForCancelledOrder(
       data: {
         action: "MEASUREMENT_BONUS_REVERSED",
         actorId: actor.userId,
-        periodId: period.id,
+        periodId: original.periodId,
         employeeId: original.employeeId,
         before: { accrualId: original.id, amount: Number(original.amount) },
         after: { reversalId: reversal.id },

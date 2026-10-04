@@ -1,4 +1,9 @@
-import { OrderLifecycle, Prisma, Role } from "@prisma/client";
+import {
+  OrderLifecycle,
+  OrderResponsibleType,
+  Prisma,
+  Role,
+} from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import {
@@ -86,11 +91,10 @@ export async function GET(request: Request) {
     const roleScope: Prisma.OrderWhereInput = partner
       ? { partnerId: partner.id }
       : role === Role.MANAGER
-        ? { OR: [
-            { managerUserId: userId },
-            { managerUserId: null, manager: { equals: auth.session!.user.name ?? "", mode: "insensitive" } },
-            { leadConversion: { managerId: userId } },
-          ] }
+        ? {
+            responsibleType: OrderResponsibleType.EMPLOYEE,
+            managerUserId: userId,
+          }
         : role === Role.PRODUCTION
           ? { productions: { some: { masterUserId: userId, archivedAt: null } } }
           : role === Role.INSTALLER
@@ -137,7 +141,7 @@ export async function GET(request: Request) {
             lifecycle: { not: OrderLifecycle.CANCELLED },
             OR: [
               { orderDateNeedsReview: true },
-              { managerUserId: null },
+              { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: null },
               { client: { phone: "" } },
               { client: { city: "" } },
               {

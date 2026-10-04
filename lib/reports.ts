@@ -81,7 +81,7 @@ export type ReportsReadModel = {
   managers: ManagerReportRow[];
   trend: Array<{ date: string; salesAmount: number; received: number }>;
   production: Array<{ stage: string; count: number }>;
-  orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; productionPrice: number | null; grossMargin: number | null; payrollAccrued: number; received: number; remaining: number; status: string }>;
+  orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; productionPrice: number | null; grossMargin: number | null; payrollAccrued: number | null; received: number; remaining: number; status: string }>;
 };
 
 const OFFSET = "+05:00";

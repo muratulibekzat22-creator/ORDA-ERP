@@ -3,6 +3,7 @@ import {
   CalendarTaskStatus,
   CalendarTaskType,
   CalendarTaskWorkflow,
+  OrderResponsibleType,
   Prisma,
   Role,
 } from "@prisma/client";
@@ -38,6 +39,7 @@ const select = {
       id: true,
       number: true,
       balance: true,
+      responsibleType: true,
       managerUserId: true,
       client: { select: { id: true, name: true, phone: true } },
     },
@@ -61,18 +63,26 @@ export function paymentPromisesFitBalance(
   return new Prisma.Decimal(activeAmount).add(new Prisma.Decimal(nextAmount)).lessThanOrEqualTo(new Prisma.Decimal(balance));
 }
 
-function canManage(actor: PaymentFollowUpActor, managerUserId: number | null) {
+function canManage(
+  actor: PaymentFollowUpActor,
+  order: {
+    responsibleType: OrderResponsibleType;
+    managerUserId: number | null;
+  },
+) {
   return actor.role === Role.DIRECTOR ||
     actor.role === Role.OPERATIONS_DIRECTOR ||
-    (actor.role === Role.MANAGER && managerUserId === actor.userId);
+    (actor.role === Role.MANAGER &&
+      order.responsibleType === OrderResponsibleType.EMPLOYEE &&
+      order.managerUserId === actor.userId);
 }
 
 export async function listPaymentFollowUps(orderId: number, actor: PaymentFollowUpActor) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, deletedAt: null },
-    select: { managerUserId: true },
+    select: { responsibleType: true, managerUserId: true },
   });
-  if (!order || !canManage(actor, order.managerUserId)) throw new Error("ORDER_NOT_FOUND");
+  if (!order || !canManage(actor, order)) throw new Error("ORDER_NOT_FOUND");
   const tasks = await prisma.calendarTask.findMany({
     where: { orderId, workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION },
     select,
@@ -103,7 +113,7 @@ export async function createPaymentFollowUp(input: {
       select: { ...select, auditEvents: { where: { action: "PAYMENT_FOLLOW_UP_SCHEDULED" }, take: 1, select: { after: true } } },
     });
     if (existing) {
-      if (existing.orderId !== input.orderId || !existing.order || !canManage(input.actor, existing.order.managerUserId))
+      if (existing.orderId !== input.orderId || !existing.order || !canManage(input.actor, existing.order))
         throw new Error("ORDER_NOT_FOUND");
       const audit = existing.auditEvents[0]?.after as { requestHash?: string } | null;
       if (!compareRequestHash(audit?.requestHash ?? null, input.requestHash))
@@ -118,13 +128,15 @@ export async function createPaymentFollowUp(input: {
         number: true,
         balance: true,
         clientId: true,
+        responsibleType: true,
         managerUserId: true,
         manager: true,
         client: { select: { name: true } },
       },
     });
-    if (!order || !canManage(input.actor, order.managerUserId)) throw new Error("ORDER_NOT_FOUND");
-    if (!order.managerUserId) throw new Error("ORDER_MANAGER_REQUIRED");
+    if (!order || !canManage(input.actor, order)) throw new Error("ORDER_NOT_FOUND");
+    if (order.responsibleType !== OrderResponsibleType.EMPLOYEE || !order.managerUserId)
+      throw new Error("ORDER_MANAGER_REQUIRED");
     const activePromises = await tx.calendarTask.aggregate({
       where: {
         orderId: order.id,
@@ -187,9 +199,9 @@ export async function cancelPaymentFollowUp(input: {
   return prisma.$transaction(async (tx) => {
     const task = await tx.calendarTask.findFirst({
       where: { id: input.taskId, orderId: input.orderId, workflow: CalendarTaskWorkflow.PAYMENT_COLLECTION },
-      select: { id: true, status: true, dueAt: true, order: { select: { id: true, number: true, managerUserId: true } } },
+      select: { id: true, status: true, dueAt: true, order: { select: { id: true, number: true, responsibleType: true, managerUserId: true } } },
     });
-    if (!task || !task.order || !canManage(input.actor, task.order.managerUserId)) throw new Error("PAYMENT_FOLLOW_UP_NOT_FOUND");
+    if (!task || !task.order || !canManage(input.actor, task.order)) throw new Error("PAYMENT_FOLLOW_UP_NOT_FOUND");
     if (task.status === CalendarTaskStatus.COMPLETED || task.status === CalendarTaskStatus.CANCELLED)
       throw new Error("PAYMENT_FOLLOW_UP_TERMINAL");
     const now = new Date();

@@ -19,9 +19,11 @@ const normalizeResponsibleName = (value: string | null | undefined) =>
   (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
 
 export const isCompanyResponsibleOrder = (order: {
+  responsibleType?: "EMPLOYEE" | "COMPANY" | null;
   managerName?: string | null;
   managerUserId?: number | null;
 }) => {
+  if (order.responsibleType) return order.responsibleType === "COMPANY";
   const responsible = normalizeResponsibleName(order.managerName);
   const companyLabel = /(^|[\s(«"'/_-])(компания|company)(?=$|[\s)»"'/_-])/iu;
   return order.managerUserId === null || companyLabel.test(responsible);
@@ -140,6 +142,7 @@ export const isManagerOrderBonusEligible = (order: {
   status?: string | null;
   lifecycle?: string | null;
   deletedAt?: Date | string | null;
+  responsibleType?: "EMPLOYEE" | "COMPANY" | null;
   managerName?: string | null;
   managerUserId?: number | null;
 }) =>
@@ -150,22 +153,17 @@ export const isManagerOrderBonusEligible = (order: {
 
 export const isOrderAssignedToManager = (
   order: {
+    responsibleType?: "EMPLOYEE" | "COMPANY" | null;
     managerUserId?: number | null;
     leadManagerId?: number | null;
     managerName?: string | null;
   },
   manager: { id: number; name: string },
 ) => {
-  // The order's current responsible party is authoritative.  A lead's former
-  // manager must not receive a bonus after the order is reassigned to the
-  // company or to another manager.
+  // Only the current normalized order assignment is authoritative. Historical
+  // lead ownership and display names must never drive payroll.
   if (isCompanyResponsibleOrder(order)) return false;
-  if (manager.id > 0) return order.managerUserId === manager.id;
-  if (order.managerUserId != null) return false;
-  const responsible = normalizeResponsibleName(order.managerName);
-  if (responsible)
-    return responsible === normalizeResponsibleName(manager.name);
-  return false;
+  return manager.id > 0 && order.managerUserId === manager.id;
 };
 
 export const isDateInPayrollPeriod = (
@@ -178,6 +176,7 @@ export const auditManagerOrderBonus = (input: {
   orderAmount: number;
   status?: string | null;
   deletedAt?: Date | string | null;
+  responsibleType?: "EMPLOYEE" | "COMPANY" | null;
   managerName?: string | null;
   managerUserId?: number | null;
   submitted: number;

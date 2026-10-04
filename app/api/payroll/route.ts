@@ -18,6 +18,7 @@ import {
   correctPayrollAccrual,
   approveManagerPayrollManual,
   closePeriod,
+  confirmPayrollCalculation,
   createAccrual,
   createPayment,
   ensurePeriod,
@@ -61,6 +62,14 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
+    const requestedEmployeeId = params.get("employeeId")
+      ? Number(params.get("employeeId"))
+      : undefined;
+    if (
+      requestedEmployeeId !== undefined &&
+      (!Number.isInteger(requestedEmployeeId) || requestedEmployeeId <= 0)
+    )
+      throw new PayrollError("EMPLOYEE_NOT_FOUND");
     const identity = actor(auth.session!);
     const canManageAccruals =
       identity.role === Role.DIRECTOR ||
@@ -68,7 +77,7 @@ export async function GET(request: Request) {
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
-    if (!period && canManageAccruals && isCompanyMonthStarted(year, month))
+    if (!period && isCompanyMonthStarted(year, month))
       period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.findUnique({
       where: { companyId: requireTenantIdentity().companyId }, select: { paydayDayOfMonth: true },
@@ -80,18 +89,44 @@ export async function GET(request: Request) {
       return NextResponse.json({
         period: null,
         rows: [],
-        totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
-        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+        totals: { prepared: 0, accrued: 0, paid: 0, pending: 0, payable: 0, remaining: 0, priorDebt: 0 },
+        breakdown: { salaryPrepared: 0, orderBonusesPrepared: 0, otherBonusesPrepared: 0, premiumsPrepared: 0, deductionsPrepared: 0, prepared: 0, salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0, priorDebt: 0 },
         settings,
         unconfigured,
       });
+    const includeDetails = requestedEmployeeId !== undefined;
+    const summary = await payrollSummary(
+      period.id,
+      actor(auth.session!),
+      requestedEmployeeId,
+      false,
+      { includeDetails },
+    );
+    const rows = includeDetails
+      ? summary.rows
+      : summary.rows.map((row) => ({
+          ...row,
+          salaryRates: [],
+          accruals: [],
+          payments: [],
+          paymentConfirmations: [],
+          advanceRequests: [],
+          calculationSnapshots: [],
+          bonusAccruals: [],
+          orderBonuses: [],
+          calculationHistory: [],
+          payrollAudit: null,
+          calculation: {
+            ...row.calculation,
+            priorDebtBreakdown: [],
+          },
+          detailsAvailable: true,
+        }));
     return NextResponse.json({
       period,
-      ...(await payrollSummary(
-        period.id,
-        actor(auth.session!),
-        params.get("employeeId") ? Number(params.get("employeeId")) : undefined,
-      )),
+      ...summary,
+      rows,
+      summaryMode: includeDetails ? "detail" : "compact",
       unconfigured,
     });
   } catch (error) {
@@ -134,6 +169,7 @@ export async function POST(request: Request) {
               typeof body.comment === "string" ? body.comment : undefined,
           },
           identity,
+          { key: keyResult.key, requestHash: hash },
         ),
       );
     if (action === "salary")
@@ -144,6 +180,7 @@ export async function POST(request: Request) {
           new Date(String(body.effectiveFrom)),
           typeof body.comment === "string" ? body.comment : undefined,
           identity,
+          { key: keyResult.key, requestHash: hash },
         ),
       );
     if (action === "allowance")
@@ -153,6 +190,7 @@ export async function POST(request: Request) {
           Number(body.amount),
           typeof body.comment === "string" ? body.comment : undefined,
           identity,
+          { key: keyResult.key, requestHash: hash },
         ),
       );
     if (action === "correct-accrual")
@@ -164,6 +202,23 @@ export async function POST(request: Request) {
             reason: String(body.reason ?? ""),
             key: keyResult.key,
             requestHash: hash,
+          },
+          identity,
+        ),
+      );
+    if (action === "confirm-calculation")
+      return NextResponse.json(
+        await confirmPayrollCalculation(
+          {
+            employeeId: Number(body.employeeId),
+            periodId: Number(body.periodId),
+            reason: String(body.reason ?? ""),
+            key: keyResult.key,
+            requestHash: hash,
+            expectedCalculationHash:
+              typeof body.expectedCalculationHash === "string"
+                ? body.expectedCalculationHash
+                : "",
           },
           identity,
         ),
@@ -249,12 +304,14 @@ export async function POST(request: Request) {
           identity,
         ),
       );
-    if (action === "review-payment-confirmation")
+    if (action === "review-payment-confirmation") {
+      if (body.decision !== "CONFIRM" && body.decision !== "REJECT")
+        throw new PayrollError("INVALID_DECISION");
       return NextResponse.json(
         await reviewPaymentConfirmation(
           Number(body.id),
           {
-            decision: body.decision === "REJECT" ? "REJECT" : "CONFIRM",
+            decision: body.decision,
             amount: body.amount == null ? undefined : Number(body.amount),
             paymentDate: body.paymentDate == null ? undefined : new Date(String(body.paymentDate)),
             method: typeof body.method === "string" ? body.method : undefined,
@@ -265,6 +322,7 @@ export async function POST(request: Request) {
           identity,
         ),
       );
+    }
     if (action === "reverse-payment")
       return NextResponse.json(
         await reversePayment(
@@ -285,6 +343,8 @@ export async function POST(request: Request) {
                 : Number(body.approvedAmount),
             comment:
               typeof body.comment === "string" ? body.comment : undefined,
+            key: keyResult.key,
+            requestHash: hash,
           },
           identity,
         ),
@@ -309,7 +369,12 @@ export async function POST(request: Request) {
       );
     if (action === "close-period")
       return NextResponse.json(
-        await closePeriod(Number(body.periodId), keyResult.key, identity),
+        await closePeriod(
+          Number(body.periodId),
+          keyResult.key,
+          hash,
+          identity,
+        ),
       );
     if (action === "transition-period")
       return NextResponse.json(
@@ -318,6 +383,7 @@ export async function POST(request: Request) {
           body.status as PayrollPeriodStatus,
           typeof body.reason === "string" ? body.reason : undefined,
           keyResult.key,
+          hash,
           identity,
         ),
       );

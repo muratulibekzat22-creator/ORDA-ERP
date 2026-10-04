@@ -18,7 +18,7 @@ import {
 type Option = { id: number; name: string };
 type PaymentMethodOption = { value: string; label: string };
 type RegistrationOptions = {
-  role: "DIRECTOR" | "MANAGER";
+  role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "MANAGER";
   currentUserId: number;
   managers: Option[];
   materials: string[];
@@ -112,7 +112,7 @@ export default function NewOrderForm() {
         ...current,
         clientName: body.existingClient?.name ?? current.clientName,
         location: [body.existingClient?.city, body.existingClient?.address].filter(Boolean).join(", ") || current.location,
-        managerUserId: options?.role === "DIRECTOR" && body.existingClient?.managerUserId
+        managerUserId: options?.role !== "MANAGER" && body.existingClient?.managerUserId
           ? String(body.existingClient.managerUserId)
           : current.managerUserId,
       }));

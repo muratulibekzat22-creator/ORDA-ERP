@@ -22,6 +22,16 @@ assert.match(service, /pg_advisory_xact_lock/);
 assert.match(service, /activePromises[\s\S]*PAYMENT_FOLLOW_UPS_EXCEED_BALANCE/);
 assert.match(service, /PAYMENT_FOLLOW_UP_CANCEL_REASON_REQUIRED/);
 assert.match(service, /input\.actor\.role === Role\.MANAGER && task\.dueAt <= now/);
+assert.match(
+  service,
+  /order\.responsibleType === OrderResponsibleType\.EMPLOYEE[\s\S]*order\.managerUserId === actor\.userId/,
+  "manager follow-up access must use the current normalized order responsibility",
+);
+assert.match(
+  service,
+  /order\.responsibleType !== OrderResponsibleType\.EMPLOYEE \|\| !order\.managerUserId/,
+  "a COMPANY order must not create a follow-up assigned to a stale employee",
+);
 
 const orderService = read("lib/services/order.service.ts");
 assert(orderService.indexOf("if (existingEvent)") < orderService.indexOf("assertPaymentFollowUpInput(data.paymentPromiseAmount"));

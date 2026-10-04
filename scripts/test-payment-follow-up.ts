@@ -1,7 +1,7 @@
 import "./require-test-database";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { Role } from "@prisma/client";
+import { OrderResponsibleType, Role } from "@prisma/client";
 
 import { createRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
@@ -18,7 +18,7 @@ async function main() {
   const manager = await prisma.user.create({ data: { companyId: 1, name: tag, email: `${tag}@test.local`, password: "test", role: Role.MANAGER } });
   const otherManager = await prisma.user.create({ data: { companyId: 1, name: `${tag}-other`, email: `${tag}-other@test.local`, password: "test", role: Role.MANAGER } });
   const client = await prisma.client.create({ data: { companyId: 1, name: "Клиент доплаты", phone: "+77000000001", city: "Алматы", manager: manager.name, managerUserId: manager.id, amount: "2000000", status: "WON", stage: "WON" } });
-  const order = await prisma.order.create({ data: { companyId: 1, number: `ORD-${tag}`, clientId: client.id, address: "Алматы", staircase: "Лестница", material: "Дуб", amount: "2000000", prepayment: "1000000", balance: "1000000", manager: manager.name, managerUserId: manager.id } });
+  const order = await prisma.order.create({ data: { companyId: 1, number: `ORD-${tag}`, clientId: client.id, address: "Алматы", staircase: "Лестница", material: "Дуб", amount: "2000000", prepayment: "1000000", balance: "1000000", manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE } });
   const actor = { userId: manager.id, name: manager.name, role: Role.MANAGER };
   let replayOrderId: number | null = null;
   try {
@@ -49,7 +49,7 @@ async function main() {
     const delayedRetry = await createPaymentFollowUp({ orderId: order.id, amount: 500000, dueAt, actor, idempotencyKey: tag, requestHash, now: new Date(dueAt.getTime() + 3600_000) });
     assert.equal(delayedRetry.id, task.id, "a delayed idempotent retry must return the existing task after its deadline");
     assert.equal((await getMandatoryTask(actor))?.phase, "ACKNOWLEDGE", "the promise must become mandatory at its due time");
-    assert((await getFounderControl()).issues.some((issue) => issue.key === `payment-follow-up:${task.id}`), "an overdue promise must appear in founder control");
+    assert((await getFounderControl()).issues.some((issue) => issue.key === "group:payment-follow-up"), "an overdue promise must appear in founder control");
 
     await assert.rejects(acknowledgeMandatoryTask(actor, task.id, new Date(Date.now() + 25 * 3600_000), "Слишком поздно"), /PAYMENT_FOLLOW_UP_COMPLETION_TOO_LATE/, "payment contact cannot be postponed for more than 24 hours");
     await acknowledgeMandatoryTask(actor, task.id, new Date(Date.now() + 3600_000), "Свяжусь с клиентом");

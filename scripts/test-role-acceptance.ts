@@ -215,6 +215,11 @@ assert.match(
   documents,
   /order:\s*\{ deletedAt: null, partnerId: ownerPartnerId \}/,
 );
+assert.match(
+  documents,
+  /return \{ client, order: \{ deletedAt: null, responsibleType: OrderResponsibleType\.EMPLOYEE, managerUserId: actor\.userId \} \}/,
+  "manager order documents must be scoped by the current normalized order responsibility",
+);
 
 const calendar = read("lib/services/calendar.service.ts");
 includesAll(

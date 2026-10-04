@@ -22,6 +22,11 @@ assert.match(service, /createdAt: \{ gte: start, lt: end \}/, "lead and event me
 assert.match(service, /toStage: \{ notIn: \["NEW", "LOST"\] \}/, "interested leads must be derived from canonical stage events");
 assert.match(service, /completedAt: \{ gte: start, lt: end \}/, "completed measurements must be event-based");
 assert.match(service, /orderReceivedAt: \{ gte: start, lt: end \}/, "orders must be attributed by received date");
+assert.match(
+  service,
+  /responsibleType: OrderResponsibleType\.EMPLOYEE,[\s\S]*managerUserId: \{ in: ids \}/,
+  "company-owned orders must not count in an employee's daily CRM results",
+);
 assert.match(service, /companyId_workflowKey/, "task generation must be idempotent per tenant and workflow key");
 assert.match(service, /pg_advisory_xact_lock/, "concurrent generators must be serialized");
 assert.match(service, /activeOlderTask/, "order-readiness tasks must not stack while an older task is active");

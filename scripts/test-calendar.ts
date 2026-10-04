@@ -56,6 +56,19 @@ for (const marker of ["taskScope(actor)", "INVALID_ASSIGNEE", "FORBIDDEN_RELATIO
 for (const marker of ["employeePayrollProfile.findMany", "active: true", "user: { is: { active: true", "role: { not: Role.PARTNER }"])
   assert.ok(employeeService.includes(marker), `missing employee source contract: ${marker}`);
 for (const marker of ["requirePermission(\"calendar\")", 'searchParams.get("start")', 'searchParams.get("end")', "62 * 86400000", 'searchParams.get("cursor")', '"Cache-Control": "private, no-store, max-age=0"']) assert.ok(api.includes(marker), `missing range/auth guard: ${marker}`);
+assert.match(
+  service,
+  /order: \{ responsibleType: OrderResponsibleType\.EMPLOYEE, managerUserId: actor\.userId \}/,
+  "manager calendar task scope must use the current order responsibility",
+);
+assert.match(
+  service,
+  /order\.responsibleType !== OrderResponsibleType\.EMPLOYEE \|\| order\.managerUserId !== actor\.userId/,
+  "manager calendar relation validation must reject COMPANY and foreign orders",
+);
+const calendarMeta = service.slice(service.indexOf("export async function getCalendarMeta"), service.indexOf("export async function createCalendarTask"));
+assert.match(calendarMeta, /responsibleType: OrderResponsibleType\.EMPLOYEE, managerUserId: actor\.userId/);
+assert.doesNotMatch(calendarMeta, /manager:\s*actor\.name|managerUserId:\s*null/);
 for (const marker of ["@@index([assigneeId, dueAt])", "completedById", "cancelledAt"]) assert.ok(schema.includes(marker), `missing schema contract: ${marker}`);
 assert.ok(!api.includes("export async function DELETE"), "calendar tasks must not be hard-deleted");
 for (const marker of ["MiniCalendar", "WeekView", "MonthView", '["period", "Период"]', "loadIndicators", "quickCreate(date", "await refresh()", "Мои задачи", "Ответственный сотрудник", '{ state: "all", assignee }'])

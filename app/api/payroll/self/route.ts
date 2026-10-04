@@ -1,13 +1,13 @@
-import { PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
+import { PayrollPaymentType, Role } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { isCompanyMonthStarted } from "@/lib/company-calendar";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { enterTenantFromSession, requireTenantIdentity } from "@/lib/tenant-context";
 import { ensureUserEmployeeProfiles } from "@/lib/services/employee.service";
 import {
-  createSelfAccrual,
   ensurePeriod,
   payrollSummary,
   PayrollError,
@@ -53,6 +53,8 @@ export async function GET(request: Request) {
   const auth = await authSelf();
   if (auth.response) return auth.response;
   try {
+    if (actor(auth.session!).role === Role.PARTNER)
+      throw new PayrollError("FORBIDDEN");
     await ensureUserEmployeeProfiles();
     const p = new URL(request.url).searchParams;
     const year = Number(p.get("year"));
@@ -66,12 +68,7 @@ export async function GET(request: Request) {
         },
       },
     });
-    const now = new Date();
-    if (
-      !period &&
-      year === now.getFullYear() &&
-      month === now.getMonth() + 1
-    )
+    if (!period && isCompanyMonthStarted(year, month))
       period = await ensurePeriod(year, month);
     const settings = await prisma.systemSettings.upsert({
       where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
@@ -80,8 +77,8 @@ export async function GET(request: Request) {
       return NextResponse.json({
         period: null,
         rows: [],
-        totals: { accrued: 0, paid: 0, pending: 0, payable: 0 },
-        breakdown: { salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0 },
+        totals: { prepared: 0, accrued: 0, paid: 0, pending: 0, payable: 0, remaining: 0, priorDebt: 0 },
+        breakdown: { salaryPrepared: 0, orderBonusesPrepared: 0, otherBonusesPrepared: 0, premiumsPrepared: 0, deductionsPrepared: 0, prepared: 0, salaryAccrued: 0, bonusesAccrued: 0, premiumsAccrued: 0, advancesPaid: 0, totalAccrued: 0, totalPaid: 0, payable: 0, priorDebt: 0 },
         settings,
       });
     return NextResponse.json({
@@ -99,9 +96,11 @@ export async function POST(request: Request) {
   const key = readIdempotencyKey(request);
   if ("response" in key) return key.response;
   try {
+    if (actor(auth.session!).role !== Role.MANAGER)
+      throw new PayrollError("FORBIDDEN");
     await ensureUserEmployeeProfiles();
     const body = (await request.json()) as Record<string, unknown>;
-    if (body.action === "report-advance") {
+    if (body.action === "request-advance") {
       return NextResponse.json(
         await requestPaymentConfirmation(
           {
@@ -115,26 +114,6 @@ export async function POST(request: Request) {
               typeof body.method === "string" ? body.method : undefined,
             comment:
               typeof body.comment === "string" ? body.comment : undefined,
-            key: key.key,
-            requestHash: createRequestHash(body),
-          },
-          actor(auth.session!),
-        ),
-      );
-    }
-    if (body.action === "accrual") {
-      const type = body.type === PayrollAccrualType.DEDUCTION
-        ? PayrollAccrualType.DEDUCTION
-        : PayrollAccrualType.ORDER_BONUS;
-      return NextResponse.json(
-        await createSelfAccrual(
-          {
-            periodId: Number(body.periodId),
-            type,
-            amount: Number(body.amount),
-            orderId: body.orderId == null ? undefined : Number(body.orderId),
-            reason: String(body.reason ?? ""),
-            manualOverride: body.manualOverride === true,
             key: key.key,
             requestHash: createRequestHash(body),
           },

@@ -95,6 +95,7 @@ model Company {
   partnerOperations             PartnerSettlementOperation[]
   partnerAuditEvents            PartnerAuditEvent[]
   orders                        Order[]
+  payrollOrderBonusDecisions    PayrollOrderBonusDecision[]
   calendarTasks                 CalendarTask[]
   calendarTaskResultAttachments CalendarTaskResultAttachment[]
   companyLedgerEntries          CompanyLedgerEntry[]
@@ -105,6 +106,7 @@ model Company {
   bankStatementRules            BankStatementRule[]
   employeePayrollProfiles       EmployeePayrollProfile[]
   payrollPeriods                PayrollPeriod[]
+  payrollCalculationSnapshots   PayrollCalculationSnapshot[]
   personalLedgerEntries         PersonalLedgerEntry[]
   documents                     Document[]
   attachments                   Attachment[]
@@ -382,6 +384,11 @@ enum OrderLifecycle {
   CANCELLED
 }
 
+enum OrderResponsibleType {
+  EMPLOYEE
+  COMPANY
+}
+
 enum OrderBlockerSeverity {
   INFO
   WARNING
@@ -518,93 +525,95 @@ model User {
   sessionVersion      Int       @default(1)
   employeeCode        String?   @unique
 
-  partnerProfile                    Partner?
-  assignedMeasurements              Measurement[]
-  assignedProductions               Production[]
-  uploadedAttachments               Attachment[]                   @relation("AttachmentUploadedBy")
-  clientInteractions                ClientInteraction[]            @relation("ClientInteractionAuthor")
-  clientAttachments                 ClientAttachment[]             @relation("ClientAttachmentUploader")
-  warehouseMovements                MaterialMovement[]             @relation("WarehouseMovementEmployee")
-  warehouseReservations             MaterialReservation[]          @relation("WarehouseReservationCreator")
-  warehouseMutations                WarehouseMutation[]            @relation("WarehouseMutationActor")
-  materialPriceChanges              MaterialPriceHistory[]         @relation("MaterialPriceChangedBy")
-  companyLedgerEntries              CompanyLedgerEntry[]           @relation("CompanyLedgerAuthor")
-  personalLedgerEntries             PersonalLedgerEntry[]          @relation("PersonalLedgerAuthor")
-  financeAuditEvents                FinanceAuditEvent[]            @relation("FinanceAuditAuthor")
-  bankStatementImportsCreated       BankStatementImport[]          @relation("BankStatementImportCreator")
-  bankStatementTransactionsResolved BankStatementTransaction[]     @relation("BankStatementTransactionResolver")
-  bankStatementRulesUpdated         BankStatementRule[]            @relation("BankStatementRuleUpdater")
-  commercialAdjustments             CommercialAdjustment[]         @relation("CommercialAdjustmentAuthor")
-  partnerAssignments                PartnerAssignmentHistory[]     @relation("PartnerAssignmentAuthor")
-  partnersCreated                   Partner[]                      @relation("PartnerCreatedBy")
-  partnerRelationsCreated           PartnerOrderRelation[]         @relation("PartnerRelationCreatedBy")
-  partnerOperationsCreated          PartnerSettlementOperation[]   @relation("PartnerOperationCreatedBy")
-  partnerAuditEvents                PartnerAuditEvent[]            @relation("PartnerAuditActor")
-  authAuditEvents                   AuthAuditEvent[]
-  managedClients                    Client[]                       @relation("ClientManager")
-  deletedClients                    Client[]                       @relation("ClientDeletedBy")
-  changedLeadStages                 LeadStatusHistory[]            @relation("LeadStageChangedBy")
-  createdLeadActions                LeadNextAction[]               @relation("LeadActionCreatedBy")
-  completedLeadActions              LeadNextAction[]               @relation("LeadActionCompletedBy")
-  responsiblePurchaseBatches        PurchaseBatch[]                @relation("PurchaseBatchResponsible")
-  finalizedPurchaseBatches          PurchaseBatch[]                @relation("PurchaseBatchFinalizer")
-  purchaseAdditionalCosts           PurchaseAdditionalCost[]
-  purchaseCostRevisions             PurchaseCostRevision[]
-  payrollProfile                    EmployeePayrollProfile?
-    kpiTargetsUpdated                 EmployeeKpiTarget[]           @relation("EmployeeKpiTargetUpdater")
-    kpiRequestsCreated                EmployeeKpiRequest[]          @relation("EmployeeKpiRequestCreator")
-    kpiRequestsResolved               EmployeeKpiRequest[]          @relation("EmployeeKpiRequestResolver")
-  approvedSalaryRates               EmployeeSalaryRate[]           @relation("SalaryRateApprover")
-  approvedPayrollAccruals           PayrollAccrual[]               @relation("PayrollAccrualApprover")
-  createdPayrollAccruals            PayrollAccrual[]               @relation("PayrollAccrualCreator")
-  payrollPayments                   PayrollPayment[]               @relation("PayrollPaymentAuthor")
-  payrollConfirmationsCreated       PayrollPaymentConfirmation[]   @relation("PayrollConfirmationCreator")
-  payrollConfirmationsReviewed      PayrollPaymentConfirmation[]   @relation("PayrollConfirmationReviewer")
-  reviewedAdvanceRequests           PayrollAdvanceRequest[]        @relation("AdvanceReviewer")
-  closedPayrollPeriods              PayrollPeriod[]                @relation("PayrollPeriodCloser")
-  payrollAuditEvents                PayrollAuditEvent[]            @relation("PayrollAuditActor")
-  managedOrders                     Order[]                        @relation("OrderResponsibleManager")
-  deletedOrders                     Order[]                        @relation("OrderDeletedBy")
-  openedOrderBlockers               OrderBlocker[]                 @relation("OrderBlockerOpenedBy")
-  responsibleOrderBlockers          OrderBlocker[]                 @relation("OrderBlockerResponsible")
-  resolvedOrderBlockers             OrderBlocker[]                 @relation("OrderBlockerResolvedBy")
-  orderGateOverrides                OrderGateOverride[]            @relation("OrderGateOverrideAuthor")
-  orderLifecycleEvents              OrderLifecycleEvent[]          @relation("OrderLifecycleEventActor")
-  assignedInstallations             OrderInstallation[]            @relation("OrderInstallationInstaller")
-  assignedCalendarTasks             CalendarTask[]                 @relation("CalendarTaskAssignee")
-  createdCalendarTasks              CalendarTask[]                 @relation("CalendarTaskCreator")
-  completedCalendarTasks            CalendarTask[]                 @relation("CalendarTaskCompleter")
-  calendarTaskAuditEvents           CalendarTaskAudit[]            @relation("CalendarTaskAuditActor")
-  calendarTaskResultAttachments     CalendarTaskResultAttachment[] @relation("CalendarTaskResultUploader")
-  uploadedMeasurementPhotos         MeasurementAttachment[]        @relation("MeasurementAttachmentUploader")
-  measurementAuditEvents            MeasurementAudit[]             @relation("MeasurementAuditActor")
-  authoredDocuments                 Document[]                     @relation("DocumentAuthor")
-  archivedDocuments                 Document[]                     @relation("DocumentArchivedBy")
-  uploadedDocumentVersions          DocumentVersion[]              @relation("DocumentVersionUploader")
-  documentAuditEvents               DocumentAudit[]                @relation("DocumentAuditActor")
-  memoAcknowledgements              CustomerMemoAcknowledgement[]  @relation("MemoAcknowledgedBy")
-  responsibleCashShifts             CashShift[]                    @relation("CashShiftResponsibleManager")
-  closedCashShifts                  CashShift[]                    @relation("CashShiftClosedBy")
-  registeredPayments                Payment[]                      @relation("PaymentRegisteredBy")
-  clientDeletionAudits              ClientDeletionAudit[]          @relation("ClientDeletionAuditActor")
-  trainingAssignments               TrainingAssignment[]           @relation("TrainingAssignmentUser")
-  trainingOverrides                 TrainingAssignment[]           @relation("TrainingAssignmentOverrideBy")
-  trainingAuditEvents               TrainingAudit[]                @relation("TrainingAuditActor")
-  assignedManagementMarketingTasks  ManagementMarketingTask[]      @relation("ManagementMarketingTaskAssignee")
-  createdManagementMarketingTasks   ManagementMarketingTask[]      @relation("ManagementMarketingTaskCreator")
-  createdManagementMarketingMetrics ManagementMarketingMetric[]    @relation("ManagementMarketingMetricCreator")
-  createdManagementMarketingReports ManagementMarketingReport[]    @relation("ManagementMarketingReportAuthor")
-  reviewedManagementMarketingReports ManagementMarketingReport[]   @relation("ManagementMarketingReportReviewer")
-  createdRecruitmentVacancies       RecruitmentVacancy[]           @relation("RecruitmentVacancyCreator")
-  createdRecruitmentCandidates      RecruitmentCandidate[]         @relation("RecruitmentCandidateCreator")
-  responsibleRecruitmentCandidates  RecruitmentCandidate[]         @relation("RecruitmentCandidateResponsible")
-  createdSalesPlans                 SalesPlan[]                    @relation("SalesPlanCreator")
-  salesPlanTargets                  SalesPlanManagerTarget[]
-  handoversFrom                   EmployeeHandover[]            @relation("HandoverFrom")
-  handoversTo                     EmployeeHandover[]            @relation("HandoverTo")
-  handoversPrepared               EmployeeHandover[]            @relation("HandoverPreparedBy")
-  handoversConfirmed              EmployeeHandover[]            @relation("HandoverConfirmedBy")
-  handoverNotices                 EmployeeHandoverNotice[]
+  partnerProfile                      Partner?
+  assignedMeasurements                Measurement[]
+  assignedProductions                 Production[]
+  uploadedAttachments                 Attachment[]                   @relation("AttachmentUploadedBy")
+  clientInteractions                  ClientInteraction[]            @relation("ClientInteractionAuthor")
+  clientAttachments                   ClientAttachment[]             @relation("ClientAttachmentUploader")
+  warehouseMovements                  MaterialMovement[]             @relation("WarehouseMovementEmployee")
+  warehouseReservations               MaterialReservation[]          @relation("WarehouseReservationCreator")
+  warehouseMutations                  WarehouseMutation[]            @relation("WarehouseMutationActor")
+  materialPriceChanges                MaterialPriceHistory[]         @relation("MaterialPriceChangedBy")
+  companyLedgerEntries                CompanyLedgerEntry[]           @relation("CompanyLedgerAuthor")
+  personalLedgerEntries               PersonalLedgerEntry[]          @relation("PersonalLedgerAuthor")
+  financeAuditEvents                  FinanceAuditEvent[]            @relation("FinanceAuditAuthor")
+  bankStatementImportsCreated         BankStatementImport[]          @relation("BankStatementImportCreator")
+  bankStatementTransactionsResolved   BankStatementTransaction[]     @relation("BankStatementTransactionResolver")
+  bankStatementRulesUpdated           BankStatementRule[]            @relation("BankStatementRuleUpdater")
+  commercialAdjustments               CommercialAdjustment[]         @relation("CommercialAdjustmentAuthor")
+  partnerAssignments                  PartnerAssignmentHistory[]     @relation("PartnerAssignmentAuthor")
+  partnersCreated                     Partner[]                      @relation("PartnerCreatedBy")
+  partnerRelationsCreated             PartnerOrderRelation[]         @relation("PartnerRelationCreatedBy")
+  partnerOperationsCreated            PartnerSettlementOperation[]   @relation("PartnerOperationCreatedBy")
+  partnerAuditEvents                  PartnerAuditEvent[]            @relation("PartnerAuditActor")
+  authAuditEvents                     AuthAuditEvent[]
+  managedClients                      Client[]                       @relation("ClientManager")
+  deletedClients                      Client[]                       @relation("ClientDeletedBy")
+  changedLeadStages                   LeadStatusHistory[]            @relation("LeadStageChangedBy")
+  createdLeadActions                  LeadNextAction[]               @relation("LeadActionCreatedBy")
+  completedLeadActions                LeadNextAction[]               @relation("LeadActionCompletedBy")
+  responsiblePurchaseBatches          PurchaseBatch[]                @relation("PurchaseBatchResponsible")
+  finalizedPurchaseBatches            PurchaseBatch[]                @relation("PurchaseBatchFinalizer")
+  purchaseAdditionalCosts             PurchaseAdditionalCost[]
+  purchaseCostRevisions               PurchaseCostRevision[]
+  payrollProfile                      EmployeePayrollProfile?
+  kpiTargetsUpdated                   EmployeeKpiTarget[]            @relation("EmployeeKpiTargetUpdater")
+  kpiRequestsCreated                  EmployeeKpiRequest[]           @relation("EmployeeKpiRequestCreator")
+  kpiRequestsResolved                 EmployeeKpiRequest[]           @relation("EmployeeKpiRequestResolver")
+  approvedSalaryRates                 EmployeeSalaryRate[]           @relation("SalaryRateApprover")
+  approvedPayrollAccruals             PayrollAccrual[]               @relation("PayrollAccrualApprover")
+  createdPayrollAccruals              PayrollAccrual[]               @relation("PayrollAccrualCreator")
+  payrollPayments                     PayrollPayment[]               @relation("PayrollPaymentAuthor")
+  payrollConfirmationsCreated         PayrollPaymentConfirmation[]   @relation("PayrollConfirmationCreator")
+  payrollConfirmationsReviewed        PayrollPaymentConfirmation[]   @relation("PayrollConfirmationReviewer")
+  reviewedAdvanceRequests             PayrollAdvanceRequest[]        @relation("AdvanceReviewer")
+  closedPayrollPeriods                PayrollPeriod[]                @relation("PayrollPeriodCloser")
+  payrollAuditEvents                  PayrollAuditEvent[]            @relation("PayrollAuditActor")
+  payrollOrderBonusDecisionsUpdated   PayrollOrderBonusDecision[]    @relation("PayrollOrderBonusDecisionUpdater")
+  payrollCalculationSnapshotsApproved PayrollCalculationSnapshot[]   @relation("PayrollCalculationSnapshotApprover")
+  managedOrders                       Order[]                        @relation("OrderResponsibleManager")
+  deletedOrders                       Order[]                        @relation("OrderDeletedBy")
+  openedOrderBlockers                 OrderBlocker[]                 @relation("OrderBlockerOpenedBy")
+  responsibleOrderBlockers            OrderBlocker[]                 @relation("OrderBlockerResponsible")
+  resolvedOrderBlockers               OrderBlocker[]                 @relation("OrderBlockerResolvedBy")
+  orderGateOverrides                  OrderGateOverride[]            @relation("OrderGateOverrideAuthor")
+  orderLifecycleEvents                OrderLifecycleEvent[]          @relation("OrderLifecycleEventActor")
+  assignedInstallations               OrderInstallation[]            @relation("OrderInstallationInstaller")
+  assignedCalendarTasks               CalendarTask[]                 @relation("CalendarTaskAssignee")
+  createdCalendarTasks                CalendarTask[]                 @relation("CalendarTaskCreator")
+  completedCalendarTasks              CalendarTask[]                 @relation("CalendarTaskCompleter")
+  calendarTaskAuditEvents             CalendarTaskAudit[]            @relation("CalendarTaskAuditActor")
+  calendarTaskResultAttachments       CalendarTaskResultAttachment[] @relation("CalendarTaskResultUploader")
+  uploadedMeasurementPhotos           MeasurementAttachment[]        @relation("MeasurementAttachmentUploader")
+  measurementAuditEvents              MeasurementAudit[]             @relation("MeasurementAuditActor")
+  authoredDocuments                   Document[]                     @relation("DocumentAuthor")
+  archivedDocuments                   Document[]                     @relation("DocumentArchivedBy")
+  uploadedDocumentVersions            DocumentVersion[]              @relation("DocumentVersionUploader")
+  documentAuditEvents                 DocumentAudit[]                @relation("DocumentAuditActor")
+  memoAcknowledgements                CustomerMemoAcknowledgement[]  @relation("MemoAcknowledgedBy")
+  responsibleCashShifts               CashShift[]                    @relation("CashShiftResponsibleManager")
+  closedCashShifts                    CashShift[]                    @relation("CashShiftClosedBy")
+  registeredPayments                  Payment[]                      @relation("PaymentRegisteredBy")
+  clientDeletionAudits                ClientDeletionAudit[]          @relation("ClientDeletionAuditActor")
+  trainingAssignments                 TrainingAssignment[]           @relation("TrainingAssignmentUser")
+  trainingOverrides                   TrainingAssignment[]           @relation("TrainingAssignmentOverrideBy")
+  trainingAuditEvents                 TrainingAudit[]                @relation("TrainingAuditActor")
+  assignedManagementMarketingTasks    ManagementMarketingTask[]      @relation("ManagementMarketingTaskAssignee")
+  createdManagementMarketingTasks     ManagementMarketingTask[]      @relation("ManagementMarketingTaskCreator")
+  createdManagementMarketingMetrics   ManagementMarketingMetric[]    @relation("ManagementMarketingMetricCreator")
+  createdManagementMarketingReports   ManagementMarketingReport[]    @relation("ManagementMarketingReportAuthor")
+  reviewedManagementMarketingReports  ManagementMarketingReport[]    @relation("ManagementMarketingReportReviewer")
+  createdRecruitmentVacancies         RecruitmentVacancy[]           @relation("RecruitmentVacancyCreator")
+  createdRecruitmentCandidates        RecruitmentCandidate[]         @relation("RecruitmentCandidateCreator")
+  responsibleRecruitmentCandidates    RecruitmentCandidate[]         @relation("RecruitmentCandidateResponsible")
+  createdSalesPlans                   SalesPlan[]                    @relation("SalesPlanCreator")
+  salesPlanTargets                    SalesPlanManagerTarget[]
+  handoversFrom                       EmployeeHandover[]             @relation("HandoverFrom")
+  handoversTo                         EmployeeHandover[]             @relation("HandoverTo")
+  handoversPrepared                   EmployeeHandover[]             @relation("HandoverPreparedBy")
+  handoversConfirmed                  EmployeeHandover[]             @relation("HandoverConfirmedBy")
+  handoverNotices                     EmployeeHandoverNotice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -639,28 +648,28 @@ enum EmployeeHandoverStatus {
 }
 
 model EmployeeHandover {
-  id            Int                    @id @default(autoincrement())
+  id            Int                      @id @default(autoincrement())
   companyId     Int
-  company       Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  company       Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
   fromUserId    Int
-  fromUser      User                   @relation("HandoverFrom", fields: [fromUserId], references: [id], onDelete: Restrict)
+  fromUser      User                     @relation("HandoverFrom", fields: [fromUserId], references: [id], onDelete: Restrict)
   toUserId      Int
-  toUser        User                   @relation("HandoverTo", fields: [toUserId], references: [id], onDelete: Restrict)
+  toUser        User                     @relation("HandoverTo", fields: [toUserId], references: [id], onDelete: Restrict)
   scheduledAt   DateTime
   categories    Json
-  status        EmployeeHandoverStatus @default(PREPARED)
+  status        EmployeeHandoverStatus   @default(PREPARED)
   preparedById  Int
-  preparedBy    User                   @relation("HandoverPreparedBy", fields: [preparedById], references: [id], onDelete: Restrict)
+  preparedBy    User                     @relation("HandoverPreparedBy", fields: [preparedById], references: [id], onDelete: Restrict)
   confirmedById Int?
-  confirmedBy   User?                  @relation("HandoverConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
+  confirmedBy   User?                    @relation("HandoverConfirmedBy", fields: [confirmedById], references: [id], onDelete: Restrict)
   confirmedAt   DateTime?
   cancelledAt   DateTime?
   rolledBackAt  DateTime?
   report        Json?
   items         EmployeeHandoverItem[]
   notices       EmployeeHandoverNotice[]
-  createdAt     DateTime               @default(now())
-  updatedAt     DateTime               @updatedAt
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
 
   @@index([companyId, status, scheduledAt])
   @@index([fromUserId, status])
@@ -668,15 +677,15 @@ model EmployeeHandover {
 }
 
 model EmployeeHandoverItem {
-  id          Int              @id @default(autoincrement())
-  handoverId  Int
-  handover    EmployeeHandover @relation(fields: [handoverId], references: [id], onDelete: Restrict)
-  kind        String
-  entityId    Int
-  oldName     String?
-  newName     String?
-  snapshot    Json?
-  transferredAt DateTime       @default(now())
+  id            Int              @id @default(autoincrement())
+  handoverId    Int
+  handover      EmployeeHandover @relation(fields: [handoverId], references: [id], onDelete: Restrict)
+  kind          String
+  entityId      Int
+  oldName       String?
+  newName       String?
+  snapshot      Json?
+  transferredAt DateTime         @default(now())
 
   @@unique([handoverId, kind, entityId])
   @@index([kind, entityId])
@@ -889,25 +898,25 @@ model CommercialProposal {
 }
 
 model LeadFollowUp {
-  id            Int       @id @default(autoincrement())
-  clientId      Int
-  client        Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  calculationId Int?
-  proposalId    Int?
-  oldPrice      Decimal   @db.Decimal(12, 2)
-  proposedPrice Decimal   @db.Decimal(12, 2)
-  standardPrice Decimal   @db.Decimal(12, 2)
-  discount      Decimal   @db.Decimal(12, 2)
-  reason        String
-  comment       String?
-  channel       String
-  managerUserId Int
-  managerName   String
+  id              Int       @id @default(autoincrement())
+  clientId        Int
+  client          Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  calculationId   Int?
+  proposalId      Int?
+  oldPrice        Decimal   @db.Decimal(12, 2)
+  proposedPrice   Decimal   @db.Decimal(12, 2)
+  standardPrice   Decimal   @db.Decimal(12, 2)
+  discount        Decimal   @db.Decimal(12, 2)
+  reason          String
+  comment         String?
+  channel         String
+  managerUserId   Int
+  managerName     String
   createdByUserId Int?
   createdByName   String?
-  nextActionAt  DateTime
-  completedAt   DateTime?
-  createdAt     DateTime  @default(now())
+  nextActionAt    DateTime
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
 
   @@index([managerUserId, nextActionAt])
   @@index([clientId, createdAt])
@@ -1058,24 +1067,24 @@ model Order {
   partnerId Int?
   partner   Partner? @relation(fields: [partnerId], references: [id])
 
-  address           String
-  staircase         String
-  material          String
-  mapUrl            String   @default("")
-  orderReceivedAt   DateTime @default(now())
-  orderDateNeedsReview Boolean @default(false)
-  frameComment      String   @default("")
-  railingType       String   @default("")
-  supportType       String   @default("")
-  color             String   @default("")
-  lighting          Boolean  @default(false)
-  lightingDetails   String   @default("")
-  cladding          Boolean  @default(false)
-  claddingDetails   String   @default("")
-  additionalDetails String   @default("")
-  designStyle       String   @default("")
-  designNotes       String   @default("")
-  paymentMethod     String   @default("")
+  address              String
+  staircase            String
+  material             String
+  mapUrl               String   @default("")
+  orderReceivedAt      DateTime @default(now())
+  orderDateNeedsReview Boolean  @default(false)
+  frameComment         String   @default("")
+  railingType          String   @default("")
+  supportType          String   @default("")
+  color                String   @default("")
+  lighting             Boolean  @default(false)
+  lightingDetails      String   @default("")
+  cladding             Boolean  @default(false)
+  claddingDetails      String   @default("")
+  additionalDetails    String   @default("")
+  designStyle          String   @default("")
+  designNotes          String   @default("")
+  paymentMethod        String   @default("")
 
   amount Decimal @db.Decimal(12, 2)
 
@@ -1089,15 +1098,16 @@ model Order {
   partnerBalance  Decimal   @default(0) @db.Decimal(12, 2)
 
   manager                       String
+  responsibleType               OrderResponsibleType @default(COMPANY)
   managerUserId                 Int?
-  managerUser                   User?          @relation("OrderResponsibleManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  managerUser                   User?                @relation("OrderResponsibleManager", fields: [managerUserId], references: [id], onDelete: SetNull)
   deletedAt                     DateTime?
   deletedById                   Int?
-  deletedBy                     User?          @relation("OrderDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
-  lifecycle                     OrderLifecycle @default(CREATED)
-  version                       Int            @default(1)
+  deletedBy                     User?                @relation("OrderDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  lifecycle                     OrderLifecycle       @default(CREATED)
+  version                       Int                  @default(1)
   promisedAt                    DateTime?
-  requiredPrepayment            Decimal        @default(0) @db.Decimal(14, 2)
+  requiredPrepayment            Decimal              @default(0) @db.Decimal(14, 2)
   contractConfirmedAt           DateTime?
   controlMeasurementCompletedAt DateTime?
   drawingApprovedAt             DateTime?
@@ -1105,12 +1115,12 @@ model Order {
   workshopConfirmedAt           DateTime?
   productionDeadline            DateTime?
   materialsReadyAt              DateTime?
-  qaRequired                    Boolean        @default(false)
+  qaRequired                    Boolean              @default(false)
   qaApprovedAt                  DateTime?
   completenessConfirmedAt       DateTime?
   operationalAcceptedAt         DateTime?
   completedAt                   DateTime?
-  status                        String         @default("Новая заявка")
+  status                        String               @default("Новая заявка")
 
   measurements                Measurement[]
   payments                    Payment[]
@@ -1132,6 +1142,7 @@ model Order {
   financeAuditEvents          FinanceAuditEvent[]
   inventoryCogsEntries        InventoryCogsEntry[]
   payrollAccruals             PayrollAccrual[]
+  payrollBonusDecisions       PayrollOrderBonusDecision[]
   blockers                    OrderBlocker[]
   gateOverrides               OrderGateOverride[]
   lifecycleEvents             OrderLifecycleEvent[]
@@ -1149,6 +1160,7 @@ model Order {
 
   @@index([lifecycle, promisedAt])
   @@index([managerUserId, lifecycle])
+  @@index([responsibleType, managerUserId, orderReceivedAt])
   @@index([deletedAt, managerUserId])
   @@index([deletedAt, lifecycle])
   @@index([orderReceivedAt])
@@ -1240,9 +1252,9 @@ model CalendarTask {
   completedBy             User?                          @relation("CalendarTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
   cancelledAt             DateTime?
   acknowledgementRequired Boolean                        @default(false)
-  workflow               CalendarTaskWorkflow?
-  workflowKey            String?
-  expectedAmount         Decimal?                       @db.Decimal(14, 2)
+  workflow                CalendarTaskWorkflow?
+  workflowKey             String?
+  expectedAmount          Decimal?                       @db.Decimal(14, 2)
   acknowledgedAt          DateTime?
   acknowledgementComment  String?
   plannedCompletionAt     DateTime?
@@ -1455,45 +1467,47 @@ model OrderCalculationLine {
 }
 
 model CompanyLedgerEntry {
-  id                       Int                       @id @default(autoincrement())
-  companyId                Int                       @default(dbgenerated())
-  company                  Company                   @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  type                     String
-  category                 String
-  categoryId               Int?
-  categoryRef              FinanceCategory?          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  direction                String
-  source                   String                    @default("MANUAL")
-  amount                   Decimal                   @db.Decimal(14, 2)
-  operationDate            DateTime                  @default(now())
-  method                   String?
-  counterparty             String?
-  orderId                  Int?
-  order                    Order?                    @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  clientId                 Int?
-  client                   Client?                   @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  partnerId                Int?
-  partner                  Partner?                  @relation(fields: [partnerId], references: [id], onDelete: SetNull)
-  employeeId               Int?
-  employee                 EmployeePayrollProfile?   @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  recurringExpensePlanId   Int?
-  recurringExpensePlan     RecurringExpensePlan?     @relation(fields: [recurringExpensePlanId], references: [id], onDelete: SetNull)
-  recurringPeriod          String?
-  comment                  String?
-  authorId                 Int?
-  author                   User?                     @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
-  idempotencyKey           String?                   @unique
-  requestHash              String?
-  affectsProfit            Boolean                   @default(true)
-  payrollAccrualId         Int?                      @unique
-  payrollAccrual           PayrollAccrual?           @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
-  payrollPaymentId         Int?                      @unique
-  payrollPayment           PayrollPayment?           @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
-  bankStatementTransaction BankStatementTransaction?
-  voidedAt                 DateTime?
-  voidReason               String?
-  createdAt                DateTime                  @default(now())
-  updatedAt                DateTime                  @updatedAt
+  id                           Int                         @id @default(autoincrement())
+  companyId                    Int                         @default(dbgenerated())
+  company                      Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  type                         String
+  category                     String
+  categoryId                   Int?
+  categoryRef                  FinanceCategory?            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  direction                    String
+  source                       String                      @default("MANUAL")
+  amount                       Decimal                     @db.Decimal(14, 2)
+  operationDate                DateTime                    @default(now())
+  method                       String?
+  counterparty                 String?
+  orderId                      Int?
+  order                        Order?                      @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  clientId                     Int?
+  client                       Client?                     @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  partnerId                    Int?
+  partner                      Partner?                    @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  employeeId                   Int?
+  employee                     EmployeePayrollProfile?     @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  recurringExpensePlanId       Int?
+  recurringExpensePlan         RecurringExpensePlan?       @relation(fields: [recurringExpensePlanId], references: [id], onDelete: SetNull)
+  recurringPeriod              String?
+  comment                      String?
+  authorId                     Int?
+  author                       User?                       @relation("CompanyLedgerAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  idempotencyKey               String?                     @unique
+  requestHash                  String?
+  affectsProfit                Boolean                     @default(true)
+  payrollAccrualId             Int?                        @unique
+  payrollAccrual               PayrollAccrual?             @relation(fields: [payrollAccrualId], references: [id], onDelete: Restrict)
+  payrollPaymentId             Int?                        @unique
+  payrollPayment               PayrollPayment?             @relation(fields: [payrollPaymentId], references: [id], onDelete: Restrict)
+  payrollCalculationSnapshotId Int?                        @unique
+  payrollCalculationSnapshot   PayrollCalculationSnapshot? @relation(fields: [payrollCalculationSnapshotId], references: [id], onDelete: Restrict)
+  bankStatementTransaction     BankStatementTransaction?
+  voidedAt                     DateTime?
+  voidReason                   String?
+  createdAt                    DateTime                    @default(now())
+  updatedAt                    DateTime                    @updatedAt
 
   @@unique([recurringExpensePlanId, recurringPeriod])
   @@index([operationDate])
@@ -1675,6 +1689,8 @@ model EmployeePayrollProfile {
   auditEvents            PayrollAuditEvent[]
   kpiTargets             EmployeeKpiTarget[]
   kpiRequests            EmployeeKpiRequest[]
+  orderBonusDecisions    PayrollOrderBonusDecision[]
+  calculationSnapshots   PayrollCalculationSnapshot[]
   companyLedgerEntries   CompanyLedgerEntry[]
   createdAt              DateTime                     @default(now())
   updatedAt              DateTime                     @updatedAt
@@ -1745,6 +1761,28 @@ model EmployeeKpiRequest {
   @@index([companyId, year, month, status])
 }
 
+model PayrollOrderBonusDecision {
+  id           Int                    @id @default(autoincrement())
+  companyId    Int                    @default(dbgenerated())
+  company      Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  orderId      Int
+  order        Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  employeeId   Int
+  employee     EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId     Int
+  period       PayrollPeriod          @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  earnedAt     DateTime
+  manualAmount Decimal?               @db.Decimal(14, 2)
+  updatedById  Int
+  updatedBy    User                   @relation("PayrollOrderBonusDecisionUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@unique([orderId, employeeId])
+  @@index([companyId, employeeId, updatedAt])
+  @@index([periodId, employeeId])
+}
+
 model EmployeeSalaryRate {
   id            Int                    @id @default(autoincrement())
   employeeId    Int
@@ -1777,11 +1815,47 @@ model PayrollPeriod {
   paymentConfirmations PayrollPaymentConfirmation[]
   advanceRequests      PayrollAdvanceRequest[]
   auditEvents          PayrollAuditEvent[]
+  orderBonusDecisions  PayrollOrderBonusDecision[]
+  calculationSnapshots PayrollCalculationSnapshot[]
   createdAt            DateTime                     @default(now())
   updatedAt            DateTime                     @updatedAt
 
   @@unique([companyId, year, month])
   @@index([companyId, year, month])
+}
+
+model PayrollCalculationSnapshot {
+  id                 Int                         @id @default(autoincrement())
+  companyId          Int                         @default(dbgenerated())
+  company            Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  employeeId         Int
+  employee           EmployeePayrollProfile      @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  periodId           Int
+  period             PayrollPeriod               @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  revision           Int
+  salaryAmount       Decimal                     @db.Decimal(14, 2)
+  orderBonusAmount   Decimal                     @db.Decimal(14, 2)
+  otherBonusAmount   Decimal                     @db.Decimal(14, 2)
+  premiumAmount      Decimal                     @db.Decimal(14, 2)
+  deductionAmount    Decimal                     @db.Decimal(14, 2)
+  preparedAmount     Decimal                     @db.Decimal(14, 2)
+  calculationHash    String
+  source             Json
+  reason             String
+  approvedById       Int
+  approvedBy         User                        @relation("PayrollCalculationSnapshotApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  approvedAt         DateTime                    @default(now())
+  previousSnapshotId Int?                        @unique
+  previousSnapshot   PayrollCalculationSnapshot? @relation("PayrollCalculationRevision", fields: [previousSnapshotId], references: [id], onDelete: Restrict)
+  nextSnapshot       PayrollCalculationSnapshot? @relation("PayrollCalculationRevision")
+  idempotencyKey     String                      @unique
+  requestHash        String
+  createdAt          DateTime                    @default(now())
+  ledgerEntry        CompanyLedgerEntry?
+
+  @@unique([periodId, employeeId, revision])
+  @@index([companyId, periodId, employeeId, revision])
+  @@index([employeeId, periodId, approvedAt])
 }
 
 model PayrollAuditEvent {
@@ -2219,18 +2293,18 @@ model ManagementMarketingReport {
 }
 
 model RecruitmentVacancy {
-  id          Int                      @id @default(autoincrement())
-  companyId   Int                      @default(dbgenerated())
-  company     Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  title       String
-  status      RecruitmentVacancyStatus @default(OPEN)
-  candidates  Int                      @default(0)
-  note        String?
-  createdById Int
-  createdBy   User                     @relation("RecruitmentVacancyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  id               Int                      @id @default(autoincrement())
+  companyId        Int                      @default(dbgenerated())
+  company          Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  title            String
+  status           RecruitmentVacancyStatus @default(OPEN)
+  candidates       Int                      @default(0)
+  note             String?
+  createdById      Int
+  createdBy        User                     @relation("RecruitmentVacancyCreator", fields: [createdById], references: [id], onDelete: Restrict)
   candidateRecords RecruitmentCandidate[]
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @updatedAt
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
 
   @@index([companyId, status, updatedAt])
 }

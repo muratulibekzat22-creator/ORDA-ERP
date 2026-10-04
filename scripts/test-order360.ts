@@ -1,7 +1,7 @@
 import "./require-test-database";
 
 import assert from "node:assert/strict";
-import { CalendarTaskStatus, CalendarTaskType, MeasurementStatus, OrderBlockerSeverity, OrderLifecycle, Role } from "@prisma/client";
+import { CalendarTaskStatus, CalendarTaskType, MeasurementStatus, OrderBlockerSeverity, OrderLifecycle, OrderResponsibleType, Role } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import {
   assignInstallation,
@@ -48,7 +48,7 @@ async function main() {
     partnerIds.push(partner.id);
     const client = await prisma.client.create({ data: { name: tag, phone: "77000000001", city: "Test", manager: manager.name, managerUserId: manager.id, amount: "1000", status: "WON", stage: "WON" } });
     clientIds.push(client.id);
-    const order = await prisma.order.create({ data: { number: `O360-${Date.now()}`, clientId: client.id, address: "Test address", staircase: "Straight", material: "Oak", amount: 1000, prepayment: 50, balance: 950, partnerPrice: 0, partnerAgreedAt: null, partnerPaid: 0, partnerBalance: 0, companyProfit: 0, manager: manager.name, managerUserId: manager.id, requiredPrepayment: 50 } });
+    const order = await prisma.order.create({ data: { number: `O360-${Date.now()}`, clientId: client.id, address: "Test address", staircase: "Straight", material: "Oak", amount: 1000, prepayment: 50, balance: 950, partnerPrice: 0, partnerAgreedAt: null, partnerPaid: 0, partnerBalance: 0, companyProfit: 0, manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE, requiredPrepayment: 50 } });
     orderIds.push(order.id);
     const assignedWithoutPrice = await assignPartnerToOrder({ orderId: order.id, partnerId: partner.id, manager: manager.name });
     assert.equal(assignedWithoutPrice?.partnerId, partner.id, "workshop was not assigned without a production price");
@@ -63,7 +63,7 @@ async function main() {
       other: { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name },
       measurer: { userId: measurer.id, role: Role.MEASURER, name: measurer.name },
     };
-    const measurementOrder = await prisma.order.create({ data: { number: `O360-MEASURE-${Date.now()}`, clientId: client.id, address: "Measurement", staircase: "Straight", material: "Oak", amount: 5200000, balance: 5200000, manager: manager.name, managerUserId: manager.id } });
+    const measurementOrder = await prisma.order.create({ data: { number: `O360-MEASURE-${Date.now()}`, clientId: client.id, address: "Measurement", staircase: "Straight", material: "Oak", amount: 5200000, balance: 5200000, manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE } });
     orderIds.push(measurementOrder.id);
     const calendarTask = await prisma.calendarTask.create({ data: { title: "Контрольный замер", type: CalendarTaskType.MEASUREMENT, dueAt: new Date(), assigneeId: measurer.id, creatorId: manager.id, clientId: client.id, orderId: measurementOrder.id } });
     await prisma.measurement.create({ data: { orderId: measurementOrder.id, clientId: client.id, calendarTaskId: calendarTask.id, measurer: measurer.name, measurerUserId: measurer.id, visitDate: new Date(), status: MeasurementStatus.ASSIGNED, city: "Караганда", address: "Measurement" } });
@@ -140,7 +140,7 @@ async function main() {
     const replay = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.COMPLETED, expectedVersion: version, key: key("completed"), requestHash: hash("completed") }, actors.manager);
     assert.equal(replay.created, false, "transition idempotency");
 
-    const overrideOrder = await prisma.order.create({ data: { number: `O360-OVR-${Date.now()}`, clientId: client.id, address: "Override", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id } });
+    const overrideOrder = await prisma.order.create({ data: { number: `O360-OVR-${Date.now()}`, clientId: client.id, address: "Override", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE } });
     orderIds.push(overrideOrder.id);
     await transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.PREPARATION, expectedVersion: 1, key: key("override-prep"), requestHash: hash("override-prep") }, actors.director);
     await code(() => transitionLifecycle({ orderId: overrideOrder.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: 2, override: true, reason: "Director accepted documented risk", key: key("hard-gate-override"), requestHash: hash("hard-gate-override") }, actors.director), "GATE_FAILED");
@@ -164,12 +164,12 @@ async function main() {
     assert((await prisma.production.findUniqueOrThrow({ where: { id: rollbackProduction.id } })).archivedAt, "untouched production placeholder was not archived");
     assert.equal(await prisma.financeAuditEvent.count({ where: { orderId: overrideOrder.id, action: "WORKSHOP_ASSIGNMENT_CLEARED" } }), 1, "workshop rollback finance audit is missing");
 
-    const startedRollbackOrder = await prisma.order.create({ data: { number: `O360-ROLLBACK-${Date.now()}`, clientId: client.id, address: "Started", staircase: "Straight", material: "Oak", amount: 100_000, manager: manager.name, managerUserId: manager.id, lifecycle: OrderLifecycle.READY_FOR_PRODUCTION, version: 3, contractConfirmedAt: new Date(), partnerId: partner.id, partnerPrice: 50_000, partnerAgreedAt: new Date(), promisedAt: new Date("2026-09-01"), status: "Передан в цех" } });
+    const startedRollbackOrder = await prisma.order.create({ data: { number: `O360-ROLLBACK-${Date.now()}`, clientId: client.id, address: "Started", staircase: "Straight", material: "Oak", amount: 100_000, manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE, lifecycle: OrderLifecycle.READY_FOR_PRODUCTION, version: 3, contractConfirmedAt: new Date(), partnerId: partner.id, partnerPrice: 50_000, partnerAgreedAt: new Date(), promisedAt: new Date("2026-09-01"), status: "Передан в цех" } });
     orderIds.push(startedRollbackOrder.id);
     await prisma.production.create({ data: { orderId: startedRollbackOrder.id, stage: "Каркас", percent: 10, master: production.name, masterUserId: production.id } });
     await code(() => transitionLifecycle({ orderId: startedRollbackOrder.id, to: OrderLifecycle.PREPARATION, expectedVersion: 3, reason: "Попытка небезопасного возврата", key: key("started-back"), requestHash: hash("started-back") }, actors.director), "ROLLBACK_BLOCKED");
 
-    const raceOrder = await prisma.order.create({ data: { number: `O360-RACE-${Date.now()}`, clientId: client.id, address: "Race", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id, lifecycle: OrderLifecycle.PREPARATION, version: 2, contractConfirmedAt: new Date(), partnerId: partner.id, partnerPrice: 10_000, partnerAgreedAt: new Date(), promisedAt: new Date("2026-09-01") } });
+    const raceOrder = await prisma.order.create({ data: { number: `O360-RACE-${Date.now()}`, clientId: client.id, address: "Race", staircase: "Straight", material: "Oak", amount: 1, manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE, lifecycle: OrderLifecycle.PREPARATION, version: 2, contractConfirmedAt: new Date(), partnerId: partner.id, partnerPrice: 10_000, partnerAgreedAt: new Date(), promisedAt: new Date("2026-09-01") } });
     orderIds.push(raceOrder.id);
     const race = await Promise.allSettled(["a", "b"].map((suffix) => transitionLifecycle({ orderId: raceOrder.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: 2, override: true, reason: "Concurrent director override", key: key(`race-${suffix}`), requestHash: hash(`race-${suffix}`) }, actors.director)));
     assert.equal(race.filter((x) => x.status === "fulfilled").length, 1, "concurrent transition committed more than once");

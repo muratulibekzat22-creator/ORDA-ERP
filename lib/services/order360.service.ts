@@ -6,6 +6,7 @@ import {
   OrderBlockerSeverity,
   OrderBlockerStatus,
   OrderLifecycle,
+  OrderResponsibleType,
   Prisma,
   Role,
 } from "@prisma/client";
@@ -43,10 +44,10 @@ export async function canAccessOrder360(
     select: {
       id: true,
       deletedAt: true,
+      responsibleType: true,
       managerUserId: true,
       manager: true,
       partnerId: true,
-      leadConversion: { select: { managerId: true } },
       productions: { select: { masterUserId: true } },
       measurements: { select: { measurerUserId: true } },
       installation: { select: { installerUserId: true } },
@@ -62,9 +63,8 @@ export async function canAccessOrder360(
     return true;
   if (actor.role === Role.MANAGER)
     return (
-      order.managerUserId === actor.userId ||
-      order.leadConversion?.managerId === actor.userId ||
-      (!order.managerUserId && order.manager === actor.name)
+      order.responsibleType === OrderResponsibleType.EMPLOYEE &&
+      order.managerUserId === actor.userId
     );
   if (actor.role === Role.PARTNER) {
     const partner = await prisma.partner.findUnique({
@@ -579,6 +579,10 @@ export async function completeControlMeasurement(
     if (order.version !== input.expectedVersion) throw new Order360Error("STALE_VERSION");
     if (!(new Set<OrderLifecycle>([OrderLifecycle.CREATED, OrderLifecycle.PREPARATION])).has(order.lifecycle))
       throw new Order360Error("INVALID_TRANSITION");
+    const currentResponsibleUserId =
+      order.responsibleType === OrderResponsibleType.EMPLOYEE
+        ? order.managerUserId
+        : null;
 
     const updated = await tx.order.updateMany({
       where: { id: order.id, version: input.expectedVersion },
@@ -643,8 +647,8 @@ export async function completeControlMeasurement(
             orderId: order.id,
             stage: INITIAL_PRODUCTION_STAGE,
             percent: 0,
-            master: order.manager,
-            masterUserId: order.managerUserId,
+            master: currentResponsibleUserId ? order.manager : "Компания",
+            masterUserId: currentResponsibleUserId,
             startDate: input.completedAt,
             comment,
             idempotencyKey: `${input.key}:production`,
@@ -674,7 +678,7 @@ export async function completeControlMeasurement(
           severity: OrderBlockerSeverity.WARNING,
           title: missing.title,
           comment: "Создано автоматически после контрольного замера",
-          responsibleUserId: order.managerUserId,
+          responsibleUserId: currentResponsibleUserId,
           openedById: actor.userId,
           idempotencyKey: `${input.key}:${missing.suffix}`,
           requestHash: input.requestHash,
@@ -682,7 +686,7 @@ export async function completeControlMeasurement(
       });
     }
 
-    if (order.managerUserId) {
+    if (currentResponsibleUserId) {
       const dueAt = new Date(input.completedAt);
       dueAt.setDate(dueAt.getDate() + 1);
       await tx.calendarTask.create({
@@ -693,7 +697,7 @@ export async function completeControlMeasurement(
           dueAt,
           status: CalendarTaskStatus.PLANNED,
           priority: CalendarTaskPriority.IMPORTANT,
-          assigneeId: order.managerUserId,
+          assigneeId: currentResponsibleUserId,
           creatorId: actor.userId,
           clientId: order.clientId,
           orderId: order.id,
@@ -1019,7 +1023,10 @@ export async function orderAttention(orderId: number, actor: Order360Actor) {
       type,
       severity,
       message,
-      responsible: order.managerUserId,
+      responsible:
+        order.responsibleType === OrderResponsibleType.EMPLOYEE
+          ? order.managerUserId
+          : null,
       dueAt,
       actionCode: type,
       deepLink: `/orders/${order.id}`,
@@ -1088,6 +1095,7 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
       promisedAt: true,
       createdAt: true,
       updatedAt: true,
+      responsibleType: true,
       managerUserId: true,
       manager: true,
       amount: true,
@@ -1146,7 +1154,9 @@ export async function orderOverview(orderId: number, actor: Order360Actor) {
         ? "ATTENTION"
         : "OK",
     attentionCount: attention.length,
-    manager: { id: order.managerUserId, name: order.manager },
+    manager: order.responsibleType === OrderResponsibleType.COMPANY
+      ? { id: null, name: "Компания" }
+      : { id: order.managerUserId, name: order.manager },
     client: order.client,
     delivery: order.installation,
     lastActivities: order.lifecycleEvents,

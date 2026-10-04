@@ -5,6 +5,7 @@ import {
   DocumentStatus,
   DocumentType,
   MeasurementPhotoType,
+  OrderResponsibleType,
   Prisma,
   Role,
 } from "@prisma/client";
@@ -68,7 +69,7 @@ async function entityScope(actor: DocumentActor): Promise<{ client: Prisma.Clien
     return { client: {}, order: {} };
   if (actor.role === Role.MANAGER) {
     const client = { active: true, deletedAt: null, OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] };
-    return { client, order: { deletedAt: null, client } };
+    return { client, order: { deletedAt: null, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId } };
   }
   if (actor.role === Role.PRODUCTION) return { client: { id: -1 }, order: { deletedAt: null, productions: { some: { masterUserId: actor.userId, archivedAt: null } } } };
   if (actor.role === Role.INSTALLER) return { client: { id: -1 }, order: { deletedAt: null, installation: { installerUserId: actor.userId } } };

@@ -2,7 +2,7 @@ import "./require-test-database";
 
 import assert from "node:assert/strict";
 import path from "node:path";
-import { DocumentType, MeasurementPhotoType, Role } from "@prisma/client";
+import { DocumentType, MeasurementPhotoType, OrderResponsibleType, Role } from "@prisma/client";
 import { del } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
 import { addDocumentVersion, allowedDocumentTypes, createDocument, getDocument, getDocuments, getDocumentVersionContent, MAX_DOCUMENT_SIZE } from "@/lib/services/document.service";
@@ -52,8 +52,8 @@ async function main() {
   const [director, managerA, managerB, accountant, production, installer, measurer] = users;
   const clientA = await prisma.client.create({ data: { name: `${tag}-client-a`, phone: "+77010000001", city: "Test", manager: managerA.name, managerUserId: managerA.id, amount: "0", status: "NEW" } });
   const clientB = await prisma.client.create({ data: { name: `${tag}-client-b`, phone: "+77010000002", city: "Test", manager: managerB.name, managerUserId: managerB.id, amount: "0", status: "NEW" } });
-  const orderA = await prisma.order.create({ data: { number: `${tag}-A`, clientId: clientA.id, address: "Test", staircase: "Test", material: "Test", amount: 1000, manager: managerA.name, managerUserId: managerA.id } });
-  await prisma.order.create({ data: { number: `${tag}-B`, clientId: clientB.id, address: "Test", staircase: "Test", material: "Test", amount: 2000, manager: managerB.name, managerUserId: managerB.id } });
+  const orderA = await prisma.order.create({ data: { number: `${tag}-A`, clientId: clientA.id, address: "Test", staircase: "Test", material: "Test", amount: 1000, manager: managerA.name, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: managerA.id } });
+  await prisma.order.create({ data: { number: `${tag}-B`, clientId: clientB.id, address: "Test", staircase: "Test", material: "Test", amount: 2000, manager: managerB.name, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: managerB.id } });
   await prisma.production.create({ data: { orderId: orderA.id, stage: "Test", master: production.name, masterUserId: production.id } });
   await prisma.orderInstallation.create({ data: { orderId: orderA.id, scheduledAt: new Date(), installerUserId: installer.id } });
   const measurement = await prisma.measurement.create({ data: { clientId: clientA.id, orderId: orderA.id, measurer: measurer.name, measurerUserId: measurer.id, visitDate: new Date() } });

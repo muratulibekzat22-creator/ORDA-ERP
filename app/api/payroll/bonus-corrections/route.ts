@@ -1,28 +1,16 @@
 import { Role } from "@prisma/client";
-import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
+import { requirePermission } from "@/lib/server-auth";
 import {
-  correctOrderBonus,
   listOrderBonusesForCorrection,
   PayrollError,
+  saveOrderBonusDecision,
   syncAutomaticOrderBonuses,
 } from "@/lib/services/payroll.service";
-import { enterTenantFromSession } from "@/lib/tenant-context";
 
-async function authBonusCorrection() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user || !enterTenantFromSession(session))
-    return {
-      response: NextResponse.json(
-        { error: "Требуется авторизация" },
-        { status: 401 },
-      ),
-    };
-  return { session };
-}
+const authBonusCorrection = () => requirePermission("payroll");
 
 const actor = (session: {
   user: {
@@ -88,23 +76,23 @@ export async function POST(request: Request) {
           actor(auth.session!),
         ),
       );
-    if (action !== "correct" && action !== "cancel")
+    if (action !== "save")
       return NextResponse.json({ error: "INVALID_ACTION" }, { status: 400 });
+    if (
+      !Object.hasOwn(body, "manualBonus") ||
+      (body.manualBonus !== null &&
+        (typeof body.manualBonus !== "number" ||
+          !Number.isFinite(body.manualBonus)))
+    )
+      throw new PayrollError("INVALID_AMOUNT");
     return NextResponse.json(
-      await correctOrderBonus(
+      await saveOrderBonusDecision(
         {
-          accrualId: Number(body.accrualId),
-          cancel: action === "cancel",
-          targetYear:
-            body.targetYear == null ? undefined : Number(body.targetYear),
-          targetMonth:
-            body.targetMonth == null ? undefined : Number(body.targetMonth),
-          targetOrderId:
-            body.targetOrderId == null
-              ? undefined
-              : Number(body.targetOrderId),
-          amount: body.amount == null ? undefined : Number(body.amount),
-          manualOverride: body.manualOverride === true,
+          year: Number(body.year),
+          month: Number(body.month),
+          orderId: Number(body.orderId),
+          employeeId: Number(body.employeeId),
+          manualBonus: body.manualBonus,
           reason: String(body.reason ?? ""),
           key: key.key,
           requestHash: createRequestHash(body),

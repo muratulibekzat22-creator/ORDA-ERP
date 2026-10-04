@@ -1,4 +1,4 @@
-import { CalendarTaskPriority, CalendarTaskStatus, CalendarTaskType, Prisma, Role } from "@prisma/client";
+import { CalendarTaskPriority, CalendarTaskStatus, CalendarTaskType, OrderResponsibleType, Prisma, Role } from "@prisma/client";
 import { decodeDateIdCursor, encodeDateIdCursor } from "@/lib/pagination/date-id-cursor";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
@@ -19,7 +19,7 @@ const taskSelect = {
 
 export function taskScope(actor: CalendarActor): Prisma.CalendarTaskWhereInput {
   if (actor.role === Role.DIRECTOR) return {};
-  if (actor.role === Role.MANAGER) return { OR: [{ assigneeId: actor.userId }, { creatorId: actor.userId }, { client: { managerUserId: actor.userId } }, { order: { managerUserId: actor.userId } }] };
+  if (actor.role === Role.MANAGER) return { OR: [{ assigneeId: actor.userId }, { creatorId: actor.userId }, { client: { managerUserId: actor.userId } }, { order: { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId } }] };
   return { assigneeId: actor.userId };
 }
 
@@ -46,10 +46,10 @@ async function validateRelations(tx: Prisma.TransactionClient, actor: CalendarAc
     if (actor.role === Role.MANAGER && client.managerUserId !== actor.userId) throw new Error("FORBIDDEN_RELATION");
   }
   if (input.orderId) {
-    const order = await tx.order.findFirst({ where: { id: input.orderId, deletedAt: null }, select: { clientId: true, managerUserId: true, manager: true } });
+    const order = await tx.order.findFirst({ where: { id: input.orderId, deletedAt: null }, select: { clientId: true, responsibleType: true, managerUserId: true } });
     if (!order) throw new Error("ORDER_NOT_FOUND");
     if (input.clientId && order.clientId !== input.clientId) throw new Error("RELATION_MISMATCH");
-    if (actor.role === Role.MANAGER && order.managerUserId !== actor.userId && order.manager !== actor.name) throw new Error("FORBIDDEN_RELATION");
+    if (actor.role === Role.MANAGER && (order.responsibleType !== OrderResponsibleType.EMPLOYEE || order.managerUserId !== actor.userId)) throw new Error("FORBIDDEN_RELATION");
   }
 }
 
@@ -105,7 +105,19 @@ export async function getCalendarTask(actor: CalendarActor, id: number) {
 }
 
 export async function getCalendarMeta(actor: CalendarActor) {
-  const orderWhere: Prisma.OrderWhereInput = { deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] } : { id: -1 }) };
+  const orderWhere: Prisma.OrderWhereInput = {
+    deletedAt: null,
+    ...(actor.role === Role.DIRECTOR
+      ? {}
+      : actor.role === Role.MANAGER
+        ? {
+            OR: [
+              { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId },
+              { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: null, manager: actor.name },
+            ],
+          }
+        : { id: -1 }),
+  };
   const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };
   const [assignees, clients, orders] = await Promise.all([
     actor.role === Role.DIRECTOR

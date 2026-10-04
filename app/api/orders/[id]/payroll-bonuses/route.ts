@@ -1,9 +1,10 @@
-import { PayrollAccrualType, Role } from "@prisma/client";
+import { OrderResponsibleType, PayrollAccrualType, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { createAccrual, PayrollError } from "@/lib/services/payroll.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export async function GET(
   _: Request,
@@ -12,9 +13,40 @@ export async function GET(
   const auth = await requirePermission("payroll");
   if (auth.response) return auth.response;
   const orderId = Number((await context.params).id);
+  if (!Number.isInteger(orderId))
+    return NextResponse.json({ error: "ORDER_NOT_FOUND" }, { status: 404 });
+  const companyId = requireTenantIdentity().companyId;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  const userId = Number(auth.session!.user.id);
+  if (
+    role !== Role.MANAGER &&
+    role !== Role.DIRECTOR &&
+    role !== Role.OPERATIONS_DIRECTOR &&
+    role !== Role.ACCOUNTANT
+  )
+    return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
+  const order = await prisma.order.findFirst({
+    where: {
+      id: orderId,
+      companyId,
+      ...(role === Role.MANAGER
+        ? {
+            responsibleType: OrderResponsibleType.EMPLOYEE,
+            managerUserId: userId,
+          }
+        : {}),
+    },
+    select: { id: true },
+  });
+  if (!order)
+    return NextResponse.json({ error: "ORDER_NOT_FOUND" }, { status: 404 });
   return NextResponse.json(
     await prisma.payrollAccrual.findMany({
-      where: { orderId },
+      where: {
+        orderId,
+        order: { companyId },
+        employee: { companyId },
+      },
       include: {
         employee: { include: { user: { select: { id: true, name: true } } } },
         payments: true,
@@ -50,7 +82,7 @@ export async function POST(
         { ...payload, key: key.key, requestHash: createRequestHash(payload) },
         {
           userId: Number(auth.session!.user.id),
-          role: auth.session!.user.role as Role,
+          role: (auth.session!.user.accountRole || auth.session!.user.role) as Role,
           name: auth.session!.user.name ?? "",
         },
       ),

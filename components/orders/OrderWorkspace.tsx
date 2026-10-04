@@ -16,7 +16,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import ProjectPayments from "@/components/project/ProjectPayments";
 import PaymentFollowUpPanel from "@/components/orders/PaymentFollowUpPanel";
@@ -137,7 +137,10 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     address: order.address,
     material: order.material,
     staircase: order.staircase,
-    manager: order.manager,
+    responsible:
+      order.responsibleType === "COMPANY"
+        ? "company"
+        : String(order.managerUserId ?? ""),
     orderReceivedAt: dateInput(order.orderReceivedAt),
     promisedAt: order.promisedAt ? dateInput(order.promisedAt) : "",
     amount: String(order.amount ?? ""),
@@ -152,6 +155,20 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const canAddPayment =
     !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canSeeFinance = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
+  const [responsibleOptions, setResponsibleOptions] = useState<
+    Array<{ id: number; name: string }>
+  >([]);
+  useEffect(() => {
+    if (!editing || !operationalManagement) return;
+    void fetch("/api/orders/options", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as {
+          managers?: Array<{ id: number; name: string }>;
+        };
+        if (response.ok) setResponsibleOptions(body.managers ?? []);
+      })
+      .catch(() => undefined);
+  }, [editing, operationalManagement]);
   const deadline = orderDeadline({
     promisedAt: order.promisedAt,
     productionDeadline: order.productionDeadline,
@@ -175,9 +192,26 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           "Idempotency-Key": crypto.randomUUID(),
         },
         body: JSON.stringify({
-          ...form,
+          clientName: form.clientName,
+          address: form.address,
+          material: form.material,
+          staircase: form.staircase,
+          orderReceivedAt: form.orderReceivedAt,
+          promisedAt: form.promisedAt,
+          paymentMethod: form.paymentMethod,
           amount: Number(form.amount),
           expectedVersion: order.version,
+          ...(operationalManagement
+            ? form.responsible === "company"
+              ? {
+                  responsibleType: "COMPANY",
+                  managerUserId: null,
+                }
+              : {
+                  responsibleType: "EMPLOYEE",
+                  managerUserId: Number(form.responsible),
+                }
+            : {}),
         }),
       });
       const result = (await response.json()) as { error?: string };
@@ -384,13 +418,34 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               {([
                 ["clientName", "Имя клиента"],
                 ["address", "Адрес"],
-                ["manager", "Ответственный"],
                 ["staircase", "Каркас"],
                 ["material", "Материал"],
                 ["amount", "Сумма продажи"],
               ] as const).map(([key, title]) => (
                 <label key={key} className="text-sm text-slate-300">{title}<input type={key === "amount" ? "number" : "text"} value={form[key]} onChange={(event) => setForm((value) => ({ ...value, [key]: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white" /></label>
               ))}
+              {operationalManagement ? (
+                <label className="text-sm text-slate-300">
+                  Ответственный
+                  <select
+                    value={form.responsible}
+                    onChange={(event) =>
+                      setForm((value) => ({
+                        ...value,
+                        responsible: event.target.value,
+                      }))
+                    }
+                    className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white"
+                  >
+                    <option value="company">Компания</option>
+                    {responsibleOptions.map((person) => (
+                      <option key={person.id} value={person.id}>
+                        {person.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <label className="text-sm text-slate-300">Способ оплаты<select value={form.paymentMethod} onChange={(event) => setForm((value) => ({ ...value, paymentMethod: event.target.value }))} className="mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{PAYMENT_METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></label>
             </div>
             {error ? <p role="alert" className="mt-3 text-sm text-red-300">{error}</p> : null}

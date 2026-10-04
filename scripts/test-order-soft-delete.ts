@@ -7,6 +7,7 @@ import {
   DocumentStatus,
   DocumentType,
   MeasurementStatus,
+  OrderResponsibleType,
   PayrollAccrualType,
   PayrollDirection,
   Role,
@@ -121,6 +122,9 @@ async function cleanup() {
     await prisma.orderLifecycleEvent.deleteMany({
       where: { orderId: { in: ids.orders } },
     });
+    await prisma.leadConversion.deleteMany({
+      where: { orderId: { in: ids.orders } },
+    });
     await prisma.order.deleteMany({ where: { id: { in: ids.orders } } });
   }
   if (ids.clients.length) {
@@ -182,6 +186,7 @@ async function createOrder(
       companyProfit: 500_000,
       manager: manager.name,
       managerUserId: manager.id,
+      responsibleType: OrderResponsibleType.EMPLOYEE,
     },
   });
   ids.orders.push(order.id);
@@ -308,6 +313,15 @@ async function main() {
         createdByName: gulsim.name,
       },
     });
+    await prisma.leadConversion.create({
+      data: {
+        clientId: clientA.id,
+        proposalId: proposal.id,
+        orderId: orderA.id,
+        managerId: gulsim.id,
+        managerName: gulsim.name,
+      },
+    });
     const document = await prisma.document.create({
       data: {
         clientId: clientA.id,
@@ -399,6 +413,39 @@ async function main() {
         master: "Цех",
         archivedAt: new Date(),
         archiveReason: "MANUAL_CANCELLED",
+      },
+    });
+
+    await prisma.order.update({
+      where: { id: orderA.id },
+      data: {
+        responsibleType: OrderResponsibleType.COMPANY,
+        managerUserId: null,
+        manager: "Компания",
+      },
+    });
+    await assert.rejects(
+      () => deleteOrderFromWork(gulsimActor, orderA.id),
+      (error) =>
+        error instanceof OrderDeletionError && error.message === "FORBIDDEN",
+      "a former lead manager deleted an order currently owned by COMPANY",
+    );
+    const companyOwnedManagerDashboard = (await getDashboardSummary({
+      role: Role.MANAGER,
+      userId: gulsim.id,
+      period: "month",
+    })) as { attention?: Array<{ id: number }> };
+    assert.equal(
+      companyOwnedManagerDashboard.attention?.some((item) => item.id === orderA.id),
+      false,
+      "a COMPANY order leaked back to the former manager through lead history",
+    );
+    await prisma.order.update({
+      where: { id: orderA.id },
+      data: {
+        responsibleType: OrderResponsibleType.EMPLOYEE,
+        managerUserId: gulsim.id,
+        manager: gulsim.name,
       },
     });
 

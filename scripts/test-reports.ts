@@ -49,9 +49,10 @@ assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| p
 assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows a confirmed business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
-assert.match(service, /JOIN "PayrollPeriod" payroll_period ON payroll_period\.id = accrual\."periodId"/, "payroll accruals must follow their accounting period");
-assert.match(service, /payroll_period\.year \* 100 \+ payroll_period\.month/, "report payroll period must match the selected business months");
-assert.doesNotMatch(service, /accrual\."createdAt" >=/, "late-entered payroll must not move into the wrong reporting month");
+assert.match(service, /prisma\.payrollCalculationSnapshot\.findMany/, "confirmed payroll must come from calculation snapshots");
+assert.match(service, /snapshot\.period\.year \* 100 \+ snapshot\.period\.month/, "report payroll period must match the selected business months");
+assert.doesNotMatch(service, /prisma\.payrollAccrual/, "legacy payroll accruals must not define report totals");
+assert.match(service, /approvedPayrollAccountingTotals/, "report payable must be calculated per employee-period from approved snapshots and payments");
 const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", import.meta.url), "utf8");
 assert.match(reportPage, /Заказы \/ заявки периода/);
 assert.match(reportPage, /Зарплата к выплате по проведённым начислениям/);

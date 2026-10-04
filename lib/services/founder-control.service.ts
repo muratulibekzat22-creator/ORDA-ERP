@@ -13,7 +13,7 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
       interactions: { take: 1, orderBy: { createdAt: "desc" }, select: { createdAt: true } },
     } }),
     db.order.findMany({ where: { companyId, deletedAt: null, lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } }, select: {
-      id: true, number: true, clientId: true, managerUserId: true, partnerId: true,
+      id: true, number: true, clientId: true, responsibleType: true, managerUserId: true, partnerId: true,
       partnerPrice: true, partnerAgreedAt: true, promisedAt: true, productionDeadline: true, lifecycle: true,
       client: { select: { phone: true, city: true } },
     } }),
@@ -25,7 +25,7 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
     ] }, select: {
       id: true, title: true, controlKey: true, workflow: true, expectedAmount: true, assigneeId: true, status: true, dueAt: true, completedAt: true, acknowledgedAt: true,
       resultSubmittedAt: true, controlVerifiedAt: true, controlRemindedAt: true, createdAt: true,
-      orderId: true, clientId: true, order: { select: { number: true, client: { select: { name: true } } } },
+      orderId: true, clientId: true, order: { select: { number: true, responsibleType: true, managerUserId: true, client: { select: { name: true } } } },
     } }),
   ]);
   const directors = users.filter(u => u.role === Role.OPERATIONS_DIRECTOR);
@@ -38,18 +38,27 @@ async function inspect(db: Prisma.TransactionClient = prisma, now = new Date()) 
     task.dueAt < now &&
     !["COMPLETED", "CANCELLED"].includes(task.status) &&
     task.order && task.orderId && task.clientId,
-  ).map(task => ({
-    key: `payment-follow-up:${task.id}`,
-    taskId: task.id,
-    title: `${task.order!.number}: просрочена доплата`,
-    reason: `Клиент ${task.order!.client.name} обещал оплатить ${Number(task.expectedAmount ?? 0).toLocaleString("ru-RU")} ₸ до ${task.dueAt.toISOString()}. Результат не зафиксирован.`,
-    action: "Менеджеру необходимо ознакомиться, связаться с клиентом, запросить оплату и записать фактический результат. Поступившие деньги нужно зарегистрировать в заказе.",
-    href: `/orders/${task.orderId}`,
-    assigneeId: activeIds.has(task.assigneeId) ? task.assigneeId : directors.length === 1 ? directors[0].id : null,
-    clientId: task.clientId!,
-    orderId: task.orderId!,
-    priority: "URGENT" as const,
-  }));
+  ).map(task => {
+    const currentManagerId = task.order!.responsibleType === "EMPLOYEE"
+      ? task.order!.managerUserId
+      : null;
+    return {
+      key: `payment-follow-up:${task.id}`,
+      taskId: task.id,
+      title: `${task.order!.number}: просрочена доплата`,
+      reason: `Клиент ${task.order!.client.name} обещал оплатить ${Number(task.expectedAmount ?? 0).toLocaleString("ru-RU")} ₸ до ${task.dueAt.toISOString()}. Результат не зафиксирован.`,
+      action: "Менеджеру необходимо ознакомиться, связаться с клиентом, запросить оплату и записать фактический результат. Поступившие деньги нужно зарегистрировать в заказе.",
+      href: `/orders/${task.orderId}`,
+      assigneeId: currentManagerId && activeIds.has(currentManagerId)
+        ? currentManagerId
+        : directors.length === 1
+          ? directors[0].id
+          : null,
+      clientId: task.clientId!,
+      orderId: task.orderId!,
+      priority: "URGENT" as const,
+    };
+  });
   const issues = [...paymentIssues, ...detectedIssues];
   return { issues, users, tasks, coverage: { leads: leads.length, orders: orders.length }, checkedAt: now.toISOString() };
 }

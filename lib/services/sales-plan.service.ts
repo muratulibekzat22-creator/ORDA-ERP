@@ -1,4 +1,4 @@
-import { EmployeeKpiRequestStatus, OrderLifecycle, Prisma, Role } from "@prisma/client";
+import { EmployeeKpiRequestStatus, OrderLifecycle, OrderResponsibleType, Prisma, Role } from "@prisma/client";
 
 import { hasProductionPrice } from "@/lib/orders/production-price";
 import { effectiveMarketingMetrics } from "@/lib/marketing";
@@ -85,10 +85,8 @@ async function orderMetrics(start: Date, end: Date, managerId?: number) {
       orderReceivedAt: { gte: start, lt: end },
       ...(managerId
         ? {
-            OR: [
-              { managerUserId: managerId },
-              { leadConversion: { managerId } },
-            ],
+            responsibleType: OrderResponsibleType.EMPLOYEE,
+            managerUserId: managerId,
           }
         : {}),
     },
@@ -97,8 +95,6 @@ async function orderMetrics(start: Date, end: Date, managerId?: number) {
       amount: true,
       partnerPrice: true,
       partnerAgreedAt: true,
-      managerUserId: true,
-      leadConversion: { select: { managerId: true } },
     },
   });
   const revenue = orders.reduce((sum, order) => sum + Number(order.amount), 0);

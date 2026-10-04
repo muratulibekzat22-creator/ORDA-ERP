@@ -2,7 +2,7 @@ import "./require-test-database";
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { OrderLifecycle, Role } from "@prisma/client";
+import { OrderLifecycle, OrderResponsibleType, Role } from "@prisma/client";
 import { dashboardPeriodRange, getDashboardSummary } from "../lib/services/dashboard.service";
 import { prisma } from "../lib/prisma";
 
@@ -38,9 +38,9 @@ async function main() {
     const otherLead = await prisma.client.create({ data: { name: `${tag}-other`, phone: `+8${Date.now()}`, city: "TEST", manager: other.name, managerUserId: other.id, amount: "2000", status: "New" } });
     clientIds.push(ownLead.id, otherLead.id);
     partnerId = (await prisma.partner.create({ data: { name: tag } })).id;
-    const ownOrder = await prisma.order.create({ data: { number: `${tag}-own`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "100000", prepayment: "40000", balance: "60000", partnerId, partnerPrice: "50000", partnerAgreedAt: new Date(), partnerPaid: "10000", partnerBalance: "40000", companyProfit: "50000", lifecycle: OrderLifecycle.CREATED, status: "New" } });
-    const cancelled = await prisma.order.create({ data: { number: `${tag}-cancelled`, clientId: ownLead.id, manager: manager.name, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "9000", balance: "9000", partnerId, partnerPrice: "5000", partnerBalance: "5000", lifecycle: OrderLifecycle.CANCELLED, status: "Cancelled" } });
-    const foreignOrder = await prisma.order.create({ data: { number: `${tag}-foreign`, clientId: otherLead.id, manager: other.name, managerUserId: other.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "200000", balance: "200000", promisedAt: new Date("2000-01-01T00:00:00.000Z"), lifecycle: OrderLifecycle.CREATED, status: "New" } });
+    const ownOrder = await prisma.order.create({ data: { number: `${tag}-own`, clientId: ownLead.id, manager: manager.name, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "100000", prepayment: "40000", balance: "60000", partnerId, partnerPrice: "50000", partnerAgreedAt: new Date(), partnerPaid: "10000", partnerBalance: "40000", companyProfit: "50000", lifecycle: OrderLifecycle.CREATED, status: "New" } });
+    const cancelled = await prisma.order.create({ data: { number: `${tag}-cancelled`, clientId: ownLead.id, manager: manager.name, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: manager.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "9000", balance: "9000", partnerId, partnerPrice: "5000", partnerBalance: "5000", lifecycle: OrderLifecycle.CANCELLED, status: "Cancelled" } });
+    const foreignOrder = await prisma.order.create({ data: { number: `${tag}-foreign`, clientId: otherLead.id, manager: other.name, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: other.id, address: "TEST", staircase: "Straight", material: "Oak", amount: "200000", balance: "200000", promisedAt: new Date("2000-01-01T00:00:00.000Z"), lifecycle: OrderLifecycle.CREATED, status: "New" } });
     orderIds.push(ownOrder.id, cancelled.id, foreignOrder.id);
     paymentIds.push((await prisma.payment.create({ data: { orderId: ownOrder.id, amount: "40000", type: "CLIENT_PAYMENT", method: "TEST", author: manager.name } })).id);
 
@@ -85,7 +85,7 @@ async function main() {
     assert(route.includes("!session?.user") && route.includes("status: 401"), "unauthenticated dashboard access is not rejected");
     assert(route.includes("const role = (session.user.accountRole || session.user.role) as Role"), "dashboard role is not derived from the authenticated session");
     const dashboard = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
-    for (const label of ["Выручка", "Получено от клиентов", "Цена производства", "Прочие доходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить доход", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
+    for (const label of ["Оборот компании", "Получено денег", "Цена производства заказов месяца", "Выручка", "Получено от клиентов", "Прочие доходы", "Операционные расходы", "Начисленная зарплата", "Выплаченная зарплата", "Чистая прибыль", "Чистая маржа", "Добавить доход", "Добавить расход", "Требуют внимания", "Нужно дополнить", "Что нужно дополнить по заказам"]) assert.ok(dashboard.includes(label), `dashboard label missing: ${label}`);
     assert(dashboard.includes("Команда и рабочая активность"), "Director team activity section is missing");
     for (const routeName of ["/orders?tab=active", "/orders?tab=active&attention=overdue"]) assert.ok(dashboard.includes(routeName), `dashboard route missing: ${routeName}`);
     const home = readFileSync("app/page.tsx", "utf8");

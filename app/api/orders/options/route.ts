@@ -10,8 +10,12 @@ import { requirePermission } from "@/lib/server-auth";
 export async function GET(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (
+    role !== Role.DIRECTOR &&
+    role !== Role.OPERATIONS_DIRECTOR &&
+    role !== Role.MANAGER
+  )
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
 
   const userId = Number(auth.session!.user.id);
@@ -20,7 +24,12 @@ export async function GET(request: Request) {
     prisma.user.findMany({
       where: role === Role.MANAGER
         ? { id: userId, active: true, role: Role.MANAGER }
-        : { active: true, role: Role.MANAGER },
+        : {
+            active: true,
+            role: {
+              in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR],
+            },
+          },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),

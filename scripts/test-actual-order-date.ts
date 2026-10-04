@@ -32,6 +32,20 @@ assert.equal(
 assert.match(ordersApi, /orderDateNeedsReview: body\.orderReceivedAt === undefined/);
 assert.match(ordersApi, /attention === "order-date"/);
 assert.match(ordersApi, /attention === "incomplete"/);
+const incompleteAttention = ordersApi.slice(
+  ordersApi.indexOf('attention === "incomplete"'),
+  ordersApi.indexOf(': attention === "order-date"'),
+);
+assert.match(
+  incompleteAttention,
+  /responsibleType: OrderResponsibleType\.EMPLOYEE, managerUserId: null/,
+  "a COMPANY order without managerUserId must not be classified as incomplete",
+);
+assert.doesNotMatch(
+  incompleteAttention,
+  /\{ managerUserId: null \}/,
+  "the incomplete filter must not treat every null managerUserId as missing responsibility",
+);
 assert.match(orderApi, /data\.orderDateNeedsReview = false/);
 assert.match(orderApi, /Фактическая дата заказа подтверждена/);
 assert.match(ordersApi, /todayAtAlmaty/);
@@ -50,6 +64,21 @@ for (const source of [salesPlan, dashboard, report, payroll])
     /orderDateNeedsReview: false|!order\.orderDateNeedsReview/,
     "monthly business calculations must exclude unconfirmed order dates",
   );
+
+const salesPlanOrderMetrics = salesPlan.slice(
+  salesPlan.indexOf("async function orderMetrics"),
+  salesPlan.indexOf("async function recommendation"),
+);
+assert.match(
+  salesPlanOrderMetrics,
+  /responsibleType: OrderResponsibleType\.EMPLOYEE,[\s\S]*managerUserId: managerId/,
+  "manager sales metrics must use the current normalized order responsibility",
+);
+assert.doesNotMatch(
+  salesPlanOrderMetrics,
+  /leadConversion/,
+  "historical lead ownership must not affect manager sales metrics",
+);
 
 assert.match(
   payrollOrderSearch,

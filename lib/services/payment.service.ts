@@ -1,8 +1,10 @@
-import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
+import { OrderResponsibleType, PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hasProductionPrice } from "@/lib/orders/production-price";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
+import { approvedPayrollAccountingTotals } from "@/lib/services/payroll-accounting-read";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export const financeOperationTypes = [
   "CLIENT_PAYMENT",
@@ -79,12 +81,13 @@ function orderInclude() {
   return { order: { include: { client: true, partner: true } }, partner: true } as const;
 }
 
-export async function getPayments(filters: { type?: string; orderId?: number; partnerId?: number; from?: Date; to?: Date } = {}) {
+export async function getPayments(filters: { type?: string; orderId?: number; partnerId?: number; managerUserId?: number; from?: Date; to?: Date } = {}) {
   return prisma.payment.findMany({
     where: {
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.orderId ? { orderId: filters.orderId } : {}),
       ...(filters.partnerId ? { OR: [{ partnerId: filters.partnerId }, { order: { partnerId: filters.partnerId } }] } : {}),
+      ...(filters.managerUserId ? { order: { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: filters.managerUserId, deletedAt: null } } : {}),
       ...((filters.from || filters.to) ? { operationDate: { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lte: filters.to } : {}) } } : {}),
     },
     include: orderInclude(),
@@ -265,8 +268,10 @@ function financeRange(period: FinanceFilters["period"], from?: Date, to?: Date) 
 const operationInRange = (date: Date, from?: Date, to?: Date) => (!from || date >= from) && (!to || date <= to);
 
 export async function getFinanceDashboard(filters: FinanceFilters = {}) {
+  const companyId = requireTenantIdentity().companyId;
   const selectedRange = financeRange(filters.period, filters.from, filters.to);
   const orderWhere: Prisma.OrderWhereInput = {
+    companyId,
     deletedAt: null,
     lifecycle: { not: "CANCELLED" },
     ...(filters.manager ? { manager: filters.manager } : {}),
@@ -276,13 +281,15 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
   const operationDate = selectedRange.from || selectedRange.to
     ? { ...(selectedRange.from ? { gte: selectedRange.from } : {}), ...(selectedRange.to ? { lte: selectedRange.to } : {}) }
     : undefined;
-  const [orders, paymentOperations, ledgerEntries, payrollProfiles, managers, partners] = await Promise.all([
-    prisma.order.findMany({ where: orderWhere, include: { client: true, partner: true, payments: true, payrollAccruals: { where: { direction: "INCREASE" }, include: { payments: true, reversedBy: { select: { id: true } } } } }, orderBy: { createdAt: "desc" } }),
+  const [orders, paymentOperations, ledgerEntries, payrollSnapshots, payrollPayments, managers, partners] = await Promise.all([
+    prisma.order.findMany({ where: orderWhere, include: { client: true, partner: true, payments: true }, orderBy: { createdAt: "desc" } }),
     getPayments({ type: filters.type, orderId: filters.orderId, partnerId: filters.partnerId, from: selectedRange.from, to: selectedRange.to }),
     prisma.companyLedgerEntry.findMany({
       where: {
+        companyId,
         ...(operationDate ? { operationDate } : {}),
         ...(filters.orderId ? { orderId: filters.orderId } : filters.manager ? { order: { manager: filters.manager } } : filters.partnerId ? { order: { partnerId: filters.partnerId } } : {}),
+        payrollCalculationSnapshotId: null,
         OR: [{ payrollPaymentId: { not: null } }, { payrollAccrualId: null }],
       },
       include: {
@@ -292,9 +299,28 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
       },
       orderBy: [{ operationDate: "desc" }, { id: "desc" }],
     }),
-    prisma.employeePayrollProfile.findMany({
-      where: { active: true, payrollEnabled: true },
-      select: { accruals: { select: { amount: true, direction: true } }, payments: { select: { amount: true, type: true } } },
+    prisma.payrollCalculationSnapshot.findMany({
+      where: { companyId },
+      select: {
+        id: true,
+        employeeId: true,
+        periodId: true,
+        revision: true,
+        preparedAmount: true,
+      },
+    }),
+    prisma.payrollPayment.findMany({
+      where: {
+        employee: { companyId },
+        reversalOfId: null,
+        reversedAt: null,
+      },
+      select: {
+        employeeId: true,
+        periodId: true,
+        amount: true,
+        type: true,
+      },
     }),
     prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { name: true }, orderBy: { name: "asc" } }),
     prisma.partner.findMany({ where: { active: true, archived: false, isTest: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
@@ -306,12 +332,6 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
     const amount = Number(order.amount), priceSet = hasProductionPrice(order.partnerPrice, order.partnerAgreedAt);
     const partnerPrice = priceSet ? Number(order.partnerPrice) : null;
     const rawBalance = amount - received, rawPartnerBalance = partnerPrice === null ? 0 : partnerPrice - partnerPaid;
-    const payrollRemaining = (types: string[]) => order.payrollAccruals
-      .filter((accrual) => types.includes(accrual.type) && !accrual.reversedBy)
-      .reduce((sum, accrual) => {
-        const paid = accrual.payments.filter((payment) => !payment.reversalOfId && !payment.reversedAt).reduce((value, payment) => value + Number(payment.amount), 0);
-        return sum + Math.max(Number(accrual.amount) - paid, 0);
-      }, 0);
     return {
       id: order.id, number: order.number, client: order.client.name, partner: order.partner?.name ?? "—", manager: order.manager,
       createdAt: order.createdAt, partnerAgreedAt: order.partnerAgreedAt, promisedAt: order.promisedAt, partnerPlannedReadyAt: order.partnerPlannedReadyAt,
@@ -319,8 +339,9 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
       priceSet, partnerPrice, partnerPaid: priceSet ? partnerPaid : 0, partnerBalance: priceSet ? Math.max(rawPartnerBalance, 0) : 0,
       partnerOverpayment: priceSet ? Math.max(-rawPartnerBalance, 0) : 0,
       grossMargin: partnerPrice === null ? null : amount - partnerPrice,
-      managerBonusPayable: payrollRemaining(["GUARANTEED_ORDER_BONUS", "ORDER_BONUS", "EXTRA_BONUS"]),
-      measurerBonusPayable: payrollRemaining(["MEASUREMENT_BONUS"]),
+      managerBonusPayable: null,
+      measurerBonusPayable: null,
+      payrollBonusAttribution: "NOT_AVAILABLE_FROM_APPROVED_CALCULATION" as const,
       paymentStatus: rawBalance <= 0 ? "paid" : received > 0 ? "partial" : "debt",
     };
   });
@@ -353,11 +374,10 @@ export async function getFinanceDashboard(filters: FinanceFilters = {}) {
     return sum;
   }, { income: 0, expense: 0 });
 
-  const payrollPayable = payrollProfiles.reduce((total, profile) => {
-    const accrued = profile.accruals.reduce((sum, item) => sum + Number(item.amount) * (item.direction === "INCREASE" ? 1 : -1), 0);
-    const paid = profile.payments.reduce((sum, item) => sum + Number(item.amount) * (item.type === "EMPLOYEE_REFUND" ? -1 : 1), 0);
-    return total + Math.max(accrued - paid, 0);
-  }, 0);
+  const payrollPayable = approvedPayrollAccountingTotals(
+    payrollSnapshots,
+    payrollPayments,
+  ).payable;
   const totals = filteredRows.reduce((sum, row) => ({
     turnover: sum.turnover + row.amount, received: sum.received + row.prepayment, clientBalance: sum.clientBalance + row.balance,
     partnerAgreed: sum.partnerAgreed + (row.partnerPrice ?? 0), partnerPaid: sum.partnerPaid + row.partnerPaid,
