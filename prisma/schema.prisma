@@ -129,6 +129,7 @@ model Company {
   rolePermissions               RolePermission[]
   managementMarketingTasks      ManagementMarketingTask[]
   managementMarketingMetrics    ManagementMarketingMetric[]
+  managementMarketingReports    ManagementMarketingReport[]
   recruitmentVacancies          RecruitmentVacancy[]
   salesPlans                    SalesPlan[]
 
@@ -219,6 +220,18 @@ enum ManagementMarketingTaskStatus {
   IN_PROGRESS
   REVIEW
   DONE
+}
+
+enum ManagementMarketingReportPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum ManagementMarketingReportStatus {
+  SUBMITTED
+  NEEDS_REVISION
+  APPROVED
 }
 
 enum RecruitmentVacancyStatus {
@@ -564,6 +577,8 @@ model User {
   assignedManagementMarketingTasks  ManagementMarketingTask[]      @relation("ManagementMarketingTaskAssignee")
   createdManagementMarketingTasks   ManagementMarketingTask[]      @relation("ManagementMarketingTaskCreator")
   createdManagementMarketingMetrics ManagementMarketingMetric[]    @relation("ManagementMarketingMetricCreator")
+  createdManagementMarketingReports ManagementMarketingReport[]    @relation("ManagementMarketingReportAuthor")
+  reviewedManagementMarketingReports ManagementMarketingReport[]   @relation("ManagementMarketingReportReviewer")
   createdRecruitmentVacancies       RecruitmentVacancy[]           @relation("RecruitmentVacancyCreator")
   createdSalesPlans                 SalesPlan[]                    @relation("SalesPlanCreator")
   salesPlanTargets                  SalesPlanManagerTarget[]
@@ -2014,6 +2029,37 @@ model ManagementMarketingMetric {
 
   @@unique([companyId, metricMonth, channel])
   @@index([companyId, metricMonth])
+}
+
+model ManagementMarketingReport {
+  id                 Int                             @id @default(autoincrement())
+  companyId          Int                             @default(dbgenerated())
+  company            Company                         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  periodType         ManagementMarketingReportPeriod
+  periodStart        DateTime                        @db.Date
+  periodEnd          DateTime                        @db.Date
+  workCompleted      String
+  resultSummary      String
+  bestResult         String
+  problems           String
+  nextActions        String
+  creativesPublished Int                             @default(0)
+  qualifiedLeads     Int                             @default(0)
+  unqualifiedLeads   Int                             @default(0)
+  status             ManagementMarketingReportStatus @default(SUBMITTED)
+  directorComment    String?
+  authorId           Int
+  author             User                            @relation("ManagementMarketingReportAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  reviewedById       Int?
+  reviewedBy         User?                           @relation("ManagementMarketingReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt         DateTime?
+  submittedAt        DateTime                        @default(now())
+  createdAt          DateTime                        @default(now())
+  updatedAt          DateTime                        @updatedAt
+
+  @@unique([companyId, authorId, periodType, periodStart, periodEnd])
+  @@index([companyId, periodStart, periodEnd])
+  @@index([companyId, status, submittedAt])
 }
 
 model RecruitmentVacancy {

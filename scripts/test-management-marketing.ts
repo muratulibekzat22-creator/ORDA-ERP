@@ -2,6 +2,8 @@ import "./require-test-database";
 
 import assert from "node:assert/strict";
 import {
+  ManagementMarketingReportPeriod,
+  ManagementMarketingReportStatus,
   ManagementMarketingTaskStatus,
   RecruitmentVacancyStatus,
   Role,
@@ -38,7 +40,7 @@ async function main() {
       },
     });
     try {
-      const [task, metric, vacancy] = await Promise.all([
+      const [task, metric, report, vacancy] = await Promise.all([
         prisma.managementMarketingTask.create({
           data: { title: `${tag}-task`, priority: 3, createdById: director.id },
         }),
@@ -51,6 +53,22 @@ async function main() {
             orders: 4,
             revenue: 800_000,
             createdById: director.id,
+          },
+        }),
+        prisma.managementMarketingReport.create({
+          data: {
+            periodType: ManagementMarketingReportPeriod.WEEKLY,
+            periodStart: new Date("2097-01-01T00:00:00Z"),
+            periodEnd: new Date("2097-01-07T00:00:00Z"),
+            workCompleted: "Запущены тестовые креативы",
+            resultSummary: "Получены тестовые обращения",
+            bestResult: "Видео-креатив",
+            problems: "Нет проблем",
+            nextActions: "Проверить качество обращений",
+            creativesPublished: 3,
+            qualifiedLeads: 4,
+            unqualifiedLeads: 2,
+            authorId: director.id,
           },
         }),
         prisma.recruitmentVacancy.create({
@@ -67,6 +85,12 @@ async function main() {
       });
       assert.equal(updatedTask.status, ManagementMarketingTaskStatus.DONE);
       assert.equal(updatedVacancy.candidates, 3);
+      const reviewedReport = await prisma.managementMarketingReport.update({
+        where: { id: report.id },
+        data: { status: ManagementMarketingReportStatus.APPROVED, directorComment: "Принято", reviewedById: director.id, reviewedAt: new Date() },
+      });
+      assert.equal(reviewedReport.status, ManagementMarketingReportStatus.APPROVED);
+      assert.equal(reviewedReport.qualifiedLeads, 4);
       assert.equal(Number(metric.revenue) / Number(metric.spend), 8, "ROAS input is inconsistent");
       assert.equal(Number(metric.spend) / metric.orders, 25_000, "CAC input is inconsistent");
       const crmClient = await prisma.client.create({
@@ -129,11 +153,13 @@ async function main() {
       await prisma.client.delete({ where: { id: crmClient.id } });
       await prisma.managementMarketingTask.delete({ where: { id: task.id } });
       await prisma.managementMarketingMetric.delete({ where: { id: metric.id } });
+      await prisma.managementMarketingReport.delete({ where: { id: report.id } });
       await prisma.recruitmentVacancy.delete({ where: { id: vacancy.id } });
       assert.equal(await prisma.managementMarketingTask.count({ where: { title: `${tag}-task` } }), 0);
     } finally {
       await prisma.managementMarketingTask.deleteMany({ where: { createdById: director.id } });
       await prisma.managementMarketingMetric.deleteMany({ where: { createdById: director.id } });
+      await prisma.managementMarketingReport.deleteMany({ where: { authorId: director.id } });
       await prisma.recruitmentVacancy.deleteMany({ where: { createdById: director.id } });
       await prisma.employeePayrollProfile.deleteMany({ where: { userId: director.id } });
       await prisma.user.deleteMany({ where: { id: director.id } });
