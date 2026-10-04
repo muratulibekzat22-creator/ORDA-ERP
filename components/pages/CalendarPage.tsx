@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSession } from "next-auth/react";
 import {
   AlertCircle,
   CalendarDays,
@@ -87,6 +86,8 @@ type Meta = {
     clientId: number;
     client: { name: string };
   }>;
+  currentUserId: number;
+  canManageAssignees: boolean;
 };
 
 type Indicator = { count: number; overdue: boolean };
@@ -619,7 +620,6 @@ function MonthView({
 }
 
 export default function CalendarPage({ initialState = "active" }: { initialState?: string }) {
-  const { data: session } = useSession();
   const today = useMemo(() => new Date(), []);
   const todayKey = businessDateKey(today);
   const [mode, setMode] = useState<CalendarViewMode>("day");
@@ -630,7 +630,13 @@ export default function CalendarPage({ initialState = "active" }: { initialState
   const [pickerMonth, setPickerMonth] = useState(startOfBusinessMonth(today));
   const [tasks, setTasks] = useState<Task[]>([]);
   const [indicatorTasks, setIndicatorTasks] = useState<Task[]>([]);
-  const [meta, setMeta] = useState<Meta>({ assignees: [], clients: [], orders: [] });
+  const [meta, setMeta] = useState<Meta>({
+    assignees: [],
+    clients: [],
+    orders: [],
+    currentUserId: 0,
+    canManageAssignees: false,
+  });
   const [assignee, setAssignee] = useState("");
   const [assigneeRole, setAssigneeRole] = useState("");
   const [taskType, setTaskType] = useState("");
@@ -657,7 +663,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
     acknowledgementRequired: false,
   });
 
-  const director = session?.user.accountRole === "DIRECTOR";
+  const director = meta.canManageAssignees;
   const selectedRange = useMemo(
     () => calendarViewRange(anchor, mode, period),
     [anchor, mode, period],
@@ -697,7 +703,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
   const loadIndicators = useCallback(async () => {
     const sequence = ++indicatorSequence.current;
     try {
-      const result = await fetchCalendarTasks(indicatorRange, { state: "all" });
+      const result = await fetchCalendarTasks(indicatorRange, { state: "all", assignee });
       if (sequence === indicatorSequence.current) {
         setIndicatorTasks(result.filter((task) => task.status !== "CANCELLED"));
       }
@@ -706,20 +712,26 @@ export default function CalendarPage({ initialState = "active" }: { initialState
         setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить индикаторы задач");
       }
     }
-  }, [indicatorRange]);
+  }, [assignee, indicatorRange]);
 
   const refresh = useCallback(async () => {
     await Promise.all([load(), loadIndicators()]);
   }, [load, loadIndicators]);
 
   useEffect(() => {
-    void fetch("/api/calendar?meta=1")
+    void fetch("/api/calendar?meta=1", { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : Promise.reject()))
       .then((nextMeta: Meta) => {
         setMeta(nextMeta);
         setForm((current) => ({
           ...current,
-          assigneeId: current.assigneeId || String(nextMeta.assignees[0]?.id ?? ""),
+          assigneeId: nextMeta.assignees.some((item) => String(item.id) === current.assigneeId)
+            ? current.assigneeId
+            : String(
+                nextMeta.assignees.find((item) => item.id === nextMeta.currentUserId)?.id
+                  ?? nextMeta.assignees[0]?.id
+                  ?? "",
+              ),
         }));
       })
       .catch(() => setError("Не удалось загрузить справочники"));
@@ -765,13 +777,20 @@ export default function CalendarPage({ initialState = "active" }: { initialState
   function quickCreate(date = mode === "period" ? businessDateFromKey(period.start) : anchor) {
     const key = businessDateKey(date);
     const time = formatBusinessInput(new Date()).slice(11);
+    const preferredAssignee = assignee && meta.assignees.some((item) => String(item.id) === assignee)
+      ? assignee
+      : String(
+          meta.assignees.find((item) => item.id === meta.currentUserId)?.id
+            ?? meta.assignees[0]?.id
+            ?? "",
+        );
     setEditId(null);
     setForm((current) => ({
       ...current,
       title: "",
       description: "",
       dueAt: `${key}T${time}`,
-      assigneeId: current.assigneeId || String(meta.assignees[0]?.id ?? ""),
+      assigneeId: preferredAssignee,
       clientId: "",
       orderId: "",
       acknowledgementRequired: false,
@@ -1011,28 +1030,31 @@ export default function CalendarPage({ initialState = "active" }: { initialState
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {director && (
-              <select value={assignee} onChange={(event) => setAssignee(event.target.value)} className={field} aria-label="Сотрудник">
-                <option value="">Все сотрудники</option>
-                {meta.assignees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            )}
             <select value={state} onChange={(event) => setState(event.target.value)} className={field} aria-label="Состояние задач">
               <option value="active">Активные</option>
               <option value="overdue">Просроченные</option>
               <option value="completed">Выполненные</option>
               <option value="all">Все</option>
             </select>
+            <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className={field} aria-label="Тип задачи">
+              <option value="">Все типы</option>
+              {Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            {director && (
+              <select value={assignee} onChange={(event) => setAssignee(event.target.value)} className={field} aria-label="Ответственный сотрудник">
+                <option value="">Все сотрудники</option>
+                <option value={meta.currentUserId}>Мои задачи</option>
+                {meta.assignees
+                  .filter((item) => item.id !== meta.currentUserId)
+                  .map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            )}
             {director && (
               <select value={assigneeRole} onChange={(event) => setAssigneeRole(event.target.value)} className={field} aria-label="Роль сотрудника">
                 <option value="">Все роли</option>
                 {[...new Set(meta.assignees.map((item) => item.role))].map((role) => <option key={role} value={role}>{role}</option>)}
               </select>
             )}
-            <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className={field} aria-label="Тип задачи">
-              <option value="">Все типы</option>
-              {Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
           </div>
         </div>
       </section>
@@ -1109,7 +1131,7 @@ export default function CalendarPage({ initialState = "active" }: { initialState
               </label>
               <label className="text-sm text-slate-300">
                 Ответственный
-                <select required value={form.assigneeId} onChange={(event) => setForm({ ...form, assigneeId: event.target.value })} className={field}>
+                <select required aria-label="Ответственный" value={form.assigneeId} onChange={(event) => setForm({ ...form, assigneeId: event.target.value })} className={field}>
                   {meta.assignees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               </label>

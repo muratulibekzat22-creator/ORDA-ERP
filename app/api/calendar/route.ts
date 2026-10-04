@@ -9,7 +9,10 @@ function date(value: string | null) { const result = value ? new Date(value) : n
 export async function GET(request: Request) {
   const auth = await requirePermission("calendar"); if (auth.response) return auth.response;
   const url = new URL(request.url);
-  if (url.searchParams.get("meta") === "1") return NextResponse.json(await getCalendarMeta(calendarActor(auth.session!)));
+  if (url.searchParams.get("meta") === "1") return NextResponse.json(
+    await getCalendarMeta(calendarActor(auth.session!)),
+    { headers: { "Cache-Control": "private, no-store, max-age=0" } },
+  );
   const now = new Date();
   const defaultFrom = new Date(now); defaultFrom.setHours(0, 0, 0, 0);
   const from = date(url.searchParams.get("start") ?? url.searchParams.get("from")) ?? defaultFrom;

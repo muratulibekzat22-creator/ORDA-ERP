@@ -2,6 +2,7 @@ import { CalendarTaskPriority, CalendarTaskStatus, CalendarTaskType, Prisma, Rol
 import { decodeDateIdCursor, encodeDateIdCursor } from "@/lib/pagination/date-id-cursor";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { listActiveCalendarAssignees } from "@/lib/services/employee.service";
 
 export type CalendarActor = { userId: number; role: Role; name: string };
 export type CalendarTaskInput = { title: string; description?: string | null; type: CalendarTaskType; dueAt: Date; priority: CalendarTaskPriority; assigneeId: number; clientId?: number | null; orderId?: number | null; acknowledgementRequired?: boolean };
@@ -104,15 +105,22 @@ export async function getCalendarTask(actor: CalendarActor, id: number) {
 }
 
 export async function getCalendarMeta(actor: CalendarActor) {
-  const userWhere = actor.role === Role.DIRECTOR ? { active: true } : { id: actor.userId, active: true };
   const orderWhere: Prisma.OrderWhereInput = { deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] } : { id: -1 }) };
   const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };
   const [assignees, clients, orders] = await Promise.all([
-    prisma.user.findMany({ where: userWhere, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } }),
+    actor.role === Role.DIRECTOR
+      ? listActiveCalendarAssignees()
+      : prisma.user.findMany({ where: { id: actor.userId, active: true }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } }),
     prisma.client.findMany({ where: clientWhere, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 300 }),
     prisma.order.findMany({ where: orderWhere, select: { id: true, number: true, clientId: true, client: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 300 }),
   ]);
-  return { assignees, clients, orders };
+  return {
+    assignees,
+    clients,
+    orders,
+    currentUserId: actor.userId,
+    canManageAssignees: actor.role === Role.DIRECTOR,
+  };
 }
 
 export async function createCalendarTask(actor: CalendarActor, input: CalendarTaskInput) {

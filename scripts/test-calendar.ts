@@ -50,12 +50,15 @@ for (let index = 1; index < chunks.length; index += 1) {
   assert.equal(chunks[index - 1].to.getTime(), chunks[index].from.getTime(), "API chunks must be contiguous");
 }
 
-const service = read("lib/services/calendar.service.ts"), api = read("app/api/calendar/route.ts"), schema = read("prisma/schema.prisma"), sidebar = read("components/layout/RouteShell.tsx"), page = read("components/pages/CalendarPage.tsx");
-for (const marker of ["taskScope(actor)", "INVALID_ASSIGNEE", "FORBIDDEN_RELATION", "RELATION_MISMATCH", "completedAt", "CANCELLED", "calendarTaskAudit.create", "conflict"]) assert.ok(service.includes(marker), `missing calendar guard: ${marker}`);
-for (const marker of ["requirePermission(\"calendar\")", 'searchParams.get("start")', 'searchParams.get("end")', "62 * 86400000", 'searchParams.get("cursor")']) assert.ok(api.includes(marker), `missing range/auth guard: ${marker}`);
+const service = read("lib/services/calendar.service.ts"), employeeService = read("lib/services/employee.service.ts"), api = read("app/api/calendar/route.ts"), schema = read("prisma/schema.prisma"), sidebar = read("components/layout/RouteShell.tsx"), page = read("components/pages/CalendarPage.tsx");
+for (const marker of ["taskScope(actor)", "INVALID_ASSIGNEE", "FORBIDDEN_RELATION", "RELATION_MISMATCH", "completedAt", "CANCELLED", "calendarTaskAudit.create", "conflict", "listActiveCalendarAssignees", "actor.role === Role.DIRECTOR ? filters.assigneeId : actor.userId", "canManageAssignees: actor.role === Role.DIRECTOR"])
+  assert.ok(service.includes(marker), `missing calendar guard: ${marker}`);
+for (const marker of ["employeePayrollProfile.findMany", "active: true", "user: { is: { active: true", "role: { not: Role.PARTNER }"])
+  assert.ok(employeeService.includes(marker), `missing employee source contract: ${marker}`);
+for (const marker of ["requirePermission(\"calendar\")", 'searchParams.get("start")', 'searchParams.get("end")', "62 * 86400000", 'searchParams.get("cursor")', '"Cache-Control": "private, no-store, max-age=0"']) assert.ok(api.includes(marker), `missing range/auth guard: ${marker}`);
 for (const marker of ["@@index([assigneeId, dueAt])", "completedById", "cancelledAt"]) assert.ok(schema.includes(marker), `missing schema contract: ${marker}`);
 assert.ok(!api.includes("export async function DELETE"), "calendar tasks must not be hard-deleted");
-for (const marker of ["MiniCalendar", "WeekView", "MonthView", '["period", "Период"]', "loadIndicators", "quickCreate(date", "await refresh()"])
+for (const marker of ["MiniCalendar", "WeekView", "MonthView", '["period", "Период"]', "loadIndicators", "quickCreate(date", "await refresh()", "Мои задачи", "Ответственный сотрудник", '{ state: "all", assignee }'])
   assert.ok(page.includes(marker), `missing calendar UI contract: ${marker}`);
 const dashboardIndex = sidebar.indexOf('["/",'), calendarIndex = sidebar.indexOf('["/calendar",');
 assert.ok(dashboardIndex >= 0 && calendarIndex > dashboardIndex, "sidebar order must stay deterministic with Home first");

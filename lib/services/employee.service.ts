@@ -118,6 +118,26 @@ export async function listEmployees(status: "active" | "inactive" | "all") {
   return employees.map(employeeDto);
 }
 
+export async function listActiveCalendarAssignees() {
+  await ensureUserEmployeeProfiles();
+  const employees = await prisma.employeePayrollProfile.findMany({
+    where: {
+      active: true,
+      user: { is: { active: true, role: { not: Role.PARTNER } } },
+    },
+    select: {
+      name: true,
+      user: { select: { id: true, name: true, role: true } },
+    },
+    orderBy: [{ name: "asc" }, { createdAt: "asc" }],
+  });
+  return employees.flatMap((employee) => employee.user ? [{
+    id: employee.user.id,
+    name: employee.name || employee.user.name,
+    role: employee.user.role,
+  }] : []);
+}
+
 type CreateEmployeeInput = {
   name: string;
   position: string;
