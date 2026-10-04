@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { currencyToKzt, loadMetaAdsCampaignReport, MetaAdsSyncError } from "@/lib/integrations/meta-ads";
 import { requirePermission } from "@/lib/server-auth";
 
+export const maxDuration = 60;
+
 export async function GET(request: Request) {
   const auth = await requirePermission("marketing");
   if (auth.response) return auth.response;
