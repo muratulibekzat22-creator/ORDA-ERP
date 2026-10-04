@@ -179,6 +179,7 @@ async function recommendation(year: number, month: number) {
 
 const planInclude = {
   tiers: { orderBy: { position: "asc" as const } },
+  managerTargets: true,
 } satisfies Prisma.SalesPlanInclude;
 
 async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
@@ -234,7 +235,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
     orderMetrics(period.start, period.end),
     recommendation(period.year, period.month),
     prisma.user.findMany({
-      where: { companyId, active: true, role: Role.MANAGER },
+      where: { companyId, active: true, role: Role.MANAGER, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     }),
@@ -361,11 +362,17 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
   const managerProgress = await Promise.all(
     visibleManagers.map(async (manager) => {
       const metrics = await orderMetrics(period.start, period.end, manager.id);
+      const target = plan?.managerTargets.find((item) => item.managerId === manager.id);
       return {
         managerId: manager.id,
         managerName: manager.name,
         actualRevenue: metrics.revenue,
         actualOrders: metrics.orders,
+        targetRevenue: target ? Number(target.revenueTarget) : null,
+        targetOrders: target?.orderTarget ?? null,
+        targetCompletionPercent: target && Number(target.revenueTarget) > 0
+          ? roundPercent((metrics.revenue / Number(target.revenueTarget)) * 100)
+          : null,
         contributionPercent: actual.revenue > 0
           ? roundPercent((metrics.revenue / actual.revenue) * 100)
           : 0,
@@ -594,7 +601,6 @@ export async function updateSalesPlan(
       },
     });
     await tx.salesPlanTier.deleteMany({ where: { planId: existing.id } });
-    await tx.salesPlanManagerTarget.deleteMany({ where: { planId: existing.id } });
     if (input.tiers.length)
       await tx.salesPlanTier.createMany({
         data: input.tiers.map((tier, index) => ({
@@ -606,5 +612,40 @@ export async function updateSalesPlan(
         })),
       });
   });
+  return getSalesPlan(month, actor);
+}
+
+export async function updateSalesPlanManagerTarget(
+  month: string,
+  input: { managerId: number; revenueTarget: number | null; orderTarget: number | null },
+  actor: SalesPlanActor,
+) {
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new Error("FORBIDDEN");
+  const period = monthRange(month);
+  const companyId = requireTenantIdentity().companyId;
+  if (!Number.isInteger(input.managerId) || input.managerId <= 0)
+    throw new Error("INVALID_MANAGER");
+  const manager = await prisma.user.findFirst({
+    where: { id: input.managerId, companyId, active: true, role: Role.MANAGER, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } },
+    select: { id: true },
+  });
+  if (!manager) throw new Error("INVALID_MANAGER");
+  const clearing = input.revenueTarget === null && input.orderTarget === null;
+  if (!clearing && (
+    !Number.isFinite(input.revenueTarget) || Number(input.revenueTarget) <= 0 ||
+    !Number.isInteger(input.orderTarget) || Number(input.orderTarget) <= 0
+  )) throw new Error("INVALID_TARGET");
+  const plan = await ensurePlan(actor, period.year, period.month);
+  if (!plan) throw new Error("NOT_FOUND");
+  if (clearing) {
+    await prisma.salesPlanManagerTarget.deleteMany({ where: { planId: plan.id, managerId: manager.id } });
+  } else {
+    await prisma.salesPlanManagerTarget.upsert({
+      where: { planId_managerId: { planId: plan.id, managerId: manager.id } },
+      create: { planId: plan.id, managerId: manager.id, revenueTarget: input.revenueTarget!, orderTarget: input.orderTarget! },
+      update: { revenueTarget: input.revenueTarget!, orderTarget: input.orderTarget! },
+    });
+  }
   return getSalesPlan(month, actor);
 }

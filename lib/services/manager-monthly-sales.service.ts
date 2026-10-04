@@ -9,11 +9,15 @@ export type ManagerMonthlySalesRow = {
   leads: number;
   orders: number;
   sales: number;
+  planOrders: number | null;
+  planSales: number | null;
+  completionPercent: number | null;
 };
 
 /** The same confirmed order date used by the business dashboard and reports. */
 export async function getManagerMonthlySales(input: { companyId: number; start: Date; end: Date }) {
-  const [users, leads, orders] = await Promise.all([
+  const localStart = new Date(input.start.getTime() + 5 * 60 * 60 * 1000);
+  const [users, leads, orders, plan] = await Promise.all([
     prisma.user.findMany({
       where: { companyId: input.companyId, role: Role.MANAGER },
       select: { id: true, name: true, active: true, payrollProfile: { select: { position: true } } },
@@ -34,6 +38,10 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
       },
       select: { managerUserId: true, manager: true, amount: true },
     }),
+    prisma.salesPlan.findUnique({
+      where: { companyId_year_month: { companyId: input.companyId, year: localStart.getUTCFullYear(), month: localStart.getUTCMonth() + 1 } },
+      select: { managerTargets: { select: { managerId: true, revenueTarget: true, orderTarget: true } } },
+    }),
   ]);
   const rows: ManagerMonthlySalesRow[] = users
     .filter((user) => !/замер/i.test(user.payrollProfile?.position ?? ""))
@@ -44,6 +52,9 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
       leads: leads.find((lead) => lead.managerUserId === user.id)?._count._all ?? 0,
       orders: 0,
       sales: 0,
+      planOrders: plan?.managerTargets.find((target) => target.managerId === user.id)?.orderTarget ?? null,
+      planSales: Number(plan?.managerTargets.find((target) => target.managerId === user.id)?.revenueTarget ?? 0) || null,
+      completionPercent: null,
     }));
   const byId = new Map(rows.map((row) => [row.userId, row]));
   const byName = new Map(rows.map((row) => [row.name.trim().toLocaleLowerCase("ru"), row]));
@@ -59,6 +70,11 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
       otherOrders += 1;
       otherSales += Number(order.amount);
     }
+  }
+  for (const row of rows) {
+    row.completionPercent = row.planSales && row.planSales > 0
+      ? Math.round((row.sales / row.planSales) * 10_000) / 100
+      : null;
   }
   return { rows, otherOrders, otherSales };
 }

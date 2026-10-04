@@ -35,14 +35,14 @@ const sections = [
   { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
   { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/sales-plan", "План продаж", TrendingUp], ["/measurements", "Замеры", Ruler], ["/catalog", "Каталог изделий", Images], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
-  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
+  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/kpi", "KPI сотрудников", BarChart3], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
 const founderSections = [
   { title: "Главное", items: [["/", "Картина бизнеса", LayoutDashboard]] },
   { title: "Контроль", items: [["/sales-plan", "План продаж", TrendingUp], ["/orders", "Заказы", ClipboardList], ["/clients", "Заявки", Users]] },
-  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/employees", "Сотрудники", UserCog], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/kpi", "KPI сотрудников", BarChart3], ["/employees", "Сотрудники", UserCog], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
@@ -88,13 +88,14 @@ export default function RouteShell({
     "/sales-plan": "reports",
   };
   const visible = (href: string) => {
+    if (href === "/kpi") return accountRole !== "PARTNER";
     if (href === "/documents" && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(accountRole ?? "")) return false;
     if (founder) return true;
     if (role === "MEASURER")
-      return ["/", "/measurements", "/catalog", "/calendar", "/training", "/payroll"].includes(href);
+      return ["/", "/measurements", "/catalog", "/calendar", "/training", "/payroll", "/kpi"].includes(href);
     if (role === "MANAGER")
-      return ["/", "/clients", "/orders", "/sales-plan", "/measurements", "/catalog", "/calendar", "/production", "/payroll"].includes(href);
-    if (role === "MARKETER") return ["/", "/marketing", "/calendar", "/payroll"].includes(href);
+      return ["/", "/clients", "/orders", "/sales-plan", "/measurements", "/catalog", "/calendar", "/production", "/payroll", "/kpi"].includes(href);
+    if (role === "MARKETER") return ["/", "/marketing", "/calendar", "/payroll", "/kpi"].includes(href);
     if (accountRole === "OPERATIONS_DIRECTOR")
       return href === "/" || Boolean(permissionByHref[href] && (
         grantedPermissions

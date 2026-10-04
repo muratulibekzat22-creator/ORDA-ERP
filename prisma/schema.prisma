@@ -131,6 +131,8 @@ model Company {
   managementMarketingMetrics    ManagementMarketingMetric[]
   recruitmentVacancies          RecruitmentVacancy[]
   salesPlans                    SalesPlan[]
+  employeeKpiTargets            EmployeeKpiTarget[]
+  employeeKpiRequests           EmployeeKpiRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -525,6 +527,9 @@ model User {
   purchaseAdditionalCosts           PurchaseAdditionalCost[]
   purchaseCostRevisions             PurchaseCostRevision[]
   payrollProfile                    EmployeePayrollProfile?
+    kpiTargetsUpdated                 EmployeeKpiTarget[]           @relation("EmployeeKpiTargetUpdater")
+    kpiRequestsCreated                EmployeeKpiRequest[]          @relation("EmployeeKpiRequestCreator")
+    kpiRequestsResolved               EmployeeKpiRequest[]          @relation("EmployeeKpiRequestResolver")
   approvedSalaryRates               EmployeeSalaryRate[]           @relation("SalaryRateApprover")
   approvedPayrollAccruals           PayrollAccrual[]               @relation("PayrollAccrualApprover")
   createdPayrollAccruals            PayrollAccrual[]               @relation("PayrollAccrualCreator")
@@ -1567,11 +1572,76 @@ model EmployeePayrollProfile {
   paymentConfirmations   PayrollPaymentConfirmation[]
   advanceRequests        PayrollAdvanceRequest[]
   auditEvents            PayrollAuditEvent[]
+  kpiTargets             EmployeeKpiTarget[]
+  kpiRequests            EmployeeKpiRequest[]
   companyLedgerEntries   CompanyLedgerEntry[]
   createdAt              DateTime                     @default(now())
   updatedAt              DateTime                     @updatedAt
 
   @@index([companyId, active])
+}
+
+enum EmployeeKpiKind {
+  AUTO
+  CUSTOM
+}
+
+enum EmployeeKpiUnit {
+  COUNT
+  MONEY
+  PERCENT
+}
+
+enum EmployeeKpiRequestStatus {
+  OPEN
+  FULFILLED
+}
+
+model EmployeeKpiTarget {
+  id           Int                    @id @default(autoincrement())
+  companyId    Int                    @default(dbgenerated())
+  company      Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  employeeId   Int
+  employee     EmployeePayrollProfile @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  year         Int
+  month        Int
+  metricCode   String
+  title        String
+  kind         EmployeeKpiKind        @default(AUTO)
+  unit         EmployeeKpiUnit        @default(COUNT)
+  target       Decimal                @db.Decimal(14, 2)
+  manualActual Decimal?               @db.Decimal(14, 2)
+  evidence     String?
+  updatedById  Int
+  updatedBy    User                   @relation("EmployeeKpiTargetUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@unique([companyId, employeeId, year, month, metricCode])
+  @@index([companyId, year, month])
+  @@index([employeeId, year, month])
+}
+
+model EmployeeKpiRequest {
+  id            Int                      @id @default(autoincrement())
+  companyId     Int                      @default(dbgenerated())
+  company       Company                  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  employeeId    Int
+  employee      EmployeePayrollProfile   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  year          Int
+  month         Int
+  status        EmployeeKpiRequestStatus @default(OPEN)
+  requestedById Int
+  requestedBy   User                     @relation("EmployeeKpiRequestCreator", fields: [requestedById], references: [id], onDelete: Restrict)
+  note          String?
+  resolvedById  Int?
+  resolvedBy    User?                    @relation("EmployeeKpiRequestResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+  resolvedAt    DateTime?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@unique([companyId, employeeId, year, month])
+  @@index([companyId, year, month, status])
 }
 
 model EmployeeSalaryRate {
