@@ -3,10 +3,11 @@ import "./require-test-database";
 import assert from "node:assert/strict";
 import { PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
 
+import { companyYearMonth } from "../lib/company-calendar";
 import { createRequestHash } from "../lib/idempotency";
 import { prisma } from "../lib/prisma";
 import { createEmployee, createEmployeeAccess, listEmployees } from "../lib/services/employee.service";
-import { changeSalary, createAccrual, createPayment, ensurePeriod, payrollSummary } from "../lib/services/payroll.service";
+import { changeSalary, confirmPayrollCalculation, createAccrual, createPayment, ensurePeriod, payrollSummary } from "../lib/services/payroll.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
   throw new Error("Employee payroll integration requires TEST_DATABASE_URL");
@@ -42,13 +43,16 @@ async function main() {
     assert.equal(await prisma.user.count({ where: { name: `${tag}-employee` } }), 0, "employee creation produced a fake User");
     assert((await listEmployees("active")).some((row) => row.employeeId === employeeId), "employee is missing from the active list");
 
-    await changeSalary(employeeId, 300_000, new Date(), "Тестовый оклад", actor);
-    const period = await ensurePeriod(2098, 12);
+    const selectedPeriod = companyYearMonth();
+    await changeSalary(
+      employeeId,
+      300_000,
+      new Date(),
+      "Тестовый оклад",
+      actor,
+    );
+    const period = await ensurePeriod(selectedPeriod.year, selectedPeriod.month);
     periodId = period.id;
-    await createAccrual({
-      employeeId, periodId, type: PayrollAccrualType.BASE_SALARY, amount: 300_000,
-      reason: "Оклад за месяц", key: key("salary"), requestHash: createRequestHash({ employeeId, periodId, amount: 300_000 }),
-    }, actor);
     await createAccrual({
       employeeId, periodId, type: PayrollAccrualType.PREMIUM, amount: 50_000,
       reason: "Премия", key: key("premium"), requestHash: createRequestHash({ employeeId, periodId, amount: 50_000 }),
@@ -57,6 +61,17 @@ async function main() {
       employeeId, periodId, type: PayrollPaymentType.ADVANCE, amount: 100_000,
       paymentDate: new Date(), method: "TEST", comment: "Фактически выплаченный аванс",
       key: key("advance"), requestHash: createRequestHash({ employeeId, periodId, amount: 100_000 }),
+    }, actor);
+
+    const preview = await payrollSummary(periodId, actor, employeeId);
+    assert.equal(preview.rows[0]?.calculation.prepared, 350_000);
+    await confirmPayrollCalculation({
+      employeeId,
+      periodId,
+      reason: "Подтверждение расчёта сотрудника без доступа в ORDA",
+      key: key("calculation"),
+      requestHash: createRequestHash({ employeeId, periodId, prepared: 350_000 }),
+      expectedCalculationHash: preview.rows[0]!.calculation.calculationHash,
     }, actor);
 
     const beforeAccess = await payrollSummary(periodId, actor, employeeId);
@@ -76,7 +91,8 @@ async function main() {
     assert.equal(linked.employeeId, employeeId, "account creation replaced the employee record");
     const afterAccess = await payrollSummary(periodId, actor, employeeId);
     assert.equal(afterAccess.rows[0].totals.payable, 250_000, "payroll history changed after linking User");
-    assert.equal(afterAccess.rows[0].accruals.length, 2);
+    assert.equal(afterAccess.rows[0].accruals.length, 1);
+    assert.equal(afterAccess.rows[0].calculationHistory.length, 1);
     assert.equal(afterAccess.rows[0].payments.length, 1);
 
     await prisma.user.update({ where: { id: linkedUserId }, data: { active: false } });
@@ -85,10 +101,20 @@ async function main() {
     console.log("employee without User, payroll, direct advance, later account link and login deactivation passed");
   } finally {
     if (employeeId) {
-      await prisma.companyLedgerEntry.deleteMany({ where: { OR: [{ payrollAccrual: { employeeId } }, { payrollPayment: { employeeId } }] } });
+      await prisma.companyLedgerEntry.deleteMany({
+        where: {
+          OR: [
+            { employeeId },
+            { payrollAccrual: { employeeId } },
+            { payrollPayment: { employeeId } },
+            { payrollCalculationSnapshot: { employeeId } },
+          ],
+        },
+      });
       await prisma.payrollAuditEvent.deleteMany({ where: { OR: [{ employeeId }, ...(directorId ? [{ actorId: directorId }] : [])] } });
       await prisma.payrollPayment.deleteMany({ where: { employeeId } });
       await prisma.payrollAccrual.deleteMany({ where: { employeeId } });
+      await prisma.payrollCalculationSnapshot.deleteMany({ where: { employeeId } });
       await prisma.employeeSalaryRate.deleteMany({ where: { employeeId } });
       await prisma.employeePayrollProfile.deleteMany({
         where: {

@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import bcrypt from "bcrypt";
-import { Role } from "@prisma/client";
+import { OrderResponsibleType, Role } from "@prisma/client";
 import { chromium } from "@playwright/test";
 
 import { prisma } from "../lib/prisma";
@@ -165,7 +165,7 @@ async function main() {
         { companyId: company.id, userId: replacement.id, name: replacement.name, position: "Менеджер", hiredAt: new Date(), active: false, baseSalary: 0 },
       ] });
       const client = await prisma.client.create({ data: { name: "Клиент Ахботы ТЕСТ", phone: "+70000000001", city: "Семей", manager: old.name, managerUserId: old.id, amount: "1000000", status: "Новая заявка" } });
-      const order = await prisma.order.create({ data: { number: `${tag}-order`, clientId: client.id, address: "Тестовая улица", staircase: "1", material: "Металл", amount: 1_000_000, manager: old.name, managerUserId: old.id } });
+      const order = await prisma.order.create({ data: { number: `${tag}-order`, clientId: client.id, address: "Тестовая улица", staircase: "1", material: "Металл", amount: 1_000_000, manager: old.name, responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: old.id } });
       const task = await prisma.calendarTask.create({ data: { title: "Позвонить клиенту ТЕСТ", type: "CALL", dueAt: new Date(Date.now() + 86_400_000), assigneeId: old.id, creatorId: director.id, clientId: client.id, orderId: order.id, acknowledgementRequired: true, acknowledgedAt: new Date(), acknowledgementComment: "Ахбота ознакомлена" } });
       const calculation = await prisma.leadCalculation.create({ data: { clientId: client.id, material: "Металл", baseClientPrice: 1_000_000, clientPrice: 900_000, internalCost: 600_000, snapshot: {}, authorId: old.id, authorName: old.name } });
       const approval = await prisma.priceApprovalRequest.create({ data: { clientId: client.id, calculationId: calculation.id, managerUserId: old.id, managerName: old.name, requestedByUserId: old.id, requestedByName: old.name, standardSalePrice: 1_000_000, currentSalePrice: 900_000, requestedSalePrice: 850_000, snapshotHash: tag, reason: "Тестовая скидка" } });
@@ -210,7 +210,10 @@ async function main() {
       assert(kpi.rows.some((row) => row.userId === old.id && !row.active), "former manager missing or active in historical KPI");
       assert(kpi.rows.some((row) => row.userId === replacement.id && row.active), "new manager missing or inactive in KPI");
       const reports = await getReportsReadModel(new URLSearchParams({ period: "month" }), { id: director.id, role: Role.DIRECTOR });
-      assert(reports.managers.some((row) => row.id === old.id && row.orders === 1 && !row.active), "former manager missing from report");
+      assert(
+        reports.managers.some((row) => row.id === old.id && row.orders === 1 && !row.active),
+        `former manager missing from report: ${JSON.stringify(reports.managers)}`,
+      );
       assert(reports.managers.some((row) => row.id === replacement.id && row.active), "new manager missing from report");
       const calendar = await listCalendarTasks({ userId: replacement.id, role: Role.MANAGER, name: replacement.name }, { from: new Date(Date.now() - 86_400_000), to: new Date(Date.now() + 3 * 86_400_000) });
       assert(calendar.tasks.some((row) => row.id === task.id && row.handover?.oldName === old.name), "handover absent in task card");

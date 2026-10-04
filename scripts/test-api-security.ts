@@ -6,7 +6,7 @@ import path from "path";
 import net from "net";
 import crypto from "crypto";
 import bcrypt from "bcrypt";
-import { CalendarTaskPriority, CalendarTaskType, OrderLifecycle, Permission, Role, type PrismaClient } from "@prisma/client";
+import { CalendarTaskPriority, CalendarTaskType, OrderLifecycle, OrderResponsibleType, Permission, Role, type PrismaClient } from "@prisma/client";
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
 import { defaultPermissions } from "@/lib/permissions";
@@ -351,7 +351,14 @@ async function main() {
       data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: hash, role: Role.MANAGER },
     });
     await prisma.client.update({ where: { id: client.id }, data: { managerUserId: manager.id } });
-    await prisma.order.updateMany({ where: { id: { in: [firstOrder.id, secondOrder.id] } }, data: { managerUserId: manager.id, manager: manager.name } });
+    await prisma.order.updateMany({
+      where: { id: { in: [firstOrder.id, secondOrder.id] } },
+      data: {
+        managerUserId: manager.id,
+        manager: manager.name,
+        responsibleType: OrderResponsibleType.EMPLOYEE,
+      },
+    });
     const lockoutUser = await prisma.user.create({
       data: { name: `${tag}-lockout`, email: `${tag}-lockout@test.local`, password: hash, role: Role.MANAGER },
     });
@@ -916,9 +923,9 @@ async function main() {
       gte: new Date(Date.UTC(dashboardYear, dashboardMonth - 1, 1) - 5 * 60 * 60 * 1000),
       lt: new Date(Date.UTC(dashboardYear, dashboardMonth, 1) - 5 * 60 * 60 * 1000),
     };
-    const expectedDashboardOrders = await prisma.order.findMany({ where: { deletedAt: null, createdAt: dashboardPeriod, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { amount: true } });
-    const expectedClientPayments = await prisma.payment.findMany({ where: { operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] }, order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } }, select: { amount: true, type: true } });
-    const expectedClientBalances = await prisma.order.findMany({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { balance: true } });
+    const expectedDashboardOrders = await prisma.order.findMany({ where: { companyId: 1, deletedAt: null, orderReceivedAt: dashboardPeriod, orderDateNeedsReview: false, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { amount: true } });
+    const expectedClientPayments = await prisma.payment.findMany({ where: { operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] }, order: { companyId: 1, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } }, select: { amount: true, type: true } });
+    const expectedClientBalances = await prisma.order.findMany({ where: { companyId: 1, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { balance: true } });
     assert(
       Number(directorDashboard.finance.revenue) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&
       Number(directorDashboard.finance.received) === expectedClientPayments.reduce((sum, payment) => sum + (payment.type === "REFUND" ? -Number(payment.amount) : Number(payment.amount)), 0) &&
