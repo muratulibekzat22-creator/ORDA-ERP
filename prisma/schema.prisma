@@ -131,6 +131,7 @@ model Company {
   managementMarketingMetrics    ManagementMarketingMetric[]
   managementMarketingReports    ManagementMarketingReport[]
   recruitmentVacancies          RecruitmentVacancy[]
+  recruitmentCandidates         RecruitmentCandidate[]
   salesPlans                    SalesPlan[]
   employeeKpiTargets            EmployeeKpiTarget[]
   employeeKpiRequests           EmployeeKpiRequest[]
@@ -242,6 +243,15 @@ enum RecruitmentVacancyStatus {
   OFFER
   HIRED
   PAUSED
+}
+
+enum RecruitmentCandidateStatus {
+  NEW
+  CONTACTED
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
 }
 
 enum LeadStage {
@@ -585,6 +595,8 @@ model User {
   createdManagementMarketingReports ManagementMarketingReport[]    @relation("ManagementMarketingReportAuthor")
   reviewedManagementMarketingReports ManagementMarketingReport[]   @relation("ManagementMarketingReportReviewer")
   createdRecruitmentVacancies       RecruitmentVacancy[]           @relation("RecruitmentVacancyCreator")
+  createdRecruitmentCandidates      RecruitmentCandidate[]         @relation("RecruitmentCandidateCreator")
+  responsibleRecruitmentCandidates  RecruitmentCandidate[]         @relation("RecruitmentCandidateResponsible")
   createdSalesPlans                 SalesPlan[]                    @relation("SalesPlanCreator")
   salesPlanTargets                  SalesPlanManagerTarget[]
 
@@ -2142,10 +2154,32 @@ model RecruitmentVacancy {
   note        String?
   createdById Int
   createdBy   User                     @relation("RecruitmentVacancyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  candidateRecords RecruitmentCandidate[]
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
 
   @@index([companyId, status, updatedAt])
+}
+
+model RecruitmentCandidate {
+  id                Int                        @id @default(autoincrement())
+  companyId         Int                        @default(dbgenerated())
+  company           Company                    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  vacancyId         Int
+  vacancy           RecruitmentVacancy         @relation(fields: [vacancyId], references: [id], onDelete: Restrict)
+  name              String
+  phone             String?
+  status            RecruitmentCandidateStatus @default(NEW)
+  note              String?
+  responsibleUserId Int?
+  responsibleUser   User?                      @relation("RecruitmentCandidateResponsible", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+  createdById       Int
+  createdBy         User                       @relation("RecruitmentCandidateCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  @@index([companyId, vacancyId, status])
+  @@index([responsibleUserId, status])
 }
 
 model CompanySettings {

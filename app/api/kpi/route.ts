@@ -29,10 +29,10 @@ async function context() {
 
 function errorResponse(error: unknown) {
   const code = error instanceof Error ? error.message : "UNKNOWN";
-  const invalid = ["INVALID_MONTH", "INVALID_EMPLOYEE", "INVALID_TARGET", "INVALID_METRIC", "INVALID_ACTUAL"].includes(code);
+  const invalid = ["INVALID_MONTH", "INVALID_EMPLOYEE", "INVALID_TARGET", "INVALID_METRIC", "INVALID_ACTUAL", "MANAGER_PLAN_IN_SALES"].includes(code);
   const forbidden = code === "FORBIDDEN";
   return NextResponse.json({
-    error: forbidden ? "Недостаточно прав" : code === "PLAN_EXISTS" ? "План уже назначен директором" : invalid ? "Проверьте данные KPI" : "Не удалось сохранить KPI",
+    error: forbidden ? "Недостаточно прав" : code === "PLAN_EXISTS" ? "План уже назначен директором" : code === "MANAGER_PLAN_IN_SALES" ? "Цель менеджера по продажам назначается в плане продаж" : invalid ? "Проверьте данные KPI" : "Не удалось сохранить KPI",
   }, { status: forbidden ? 403 : invalid ? 400 : code === "PLAN_EXISTS" ? 409 : 500 });
 }
 
@@ -40,8 +40,20 @@ export async function GET(request: Request) {
   const auth = await context();
   if (!auth) return NextResponse.json({ error: "Сессия завершена" }, { status: 401 });
   try {
-    const month = new URL(request.url).searchParams.get("month") ?? undefined;
-    return NextResponse.json(await runWithTenant(auth.tenant, () => getEmployeeKpi(month, auth.actor)));
+    const params = new URL(request.url).searchParams;
+    const month = params.get("month") ?? undefined;
+    const data = await runWithTenant(auth.tenant, () => getEmployeeKpi(month, auth.actor));
+    if (params.get("export") === "csv") {
+      const cell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+      const rows = [
+        ["Период", "Сотрудник", "Должность", "Показатель", "Единица", "План", "Факт", "Выполнение, %", "Источник"],
+        ...data.rows.flatMap((row) => row.metrics.map((metric) => [data.month, row.name, row.position, metric.title, metric.unit, metric.target, metric.actual, metric.completionPercent, metric.source])),
+      ];
+      return new NextResponse(`\uFEFF${rows.map((row) => row.map(cell).join(";")).join("\r\n")}`, {
+        headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="employee-kpi-${data.month}.csv"` },
+      });
+    }
+    return NextResponse.json(data);
   } catch (error) {
     return errorResponse(error);
   }

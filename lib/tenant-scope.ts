@@ -51,6 +51,7 @@ export const TENANT_MODELS = new Set([
   "ManagementMarketingMetric",
   "ManagementMarketingReport",
   "RecruitmentVacancy",
+  "RecruitmentCandidate",
   "SalesPlan",
   "EmployeeKpiTarget",
   "EmployeeKpiRequest",

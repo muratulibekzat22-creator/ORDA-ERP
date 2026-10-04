@@ -1,12 +1,11 @@
 "use client";
 
-import { BarChart3, BriefcaseBusiness, ChevronDown, ChevronRight, ClipboardCheck, Eye, KanbanSquare, MessageCircle, MousePointerClick, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronRight, ClipboardCheck, Eye, KanbanSquare, MessageCircle, MousePointerClick, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Fragment, type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type Status = "TODO" | "IN_PROGRESS" | "REVIEW" | "DONE";
 type Task = { id: number; title: string; description: string | null; status: Status; priority: number; dueAt: string | null; assignee: { id: number; name: string } | null; createdBy: { id: number; name: string } };
 type Metric = { id: number; metricMonth: string; channel: string; spend: string; leads: number; orders: number; revenue: string };
-type Vacancy = { id: number; title: string; status: "OPEN" | "INTERVIEW" | "OFFER" | "HIRED" | "PAUSED"; candidates: number; note: string | null };
 type MarketingReport = {
   id: number;
   periodType: "DAILY" | "WEEKLY" | "MONTHLY";
@@ -60,7 +59,6 @@ type Data = {
   tasks: Task[];
   metrics: Metric[];
   reports: MarketingReport[];
-  vacancies: Vacancy[];
   assignees: Array<{ id: number; name: string; role: string }>;
   integration: { configured: boolean; account: string | null; graphVersion: string; automatic: boolean; campaignCount: number; booksToLedger: boolean; state: "NEEDS_SETUP" | "READY" | "ACTIVE"; lastSyncedAt: string | null };
   summary: {
@@ -103,7 +101,6 @@ const sumMeta = (rows: MetaMetrics[]) => rows.reduce((total, row) => ({
   leadActions: total.leadActions + row.leadActions,
 }), zeroMeta());
 const taskColumns: Array<[Status, string]> = [["TODO", "Нужно сделать"], ["IN_PROGRESS", "В работе"], ["REVIEW", "Проверка"], ["DONE", "Готово"]];
-const vacancyLabels: Record<Vacancy["status"], string> = { OPEN: "Открыта", INTERVIEW: "Собеседования", OFFER: "Оффер", HIRED: "Сотрудник найден", PAUSED: "Пауза" };
 const reportPeriodLabels: Record<MarketingReport["periodType"], string> = { DAILY: "День", WEEKLY: "Неделя", MONTHLY: "Месяц" };
 const reportStatusLabels: Record<MarketingReport["status"], string> = { SUBMITTED: "На проверке", NEEDS_REVISION: "На доработке", APPROVED: "Принят" };
 const field = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white";
@@ -129,7 +126,6 @@ export default function MarketingManagementPage() {
   const [report, setReport] = useState({ periodType: "WEEKLY", periodStart: shiftDateKey(today, -6), periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
   const [reviewComments, setReviewComments] = useState<Record<number, string>>({});
   const [metricMonth, setMetricMonth] = useState(today.slice(0, 7));
-  const [vacancy, setVacancy] = useState({ title: "", note: "" });
   const [adPeriod, setAdPeriod] = useState<AdPeriod>("MONTH");
   const [campaignsOpen, setCampaignsOpen] = useState(false);
   const [dailyOpen, setDailyOpen] = useState(false);
@@ -227,8 +223,7 @@ export default function MarketingManagementPage() {
     event.preventDefault();
     if (await send("POST", { action: "report", ...report })) setReport({ periodType: "WEEKLY", periodStart: shiftDateKey(today, -6), periodEnd: today, workCompleted: "", resultSummary: "", bestResult: "", problems: "", nextActions: "", creativesPublished: "0", qualifiedLeads: "0", unqualifiedLeads: "0" });
   }
-  async function addVacancy(event: FormEvent) { event.preventDefault(); if (await send("POST", { action: "vacancy", ...vacancy })) setVacancy({ title: "", note: "" }); }
-  async function remove(action: "task" | "report" | "vacancy", id: number, title: string) {
+  async function remove(action: "task" | "report", id: number, title: string) {
     if (!window.confirm(`Удалить «${title}»? Это действие нельзя отменить.`)) return;
     await send("DELETE", { action, id });
   }
@@ -330,18 +325,14 @@ export default function MarketingManagementPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-2">
+      <section>
         <FormPanel title="Новая задача" subtitle="Попадёт в маркетинговый Kanban">
           <form onSubmit={addTask} className="grid gap-3"><Input label="Что сделать" value={task.title} onChange={(value)=>setTask({...task,title:value})}/><TextArea label="Ожидаемый результат и критерий готовности" value={task.description} onChange={(value)=>setTask({...task,description:value})}/><div className="grid gap-3 sm:grid-cols-3"><Input label="Срок" type="date" value={task.dueAt} onChange={(value)=>setTask({...task,dueAt:value})}/><label className="text-sm text-slate-300">Ответственный<select className={`${field} mt-1`} value={task.assigneeId} onChange={(e)=>setTask({...task,assigneeId:e.target.value})}><option value="">Не назначен</option>{data.assignees.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label className="text-sm text-slate-300">Приоритет<select className={`${field} mt-1`} value={task.priority} onChange={(e)=>setTask({...task,priority:e.target.value})}><option value="1">Обычный</option><option value="2">Важный</option><option value="3">Срочный</option></select></label></div><button className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold"><Plus size={16} className="mr-2 inline"/>Добавить задачу</button></form>
-        </FormPanel>
-        <FormPanel title="Новая вакансия" subtitle="Контроль найма у директора">
-          <form onSubmit={addVacancy} className="grid gap-3"><Input label="Должность" value={vacancy.title} onChange={(value)=>setVacancy({...vacancy,title:value})}/><Input label="Комментарий" value={vacancy.note} onChange={(value)=>setVacancy({...vacancy,note:value})}/><button className="min-h-11 rounded-xl bg-amber-700 px-4 font-semibold"><Plus size={16} className="mr-2 inline"/>Открыть вакансию</button></form>
         </FormPanel>
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4"><h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><KanbanSquare className="text-blue-400"/>Marketing Kanban</h2><div className="overflow-x-auto"><div className="grid min-w-[1050px] grid-cols-4 gap-3">{taskColumns.map(([status,label])=><div key={status} className="rounded-xl bg-slate-950/70 p-3"><div className="mb-3 flex justify-between"><strong>{label}</strong><span className="rounded-full bg-blue-500/15 px-2 text-blue-200">{data.tasks.filter(item=>item.status===status).length}</span></div><div className="space-y-2">{data.tasks.filter(item=>item.status===status).map(item=><article key={item.id} className="rounded-xl border border-slate-800 bg-[#101827] p-3"><div className="flex items-start justify-between gap-2"><strong className="block">{item.title}</strong>{canReview&&<button type="button" aria-label="Удалить задачу" onClick={()=>void remove("task",item.id,item.title)} className="text-red-300"><Trash2 size={15}/></button>}</div>{item.description && <p className="mt-1 whitespace-pre-wrap text-xs text-slate-400">{item.description}</p>}<p className="mt-2 text-xs text-slate-500">{item.assignee?.name ?? "Не назначен"} · {item.dueAt ? new Date(item.dueAt).toLocaleDateString("ru-RU") : "без срока"} · приоритет {item.priority} · создал {item.createdBy.name}</p><select aria-label="Этап задачи" value={item.status} onChange={(e)=>void send("PATCH",{action:"task-status",id:item.id,status:e.target.value})} className="mt-3 min-h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 text-sm">{taskColumns.map(([value,title])=><option key={value} value={value}>{title}</option>)}</select></article>)}{!data.tasks.some(item=>item.status===status)&&<p className="rounded-xl border border-dashed border-slate-800 p-4 text-center text-sm text-slate-600">Пусто</p>}</div></div>)}</div></div></section>
 
-      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4"><h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><BriefcaseBusiness className="text-amber-400"/>Вакансии</h2><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{data.vacancies.map(item=><article key={item.id} className="rounded-xl bg-slate-950 p-4"><div className="flex items-start justify-between gap-2"><strong>{item.title}</strong>{canReview&&<button type="button" aria-label="Удалить вакансию" onClick={()=>void remove("vacancy",item.id,item.title)} className="text-red-300"><Trash2 size={15}/></button>}</div><p className="mt-1 text-sm text-slate-500">Кандидатов: {item.candidates}</p>{item.note&&<p className="mt-2 text-sm text-slate-300">{item.note}</p>}<div className="mt-3 grid grid-cols-[1fr_100px] gap-2"><select value={item.status} onChange={(e)=>void send("PATCH",{action:"vacancy-status",id:item.id,status:e.target.value,candidates:item.candidates})} className={field}>{Object.entries(vacancyLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select><input aria-label="Кандидаты" type="number" min="0" defaultValue={item.candidates} onBlur={(e)=>void send("PATCH",{action:"vacancy-status",id:item.id,status:item.status,candidates:Number(e.target.value)})} className={field}/></div></article>)}{!data.vacancies.length&&<p className="text-slate-500">Открытых вакансий пока нет.</p>}</div></section>
     </> : null}
   </main>;
 }

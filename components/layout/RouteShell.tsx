@@ -24,6 +24,7 @@ import {
   Images,
   TrendingUp,
   X,
+  BriefcaseBusiness,
 } from "lucide-react";
 import Header from "@/components/Header";
 import ManagerFollowUpGate from "@/components/clients/ManagerFollowUpGate";
@@ -35,14 +36,14 @@ const sections = [
   { title: "Главное", items: [["/", "Главная", LayoutDashboard]] },
   { title: "Продажи", items: [["/clients", "Заявки", Users], ["/orders", "Заказы", ClipboardList], ["/sales-plan", "План продаж", TrendingUp], ["/measurements", "Замеры", Ruler], ["/catalog", "Каталог изделий", Images], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Работа", items: [["/calendar", "Календарь", CalendarDays], ["/production", "Производство", Factory], ["/warehouse", "Склад", Warehouse], ["/training", "Обучение", GraduationCap]] },
-  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/kpi", "KPI сотрудников", BarChart3], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
+  { title: "Компания", items: [["/employees", "Сотрудники", UserCog], ["/vacancies", "Вакансии", BriefcaseBusiness], ["/kpi", "KPI сотрудников", BarChart3], ["/payroll", "Зарплаты", Banknote], ["/finance", "Финансы", Wallet], ["/partner-management", "Цехи и расчёты", Handshake], ["/reports", "Отчёты", BarChart3], ["/documents", "Документы", FileText]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
 const founderSections = [
   { title: "Главное", items: [["/", "Картина бизнеса", LayoutDashboard]] },
   { title: "Контроль", items: [["/sales-plan", "План продаж", TrendingUp], ["/orders", "Заказы", ClipboardList], ["/clients", "Заявки", Users]] },
-  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/kpi", "KPI сотрудников", BarChart3], ["/employees", "Сотрудники", UserCog], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/kpi", "KPI сотрудников", BarChart3], ["/employees", "Сотрудники", UserCog], ["/vacancies", "Вакансии", BriefcaseBusiness], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
@@ -82,6 +83,7 @@ export default function RouteShell({
     "/reports": "reports",
     "/calendar": "calendar",
     "/employees": "employees",
+    "/vacancies": "employees",
     "/payroll": "payroll",
     "/settings": "settings",
     "/marketing": "marketing",
@@ -89,6 +91,7 @@ export default function RouteShell({
   };
   const visible = (href: string) => {
     if (href === "/kpi") return accountRole !== "PARTNER";
+    if (href === "/vacancies" && accountRole !== "DIRECTOR" && accountRole !== "OPERATIONS_DIRECTOR") return false;
     if (href === "/documents" && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(accountRole ?? "")) return false;
     if (founder) return true;
     if (role === "MEASURER")
@@ -143,7 +146,7 @@ export default function RouteShell({
       calendar: "calendar", documents: "documents", production: "production", warehouse: "warehouse",
       finance: "finance", "company-finance": "finance", "personal-finance": "finance",
       partners: "partners", "partner-management": "partners", reports: "reports", analytics: "reports", "sales-plan": "reports",
-      employees: "employees", payroll: "payroll", settings: "settings", "calculator-config": "settings",
+      employees: "employees", vacancies: "employees", payroll: "payroll", settings: "settings", "calculator-config": "settings",
       marketing: "marketing",
     };
     const permission = required[first];

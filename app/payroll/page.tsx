@@ -332,7 +332,7 @@ const partialSalaryAvailable = (row: PayrollRow) => {
     .reduce((sum, item) => sum + Number(item.amount), 0);
   return Math.max(row.currentSalary - paidTowardSalary, 0);
 };
-const statementAccrued = (row: PayrollRow) => row.calculation.totalToAccrue;
+const statementAccrued = (row: PayrollRow) => row.calculation.accrued;
 const statementPayable = (row: PayrollRow) => row.calculation.amountToPay;
 const errorLabels: Record<string, string> = {
   FORBIDDEN: "Недостаточно прав для этой операции",
@@ -942,7 +942,7 @@ export default function PayrollPage() {
           <section className="mt-4 rounded-2xl border border-blue-500/25 bg-blue-500/5 p-4 text-sm text-slate-200">
             <h2 className="font-bold text-white">Порядок начисления зарплаты</h2>
             <p className="mt-2 leading-6">Система предлагает бонус: до 3 000 000 ₸ включительно — 30 000 ₸, выше — 50 000 ₸. Итоговую сумму за заказ вводят менеджер, директор или основатель. Заказы с ответственным «Компания» не дают менеджерский бонус. Расчётный месяц всегда определяется фактической датой заказа; уволенному менеджеру бонус становится доступен только после завершения заказа.</p>
-            <p className="mt-2 leading-6">«Начислено» — полный расчёт за месяц: назначенный оклад, внесённые или предложенные бонусы, премии и удержания. «Выплачено» показывает фактические подтверждённые выплаты, а «К выплате» — остаток после их вычета. Оклад без назначения не создаёт долг.</p>
+            <p className="mt-2 leading-6">«Начислено» — только подтверждённая сумма: проведённые начисления и уже выплаченные авансы. Предложенные бонусы сюда не входят. «Выплачено» — подтверждённые выплаты. «К выплате» — остаток по расчёту месяца после этих выплат; он может включать суммы, которые директор ещё не начислил. Оклад без назначения не создаёт долг.</p>
             <p className="mt-2 text-amber-100">Данные о зарплате, клиентах, ценах и доступах конфиденциальны и используются только внутри компании согласно NDA.</p>
           </section>
         )}
@@ -1255,10 +1255,10 @@ function PayrollTableRow({
 }
 function Status({ payable, paid, accrued, calculationReady }: { payable: number; paid: number; accrued: number; calculationReady: boolean }) {
   const value =
-    payable > 0 && paid > 0 ? "Частично" : payable <= 0 && paid <= 0 && accrued <= 0 ? "Нет начислений" : payable <= 0 ? "Выплачено" : !calculationReady ? "Не всё начислено" : "К выплате";
+    payable > 0 && paid > 0 ? "Частично" : payable <= 0 && paid <= 0 && accrued <= 0 ? "Нет начислений" : payable <= 0 ? "Выплачено" : accrued <= 0 ? "Не начислено" : !calculationReady ? "Не всё начислено" : "К выплате";
   return (
     <span
-      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${value === "Частично" || value === "Не всё начислено" ? "bg-amber-500/15 text-amber-200" : value === "Выплачено" ? "bg-emerald-500/15 text-emerald-300" : value === "Нет начислений" ? "bg-slate-700/50 text-slate-300" : "bg-blue-500/15 text-blue-300"}`}
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${value === "Частично" || value === "Не всё начислено" || value === "Не начислено" ? "bg-amber-500/15 text-amber-200" : value === "Выплачено" ? "bg-emerald-500/15 text-emerald-300" : value === "Нет начислений" ? "bg-slate-700/50 text-slate-300" : "bg-blue-500/15 text-blue-300"}`}
     >
       {value}
     </span>

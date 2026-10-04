@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Некорректный месяц" }, { status: 400 });
   const month = marketingMonthRange(requestedMonth);
   const companyId = Number(auth.session!.user.companyId);
-  const [tasks, metrics, reports, vacancies, assignees, dailyCrm, managerSales] = await Promise.all([
+  const [tasks, metrics, reports, assignees, dailyCrm, managerSales] = await Promise.all([
     prisma.managementMarketingTask.findMany({
       where: { companyId },
       include: {
@@ -63,10 +63,6 @@ export async function GET(request: Request) {
         reviewedBy: { select: { id: true, name: true } },
       },
       orderBy: [{ periodEnd: "desc" }, { submittedAt: "desc" }],
-    }),
-    prisma.recruitmentVacancy.findMany({
-      where: { companyId },
-      orderBy: { updatedAt: "desc" },
     }),
     prisma.user.findMany({
       where: {
@@ -94,7 +90,6 @@ export async function GET(request: Request) {
     tasks,
     metrics: effectiveMetrics,
     reports,
-    vacancies,
     assignees,
     dailyCrm,
     managerSales,
@@ -262,6 +257,7 @@ export async function POST(request: Request) {
       return NextResponse.json(result, { status: 201 });
     }
     if (action === "vacancy") {
+      if (!canReviewMarketing(role)) return NextResponse.json({ error: "Найм ведёт директор" }, { status: 403 });
       const title = text(body.title, 200);
       if (!title) return NextResponse.json({ error: "Укажите вакансию" }, { status: 400 });
       return NextResponse.json(
@@ -303,6 +299,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json(await prisma.managementMarketingTask.findFirstOrThrow({ where: { id, companyId } }));
     }
     if (body.action === "vacancy-status" && Object.values(RecruitmentVacancyStatus).includes(body.status as RecruitmentVacancyStatus)) {
+      if (!canReviewMarketing(role)) return NextResponse.json({ error: "Найм ведёт директор" }, { status: 403 });
       const candidates = count(body.candidates);
       const result = await prisma.recruitmentVacancy.updateMany({ where: { id, companyId }, data: { status: body.status as RecruitmentVacancyStatus, ...(candidates === null ? {} : { candidates }) } });
       if (!result.count) return NextResponse.json({ error: "Вакансия не найдена" }, { status: 404 });

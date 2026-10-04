@@ -8,6 +8,13 @@ export const PAYROLL_SALARY_ADJUSTMENT_PREFIX = "Автопроверка окл
 export const MANAGER_ORDER_BONUS_EARNED_EVENT = "ORDER_RECEIVED";
 export const TERMINATED_MANAGER_ORDER_BONUS_EARNED_EVENT = "ORDER_COMPLETED";
 
+export const isSalesManagerPayrollEmployee = (employee: {
+  position: string;
+  user?: { role: string } | null;
+}) =>
+  !/замер/i.test(employee.position) &&
+  (employee.user?.role === "MANAGER" || employee.position === "MANAGER");
+
 const normalizeResponsibleName = (value: string | null | undefined) =>
   (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
 

@@ -31,6 +31,7 @@ import {
   managerOrderBonusEarnedEvent,
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
+  isSalesManagerPayrollEmployee,
   isPayrollReconciled,
   isTerminatedPayrollEmployee,
   isValidOptionalPaymentReference,
@@ -557,12 +558,7 @@ async function createAccrualInternal(
             user: { select: { id: true, name: true, role: true, active: true } },
           },
         });
-        const terminatedManager = Boolean(
-          employee &&
-          employmentEnded(employee) &&
-          (employee.user?.role === Role.MANAGER ||
-            employee.position === Role.MANAGER),
-        );
+        const terminatedManager = Boolean(employee && employmentEnded(employee) && isSalesManagerPayrollEmployee(employee));
         if (
           !employee?.payrollEnabled ||
           (employmentEnded(employee) &&
@@ -884,8 +880,7 @@ async function managerPayrollPolicyState(
     },
   });
   if (!employee) throw new PayrollError("EMPLOYEE_NOT_FOUND");
-  const applies =
-    employee.user?.role === Role.MANAGER || employee.position === Role.MANAGER;
+  const applies = isSalesManagerPayrollEmployee(employee);
   if (!applies)
     return {
       applies: false,
@@ -1912,9 +1907,7 @@ export async function payrollSummary(
       employee.advanceRequests.length > 0
     )
       return true;
-    const manager =
-      employee.user?.role === Role.MANAGER ||
-      employee.position === Role.MANAGER;
+    const manager = isSalesManagerPayrollEmployee(employee);
     if (!manager) return false;
     return periodOrders.some(
       (order) =>
@@ -2062,7 +2055,7 @@ export async function payrollSummary(
       Math.max(salaryPosted, salaryPaid) + confirmedOtherAccruals,
       0,
     );
-    const managerPolicyApplies = identity.role === Role.MANAGER;
+    const managerPolicyApplies = isSalesManagerPayrollEmployee(employee);
     const assignedOrders = managerPolicyApplies
       ? periodOrders.filter(
           (order) =>

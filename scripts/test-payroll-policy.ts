@@ -7,6 +7,7 @@ import {
   isManagerOrderBonusAutomaticPeriod,
   isManagerOrderBonusEligible,
   isOrderAssignedToManager,
+  isSalesManagerPayrollEmployee,
   isPayrollReconciled,
   isPayrollPolicyReady,
   isTerminatedPayrollEmployee,
@@ -26,6 +27,10 @@ assert.equal(managerOrderBonus(616_000), 30_000);
 assert.equal(managerOrderBonus(3_000_000), 30_000);
 assert.equal(managerOrderBonus(3_000_001), 50_000);
 assert.equal(managerOrderBonus(6_000_000), 50_000);
+assert.equal(isSalesManagerPayrollEmployee({ position: "Менеджер", user: { role: "MANAGER" } }), true);
+assert.equal(isSalesManagerPayrollEmployee({ position: "Замерщик", user: { role: "MANAGER" } }), false);
+assert.equal(isSalesManagerPayrollEmployee({ position: "замерщик", user: { role: "MANAGER" } }), false);
+assert.equal(isSalesManagerPayrollEmployee({ position: "Замерщик", user: { role: "MEASURER" } }), false);
 assert.equal(isManagerOrderBonusAutomaticPeriod(2026, 9), false);
 assert.equal(isManagerOrderBonusAutomaticPeriod(2026, 10), true);
 assert.equal(isManagerOrderBonusAutomaticPeriod(2027, 1), true);
@@ -552,7 +557,9 @@ assert.match(
 assert.match(payrollPageSource, /adminView = founder \|\| operationsDirector \|\| accountant/);
 assert.match(payrollPageSource, /statementAccrued/);
 assert.match(payrollPageSource, /statementPayable/);
-assert.match(payrollPageSource, /«Начислено» — полный расчёт за месяц/);
+assert.match(payrollPageSource, /statementAccrued = \(row: PayrollRow\) => row\.calculation\.accrued/);
+assert.match(payrollPageSource, /statementPayable = \(row: PayrollRow\) => row\.calculation\.amountToPay/);
+assert.match(payrollPageSource, /«Начислено» — только подтверждённая сумма/);
 assert.match(payrollPageSource, /Частичная оплата зарплаты/);
 assert.match(payrollPageSource, /Оклад сотрудника не изменится; выплата будет учтена как аванс/);
 assert.match(payrollPageSource, /label="Изменить оклад"/);

@@ -1,9 +1,10 @@
-import { OrderLifecycle, Prisma, Role } from "@prisma/client";
+import { EmployeeKpiRequestStatus, OrderLifecycle, Prisma, Role } from "@prisma/client";
 
 import { hasProductionPrice } from "@/lib/orders/production-price";
 import { effectiveMarketingMetrics } from "@/lib/marketing";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { getManagerMonthlySales } from "@/lib/services/manager-monthly-sales.service";
 
 export type SalesPlanActor = { userId: number; role: Role };
 
@@ -230,7 +231,7 @@ async function ensurePlan(actor: SalesPlanActor, year: number, month: number) {
 export async function getSalesPlan(month: string | undefined, actor: SalesPlanActor) {
   const period = monthRange(month);
   const companyId = requireTenantIdentity().companyId;
-  const [plan, actual, suggested, managers, applications, marketingMetrics, ledgerOrders, pendingOrderDates] = await Promise.all([
+  const [plan, actual, suggested, managers, applications, marketingMetrics, ledgerOrders, pendingOrderDates, monthlyManagers] = await Promise.all([
     ensurePlan(actor, period.year, period.month),
     orderMetrics(period.start, period.end),
     recommendation(period.year, period.month),
@@ -281,6 +282,7 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
         orderDateNeedsReview: true,
       },
     }),
+    getManagerMonthlySales({ companyId, start: period.start, end: period.end }),
   ]);
   const now = new Date();
   const localNow = new Date(now.getTime() + ALMATY_OFFSET_MS);
@@ -359,28 +361,26 @@ export async function getSalesPlan(month: string | undefined, actor: SalesPlanAc
   const visibleManagers = actor.role === Role.MANAGER
     ? managers.filter((manager) => manager.id === actor.userId)
     : managers;
-  const managerProgress = await Promise.all(
-    visibleManagers.map(async (manager) => {
-      const metrics = await orderMetrics(period.start, period.end, manager.id);
+  const managerProgress = visibleManagers.map((manager) => {
+      const metrics = monthlyManagers.rows.find((row) => row.userId === manager.id);
       const target = plan?.managerTargets.find((item) => item.managerId === manager.id);
       return {
         managerId: manager.id,
         managerName: manager.name,
-        actualRevenue: metrics.revenue,
-        actualOrders: metrics.orders,
+        actualRevenue: metrics?.sales ?? 0,
+        actualOrders: metrics?.orders ?? 0,
         targetRevenue: target ? Number(target.revenueTarget) : null,
         targetOrders: target?.orderTarget ?? null,
         targetCompletionPercent: target && Number(target.revenueTarget) > 0
-          ? roundPercent((metrics.revenue / Number(target.revenueTarget)) * 100)
+          ? roundPercent(((metrics?.sales ?? 0) / Number(target.revenueTarget)) * 100)
           : null,
         contributionPercent: actual.revenue > 0
-          ? roundPercent((metrics.revenue / actual.revenue) * 100)
+          ? roundPercent(((metrics?.sales ?? 0) / actual.revenue) * 100)
           : 0,
-        marginCoveragePercent: metrics.marginCoveragePercent,
-        grossMarginPercent: metrics.grossMarginPercent,
+        marginCoveragePercent: metrics?.marginCoveragePercent ?? 100,
+        grossMarginPercent: metrics?.grossMarginPercent ?? 0,
       };
-    }),
-  );
+    });
   const marketingActual = effectiveMarketingMetrics(marketingMetrics).reduce(
     (total, metric) => ({
       spend: total.spend + Number(metric.spend),
@@ -628,7 +628,7 @@ export async function updateSalesPlanManagerTarget(
     throw new Error("INVALID_MANAGER");
   const manager = await prisma.user.findFirst({
     where: { id: input.managerId, companyId, active: true, role: Role.MANAGER, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } },
-    select: { id: true },
+    select: { id: true, payrollProfile: { select: { id: true } } },
   });
   if (!manager) throw new Error("INVALID_MANAGER");
   const clearing = input.revenueTarget === null && input.orderTarget === null;
@@ -645,6 +645,10 @@ export async function updateSalesPlanManagerTarget(
       where: { planId_managerId: { planId: plan.id, managerId: manager.id } },
       create: { planId: plan.id, managerId: manager.id, revenueTarget: input.revenueTarget!, orderTarget: input.orderTarget! },
       update: { revenueTarget: input.revenueTarget!, orderTarget: input.orderTarget! },
+    });
+    if (manager.payrollProfile) await prisma.employeeKpiRequest.updateMany({
+      where: { companyId, employeeId: manager.payrollProfile.id, year: period.year, month: period.month, status: EmployeeKpiRequestStatus.OPEN },
+      data: { status: EmployeeKpiRequestStatus.FULFILLED, resolvedById: actor.userId, resolvedAt: new Date() },
     });
   }
   return getSalesPlan(month, actor);

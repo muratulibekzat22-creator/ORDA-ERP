@@ -60,23 +60,24 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
   const period = kpiMonthRange(monthValue);
   const companyId = requireTenantIdentity().companyId;
   const manager = canManage(actor.role);
+  const viewAll = manager || actor.role === Role.ACCOUNTANT;
   const [profiles, storedTargets, requests, tasks, measurements, productions, installations, managerSales] = await Promise.all([
     prisma.employeePayrollProfile.findMany({
       where: {
         companyId,
         active: true,
         OR: [{ terminatedAt: null }, { terminatedAt: { gte: period.start } }],
-        ...(manager ? {} : { userId: actor.userId }),
+        ...(viewAll ? {} : { userId: actor.userId }),
       },
       select: { id: true, userId: true, name: true, position: true, user: { select: { name: true, role: true, active: true } } },
       orderBy: { name: "asc" },
     }),
     prisma.employeeKpiTarget.findMany({
-      where: { companyId, year: period.year, month: period.month, ...(manager ? {} : { employee: { userId: actor.userId } }) },
+      where: { companyId, year: period.year, month: period.month, ...(viewAll ? {} : { employee: { userId: actor.userId } }) },
       orderBy: { id: "asc" },
     }),
     prisma.employeeKpiRequest.findMany({
-      where: { companyId, year: period.year, month: period.month, ...(manager ? {} : { employee: { userId: actor.userId } }) },
+      where: { companyId, year: period.year, month: period.month, ...(viewAll ? {} : { employee: { userId: actor.userId } }) },
       include: { requestedBy: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
     }),
@@ -106,6 +107,7 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
   const rows = profiles.map((profile) => {
     const role = effectiveRole(profile.user?.role ?? null, profile.position);
     const userId = profile.userId;
+    const sales = userId ? salesByUser.get(userId) : undefined;
     const definitions: MetricDefinition[] = [{
       code: "tasks_completed",
       title: "Выполненные задачи",
@@ -114,7 +116,6 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
       source: "Календарь · дата завершения",
     }];
     if (role === Role.MANAGER) {
-      const sales = userId ? salesByUser.get(userId) : undefined;
       definitions.push(
         { code: "leads", title: "Новые обращения", unit: EmployeeKpiUnit.COUNT, actual: sales?.leads ?? 0, source: "CRM · дата создания обращения" },
         { code: "orders", title: "Оформленные заказы", unit: EmployeeKpiUnit.COUNT, actual: sales?.orders ?? 0, source: "Заказы · подтверждённая дата оформления" },
@@ -130,7 +131,11 @@ export async function getEmployeeKpi(monthValue: string | undefined, actor: KpiA
     const ownTargets = storedTargets.filter((target) => target.employeeId === profile.id);
     const metrics: KpiMetric[] = definitions.map((definition) => {
       const target = ownTargets.find((item) => item.metricCode === definition.code);
-      const planned = target ? Number(target.target) : null;
+      const planned = role === Role.MANAGER && definition.code === "sales"
+        ? sales?.planSales ?? null
+        : role === Role.MANAGER && definition.code === "orders"
+          ? sales?.planOrders ?? null
+          : target ? Number(target.target) : null;
       return {
         ...definition,
         kind: EmployeeKpiKind.AUTO,
@@ -208,6 +213,7 @@ export async function saveEmployeeKpiTarget(input: {
   const isCustom = input.kind === EmployeeKpiKind.CUSTOM;
   if (isCustom && (!input.code.startsWith("custom:") || !input.title?.trim() || input.title.trim().length > 120)) throw new Error("INVALID_METRIC");
   if (!isCustom && (!metric || metric.kind !== EmployeeKpiKind.AUTO || metric.unit !== input.unit)) throw new Error("INVALID_METRIC");
+  if (!isCustom && current.rows.find((row) => row.employeeId === input.employeeId)?.role === Role.MANAGER && ["sales", "orders"].includes(input.code)) throw new Error("MANAGER_PLAN_IN_SALES");
   const actual = input.actual ?? null;
   if (isCustom && actual !== null && (!Number.isFinite(actual) || actual < 0 || !input.evidence?.trim())) throw new Error("INVALID_ACTUAL");
   if (!isCustom && actual !== null) throw new Error("INVALID_ACTUAL");

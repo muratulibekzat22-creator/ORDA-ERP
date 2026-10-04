@@ -1,6 +1,7 @@
 import { OrderLifecycle, Role } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { hasProductionPrice } from "@/lib/orders/production-price";
 
 export type ManagerMonthlySalesRow = {
   userId: number;
@@ -9,6 +10,11 @@ export type ManagerMonthlySalesRow = {
   leads: number;
   orders: number;
   sales: number;
+  pricedOrders: number;
+  pricedRevenue: number;
+  productionCost: number;
+  marginCoveragePercent: number;
+  grossMarginPercent: number;
   planOrders: number | null;
   planSales: number | null;
   completionPercent: number | null;
@@ -36,7 +42,7 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
         orderDateNeedsReview: false,
         orderReceivedAt: { gte: input.start, lt: input.end },
       },
-      select: { managerUserId: true, manager: true, amount: true },
+      select: { managerUserId: true, manager: true, amount: true, partnerPrice: true, partnerAgreedAt: true },
     }),
     prisma.salesPlan.findUnique({
       where: { companyId_year_month: { companyId: input.companyId, year: localStart.getUTCFullYear(), month: localStart.getUTCMonth() + 1 } },
@@ -52,6 +58,11 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
       leads: leads.find((lead) => lead.managerUserId === user.id)?._count._all ?? 0,
       orders: 0,
       sales: 0,
+      pricedOrders: 0,
+      pricedRevenue: 0,
+      productionCost: 0,
+      marginCoveragePercent: 0,
+      grossMarginPercent: 0,
       planOrders: plan?.managerTargets.find((target) => target.managerId === user.id)?.orderTarget ?? null,
       planSales: Number(plan?.managerTargets.find((target) => target.managerId === user.id)?.revenueTarget ?? 0) || null,
       completionPercent: null,
@@ -66,15 +77,26 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
     if (row) {
       row.orders += 1;
       row.sales += Number(order.amount);
+      if (hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)) {
+        row.pricedOrders += 1;
+        row.pricedRevenue += Number(order.amount);
+        row.productionCost += Number(order.partnerPrice);
+      }
     } else {
       otherOrders += 1;
       otherSales += Number(order.amount);
     }
   }
   for (const row of rows) {
+    row.marginCoveragePercent = row.orders > 0 ? Math.round((row.pricedOrders / row.orders) * 10_000) / 100 : 100;
+    row.grossMarginPercent = row.pricedRevenue > 0 ? Math.round(((row.pricedRevenue - row.productionCost) / row.pricedRevenue) * 10_000) / 100 : 0;
     row.completionPercent = row.planSales && row.planSales > 0
       ? Math.round((row.sales / row.planSales) * 10_000) / 100
       : null;
   }
-  return { rows, otherOrders, otherSales };
+  return {
+    rows: rows.filter((row) => row.active || row.orders > 0 || row.leads > 0 || row.planOrders !== null || row.planSales !== null),
+    otherOrders,
+    otherSales,
+  };
 }

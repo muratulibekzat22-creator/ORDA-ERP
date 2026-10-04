@@ -390,7 +390,7 @@ async function managementProjection(scope: DashboardScope) {
     0,
   );
   const payrollAccrued = payrollStatement?.rows.reduce(
-    (sum, row) => sum + row.calculation.totalToAccrue,
+    (sum, row) => sum + row.calculation.accrued,
     0,
   ) ?? 0;
   const payrollPaid = payrollPayments.reduce(

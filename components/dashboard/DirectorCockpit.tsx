@@ -627,7 +627,8 @@ function OperationsDashboard({ data }: { data: OperationsPayload }) {
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <Link href="/clients" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Контролировать заявки</Link>
         <Link href="/measurements" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Контролировать замеры</Link>
-        <Link href="/marketing" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Маркетинг и вакансии</Link>
+        <Link href="/marketing" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Маркетинг</Link>
+        <Link href="/vacancies" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Вакансии и кандидаты</Link>
       </div>
     </section>
     <MarketingAndTeam data={data} />
