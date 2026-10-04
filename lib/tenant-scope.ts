@@ -49,6 +49,7 @@ export const TENANT_MODELS = new Set([
   "RolePermission",
   "ManagementMarketingTask",
   "ManagementMarketingMetric",
+  "ManagementMarketingReport",
   "RecruitmentVacancy",
   "SalesPlan",
   "EmployeeKpiTarget",

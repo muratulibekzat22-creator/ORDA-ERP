@@ -43,7 +43,8 @@ assert.doesNotMatch(buildScript, /prisma:migrate:deploy/, "Vercel builds must no
 assert.match(dashboard, /Ежедневный CRM-контроль/, "manager/director CRM summary is missing");
 assert.match(founderControl, /data\.issues\.map\(\(group\)/, "founder control must show consolidated groups");
 assert.doesNotMatch(founderControl, /Отклонений:.*summary\.total/, "founder control must not lead with hundreds of raw exceptions");
-assert.match(marketing, /CRM за предыдущий день/, "marketing CRM summary is missing");
+assert.match(marketing, /Работа менеджеров продаж за вчера/, "marketing CRM summary is missing");
+assert.match(marketing, /Замерщики здесь не оцениваются/, "marketing CRM summary must explain that measurers are outside this block");
 assert.match(legacyCrm, /redirect\("\/clients"\)/, "legacy demo CRM route must redirect to the live clients workspace");
 assert.doesNotMatch(legacyCrm, /\+7 777 123 45 67/, "legacy demo client data must not remain reachable");
 

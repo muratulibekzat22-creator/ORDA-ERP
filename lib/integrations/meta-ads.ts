@@ -12,6 +12,10 @@ type MetaInsight = {
   account_currency?: string;
   campaign_id?: string;
   campaign_name?: string;
+  ad_id?: string;
+  ad_name?: string;
+  date_start?: string;
+  date_stop?: string;
   spend?: string;
   reach?: string;
   impressions?: string;
@@ -76,6 +80,40 @@ function nonNegativeNumber(value: string | undefined) {
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
+function insightMetrics(row: MetaInsight) {
+  return {
+    spend: Math.round(nonNegativeNumber(row.spend) * 100) / 100,
+    reach: Math.round(nonNegativeNumber(row.reach)),
+    impressions: Math.round(nonNegativeNumber(row.impressions)),
+    linkClicks: Math.round(nonNegativeNumber(row.inline_link_clicks)),
+    ...metaActionCounts(row.actions),
+  };
+}
+
+function addMetrics<T extends ReturnType<typeof insightMetrics>>(left: T, right: ReturnType<typeof insightMetrics>) {
+  return {
+    ...left,
+    spend: Math.round((left.spend + right.spend) * 100) / 100,
+    reach: left.reach + right.reach,
+    impressions: left.impressions + right.impressions,
+    linkClicks: left.linkClicks + right.linkClicks,
+    conversations: left.conversations + right.conversations,
+    leadActions: left.leadActions + right.leadActions,
+  };
+}
+
+async function loadInsightPages(url: URL, token: string) {
+  const rows: MetaInsight[] = [];
+  let next: URL | string | undefined = url;
+  for (let page = 0; next && page < 10; page++) {
+    const response: MetaInsightsResponse = await metaFetch<MetaInsightsResponse>(next, token);
+    rows.push(...(response.data ?? []));
+    next = response.paging?.next;
+  }
+  if (next) throw new MetaAdsSyncError("META_PAGINATION_LIMIT");
+  return rows;
+}
+
 export async function loadMetaAdsCampaignReport(month: string) {
   const config = configuration();
   if (!/^\d+$/.test(config.accountId) || !config.accessToken || !config.campaignIds.length)
@@ -86,23 +124,57 @@ export async function loadMetaAdsCampaignReport(month: string) {
   url.searchParams.set("fields", "campaign_id,campaign_name,account_currency,spend,reach,impressions,inline_link_clicks,actions");
   url.searchParams.set("time_range", JSON.stringify({ since: period.since, until: period.until }));
   url.searchParams.set("limit", "500");
-  const rows: MetaInsight[] = [];
-  let next: URL | string | undefined = url;
-  for (let page = 0; next && page < 10; page++) {
-    const response: MetaInsightsResponse = await metaFetch<MetaInsightsResponse>(next, config.accessToken);
-    rows.push(...(response.data ?? []));
-    next = response.paging?.next;
+  const dailyUrl = new URL(url);
+  dailyUrl.searchParams.set("time_increment", "1");
+  dailyUrl.searchParams.set("fields", "campaign_id,campaign_name,date_start,date_stop,account_currency,spend,reach,impressions,inline_link_clicks,actions");
+  const adsUrl = new URL(url);
+  adsUrl.searchParams.set("level", "ad");
+  adsUrl.searchParams.set("fields", "campaign_id,campaign_name,ad_id,ad_name,account_currency,spend,reach,impressions,inline_link_clicks,actions");
+  const adDailyUrl = new URL(adsUrl);
+  adDailyUrl.searchParams.set("time_increment", "1");
+  adDailyUrl.searchParams.set("fields", "campaign_id,campaign_name,ad_id,ad_name,date_start,date_stop,account_currency,spend,reach,impressions,inline_link_clicks,actions");
+  const [rows, dailyRows, adRows, adDailyRows] = await Promise.all([
+    loadInsightPages(url, config.accessToken),
+    loadInsightPages(dailyUrl, config.accessToken),
+    loadInsightPages(adsUrl, config.accessToken),
+    loadInsightPages(adDailyUrl, config.accessToken),
+  ]);
+  const selectedDailyRows = onlySelectedCampaigns(dailyRows, config.campaignIds);
+  const selectedAdRows = onlySelectedCampaigns(adRows, config.campaignIds);
+  const selectedAdDailyRows = onlySelectedCampaigns(adDailyRows, config.campaignIds);
+  const adsByCampaign = new Map<string, Map<string, { id: string; name: string; daily: Array<{ date: string } & ReturnType<typeof insightMetrics>> } & ReturnType<typeof insightMetrics>>>();
+  for (const row of selectedAdRows) {
+    if (!row.campaign_id || !row.ad_id) continue;
+    const campaignAds = adsByCampaign.get(row.campaign_id) ?? new Map();
+    const metrics = insightMetrics(row);
+    campaignAds.set(row.ad_id, {
+      id: row.ad_id,
+      name: row.ad_name ?? row.ad_id,
+      ...metrics,
+      daily: selectedAdDailyRows
+        .filter((daily) => daily.ad_id === row.ad_id && daily.date_start)
+        .map((daily) => ({ date: daily.date_start!, ...insightMetrics(daily) }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    });
+    adsByCampaign.set(row.campaign_id, campaignAds);
   }
-  if (next) throw new MetaAdsSyncError("META_PAGINATION_LIMIT");
   const campaigns = onlySelectedCampaigns(rows, config.campaignIds).map((row) => ({
     id: row.campaign_id!,
     name: row.campaign_name ?? row.campaign_id!,
-    spend: Math.round(nonNegativeNumber(row.spend) * 100) / 100,
-    reach: Math.round(nonNegativeNumber(row.reach)),
-    impressions: Math.round(nonNegativeNumber(row.impressions)),
-    linkClicks: Math.round(nonNegativeNumber(row.inline_link_clicks)),
-    ...metaActionCounts(row.actions),
+    ...insightMetrics(row),
+    daily: selectedDailyRows
+      .filter((daily) => daily.campaign_id === row.campaign_id && daily.date_start)
+      .map((daily) => ({ date: daily.date_start!, ...insightMetrics(daily) }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    ads: [...(adsByCampaign.get(row.campaign_id!)?.values() ?? [])]
+      .sort((a, b) => b.spend - a.spend),
   })).sort((a, b) => b.spend - a.spend);
+  const dailyByDate = new Map<string, ReturnType<typeof insightMetrics>>();
+  for (const row of selectedDailyRows) {
+    if (!row.date_start) continue;
+    const metrics = insightMetrics(row);
+    dailyByDate.set(row.date_start, dailyByDate.has(row.date_start) ? addMetrics(dailyByDate.get(row.date_start)!, metrics) : metrics);
+  }
   const accountUrl = new URL(`https://graph.facebook.com/${config.graphVersion}/act_${config.accountId}`);
   accountUrl.searchParams.set("fields", "currency,timezone_name");
   const account = await metaFetch<{ currency?: string; timezone_name?: string }>(accountUrl, config.accessToken);
@@ -114,7 +186,9 @@ export async function loadMetaAdsCampaignReport(month: string) {
     accountTimezone: account.timezone_name ?? null,
     currency,
     selectedCampaignCount: config.campaignIds.length,
+    loadedAt: new Date().toISOString(),
     campaigns,
+    daily: [...dailyByDate.entries()].map(([date, metrics]) => ({ date, ...metrics })).sort((a, b) => a.date.localeCompare(b.date)),
     spend: Math.round(campaigns.reduce((sum, row) => sum + row.spend, 0) * 100) / 100,
     conversations: campaigns.reduce((sum, row) => sum + row.conversations, 0),
     leadActions: campaigns.reduce((sum, row) => sum + row.leadActions, 0),
@@ -123,10 +197,30 @@ export async function loadMetaAdsCampaignReport(month: string) {
   };
 }
 
-async function currencyToKzt(currency: string, at: Date) {
-  const fallback = Number(process.env.META_CURRENCY_TO_KZT_RATE ?? 0);
+async function storedCurrencyRate(currency: string) {
+  const { companyId } = requireTenantIdentity();
+  const metric = await prisma.managementMarketingMetric.findFirst({
+    where: { companyId, channel: META_CHANNEL, note: { contains: `${currency.toUpperCase()} ×` } },
+    select: { note: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const match = metric?.note?.match(new RegExp(`${currency.toUpperCase()} × ([0-9]+(?:\\.[0-9]+)?) KZT`, "i"));
+  const rate = Number(match?.[1] ?? 0);
+  return Number.isFinite(rate) && rate > 0 ? rate : 0;
+}
+
+export async function currencyToKzt(currency: string, at: Date) {
+  const configuredFallback = Number(process.env.META_CURRENCY_TO_KZT_RATE ?? 0);
+  const savedFallback = await storedCurrencyRate(currency);
+  const fallback = Number.isFinite(configuredFallback) && configuredFallback > 0 ? configuredFallback : savedFallback;
   try {
-    return await officialCurrencyRateToKzt(currency, at, fallback);
+    const exchange = await officialCurrencyRateToKzt(currency, at, fallback);
+    return {
+      ...exchange,
+      fallbackKind: exchange.source === "CONFIGURED_FALLBACK"
+        ? configuredFallback > 0 ? "CONFIGURED" : "LAST_SUCCESSFUL_SYNC"
+        : null,
+    };
   } catch {
     throw new MetaAdsSyncError("META_EXCHANGE_RATE_UNAVAILABLE");
   }
@@ -144,7 +238,7 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
   });
   if (!actor) throw new MetaAdsSyncError("META_SYNC_FORBIDDEN");
   const insights = await loadMetaAdsCampaignReport(month);
-  const exchange = await currencyToKzt(insights.currency, new Date(insights.end.getTime() - 1));
+  const exchange = await currencyToKzt(insights.currency, new Date(Math.min(insights.end.getTime() - 1, now.getTime())));
   const spendKzt = Math.round(insights.spend * exchange.rate * 100) / 100;
   const sourceClients = await prisma.client.findMany({
     where: {
