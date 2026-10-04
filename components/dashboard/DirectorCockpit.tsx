@@ -50,6 +50,8 @@ type ManagementPayload = {
       id: number;
       orderId: number | null;
       orderNumber: string;
+      orderReceivedAt: string | null;
+      orderDateNeedsReview: boolean;
       operationDate: string;
       amount: number;
       fromPeriodOrder: boolean;
@@ -445,7 +447,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
           <FounderKpi label="Оборот компании" value={money(data.finance.revenue)} hint={`${totalOrders} заказов · средний чек ${averageOrder === null ? "—" : money(averageOrder)}`} tone="blue" />
           <FounderKpi label="Получено денег" value={money(data.finance.received)} hint={`По заказам месяца ${money(data.finance.receivedForPeriodOrders)} · открыть платежи`} tone="cyan" onClick={() => setDetailsOpen(detailsOpen === "cash" ? null : "cash")} />
-          <FounderKpi label="Затраты и расходы месяца" value={money(totalExpenses)} hint="Цены производства заказов месяца + расходы + начисленная зарплата · открыть состав" tone="amber" onClick={() => setDetailsOpen(detailsOpen === "costs" ? null : "costs")} />
+          <FounderKpi label="Затраты и расходы месяца" value={money(totalExpenses)} hint="Цена производства заказов + расходы по датам + зарплата по ведомости · открыть состав" tone="amber" onClick={() => setDetailsOpen(detailsOpen === "costs" ? null : "costs")} />
           <FounderKpi label={profitLabel} value={data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных"} hint={data.finance.dataComplete ? `Маржа ${percent(data.finance.netMargin)} · открыть расчёт` : "Открыть расчёт и заполнить цены производства"} tone={data.finance.dataComplete ? "emerald" : "amber"} onClick={() => setDetailsOpen(detailsOpen === "profit" ? null : "profit")} />
         </div>
         {detailsOpen && <FounderFinanceDetails data={data} view={detailsOpen} monthLabel={monthLabel} />}
@@ -468,7 +470,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
               <FounderFinanceRow label="Прочие доходы" value={data.finance.additionalIncome} />
               <FounderFinanceRow label="Цена производства заказов месяца" value={data.finance.directExpenses} expense />
               <FounderFinanceRow label="Операционные расходы по дате операции" value={data.finance.operatingExpenses} expense />
-              <FounderFinanceRow label="Начисленная зарплата" value={data.finance.payrollAccrued} expense />
+              <FounderFinanceRow label="Зарплата по ведомости месяца" value={data.finance.payrollAccrued} expense />
               <FounderFinanceRow label="Затраты и расходы месяца" value={totalExpenses} expense strong onClick={() => revealDetails("costs")} />
               {data.finance.dataComplete ? <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit onClick={() => revealDetails("profit")} /> : <tr className="border-t-2 border-slate-700"><td className="px-4 py-3">{profitLabel}</td><td className="px-4 py-3 text-right text-amber-200">Недостаточно данных</td></tr>}
             </tbody></table>
@@ -537,7 +539,7 @@ function FounderFinanceDetails({ data, view, monthLabel }: { data: ManagementPay
           <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
             {finance.customerPayments.map((payment) => (
               <Link key={payment.id} href={payment.orderId ? `/orders/${payment.orderId}` : "/finance"} className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800">
-                <span>{date(payment.operationDate)} · {payment.orderNumber} <small className="text-slate-500">{payment.fromPeriodOrder ? "в обороте месяца" : "вне оборота месяца"}</small></span>
+                <span>{date(payment.operationDate)} · {payment.orderNumber} <small className="block text-slate-400">Дата заказа: {date(payment.orderReceivedAt)} · {payment.fromPeriodOrder ? "в обороте месяца" : payment.orderDateNeedsReview ? "дата требует подтверждения" : "вне оборота месяца"}</small></span>
                 <b className={payment.amount < 0 ? "text-red-300" : "text-emerald-300"}>{money(payment.amount)}</b>
               </Link>
             ))}
@@ -552,12 +554,12 @@ function FounderFinanceDetails({ data, view, monthLabel }: { data: ManagementPay
               <MetricLine label="Прочие доходы месяца" value={finance.additionalIncome} />
               <MetricLine label="Цена производства заказов месяца" value={-finance.directExpenses} />
               <MetricLine label="Операционные расходы по дате операции" value={-finance.operatingExpenses} />
-              <MetricLine label="Начисленная зарплата месяца" value={-finance.payrollAccrued} />
+              <MetricLine label="Зарплата по ведомости месяца" value={-finance.payrollAccrued} />
               <MetricLine label={finance.dataComplete ? "Чистая прибыль" : "Промежуточный итог по заполненным заказам"} value={finance.netProfit} strong />
               {!finance.dataComplete && <p className="pt-2 text-amber-200">Расчёт неполный: {finance.ordersWithoutMargin} заказ(а) без подтверждённой цены производства.</p>}
             </div>
           )}
-          <p className="mt-3 text-sm text-slate-300">Цена производства относится к заказам {monthLabel}, операционные расходы — к фактической дате записи, зарплата — к расчётному месяцу. Расходы сентября не переносятся в октябрь автоматически.</p>
+          <p className="mt-3 text-sm text-slate-300">Цена производства относится к заказам {monthLabel}, операционные расходы — к дате записи, зарплата совпадает с показателем «Начислено» в ведомости месяца. Пока ведомость открыта, зарплатная сумма может измениться. Расходы сентября не переносятся в октябрь автоматически.</p>
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             <div>
               <h4 className="text-sm font-semibold text-white">Производство по заказам · {money(finance.directExpenses)}</h4>
@@ -574,7 +576,7 @@ function FounderFinanceDetails({ data, view, monthLabel }: { data: ManagementPay
               </div>
             </div>
           </div>
-          <Link href="/payroll" className="mt-3 inline-block text-sm font-semibold text-blue-300">Начисленная зарплата · {money(finance.payrollAccrued)} → открыть ведомость</Link>
+          <Link href="/payroll" className="mt-3 inline-block text-sm font-semibold text-blue-300">Зарплата по ведомости · {money(finance.payrollAccrued)} → открыть ведомость</Link>
         </>
       )}
     </section>

@@ -101,6 +101,7 @@ export async function getFounderControl() {
     assignee: operationsDirector ? `Контроль: ${operationsDirector.name}` : "Нужно назначить директора",
     assigneeId: operationsDirector?.id ?? null,
     priority: group.rows.some((issue) => issue.priority === "URGENT") ? "URGENT" : "IMPORTANT",
+    urgentCount: group.rows.filter((issue) => issue.priority === "URGENT").length,
     task: null,
     details: group.rows.map((issue) => {
       const linkedTask = snapshot.tasks.find((task) =>

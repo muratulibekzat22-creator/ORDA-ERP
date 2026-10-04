@@ -31,6 +31,7 @@ type Data = {
     href: string;
     assignee: string;
     priority: "URGENT" | "IMPORTANT";
+    urgentCount: number;
     details: ControlDetail[];
   }>;
   recentCompleted: Array<{
@@ -47,6 +48,7 @@ export default function FounderControlPanel() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   async function load() {
     setBusy(true);
@@ -106,11 +108,11 @@ export default function FounderControlPanel() {
                     <small className="mt-1 block text-slate-400">{group.assignee} · открыть список и действия</small>
                   </span>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${group.priority === "URGENT" ? "bg-red-500/15 text-red-200" : "bg-amber-500/15 text-amber-200"}`}>
-                    {group.priority === "URGENT" ? "Есть срочные" : "Требует внимания"}
+                    {group.urgentCount ? `Срочно: ${group.urgentCount}` : "Требует внимания"}
                   </span>
                 </summary>
                 <div className="space-y-2 border-t border-slate-800 p-3">
-                  {group.details.map((issue) => (
+                  {(expandedGroups[group.key] ? group.details : group.details.slice(0, 10)).map((issue) => (
                     <article key={issue.key} className="rounded-lg bg-slate-900 p-3 text-sm">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <Link href={issue.href} className="font-semibold text-sky-300 underline-offset-2 hover:underline">{issue.title}</Link>
@@ -121,6 +123,15 @@ export default function FounderControlPanel() {
                       <p className="mt-2 text-xs text-slate-400">{issue.status} · {issue.assignee}</p>
                     </article>
                   ))}
+                  {group.details.length > 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedGroups((current) => ({ ...current, [group.key]: !current[group.key] }))}
+                      className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-sky-300"
+                    >
+                      {expandedGroups[group.key] ? "Показать первые 10" : `Показать все ${group.details.length} замечаний`}
+                    </button>
+                  )}
                 </div>
               </details>
             ))}

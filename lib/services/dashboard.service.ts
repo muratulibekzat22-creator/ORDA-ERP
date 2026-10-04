@@ -1,6 +1,5 @@
 import {
   OrderLifecycle,
-  PayrollDirection,
   PayrollPaymentType,
   Prisma,
   Role,
@@ -21,6 +20,7 @@ import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/financ
 import { splitDashboardReceipts } from "@/lib/finance/dashboard-receipts";
 import { getDailyCrmSnapshot } from "@/lib/services/daily-operations.service";
 import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
+import { payrollSummary } from "@/lib/services/payroll.service";
 
 type DashboardScope = {
   role: Role;
@@ -140,8 +140,6 @@ function economyFor(order: Prisma.OrderGetPayload<{ select: typeof orderEconomyS
   });
 }
 
-const signedAccrual = (row: { amount: Prisma.Decimal; direction: PayrollDirection }) =>
-  Number(row.amount) * (row.direction === PayrollDirection.INCREASE ? 1 : -1);
 const signedPayment = (row: { amount: Prisma.Decimal; type: PayrollPaymentType }) =>
   Number(row.amount) * (row.type === PayrollPaymentType.EMPLOYEE_REFUND ? -1 : 1);
 
@@ -199,7 +197,7 @@ async function managementProjection(scope: DashboardScope) {
         amount: true,
         orderId: true,
         operationDate: true,
-        order: { select: { number: true } },
+        order: { select: { number: true, orderReceivedAt: true, orderDateNeedsReview: true } },
       },
       orderBy: [{ operationDate: "desc" }, { id: "desc" }],
     }),
@@ -320,17 +318,10 @@ async function managementProjection(scope: DashboardScope) {
     }),
   ]);
 
-  const [payrollAccruals, payrollPayments, customerBalance] = await Promise.all([
+  const [payrollStatement, payrollPayments, customerBalance] = await Promise.all([
     payrollPeriod
-      ? prisma.payrollAccrual.findMany({
-          where: { periodId: payrollPeriod.id, reversalOfId: null },
-          select: {
-            amount: true,
-            direction: true,
-            reversedBy: { select: { id: true } },
-          },
-        })
-      : Promise.resolve([]),
+      ? payrollSummary(payrollPeriod.id, { userId: scope.userId, role: scope.role, name: "Сводка компании" })
+      : Promise.resolve(null),
     payrollPeriod
       ? prisma.payrollPayment.findMany({
           where: {
@@ -396,9 +387,10 @@ async function managementProjection(scope: DashboardScope) {
     (sum, { order }) => sum + Number(order.partnerPrice),
     0,
   );
-  const payrollAccrued = payrollAccruals
-    .filter((row) => !row.reversedBy)
-    .reduce((sum, row) => sum + signedAccrual(row), 0);
+  const payrollAccrued = payrollStatement?.rows.reduce(
+    (sum, row) => sum + row.calculation.totalToAccrue,
+    0,
+  ) ?? 0;
   const payrollPaid = payrollPayments.reduce(
     (sum, row) => sum + signedPayment(row),
     0,
@@ -546,6 +538,8 @@ async function managementProjection(scope: DashboardScope) {
         id: payment.id,
         orderId: payment.orderId,
         orderNumber: payment.order?.number ?? "Без номера заказа",
+        orderReceivedAt: payment.order?.orderReceivedAt ?? null,
+        orderDateNeedsReview: payment.order?.orderDateNeedsReview ?? false,
         operationDate: payment.operationDate,
         amount,
         fromPeriodOrder,
