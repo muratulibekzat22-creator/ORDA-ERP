@@ -21,13 +21,13 @@ export async function GET(request: Request) {
   const auth = await requirePermission("measurements");
   if (auth.response) return auth.response;
   const actor = measurementActor(auth.session!);
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.MEASURER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.MEASURER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const url = new URL(request.url);
   if (url.searchParams.get("meta") === "1") {
-    if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+    if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const [measurerRows, managers] = await Promise.all([
       prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } }, orderBy: { name: "asc" } }),
-      actor.role === Role.DIRECTOR
+      actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR
         ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
         : Promise.resolve([]),
     ]);

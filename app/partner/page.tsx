@@ -1,265 +1,80 @@
 "use client";
-import { useEffect, useState } from "react";
+
 import { signOut } from "next-auth/react";
-import { useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ORDER_STATUSES } from "@/lib/orders/lifecycle";
-type Dashboard = {
-  activeOrders: number;
-  completedOrders: number;
-  totals: { price: number; paid: number; balance: number };
-  statuses: Record<string, number>;
-  recentPayments: Array<{
-    id: number;
-    amount: number;
-    method: string;
-    comment: string | null;
-    operationDate: string;
-    order: { number: string };
-  }>;
+
+type Measurement = { id: number; status: string; completedAt: string | null; visitDate: string; stepsCount: number | null; measurer: string; sheetHref: string };
+type PartnerOrder = {
+  id: number; number: string; status: string; lifecycle: string;
+  client: { id: number; name: string; phone: string; city: string };
+  address: string; staircase: string; material: string; mapUrl: string;
+  orderReceivedAt: string; promisedAt: string | null; productionDeadline: string | null;
+  frameComment: string; railingType: string; supportType: string; color: string;
+  lighting: boolean; lightingDetails: string; cladding: boolean; claddingDetails: string;
+  additionalDetails: string; designStyle: string; designNotes: string;
+  partnerPrice: number; partnerAgreedAt: string | null; partnerPaid: number; partnerBalance: number;
+  partnerPlannedReadyAt: string | null; partnerComment: string;
+  readyForInstallation: boolean; installationCompleted: boolean; measurements: Measurement[];
 };
+type Dashboard = {
+  partner: { id: number; name: string; phone: string };
+  activeOrders: number; completedOrders: number;
+  totals: { price: number; paid: number; balance: number };
+  statuses: Record<string, number>; orders: PartnerOrder[];
+  recentPayments: Array<{ id: number; amount: number; method: string; comment: string | null; operationDate: string; order: { number: string } }>;
+};
+
+const money = (value: number) => `${Number(value).toLocaleString("ru-RU")} ₸`;
+const day = (value?: string | null) => value ? new Date(value).toLocaleDateString("ru-RU") : "Не указана";
+
 export default function PartnerPage() {
-  const [d, setD] = useState<Dashboard | null>(null),
-    [orders, setOrders] = useState<
-      Array<{
-        id: number;
-        number: string;
-        status: string;
-        address: string;
-        material: string;
-        partnerPrice: string;
-        partnerPaid: string;
-        partnerBalance: string;
-        partnerPlannedReadyAt: string | null;
-        partnerComment: string;
-        readyForInstallation: boolean;
-        installationCompleted: boolean;
-      }>
-    >([]),
-    [page, setPage] = useState(1),
-    [totalPages, setTotalPages] = useState(1),
-    [error, setError] = useState("");
-  const load = useCallback(
-    (targetPage = 1, append = false) =>
-      Promise.all([fetch("/api/partner/dashboard"), fetch(`/api/orders?page=${targetPage}&limit=50`)])
-        .then(async ([a, b]) => {
-          if (!a.ok || !b.ok) throw new Error("Не удалось загрузить кабинет");
-          setD((await a.json()) as Dashboard);
-          const payload = await b.json() as { data: PartnerOrderItem[]; pagination: { page: number; totalPages: number } };
-          setOrders((current) => append ? [...current, ...payload.data] : payload.data);
-          setPage(payload.pagination.page);
-          setTotalPages(payload.pagination.totalPages);
-        })
-        .catch((e) => setError(e instanceof Error ? e.message : "Ошибка")),
-    [],
-  );
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null), [error, setError] = useState(""), [query, setQuery] = useState(""), [mode, setMode] = useState<"active" | "completed" | "all">("active");
+  const load = useCallback(async () => {
+    setError("");
+    const response = await fetch("/api/partner/dashboard", { cache: "no-store" }), body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось загрузить кабинет"); else setDashboard(body as Dashboard);
+  }, []);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  const orders = useMemo(() => (dashboard?.orders ?? []).filter((order) => {
+    const completed = order.lifecycle === "COMPLETED" || order.installationCompleted;
+    const modeMatch = mode === "all" || (mode === "completed" ? completed : !completed);
+    const needle = query.trim().toLocaleLowerCase("ru");
+    return modeMatch && (!needle || [order.number, order.client.name, order.client.phone, order.address, order.material].some((value) => value.toLocaleLowerCase("ru").includes(needle)));
+  }), [dashboard, mode, query]);
   async function updateOrder(id: number, data: Record<string, unknown>) {
     setError("");
-    const response = await fetch(`/api/orders/${id}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify(data),
-    });
-    const payload = (await response.json()) as { error?: string };
-    if (!response.ok)
-      return setError(payload.error ?? "Не удалось обновить заказ");
-    await load();
+    const response = await fetch(`/api/orders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify(data) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось обновить заказ"); else await load();
   }
-  const money = (v: number | string) =>
-    `${Number(v).toLocaleString("ru-RU")} ₸`;
-  return (
-    <main className="min-h-screen bg-slate-950 p-5 text-white md:p-8">
-      <header className="mb-6 flex justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Кабинет цеха</h1>
-          <p className="text-slate-400">Только ваши заказы и выплаты</p>
-        </div>
-        <button onClick={() => void signOut({ callbackUrl: "/login" })}>
-          Выйти
-        </button>
-      </header>
-      {error && <p className="text-red-400">{error}</p>}
-      {d && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {[
-            ["Активные", d.activeOrders],
-            ["Сумма", money(d.totals.price)],
-            ["Выплачено", money(d.totals.paid)],
-            ["Остаток", money(d.totals.balance)],
-            ["Завершённые заказы", d.completedOrders],
-          ].map(([k, v]) => (
-            <div key={String(k)} className="rounded-xl bg-slate-900 p-4">
-              <p className="text-slate-400">{k}</p>
-              <b>{v}</b>
-            </div>
-          ))}
-        </div>
-      )}
-      <section className="mt-6 rounded-xl bg-slate-900 p-5">
-        <h2 className="text-xl font-semibold">Мои заказы</h2>
-        {orders.map((o) => (
-          <PartnerOrder
-            key={o.id}
-            order={o}
-            money={money}
-            onUpdate={updateOrder}
-          />
-        ))}
-        {!orders.length && (
-          <p className="mt-3 text-slate-400">Заказов пока нет.</p>
-        )}
-        {page < totalPages && <button type="button" onClick={() => void load(page + 1, true)} className="mt-4 min-h-11 w-full rounded-lg bg-slate-800 px-4 text-white">Показать ещё</button>}
+  return <main className="min-h-screen bg-slate-950 p-4 text-white md:p-8">
+    <header className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-sm font-semibold uppercase tracking-wider text-blue-300">ORDA · производство партнёра</p><h1 className="mt-1 text-3xl font-bold">Кабинет подрядчика</h1><p className="mt-1 text-slate-400">Заказы, переданные вашей команде, документы и расчёты с компанией.</p></div><button onClick={() => void signOut({ callbackUrl: "/login" })} className="rounded-xl bg-slate-800 px-4 py-3">Выйти</button></header>
+    {error && <p className="mt-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-200">{error}</p>}
+    {dashboard && <>
+      <section className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-5">{[["В работе", dashboard.activeOrders], ["Согласовано с нами", money(dashboard.totals.price)], ["Выплачено", money(dashboard.totals.paid)], ["Осталось получить", money(dashboard.totals.balance)], ["Завершено", dashboard.completedOrders]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">{label}</p><b className="mt-1 block text-lg">{value}</b></div>)}</section>
+      <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-4 md:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Переданные заказы</h2><p className="text-sm text-slate-400">Технические данные и сумма договора компании с вами.</p></div><div className="flex gap-2">{(["active", "completed", "all"] as const).map((value) => <button key={value} onClick={() => setMode(value)} className={`min-h-10 rounded-lg px-3 text-sm ${mode === value ? "bg-blue-600" : "bg-slate-800"}`}>{value === "active" ? "В работе" : value === "completed" ? "Завершённые" : "Все"}</button>)}</div></div>
+        <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Номер, клиент, телефон, адрес или материал" className="mt-4 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 outline-none focus:border-blue-500" />
+        <div className="mt-4 space-y-4">{orders.map((order) => <PartnerOrderCard key={order.id} order={order} onUpdate={updateOrder} />)}{!orders.length && <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Подходящих заказов нет.</p>}</div>
       </section>
-      {d && (
-        <section className="mt-6 rounded-xl bg-slate-900 p-5">
-          <h2 className="text-xl font-semibold">Последние выплаты</h2>
-          {d.recentPayments.map((p) => (
-            <p key={p.id} className="mt-2">
-              {p.order.number} — {money(p.amount)} · {p.method}
-            </p>
-          ))}
-        </section>
-      )}
-    </main>
-  );
+      <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-5"><h2 className="text-xl font-semibold">Последние выплаты от компании</h2>{dashboard.recentPayments.length ? dashboard.recentPayments.map((payment) => <p key={payment.id} className="mt-3 text-sm text-slate-300"><b className="text-white">{payment.order.number}</b> · {money(payment.amount)} · {payment.method} · {day(payment.operationDate)}</p>) : <p className="mt-3 text-slate-400">Выплат пока нет.</p>}</section>
+    </>}
+  </main>;
 }
 
-type PartnerOrderItem = {
-  id: number;
-  number: string;
-  status: string;
-  address: string;
-  material: string;
-  partnerPrice: string;
-  partnerPaid: string;
-  partnerBalance: string;
-  partnerPlannedReadyAt: string | null;
-  partnerComment: string;
-  readyForInstallation: boolean;
-  installationCompleted: boolean;
-};
-
-function PartnerOrder({
-  order,
-  money,
-  onUpdate,
-}: {
-  order: PartnerOrderItem;
-  money: (value: number | string) => string;
-  onUpdate: (id: number, data: Record<string, unknown>) => Promise<void>;
-}) {
-  const [status, setStatus] = useState(order.status);
-  const [date, setDate] = useState(
-    order.partnerPlannedReadyAt?.slice(0, 10) ?? "",
-  );
-  const [comment, setComment] = useState(order.partnerComment ?? "");
-  const safeStatuses = ORDER_STATUSES.filter((value) =>
-    [
-      "Заготовка",
-      "Покраска",
-      "Заказ готов",
-      "Ожидает установки",
-      "Установка",
-      "Заказ завершён",
-    ].includes(value),
-  );
-  return (
-    <article className="mt-4 rounded-xl border border-slate-700 bg-slate-950/40 p-4">
-      <div className="flex flex-wrap justify-between gap-3">
-        <div>
-          <h3 className="font-bold text-white">{order.number}</h3>
-          <p className="text-sm text-slate-400">
-            {order.address} · {order.material}
-          </p>
-        </div>
-        <span className="rounded-full bg-blue-950 px-3 py-1 text-sm text-blue-300">
-          {order.status}
-        </span>
-      </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <label className="text-sm text-slate-300">
-          Разрешённый этап
-          <select
-            value={status}
-            onChange={(event) => setStatus(event.target.value)}
-            className="mt-1 min-h-11 w-full rounded-lg bg-slate-800 px-3"
-          >
-            {!safeStatuses.includes(
-              status as (typeof safeStatuses)[number],
-            ) && <option>{status}</option>}
-            {safeStatuses.map((value) => (
-              <option key={value}>{value}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-sm text-slate-300">
-          Плановая дата готовности
-          <input
-            type="date"
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-            className="mt-1 min-h-11 w-full rounded-lg bg-slate-800 px-3"
-          />
-        </label>
-        <label className="text-sm text-slate-300 md:col-span-2">
-          Комментарий
-          <textarea
-            value={comment}
-            onChange={(event) => setComment(event.target.value)}
-            className="mt-1 min-h-20 w-full rounded-lg bg-slate-800 p-3"
-          />
-        </label>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() =>
-            void onUpdate(order.id, {
-              status,
-              comment,
-              partnerPlannedReadyAt: date || null,
-              partnerComment: comment,
-            })
-          }
-          className="min-h-11 rounded-lg bg-blue-600 px-4"
-        >
-          Сохранить изменения
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            void onUpdate(order.id, {
-              readyForInstallation: true,
-              partnerComment: comment,
-            })
-          }
-          className="min-h-11 rounded-lg bg-green-700 px-4"
-        >
-          Готово к установке
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            void onUpdate(order.id, {
-              installationCompleted: true,
-              status: "Заказ завершён",
-              comment,
-            })
-          }
-          className="min-h-11 rounded-lg bg-emerald-800 px-4"
-        >
-          Установка завершена
-        </button>
-      </div>
-      <p className="mt-4 text-sm text-slate-400">
-        Стоимость работ цеха: {money(order.partnerPrice)} · Выплачено:{" "}
-        {money(order.partnerPaid)} · Остаток: {money(order.partnerBalance)}
-      </p>
-    </article>
-  );
+function PartnerOrderCard({ order, onUpdate }: { order: PartnerOrder; onUpdate: (id: number, data: Record<string, unknown>) => Promise<void> }) {
+  const [status, setStatus] = useState(order.status), [dateValue, setDateValue] = useState(order.partnerPlannedReadyAt?.slice(0, 10) ?? ""), [comment, setComment] = useState(order.partnerComment ?? "");
+  const statuses = ORDER_STATUSES.filter((value) => ["Заготовка", "Покраска", "Заказ готов", "Ожидает установки", "Установка", "Заказ завершён"].includes(value));
+  return <article className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-bold">{order.number}</h3><p className="text-sm text-slate-400">{order.client.name} · <a href={`tel:${order.client.phone}`} className="text-blue-300">{order.client.phone}</a></p><p className="mt-1 text-sm text-slate-400">{order.client.city} · {order.address}</p></div><span className="rounded-full bg-blue-950 px-3 py-1 text-sm text-blue-200">{order.status}</span></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Info label="Лестница" value={order.staircase}/><Info label="Материал" value={order.material}/><Info label="Цвет" value={order.color}/><Info label="Срок производства" value={day(order.productionDeadline)}/><Info label="Ограждение" value={order.railingType}/><Info label="Опора" value={order.supportType}/><Info label="Подсветка" value={order.lighting ? order.lightingDetails || "Да" : "Нет"}/><Info label="Обшивка" value={order.cladding ? order.claddingDetails || "Да" : "Нет"}/></div>
+    {[order.frameComment, order.additionalDetails, order.designStyle, order.designNotes].some(Boolean) && <div className="mt-3 rounded-lg bg-slate-900 p-3 text-sm text-slate-300">{[order.frameComment, order.additionalDetails, order.designStyle, order.designNotes].filter(Boolean).join(" · ")}</div>}
+    <div className="mt-4 rounded-xl border border-emerald-900 bg-emerald-950/20 p-3"><h4 className="font-semibold text-white">Расчёт между компанией и подрядчиком</h4><div className="mt-2 grid grid-cols-3 gap-2 text-sm"><Info label="Согласовано" value={money(order.partnerPrice)}/><Info label="Выплачено" value={money(order.partnerPaid)}/><Info label="Осталось" value={money(order.partnerBalance)}/></div></div>
+    <div className="mt-4"><h4 className="font-semibold">Замерные листы</h4>{order.measurements.length ? <div className="mt-2 flex flex-wrap gap-2">{order.measurements.map((measurement) => <a key={measurement.id} href={measurement.sheetHref} target="_blank" className="rounded-lg bg-blue-800 px-3 py-2 text-sm">Замер №{measurement.id} · {measurement.stepsCount ?? "—"} ступ.</a>)}</div> : <p className="mt-1 text-sm text-slate-500">Завершённый замер пока не привязан.</p>}</div>
+    <div className="mt-4 grid gap-3 md:grid-cols-2"><label className="text-sm text-slate-300">Этап<select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg bg-slate-800 px-3">{!statuses.includes(status as never) && <option>{status}</option>}{statuses.map((value) => <option key={value}>{value}</option>)}</select></label><label className="text-sm text-slate-300">Плановая готовность<input type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg bg-slate-800 px-3" /></label><label className="text-sm text-slate-300 md:col-span-2">Комментарий подрядчика<textarea value={comment} onChange={(event) => setComment(event.target.value)} className="mt-1 min-h-20 w-full rounded-lg bg-slate-800 p-3" /></label></div>
+    <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void onUpdate(order.id, { status, partnerPlannedReadyAt: dateValue || null, partnerComment: comment })} className="min-h-11 rounded-lg bg-blue-600 px-4">Сохранить</button><button onClick={() => void onUpdate(order.id, { readyForInstallation: true, partnerComment: comment })} className="min-h-11 rounded-lg bg-green-700 px-4">Готово к установке</button><button onClick={() => void onUpdate(order.id, { installationCompleted: true, status: "Заказ завершён", partnerComment: comment })} className="min-h-11 rounded-lg bg-emerald-800 px-4">Установка завершена</button>{order.mapUrl && <a href={order.mapUrl} target="_blank" className="min-h-11 rounded-lg bg-slate-800 px-4 py-3">Открыть карту</a>}</div>
+  </article>;
 }
+
+function Info({ label, value }: { label: string; value: string }) { return <span className="min-w-0 text-sm text-slate-400">{label}<b className="block break-words text-white">{value || "—"}</b></span>; }

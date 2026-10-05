@@ -58,6 +58,12 @@ type Measurement = {
   refusalReason?: string | null;
   outcomeComment?: string | null;
   outcomeAt?: string | null;
+  quoteMaterial?: string;
+  quoteBasePrice?: string | number | null;
+  quoteDiscount?: string | number;
+  quoteFinalPrice?: string | number | null;
+  quoteComment?: string | null;
+  finalProposal?: { id: number; number: string; total?: string | number | null } | null;
   client: {
     id: number;
     name: string;
@@ -124,6 +130,9 @@ const auditLabels: Record<string, string> = {
   REASSIGNED: "Замер перенесён и переназначен",
   STARTED: "Замер начат",
   DRAFT_SAVED: "Черновик сохранён",
+  COMMERCIAL_QUOTE_SAVED: "Окончательная цена сохранена",
+  ORDER_LINKED: "Замер привязан к заказу",
+  ORDER_AUTO_LINKED: "Замер автоматически привязан к заказу",
   DESIGN_BRIEF_SAVED: "Пожелания для 3D сохранены",
   DESIGN_PROMPT_COPIED: "Промпт для 3D скопирован",
   DESIGN_SHOWN_TO_CLIENT: "3D-эскиз показан клиенту",
@@ -138,6 +147,7 @@ const auditLabels: Record<string, string> = {
 const date = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium" }).format(new Date(value));
 const time = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 const when = (value: string) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+const money = (value: unknown) => `${Number(value ?? 0).toLocaleString("ru-RU")} ₸`;
 const businessDate = (value: string | Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Almaty", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 const photoLabels: Record<string, string> = {
   SHEET: "Замерный лист",
@@ -364,6 +374,7 @@ function TechnicalResult({ row }: { row: Measurement }) {
     {row.platforms?.length ? <List title="Площадки" items={row.platforms.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} мм`)}/> : null}
     {(row.designStyle || row.designNotes || row.designShownAt) && <div className="rounded-xl border border-violet-700/50 bg-violet-950/20 p-4"><strong className="text-violet-100">3D-проект клиенту</strong><div className="mt-3 grid gap-2 sm:grid-cols-2"><Detail label="Стиль" value={row.designStyle || "По референсу"}/><Detail label="Показан клиенту" value={row.designShownAt ? when(row.designShownAt) : "Нет"}/></div>{row.designNotes && <p className="mt-3 whitespace-pre-wrap text-sm text-slate-300">{row.designNotes}</p>}</div>}
     {row.railingComment && <Info title="Ограждение">{row.railingComment}</Info>}{row.objectNotes && <Info title="Особенности объекта">{row.objectNotes}</Info>}{row.comment && <Info title="Комментарий замерщика">{row.comment}</Info>}
+    <div className="rounded-xl border border-blue-800/60 bg-blue-950/20 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">Замерный лист и окончательное КП</strong><a href={`/api/measurements/${row.id}/sheet`} target="_blank" className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white">Открыть PDF замера</a></div>{row.quoteFinalPrice ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4"><Detail label="Материал" value={row.quoteMaterial}/><Detail label="Цена по КП" value={money(row.quoteBasePrice)}/><Detail label="Скидка" value={money(row.quoteDiscount)}/><Detail label="Итого" value={money(row.quoteFinalPrice)}/></div> : <p className="mt-2 text-sm text-slate-400">Окончательная цена не фиксировалась.</p>}{row.quoteComment && <p className="mt-2 text-sm text-slate-300">{row.quoteComment}</p>}{row.finalProposal && <a href={`/api/proposals/${row.finalProposal.id}/pdf`} target="_blank" className="mt-3 inline-block text-sm font-semibold text-emerald-300">Окончательное КП №{row.finalProposal.number}</a>}</div>
     {row.clientOutcome && <div className={`rounded-xl p-4 ${row.clientOutcome === "REFUSED" ? "bg-red-950/50 text-red-100" : row.clientOutcome === "RETURN_TO_MANAGER" ? "bg-amber-950/40 text-amber-100" : "bg-emerald-950/40 text-emerald-100"}`}><strong>{outcomeLabels[row.clientOutcome]}</strong>{row.refusalReason && <p className="mt-1">Причина: {refusalLabels[row.refusalReason] ?? row.refusalReason}</p>}{row.outcomeComment && <p className="mt-1 whitespace-pre-wrap text-sm">{row.outcomeComment}</p>}{row.outcomeAt && <p className="mt-2 text-xs opacity-70">Зафиксировано {when(row.outcomeAt)}</p>}</div>}
     <div><h4 className="font-semibold text-white">Фотографии</h4>{row.attachments.length ? <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">{row.attachments.map((photo) => <a key={photo.id} href={`/api/measurement-attachments/${photo.id}`} target="_blank" rel="noreferrer" className="overflow-hidden rounded-xl border border-slate-700 bg-slate-900"><Image src={`/api/measurement-attachments/${photo.id}`} alt={photo.fileName} width={320} height={128} unoptimized className="h-32 w-full object-cover"/><span className="block truncate p-2 text-xs text-blue-200">{photoLabels[photo.type] ?? photo.fileName}</span></a>)}</div> : <p className="mt-2 text-sm text-slate-500">Фотографии не добавлены.</p>}</div>
   </section>;

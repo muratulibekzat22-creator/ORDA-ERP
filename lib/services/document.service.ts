@@ -107,6 +107,24 @@ export async function canUseEntities(actor: DocumentActor, clientId?: number | n
   return { clientId: effectiveClientId, orderId: order?.id ?? null };
 }
 
+export async function getGeneratedMeasurementSheetData(id: number, actor: DocumentActor) {
+  if (!allowedDocumentTypes(actor).includes(DocumentType.MEASUREMENT_SHEET)) return null;
+  const measurement = await prisma.measurement.findUnique({
+    where: { id },
+    include: {
+      client: { select: { id: true, name: true, phone: true, city: true, address: true } },
+      order: { select: { id: true, number: true, status: true } },
+      measurerUser: { select: { id: true, name: true } },
+      sourceProposal: { select: { id: true, number: true } },
+      finalProposal: { select: { id: true, number: true, total: true } },
+    },
+  });
+  if (!measurement || !measurement.completedAt || !measurement.completedSnapshot) return null;
+  if (actor.role === Role.MEASURER && measurement.measurerUserId !== actor.userId) return null;
+  if (!await canUseEntities(actor, measurement.clientId, measurement.orderId)) return null;
+  return measurement;
+}
+
 function listSelect() {
   return {
     id: true, type: true, number: true, title: true, documentDate: true, status: true, source: true, currentVersion: true, createdAt: true,
@@ -170,11 +188,26 @@ async function getLinkedDocuments(actor: DocumentActor, filters: { orderId?: num
     }
   }
   if (allowed.some((type) => measurableTypes.includes(type)) && (!filters.type || measurableTypes.includes(filters.type))) {
+    if (!filters.type || filters.type === DocumentType.MEASUREMENT_SHEET) {
+      const measurements = await prisma.measurement.findMany({
+        where: {
+          completedAt: { not: null }, completedSnapshot: { not: Prisma.DbNull },
+          ...(dateWhere ? { completedAt: dateWhere } : {}),
+          ...(filters.clientId ? { clientId: filters.clientId } : {}),
+          ...(filters.orderId ? { orderId: filters.orderId } : {}),
+          OR: [{ order: scope.order }, { orderId: null, client: scope.client }],
+          ...(actor.role === Role.MEASURER ? { measurerUserId: actor.userId } : {}),
+        },
+        select: { id: true, completedAt: true, updatedAt: true, measurerUser: { select: { id: true, name: true } }, client: { select: { id: true, name: true, phone: true } }, order: { select: { id: true, number: true } } },
+        orderBy: { completedAt: "desc" }, take,
+      });
+      for (const item of measurements) rows.push({ id: `measurement-sheet-${item.id}`, recordKind: "GENERATED_MEASUREMENT_SHEET", type: DocumentType.MEASUREMENT_SHEET, number: `ZM-${item.id}`, title: "Замерный лист", documentDate: item.completedAt ?? item.updatedAt, status: DocumentStatus.READY, source: "GENERATED_MEASUREMENT", currentVersion: 1, createdAt: item.completedAt ?? item.updatedAt, client: item.client, order: item.order, author: item.measurerUser, openHref: `/api/measurements/${item.id}/sheet` });
+    }
     const attachments = await prisma.measurementAttachment.findMany({ where: { ...(dateWhere ? { createdAt: dateWhere } : {}), measurement: { ...(filters.clientId ? { clientId: filters.clientId } : {}), ...(filters.orderId ? { orderId: filters.orderId } : {}), OR: [{ order: scope.order }, { orderId: null, client: scope.client }] } }, select: { id: true, type: true, fileName: true, contentType: true, createdAt: true, uploadedBy: { select: { id: true, name: true } }, measurement: { select: { client: { select: { id: true, name: true, phone: true } }, order: { select: { id: true, number: true } } } } }, orderBy: { createdAt: "desc" }, take });
     for (const item of attachments) {
       const type = item.type === MeasurementPhotoType.SHEET ? DocumentType.MEASUREMENT_SHEET : DocumentType.PHOTO;
       if (filters.type && filters.type !== type) continue;
-      rows.push({ id: `measurement-${item.id}`, recordKind: "MEASUREMENT_ATTACHMENT", type, number: "", title: item.type === MeasurementPhotoType.SHEET ? "Замерный лист" : item.fileName, documentDate: item.createdAt, status: DocumentStatus.READY, source: "MEASUREMENT_ATTACHMENT", currentVersion: 1, createdAt: item.createdAt, client: item.measurement.client, order: item.measurement.order, author: item.uploadedBy, openHref: `/api/document-links/measurement/${item.id}` });
+      rows.push({ id: `measurement-${item.id}`, recordKind: "MEASUREMENT_ATTACHMENT", type, number: "", title: item.type === MeasurementPhotoType.SHEET ? "Фото заполненного замерного листа" : item.fileName, documentDate: item.createdAt, status: DocumentStatus.READY, source: "MEASUREMENT_ATTACHMENT", currentVersion: 1, createdAt: item.createdAt, client: item.measurement.client, order: item.measurement.order, author: item.uploadedBy, openHref: `/api/document-links/measurement/${item.id}` });
     }
   }
   if (allowed.some((type) => type === DocumentType.OTHER || type === DocumentType.PHOTO) && (!filters.type || filters.type === DocumentType.OTHER || filters.type === DocumentType.PHOTO)) {

@@ -70,6 +70,8 @@ type Measurement = {
     city: string;
     address: string;
     managerUser?: { id: number; name: string; phone?: string | null } | null;
+    commercialProposals: Array<{ id: number; number: string; status: string; total?: string | number | null; snapshot: unknown; createdAt: string }>;
+    orders: Array<{ id: number; number: string; status: string; lifecycle: string }>;
   };
   measurerUser?: { id: number; name: string } | null;
   attachments: Photo[];
@@ -81,6 +83,15 @@ type Measurement = {
   outcomeComment?: string | null;
   refusalReason?: string | null;
   outcomeAt?: string | null;
+  sourceProposalId?: number | null;
+  finalProposalId?: number | null;
+  quoteMaterial?: string;
+  quoteBasePrice?: string | number | null;
+  quoteDiscount?: string | number;
+  quoteFinalPrice?: string | number | null;
+  quoteComment?: string | null;
+  quoteConfirmedAt?: string | null;
+  finalProposal?: { id: number; number: string; status: string; total?: string | number | null } | null;
   auditEvents: Array<{
     id: number;
     action: string;
@@ -117,6 +128,7 @@ type Payload = {
 };
 type ScheduleClient = { id: number; name: string; phone: string; whatsapp: string; city: string; address: string };
 type ActiveMeasurer = { id: number; name: string; phone?: string | null; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
+type QuoteForm = { sourceProposalId: string; material: string; discount: string; comment: string; confirmedWithClient: boolean };
 type Form = {
   stepsCount: string;
   sameSize: boolean;
@@ -229,6 +241,17 @@ const formOf = (row: Measurement): Form => ({
   comment: row.comment ?? "",
 });
 
+function safeProposalVariants(snapshot: unknown) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return [];
+  const variants = (snapshot as Record<string, unknown>).variants;
+  if (!Array.isArray(variants)) return [];
+  return variants.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const row = value as Record<string, unknown>, total = Number(row.total ?? 0), material = String(row.material ?? "").trim();
+    return material && Number.isFinite(total) && total > 0 ? [{ material, total }] : [];
+  });
+}
+
 function dimensions(value: string, withComment = false) {
   const number = (part: string | undefined) => {
     if (!part?.trim()) return undefined;
@@ -253,7 +276,7 @@ function dimensions(value: string, withComment = false) {
 
 export default function MeasurementWorkspace() {
   const { data: session } = useSession();
-  if (session?.user.role === "DIRECTOR") return <DirectorMeasurementControl />;
+  if (session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR") return <DirectorMeasurementControl />;
   return <OperationalMeasurementWorkspace />;
 }
 
@@ -286,6 +309,8 @@ function OperationalMeasurementWorkspace() {
     [error, setError] = useState(""),
     [trainingRequired, setTrainingRequired] = useState(false),
     [notice, setNotice] = useState("");
+  const [quote, setQuote] = useState<QuoteForm>({ sourceProposalId: "", material: "", discount: "0", comment: "", confirmedWithClient: false });
+  const [linkOrderId, setLinkOrderId] = useState("");
   const [search, setSearch] = useState(""), [debouncedSearch, setDebouncedSearch] = useState("");
   const [inviteAt, setInviteAt] = useState(""),
     [inviteComment, setInviteComment] = useState("");
@@ -322,6 +347,8 @@ function OperationalMeasurementWorkspace() {
     setClientOutcome(row.clientOutcome ?? "");
     setOutcomeComment(row.outcomeComment ?? "");
     setRefusalReason(row.refusalReason ?? "");
+    setQuote({ sourceProposalId: row.sourceProposalId ? String(row.sourceProposalId) : "", material: row.quoteMaterial ?? "", discount: String(row.quoteDiscount ?? 0), comment: row.quoteComment ?? "", confirmedWithClient: Boolean(row.quoteConfirmedAt) });
+    setLinkOrderId(row.order?.id ? String(row.order.id) : "");
     setCancelOpen(false);
     setRescheduleOpen(false);
     setRescheduleDate(new Date(row.visitDate).toISOString().slice(0, 16));
@@ -386,6 +413,8 @@ function OperationalMeasurementWorkspace() {
         setClientOutcome(requestedMeasurement.clientOutcome ?? "");
         setOutcomeComment(requestedMeasurement.outcomeComment ?? "");
         setRefusalReason(requestedMeasurement.refusalReason ?? "");
+        setQuote({ sourceProposalId: requestedMeasurement.sourceProposalId ? String(requestedMeasurement.sourceProposalId) : "", material: requestedMeasurement.quoteMaterial ?? "", discount: String(requestedMeasurement.quoteDiscount ?? 0), comment: requestedMeasurement.quoteComment ?? "", confirmedWithClient: Boolean(requestedMeasurement.quoteConfirmedAt) });
+        setLinkOrderId(requestedMeasurement.order?.id ? String(requestedMeasurement.order.id) : "");
       } else if (!cursor && Number.isInteger(requested) && requested > 0) {
         const detailResponse = await fetch(`/api/measurements/${requested}`, { cache: "no-store" });
         if (detailResponse.ok) {
@@ -396,6 +425,8 @@ function OperationalMeasurementWorkspace() {
           setClientOutcome(detail.clientOutcome ?? "");
           setOutcomeComment(detail.outcomeComment ?? "");
           setRefusalReason(detail.refusalReason ?? "");
+          setQuote({ sourceProposalId: detail.sourceProposalId ? String(detail.sourceProposalId) : "", material: detail.quoteMaterial ?? "", discount: String(detail.quoteDiscount ?? 0), comment: detail.quoteComment ?? "", confirmedWithClient: Boolean(detail.quoteConfirmedAt) });
+          setLinkOrderId(detail.order?.id ? String(detail.order.id) : "");
         }
       }
     }
@@ -408,6 +439,10 @@ function OperationalMeasurementWorkspace() {
   }, [load]);
   const selected =
     data.measurements.find((row) => row.id === selectedId) ?? null;
+  const selectedProposal = selected?.client.commercialProposals.find((item) => item.id === Number(quote.sourceProposalId));
+  const quoteVariants = selectedProposal ? safeProposalVariants(selectedProposal.snapshot) : [];
+  const quoteVariant = quoteVariants.find((item) => item.material === quote.material);
+  const quoteFinalPrice = Math.max(0, (quoteVariant?.total ?? 0) - Number(quote.discount || 0));
   const rows = data.measurements;
   const patchForm = (key: keyof Form, value: string | boolean) =>
     setForm((current) => ({ ...current, [key]: value }));
@@ -428,6 +463,11 @@ function OperationalMeasurementWorkspace() {
     railingComment: form.railingComment,
     objectNotes: form.objectNotes,
     comment: form.comment,
+  });
+  const quotePayload = () => ({
+    sourceProposalId: Number(quote.sourceProposalId), quoteMaterial: quote.material,
+    quoteDiscount: Number(quote.discount || 0), quoteComment: quote.comment,
+    quoteConfirmedWithClient: quote.confirmedWithClient,
   });
   async function run(body: Record<string, unknown>, ok: string) {
     if (!selected) return;
@@ -468,8 +508,12 @@ function OperationalMeasurementWorkspace() {
       setError("Укажите причину отказа и комментарий для варианта «Другое»");
       return;
     }
+    if (clientOutcome === "READY_TO_CONTINUE" && (!quote.sourceProposalId || !quote.material || !quote.confirmedWithClient || quoteFinalPrice <= 0)) {
+      setError("Для готового клиента выберите КП, материал, окончательную цену и подтвердите согласование");
+      return;
+    }
     await run(
-      { ...payload("complete"), clientOutcome, refusalReason: clientOutcome === "REFUSED" ? refusalReason : undefined, outcomeComment },
+      { ...payload("complete"), ...(quote.sourceProposalId ? quotePayload() : {}), clientOutcome, refusalReason: clientOutcome === "REFUSED" ? refusalReason : undefined, outcomeComment },
       "Замер завершён, результат передан менеджеру",
     );
   }
@@ -924,6 +968,19 @@ function OperationalMeasurementWorkspace() {
                 </p>
               )}
             </div>
+            {canSchedule && selected.client.orders.length > 0 && (
+              <section className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
+                <h3 className="font-semibold text-white">Привязка к действующему заказу</h3>
+                <p className="mt-1 text-sm text-slate-400">После привязки замерный лист появится в заказе и в кабинете назначенного подрядчика.</p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <select className={input} value={linkOrderId} onChange={(event) => setLinkOrderId(event.target.value)}>
+                    <option value="">Выберите заказ</option>
+                    {selected.client.orders.map((order) => <option key={order.id} value={order.id}>{order.number} · {order.status}</option>)}
+                  </select>
+                  <button type="button" disabled={busy || !linkOrderId || Number(linkOrderId) === selected.order?.id} onClick={() => void run({ action: "link-order", orderId: Number(linkOrderId) }, "Замер привязан к заказу")} className="min-h-11 shrink-0 rounded-xl bg-blue-700 px-4 font-semibold disabled:opacity-50">Привязать</button>
+                </div>
+              </section>
+            )}
             {measurer && selected.status === "ASSIGNED" && (
               <button
                 disabled={busy}
@@ -941,6 +998,21 @@ function OperationalMeasurementWorkspace() {
                   measurement={selected}
                   onChanged={async () => { await load(); }}
                 />
+                <section className="space-y-4 rounded-xl border border-blue-800/70 bg-blue-950/20 p-4">
+                  <div><h3 className="font-semibold text-white">КП менеджера и окончательная цена</h3><p className="mt-1 text-sm text-slate-400">Выберите отправленное клиенту КП. Скидка уменьшит цену выбранного материала; после подтверждения ORDA сформирует новую версию КП.</p></div>
+                  {!selected.client.commercialProposals.length ? <p className="rounded-lg border border-amber-800 bg-amber-950/30 p-3 text-sm text-amber-200">У клиента пока нет КП. Вы можете завершить замер с возвратом менеджеру, чтобы он подготовил расчёт.</p> : <>
+                    <Field label="Исходное КП менеджера"><select className={input} value={quote.sourceProposalId} onChange={(event) => { const proposalId = event.target.value; const proposal = selected.client.commercialProposals.find((item) => item.id === Number(proposalId)); const first = proposal ? safeProposalVariants(proposal.snapshot)[0] : undefined; setQuote((current) => ({ ...current, sourceProposalId: proposalId, material: first?.material ?? "", discount: "0", confirmedWithClient: false })); }}><option value="">Выберите КП</option>{selected.client.commercialProposals.map((proposal) => <option key={proposal.id} value={proposal.id}>№{proposal.number} · {new Date(proposal.createdAt).toLocaleDateString("ru-RU")}</option>)}</select></Field>
+                    {quote.sourceProposalId && <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Материал"><select className={input} value={quote.material} onChange={(event) => setQuote((current) => ({ ...current, material: event.target.value, discount: "0", confirmedWithClient: false }))}>{quoteVariants.map((variant) => <option key={variant.material} value={variant.material}>{variant.material} · {money(variant.total)}</option>)}</select></Field>
+                      <Field label="Скидка на объекте, ₸"><input type="number" min="0" max={quoteVariant?.total ? quoteVariant.total - 1 : undefined} className={input} value={quote.discount} onChange={(event) => setQuote((current) => ({ ...current, discount: event.target.value, confirmedWithClient: false }))} /></Field>
+                      <div className="rounded-xl bg-slate-950 p-3 text-sm text-slate-300"><span>Цена по КП</span><b className="mt-1 block text-lg text-white">{money(quoteVariant?.total ?? 0)}</b></div>
+                      <div className="rounded-xl bg-emerald-950/50 p-3 text-sm text-emerald-200"><span>Окончательная цена</span><b className="mt-1 block text-lg text-white">{money(quoteFinalPrice)}</b></div>
+                      <label className="sm:col-span-2 text-sm text-slate-300">Комментарий по цене<textarea rows={2} className={`${input} mt-1`} value={quote.comment} onChange={(event) => setQuote((current) => ({ ...current, comment: event.target.value }))} /></label>
+                      <label className="flex min-h-12 items-center gap-3 rounded-xl border border-emerald-800 px-3 text-sm text-emerald-100 sm:col-span-2"><input type="checkbox" checked={quote.confirmedWithClient} onChange={(event) => setQuote((current) => ({ ...current, confirmedWithClient: event.target.checked }))} />Окончательная сумма озвучена и согласована с клиентом</label>
+                      <button type="button" disabled={busy || !quote.material || quoteFinalPrice <= 0} onClick={() => void run({ action: "save-quote", ...quotePayload() }, "Окончательная цена сохранена")} className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold disabled:opacity-50 sm:col-span-2">Сохранить цену без завершения замера</button>
+                    </div>}
+                  </>}
+                </section>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Количество ступеней">
                     <input
@@ -1095,8 +1167,7 @@ function OperationalMeasurementWorkspace() {
                 <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
                   <h3 className="font-semibold text-white">Фотографии</h3>
                   <p className="mt-1 text-sm text-slate-400">
-                    Фото листа замера обязательно. Три ракурса объекта,
-                    референс и готовый эскиз добавляются в 3D-процессе выше.
+                    ORDA сама сформирует PDF из заполненных размеров. Фото бумажного листа можно приложить дополнительно. Три ракурса объекта, референс и готовый эскиз добавляются в 3D-процессе выше.
                   </p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <button
@@ -1170,7 +1241,7 @@ function OperationalMeasurementWorkspace() {
                     <Field label={clientOutcome === "RETURN_TO_MANAGER" ? "Комментарий менеджеру" : "Комментарий к результату"}><textarea rows={3} className={input} value={outcomeComment} onChange={(event) => setOutcomeComment(event.target.value)} placeholder={clientOutcome === "RETURN_TO_MANAGER" ? "Что должен сделать менеджер" : "Дополнительные детали"} /></Field>
                   )}
                   <button
-                    disabled={busy || !clientOutcome || (clientOutcome === "RETURN_TO_MANAGER" && !outcomeComment.trim()) || (clientOutcome === "REFUSED" && (!refusalReason || (refusalReason === "OTHER" && !outcomeComment.trim())))}
+                    disabled={busy || !clientOutcome || (clientOutcome === "READY_TO_CONTINUE" && (!quote.sourceProposalId || !quote.material || !quote.confirmedWithClient || quoteFinalPrice <= 0)) || (clientOutcome === "RETURN_TO_MANAGER" && !outcomeComment.trim()) || (clientOutcome === "REFUSED" && (!refusalReason || (refusalReason === "OTHER" && !outcomeComment.trim())))}
                     onClick={() => void complete()}
                     className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 font-semibold disabled:opacity-50"
                   >
@@ -1510,6 +1581,11 @@ function MeasurementResult({ row }: { row: Measurement }) {
           {row.objectNotes}
         </p>
       )}
+      <div className="mt-4 rounded-xl border border-blue-900 bg-blue-950/20 p-3 text-sm text-slate-300">
+        <div className="flex flex-wrap items-center justify-between gap-3"><b className="text-white">Замерный лист и окончательное КП</b><a href={`/api/measurements/${row.id}/sheet`} target="_blank" className="rounded-lg bg-blue-700 px-3 py-2 font-semibold text-white">Открыть PDF замера</a></div>
+        {row.quoteFinalPrice ? <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><span>Материал<b className="block text-white">{row.quoteMaterial || "—"}</b></span><span>Цена по КП<b className="block text-white">{money(Number(row.quoteBasePrice ?? 0))}</b></span><span>Скидка<b className="block text-white">{money(Number(row.quoteDiscount ?? 0))}</b></span><span>Итого<b className="block text-emerald-300">{money(Number(row.quoteFinalPrice))}</b></span></div> : <p className="mt-2 text-slate-400">Окончательная цена не фиксировалась.</p>}
+        {row.finalProposal && <a href={`/api/proposals/${row.finalProposal.id}/pdf`} target="_blank" className="mt-3 inline-block font-semibold text-emerald-300">Окончательное КП №{row.finalProposal.number}</a>}
+      </div>
       {row.clientOutcome && (
         <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-sm text-slate-300">
           <b className="text-white">Результат клиента: {outcomeNames[row.clientOutcome] ?? row.clientOutcome}</b>

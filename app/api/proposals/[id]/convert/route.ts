@@ -25,6 +25,26 @@ export async function POST(_: Request, { params }: Context) {
       await tx.leadStatusHistory.create({ data: { clientId: proposal.clientId, fromStatus: proposal.client.status, toStatus: proposal.client.status, fromStage: proposal.client.stage, toStage: proposal.client.stage, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? "Система", comment: `Создан заказ ${number}` } });
       await tx.orderEvent.create({ data: { orderId: created.id, title: "Заказ оформлен из заявки", description: `КП ${proposal.number}`, user: auth.session!.user.name ?? "Система" } });
       await tx.orderLifecycleEvent.create({ data: { orderId: created.id, type: "ORDER_CREATED", toLifecycle: "CREATED", message: `КП ${proposal.number}`, actorId: Number(auth.session!.user.id), actorName: auth.session!.user.name ?? "Система", role: auth.session!.user.role as Role, metadata: { proposalId: proposal.id, clientId: proposal.clientId } } });
+      const unlinkedMeasurements = await tx.measurement.findMany({
+        where: { clientId: proposal.clientId, orderId: null },
+        select: { id: true, calendarTaskId: true },
+      });
+      if (unlinkedMeasurements.length) {
+        await tx.measurement.updateMany({
+          where: { id: { in: unlinkedMeasurements.map((item) => item.id) } },
+          data: { orderId: created.id },
+        });
+        const taskIds = unlinkedMeasurements.flatMap((item) => item.calendarTaskId ? [item.calendarTaskId] : []);
+        if (taskIds.length) await tx.calendarTask.updateMany({ where: { id: { in: taskIds } }, data: { orderId: created.id } });
+        await tx.measurementAudit.createMany({
+          data: unlinkedMeasurements.map((item) => ({
+            measurementId: item.id,
+            action: "ORDER_AUTO_LINKED",
+            actorId: Number(auth.session!.user.id),
+            after: { orderId: created.id, orderNumber: created.number, proposalId },
+          })),
+        });
+      }
       await ensureMeasurerBonusForOrder(tx, created.id, actor);
       return created;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

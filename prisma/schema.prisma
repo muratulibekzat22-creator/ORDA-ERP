@@ -889,6 +889,8 @@ model CommercialProposal {
   requestHash        String?
   providerMessageId  String?
   sendIdempotencyKey String?                @unique
+  sourceMeasurements Measurement[]          @relation("MeasurementSourceProposal")
+  finalMeasurement   Measurement?           @relation("MeasurementFinalProposal")
 
   @@index([clientId, createdAt])
   @@index([status, validUntil])
@@ -2672,6 +2674,17 @@ model Measurement {
   mapLink        String?
   managerComment String?
 
+  sourceProposalId Int?
+  sourceProposal   CommercialProposal? @relation("MeasurementSourceProposal", fields: [sourceProposalId], references: [id], onDelete: SetNull)
+  finalProposalId  Int?                @unique
+  finalProposal    CommercialProposal? @relation("MeasurementFinalProposal", fields: [finalProposalId], references: [id], onDelete: SetNull)
+  quoteMaterial    String              @default("")
+  quoteBasePrice   Decimal?            @db.Decimal(12, 2)
+  quoteDiscount    Decimal             @default(0) @db.Decimal(12, 2)
+  quoteFinalPrice  Decimal?            @db.Decimal(12, 2)
+  quoteComment     String?
+  quoteConfirmedAt DateTime?
+
   floorHeight     Float?
   staircaseWidth  Float?
   stepsCount      Int?
@@ -2718,6 +2731,7 @@ model Measurement {
   @@index([measurerUserId, visitDate])
   @@index([clientId, status, visitDate])
   @@index([orderId])
+  @@index([sourceProposalId])
   @@index([clientOutcome, outcomeAt])
   @@index([status, visitDate])
   @@index([measurerUserId, status, visitDate])

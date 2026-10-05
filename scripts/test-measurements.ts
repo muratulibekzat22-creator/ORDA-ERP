@@ -43,6 +43,12 @@ const draft: MeasurementDraft = {
   comment: "Фактический замер",
 };
 
+async function createTestProposal(clientId: number, manager: { id: number; name: string }) {
+  const calculation = await prisma.leadCalculation.create({ data: { clientId, material: "Карагач", baseClientPrice: 2_900_000, clientPrice: 2_900_000, internalCost: 1_700_000, snapshot: { regularSteps: 15, workshopRate: 100_000, saleRate: 190_000 }, authorId: manager.id, authorName: manager.name } });
+  const proposal = await prisma.commercialProposal.create({ data: { clientId, calculationId: calculation.id, number: `${tag}-KP-${clientId}`, rootNumber: `${tag}-KP-${clientId}`, snapshot: { client: { name: tag }, variants: [{ material: "Карагач", total: 2_900_000, warranty: "1 год" }] }, total: 2_900_000, validUntil: new Date(Date.now() + 7 * 86_400_000), executionTerm: "40–50 дней", paymentTerms: "50/50", warranty: "1 год", managerContact: manager.name, createdById: manager.id, createdByName: manager.name } });
+  return { sourceProposalId: proposal.id, material: "Карагач", discount: 100_000, comment: "Скидка согласована на объекте", confirmedWithClient: true };
+}
+
 async function prepareDesignWorkflow(
   measurementId: number,
   uploaderId: number,
@@ -102,6 +108,7 @@ async function cleanupStaleRuns() {
   const taskIds = tasks.map((row) => row.id);
   if (taskIds.length) { await prisma.calendarTaskAudit.deleteMany({ where: { taskId: { in: taskIds } } }); await prisma.calendarTask.deleteMany({ where: { id: { in: taskIds } } }); }
   if (clientIds.length) { await prisma.leadNextAction.deleteMany({ where: { clientId: { in: clientIds } } }); await prisma.leadStatusHistory.deleteMany({ where: { clientId: { in: clientIds } } }); await prisma.leadActivity.deleteMany({ where: { clientId: { in: clientIds } } }); }
+  if (clientIds.length) { await prisma.commercialProposal.deleteMany({ where: { clientId: { in: clientIds } } }); await prisma.leadCalculation.deleteMany({ where: { clientId: { in: clientIds } } }); }
   if (orderIds.length) { await prisma.orderEvent.deleteMany({ where: { orderId: { in: orderIds } } }); await prisma.order.deleteMany({ where: { id: { in: orderIds } } }); }
   if (profileIds.length) await prisma.employeePayrollProfile.deleteMany({ where: { id: { in: profileIds } } });
   if (clientIds.length) await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
@@ -132,6 +139,8 @@ async function cleanup() {
     await prisma.leadNextAction.deleteMany({ where: { clientId: { in: ids.clients } } });
     await prisma.leadStatusHistory.deleteMany({ where: { clientId: { in: ids.clients } } });
     await prisma.leadActivity.deleteMany({ where: { clientId: { in: ids.clients } } });
+    await prisma.commercialProposal.deleteMany({ where: { clientId: { in: ids.clients } } });
+    await prisma.leadCalculation.deleteMany({ where: { clientId: { in: ids.clients } } });
   }
   if (ids.orders.length) {
     await prisma.orderEvent.deleteMany({ where: { orderId: { in: ids.orders } } });
@@ -233,7 +242,9 @@ async function main() {
     assert.equal((savedDraft.individualSteps as Array<{ length: number | null }>)[1].length, null, "Partial measurement draft was not persisted");
     await prepareDesignWorkflow(scheduled.measurement.id, measurerA.id, "main");
     await assert.rejects(() => completeMeasurement(actorA, scheduled.measurement.id, draft), (error) => error instanceof MeasurementError && error.message === "CLIENT_OUTCOME_REQUIRED");
-    const completed = await completeMeasurement(actorA, scheduled.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE });
+    await assert.rejects(() => completeMeasurement(actorA, scheduled.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE }), (error) => error instanceof MeasurementError && error.message === "QUOTE_REQUIRED");
+    const commercial = await createTestProposal(client.id, manager);
+    const completed = await completeMeasurement(actorA, scheduled.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE }, commercial);
     assert.equal(completed.status, "COMPLETED");
     assert.equal(completed.stepsCount, 15);
     assert.equal(completed.stepLength, 1000);
@@ -242,6 +253,8 @@ async function main() {
     assert.equal(completed.winderCount, 2);
     assert.equal(completed.platformsCount, 1);
     assert.equal(completed.railingLength, 5.4);
+    assert.equal(Number(completed.quoteFinalPrice), 2_800_000);
+    assert.ok(completed.finalProposalId, "Final proposal was not linked to measurement");
     await assert.rejects(() => saveMeasurementDraft(actorA, scheduled.measurement.id, { ...draft, stepsCount: 16 }), (error) => error instanceof MeasurementError && error.message === "IMMUTABLE_MEASUREMENT");
     const handed = await handMeasurementToManager(actorA, scheduled.measurement.id);
     console.log("measurement test: completed and handed");

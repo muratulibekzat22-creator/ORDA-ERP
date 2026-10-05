@@ -16,7 +16,7 @@ export async function GET() {
 
   const partner = await prisma.partner.findFirst({
     where: { userId: Number(auth.session!.user.id), active: true, archived: false, isTest: false },
-    select: { id: true },
+    select: { id: true, name: true, phone: true },
   });
   if (!partner) {
     return NextResponse.json(
@@ -29,13 +29,45 @@ export async function GET() {
     prisma.order.findMany({
       where: { partnerId: partner.id, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
       select: {
+        id: true,
+        number: true,
         status: true,
         lifecycle: true,
+        address: true,
+        staircase: true,
+        material: true,
+        mapUrl: true,
+        orderReceivedAt: true,
+        promisedAt: true,
+        productionDeadline: true,
+        frameComment: true,
+        railingType: true,
+        supportType: true,
+        color: true,
+        lighting: true,
+        lightingDetails: true,
+        cladding: true,
+        claddingDetails: true,
+        additionalDetails: true,
+        designStyle: true,
+        designNotes: true,
         partnerPrice: true,
         partnerAgreedAt: true,
         partnerPaid: true,
         partnerBalance: true,
+        partnerPlannedReadyAt: true,
+        partnerComment: true,
+        readyForInstallation: true,
+        installationCompleted: true,
+        client: { select: { id: true, name: true, phone: true, city: true } },
+        measurements: {
+          where: { completedAt: { not: null } },
+          select: { id: true, status: true, completedAt: true, visitDate: true, stepsCount: true, measurer: true },
+          orderBy: { completedAt: "desc" },
+        },
       },
+      orderBy: [{ lifecycle: "asc" }, { productionDeadline: "asc" }, { id: "desc" }],
+      take: 500,
     }),
     prisma.payment.findMany({
       where: {
@@ -69,6 +101,22 @@ export async function GET() {
   );
 
   return NextResponse.json({
+    partner: { id: partner.id, name: partner.name, phone: partner.phone },
+    orders: orders.map((order) => ({
+      id: order.id, number: order.number, status: order.status, lifecycle: order.lifecycle,
+      client: order.client, address: order.address, staircase: order.staircase, material: order.material,
+      mapUrl: order.mapUrl, orderReceivedAt: order.orderReceivedAt, promisedAt: order.promisedAt,
+      productionDeadline: order.productionDeadline, frameComment: order.frameComment,
+      railingType: order.railingType, supportType: order.supportType, color: order.color,
+      lighting: order.lighting, lightingDetails: order.lightingDetails,
+      cladding: order.cladding, claddingDetails: order.claddingDetails,
+      additionalDetails: order.additionalDetails, designStyle: order.designStyle, designNotes: order.designNotes,
+      partnerPrice: Number(order.partnerPrice), partnerAgreedAt: order.partnerAgreedAt,
+      partnerPaid: Number(order.partnerPaid), partnerBalance: Math.max(Number(order.partnerBalance), 0),
+      partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment,
+      readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted,
+      measurements: order.measurements.map((measurement) => ({ ...measurement, sheetHref: `/api/measurements/${measurement.id}/sheet` })),
+    })),
     activeOrders: orders.filter((order) => order.lifecycle !== OrderLifecycle.COMPLETED && order.lifecycle !== OrderLifecycle.CANCELLED).length,
     completedOrders: orders.filter((order) => order.lifecycle === OrderLifecycle.COMPLETED).length,
     totals,

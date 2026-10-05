@@ -15,7 +15,6 @@ export function measurementError(error: unknown) {
   if (code === "MEASURER_TRAVEL_APPROVAL_REQUIRED") return NextResponse.json({ error: "Это дальний выезд. Подтвердите согласование поездки с замерщиком." }, { status: 409 });
   if (code === "CLIENT_PHONE_REQUIRED") return NextResponse.json({ error: "У клиента должен быть указан телефон" }, { status: 400 });
   if (code === "LOCATION_REQUIRED") return NextResponse.json({ error: "Укажите адрес или ссылку на локацию" }, { status: 400 });
-  if (code === "SHEET_PHOTO_REQUIRED") return NextResponse.json({ error: "Перед завершением загрузите фото листа замера" }, { status: 409 });
   if (code === "OBJECT_PHOTOS_REQUIRED") return NextResponse.json({ error: "Добавьте три обязательных ракурса лестницы: спереди, сбоку и с обратной стороны" }, { status: 409 });
   if (code === "DESIGN_REFERENCE_REQUIRED") return NextResponse.json({ error: "Добавьте референс дизайна, который выбрал клиент" }, { status: 409 });
   if (code === "DESIGN_INPUT_REQUIRED") return NextResponse.json({ error: "Для промпта нужны три ракурса объекта и референс клиента" }, { status: 409 });
@@ -27,6 +26,13 @@ export function measurementError(error: unknown) {
   if (code === "REFUSAL_REASON_REQUIRED") return NextResponse.json({ error: "Укажите причину отказа; для «Другое» нужен комментарий" }, { status: 400 });
   if (code === "CANCELLATION_REASON_REQUIRED") return NextResponse.json({ error: "Укажите причину отмены замера" }, { status: 400 });
   if (code === "MANAGER_REQUIRED") return NextResponse.json({ error: "У заявки нет ответственного менеджера" }, { status: 409 });
+  if (code === "ORDER_NOT_FOUND") return NextResponse.json({ error: "Подходящий действующий заказ не найден" }, { status: 404 });
+  if (code === "SOURCE_PROPOSAL_REQUIRED") return NextResponse.json({ error: "Выберите исходное КП менеджера" }, { status: 400 });
+  if (code === "PROPOSAL_NOT_FOUND") return NextResponse.json({ error: "КП не найдено у этого клиента" }, { status: 404 });
+  if (code === "PROPOSAL_VARIANT_REQUIRED") return NextResponse.json({ error: "Выберите материал из исходного КП" }, { status: 400 });
+  if (code === "QUOTE_REQUIRED") return NextResponse.json({ error: "Перед завершением укажите окончательную цену" }, { status: 409 });
+  if (code === "QUOTE_CONFIRMATION_REQUIRED") return NextResponse.json({ error: "Подтвердите, что окончательная сумма согласована с клиентом" }, { status: 409 });
+  if (code === "INVALID_QUOTE") return NextResponse.json({ error: "Скидка должна быть неотрицательной и меньше исходной цены" }, { status: 400 });
   if (code === "TRAINING_REQUIRED") return NextResponse.json({ error: "Для начала работы необходимо пройти обязательное обучение.", code: "TRAINING_REQUIRED" }, { status: 409 });
   if (["INVALID_STATE", "IMMUTABLE_MEASUREMENT"].includes(code)) return NextResponse.json({ error: "Завершённый или переданный замер нельзя изменять" }, { status: 409 });
   if (["INVALID_INPUT", "INVALID_DIMENSIONS"].includes(code)) return NextResponse.json({ error: "Проверьте обязательные поля и размеры" }, { status: 400 });

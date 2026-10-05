@@ -54,6 +54,12 @@ const draft: MeasurementDraft = {
   comment: "Результат замерщика",
 };
 
+async function commercialQuote(clientId: number, manager: { id: number; name: string }) {
+  const calculation = await prisma.leadCalculation.create({ data: { clientId, material: "Карагач", baseClientPrice: 1_350_000, clientPrice: 1_350_000, internalCost: 800_000, snapshot: { regularSteps: 12, workshopRate: 65_000, saleRate: 110_000 }, authorId: manager.id, authorName: manager.name } });
+  const proposal = await prisma.commercialProposal.create({ data: { clientId, calculationId: calculation.id, number: `${tag}-ready-KP`, rootNumber: `${tag}-ready-KP`, snapshot: { variants: [{ material: "Карагач", total: 1_350_000, warranty: "1 год" }] }, total: 1_350_000, validUntil: new Date(Date.now() + 7 * 86_400_000), executionTerm: "40–50 дней", paymentTerms: "50/50", warranty: "1 год", managerContact: manager.name, createdById: manager.id, createdByName: manager.name } });
+  return { sourceProposalId: proposal.id, material: "Карагач", discount: 50_000, confirmedWithClient: true, comment: "Скидка после замера" };
+}
+
 async function client(manager: { id: number; name: string }, suffix: string) {
   const created = await prisma.client.create({
     data: {
@@ -220,9 +226,12 @@ async function main() {
     const readyClient = await client(manager, "ready");
     const readyMeasurement = await scheduleMeasurement(managerActor, { clientId: readyClient.id, measurerUserId: measurer.id, visitDate: new Date(Date.now() + 86_400_000), address: readyClient.address });
     await prepareForCompletion(readyMeasurement.measurement.id, measurer.id, "ready");
-    const ready = await completeMeasurement(measurerActor, readyMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE });
+    const quote = await commercialQuote(readyClient.id, manager);
+    const ready = await completeMeasurement(measurerActor, readyMeasurement.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE }, quote);
     assert.equal(ready.status, MeasurementStatus.COMPLETED);
     assert.equal(ready.clientOutcome, MeasurementClientOutcome.READY_TO_CONTINUE);
+    assert.equal(Number(ready.quoteFinalPrice), 1_300_000);
+    assert.ok(ready.finalProposalId);
     assert.equal(await prisma.calendarTask.count({ where: { clientId: readyClient.id, assigneeId: manager.id, type: "TASK" } }), 1);
     assert.equal(await prisma.leadNextAction.count({ where: { clientId: readyClient.id, completedAt: null, nextActionComment: { contains: "клиент готов" } } }), 1);
 

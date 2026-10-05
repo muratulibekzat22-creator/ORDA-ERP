@@ -22,6 +22,7 @@ export default function MeasurementsTab({ order }: { order: OrderTabData }) {
                   Высота: {measurement.floorHeight ?? "—"} · Ширина: {measurement.staircaseWidth ?? "—"} · Ступени: {measurement.stepsCount ?? "—"}
                 </p>
                 {measurement.comment && <p className="mt-2 text-sm text-slate-400">{measurement.comment}</p>}
+                <a href={`/api/measurements/${measurement.id}/sheet`} target="_blank" className="mt-3 inline-block text-sm font-semibold text-blue-300">Открыть замерный лист PDF</a>
               </div>
             ))
           )}

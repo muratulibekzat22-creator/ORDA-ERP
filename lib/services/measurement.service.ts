@@ -17,6 +17,8 @@ import {
   OrderResponsibleType,
 } from "@prisma/client";
 import { createRequestHash } from "@/lib/idempotency";
+import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
+import { PROPOSAL_VALIDITY_DAYS } from "@/lib/proposals/presentation";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
 import {
   decodeDateIdCursor,
@@ -64,6 +66,14 @@ export type MeasurementOutcomeInput = {
   clientOutcome: MeasurementClientOutcome;
   refusalReason?: LeadLostReason;
   outcomeComment?: string;
+};
+
+export type MeasurementCommercialInput = {
+  sourceProposalId: number;
+  material: string;
+  discount: number;
+  comment?: string;
+  confirmedWithClient: boolean;
 };
 
 export type MeasurementDesignWorkflowInput = {
@@ -147,9 +157,22 @@ const measurementInclude = {
       manager: true,
       managerUserId: true,
       managerUser: { select: { id: true, name: true, phone: true } },
+      commercialProposals: {
+        select: { id: true, number: true, status: true, total: true, snapshot: true, createdAt: true },
+        orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }],
+        take: 10,
+      },
+      orders: {
+        where: { deletedAt: null, lifecycle: { not: "CANCELLED" as const } },
+        select: { id: true, number: true, status: true, lifecycle: true },
+        orderBy: { createdAt: "desc" as const },
+        take: 25,
+      },
     },
   },
   order: { select: { id: true, number: true } },
+  sourceProposal: { select: { id: true, number: true, status: true, total: true, snapshot: true } },
+  finalProposal: { select: { id: true, number: true, status: true, total: true } },
   attachments: {
     select: {
       id: true,
@@ -230,6 +253,16 @@ export function measurementOperationalView(
 
   return {
     ...measurement,
+    client: {
+      ...measurement.client,
+      commercialProposals: measurement.client.commercialProposals.map((proposal) => ({
+        ...proposal,
+        snapshot: publicCalculationSnapshot(proposal.snapshot),
+      })),
+    },
+    sourceProposal: measurement.sourceProposal
+      ? { ...measurement.sourceProposal, snapshot: publicCalculationSnapshot(measurement.sourceProposal.snapshot) }
+      : null,
     operational: {
       needsClosing: overdueMs > 0,
       overdueMs,
@@ -264,7 +297,7 @@ export function measurementOperationalView(
 export function measurementScope(
   actor: MeasurementActor,
 ): Prisma.MeasurementWhereInput {
-  if (actor.role === Role.DIRECTOR) return {};
+  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) return {};
   if (actor.role === Role.MEASURER) return { measurerUserId: actor.userId };
   if (actor.role === Role.MANAGER)
     return {
@@ -283,7 +316,7 @@ function canManage(
   measurement: { client: { managerUserId: number | null; manager?: string } },
 ) {
   return (
-    actor.role === Role.DIRECTOR ||
+    actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR ||
     (actor.role === Role.MANAGER &&
       (measurement.client.managerUserId === actor.userId ||
         (!measurement.client.managerUserId &&
@@ -964,7 +997,7 @@ export async function scheduleMeasurement(
   actor: MeasurementActor,
   input: ScheduleMeasurementInput,
 ) {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER)
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER)
     throw new MeasurementError("FORBIDDEN");
   if (
     !Number.isInteger(input.clientId) ||
@@ -1363,23 +1396,192 @@ export async function updateMeasurementDesignWorkflow(
   });
 }
 
-export async function completeMeasurement(
+function proposalVariants(snapshot: Prisma.JsonValue) {
+  const safe = publicCalculationSnapshot(snapshot);
+  if (!safe || typeof safe !== "object" || Array.isArray(safe)) return [];
+  const variants = (safe as Record<string, unknown>).variants;
+  if (!Array.isArray(variants)) return [];
+  return variants
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => ({
+      ...item,
+      material: String(item.material ?? "").trim(),
+      total: Number(item.total ?? 0),
+    }))
+    .filter((item) => item.material && Number.isFinite(item.total) && item.total > 0);
+}
+
+export function measurementQuoteAmounts(basePriceValue: unknown, discountValue: unknown) {
+  const basePrice = Number(basePriceValue), discount = Number(discountValue);
+  if (!Number.isFinite(basePrice) || basePrice <= 0 || !Number.isFinite(discount) || discount < 0 || discount >= basePrice)
+    throw new MeasurementError("INVALID_QUOTE");
+  return { basePrice, discount, finalPrice: basePrice - discount };
+}
+
+async function validateCommercialQuote(
+  tx: Prisma.TransactionClient,
+  current: Awaited<ReturnType<typeof editableMeasurement>>,
+  input: MeasurementCommercialInput,
+) {
+  if (!Number.isInteger(input.sourceProposalId) || input.sourceProposalId <= 0)
+    throw new MeasurementError("SOURCE_PROPOSAL_REQUIRED");
+  const proposal = await tx.commercialProposal.findFirst({
+    where: { id: input.sourceProposalId, clientId: current.clientId },
+    include: { calculation: true },
+  });
+  if (!proposal) throw new MeasurementError("PROPOSAL_NOT_FOUND");
+  const material = input.material.trim().slice(0, 120);
+  const variant = proposalVariants(proposal.snapshot).find((item) => item.material === material);
+  if (!variant) throw new MeasurementError("PROPOSAL_VARIANT_REQUIRED");
+  const amounts = measurementQuoteAmounts(variant.total, input.discount);
+  return {
+    proposal,
+    material,
+    ...amounts,
+    comment: trim(input.comment, 2000),
+    confirmedAt: input.confirmedWithClient ? new Date() : null,
+  };
+}
+
+export async function saveMeasurementCommercialQuote(
   actor: MeasurementActor,
   id: number,
-  draft: MeasurementDraft,
-  outcome?: MeasurementOutcomeInput,
+  input: MeasurementCommercialInput,
 ) {
   if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
-    if (
-      !current.attachments.some(
-        (photo) => photo.type === MeasurementPhotoType.SHEET,
-      )
-    )
-      throw new MeasurementError("SHEET_PHOTO_REQUIRED");
+    const quote = await validateCommercialQuote(tx, current, input);
+    const updated = await tx.measurement.update({
+      where: { id },
+      data: {
+        sourceProposalId: quote.proposal.id,
+        quoteMaterial: quote.material,
+        quoteBasePrice: quote.basePrice,
+        quoteDiscount: quote.discount,
+        quoteFinalPrice: quote.finalPrice,
+        quoteComment: quote.comment,
+        quoteConfirmedAt: quote.confirmedAt,
+      },
+      include: measurementInclude,
+    });
+    await tx.measurementAudit.create({
+      data: {
+        measurementId: id,
+        action: "COMMERCIAL_QUOTE_SAVED",
+        actorId: actor.userId,
+        after: {
+          sourceProposalId: quote.proposal.id,
+          material: quote.material,
+          basePrice: quote.basePrice,
+          discount: quote.discount,
+          finalPrice: quote.finalPrice,
+          confirmedWithClient: Boolean(quote.confirmedAt),
+        },
+      },
+    });
+    return measurementOperationalView(updated);
+  });
+}
+
+async function createFinalMeasurementProposal(
+  tx: Prisma.TransactionClient,
+  current: Awaited<ReturnType<typeof editableMeasurement>>,
+  measurementId: number,
+  actor: MeasurementActor,
+  quote: Awaited<ReturnType<typeof validateCommercialQuote>>,
+) {
+  const rootNumber = quote.proposal.rootNumber ?? quote.proposal.number;
+  const latest = await tx.commercialProposal.findFirst({
+    where: { clientId: current.clientId, rootNumber },
+    orderBy: { version: "desc" },
+    select: { version: true },
+  });
+  const version = Math.max(latest?.version ?? quote.proposal.version, quote.proposal.version) + 1;
+  const number = `${rootNumber}-V${version}`;
+  const sourceSnapshot = publicCalculationSnapshot(quote.proposal.snapshot) as Record<string, unknown>;
+  const selectedVariant = proposalVariants(quote.proposal.snapshot).find((item) => item.material === quote.material)!;
+  const now = new Date();
+  const validUntil = new Date(now.getTime() + PROPOSAL_VALIDITY_DAYS * 86_400_000);
+  const sourceCalculationSnapshot = quote.proposal.calculation.snapshot && typeof quote.proposal.calculation.snapshot === "object" && !Array.isArray(quote.proposal.calculation.snapshot)
+    ? quote.proposal.calculation.snapshot as Prisma.JsonObject
+    : {};
+  const calculationSnapshot = {
+    ...sourceCalculationSnapshot,
+    measurementId,
+    onsiteDiscount: quote.discount,
+    finalClientPrice: quote.finalPrice,
+  } as Prisma.InputJsonObject;
+  const calculation = await tx.leadCalculation.create({
+    data: {
+      clientId: current.clientId,
+      material: quote.material,
+      baseClientPrice: quote.basePrice,
+      clientPrice: quote.finalPrice,
+      internalCost: quote.proposal.calculation.internalCost,
+      snapshot: calculationSnapshot,
+      comment: `Окончательный расчёт после замера №${measurementId}${quote.comment ? ` · ${quote.comment}` : ""}`,
+      authorId: actor.userId,
+      authorName: actor.name,
+    },
+  });
+  const snapshot = JSON.parse(JSON.stringify({
+    ...sourceSnapshot,
+    number: rootNumber,
+    version,
+    createdAt: now.toISOString(),
+    validUntil: validUntil.toISOString(),
+    measurementId,
+    variants: [{
+      ...selectedVariant,
+      total: quote.finalPrice,
+      baseTotal: quote.basePrice,
+      onsiteDiscount: quote.discount,
+      quoteComment: quote.comment ?? "",
+    }],
+    finalQuote: {
+      material: quote.material,
+      baseTotal: quote.basePrice,
+      discount: quote.discount,
+      total: quote.finalPrice,
+      confirmedAt: quote.confirmedAt?.toISOString() ?? now.toISOString(),
+    },
+  })) as Prisma.InputJsonValue;
+  return tx.commercialProposal.create({
+    data: {
+      clientId: current.clientId,
+      calculationId: calculation.id,
+      number,
+      rootNumber,
+      version,
+      status: "GENERATED",
+      snapshot,
+      total: quote.finalPrice,
+      validUntil,
+      executionTerm: quote.proposal.executionTerm,
+      paymentTerms: quote.proposal.paymentTerms,
+      warranty: quote.proposal.warranty,
+      managerContact: quote.proposal.managerContact,
+      createdById: actor.userId,
+      createdByName: actor.name,
+    },
+  });
+}
+
+export async function completeMeasurement(
+  actor: MeasurementActor,
+  id: number,
+  draft: MeasurementDraft,
+  outcome?: MeasurementOutcomeInput,
+  commercial?: MeasurementCommercialInput,
+) {
+  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
+  return prisma.$transaction(async (tx) => {
+    const current = await editableMeasurement(tx, actor, id);
+    if (!EDITABLE_STATUSES.includes(current.status))
+      throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     const photoTypes = current.attachments.map((photo) => photo.type);
     const legacyObjectPhotos = photoTypes.filter(
       (type) => type === MeasurementPhotoType.OBJECT,
@@ -1402,6 +1604,21 @@ export async function completeMeasurement(
     if (!current.designShownAt)
       throw new MeasurementError("DESIGN_NOT_SHOWN");
     if (!outcome) throw new MeasurementError("CLIENT_OUTCOME_REQUIRED");
+    const quote = commercial
+      ? await validateCommercialQuote(tx, current, commercial)
+      : current.sourceProposalId && current.quoteFinalPrice
+        ? await validateCommercialQuote(tx, current, {
+            sourceProposalId: current.sourceProposalId,
+            material: current.quoteMaterial,
+            discount: Number(current.quoteDiscount),
+            comment: current.quoteComment ?? undefined,
+            confirmedWithClient: Boolean(current.quoteConfirmedAt),
+          })
+        : null;
+    if (outcome.clientOutcome === MeasurementClientOutcome.READY_TO_CONTINUE && !quote)
+      throw new MeasurementError("QUOTE_REQUIRED");
+    if (outcome.clientOutcome === MeasurementClientOutcome.READY_TO_CONTINUE && !quote?.confirmedAt)
+      throw new MeasurementError("QUOTE_CONFIRMATION_REQUIRED");
     const outcomeComment = trim(outcome?.outcomeComment, 2000);
     if (
       outcome?.clientOutcome === MeasurementClientOutcome.RETURN_TO_MANAGER &&
@@ -1415,13 +1632,36 @@ export async function completeMeasurement(
     )
       throw new MeasurementError("REFUSAL_REASON_REQUIRED");
     const now = new Date();
+    const finalProposal = quote?.confirmedAt
+      ? await createFinalMeasurementProposal(tx, current, id, actor, quote)
+      : null;
+    const commercialSnapshot = quote ? {
+      sourceProposalId: quote.proposal.id,
+      finalProposalId: finalProposal?.id ?? null,
+      material: quote.material,
+      basePrice: quote.basePrice,
+      discount: quote.discount,
+      finalPrice: quote.finalPrice,
+      comment: quote.comment,
+      confirmedAt: quote.confirmedAt?.toISOString() ?? null,
+    } : null;
     const result = await tx.measurement.update({
       where: { id },
       data: {
         ...draftData(draft),
+        ...(quote ? {
+          sourceProposal: { connect: { id: quote.proposal.id } },
+          ...(finalProposal ? { finalProposal: { connect: { id: finalProposal.id } } } : {}),
+          quoteMaterial: quote.material,
+          quoteBasePrice: quote.basePrice,
+          quoteDiscount: quote.discount,
+          quoteFinalPrice: quote.finalPrice,
+          quoteComment: quote.comment,
+          quoteConfirmedAt: quote.confirmedAt,
+        } : {}),
         status: MeasurementStatus.COMPLETED,
         completedAt: now,
-        completedSnapshot: draft as unknown as Prisma.InputJsonValue,
+        completedSnapshot: { measurement: draft, commercial: commercialSnapshot } as unknown as Prisma.InputJsonValue,
         ...(outcome
           ? {
               clientOutcome: outcome.clientOutcome,
@@ -1548,6 +1788,7 @@ export async function completeMeasurement(
               : `Замер завершён — требуется работа: ${client.name}`,
             description: [
               `Замер №${id}`,
+              finalProposal ? `Окончательное КП №${finalProposal.number}: ${quote?.finalPrice.toLocaleString("ru-RU")} ₸` : null,
               outcomeComment,
             ]
               .filter(Boolean)
@@ -1629,7 +1870,7 @@ export async function handMeasurementToManager(
   actor: MeasurementActor,
   id: number,
 ) {
-  if (actor.role !== Role.MEASURER && actor.role !== Role.DIRECTOR)
+  if (actor.role !== Role.MEASURER && actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
@@ -1703,6 +1944,51 @@ export async function handMeasurementToManager(
       where: { id },
       data: { status: MeasurementStatus.HANDED_TO_MANAGER, handedAt: now },
     });
+  });
+}
+
+export async function linkMeasurementToOrder(
+  actor: MeasurementActor,
+  id: number,
+  orderId: number,
+) {
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER)
+    throw new MeasurementError("FORBIDDEN");
+  return prisma.$transaction(async (tx) => {
+    const measurement = await tx.measurement.findUnique({
+      where: { id },
+      select: { id: true, clientId: true, orderId: true, calendarTaskId: true, client: { select: { managerUserId: true } } },
+    });
+    if (!measurement || (actor.role === Role.MANAGER && measurement.client.managerUserId !== actor.userId))
+      throw new MeasurementError("NOT_FOUND");
+    const order = await tx.order.findFirst({
+      where: {
+        id: orderId,
+        clientId: measurement.clientId,
+        deletedAt: null,
+        lifecycle: { not: "CANCELLED" },
+        ...(actor.role === Role.MANAGER ? { managerUserId: actor.userId } : {}),
+      },
+      select: { id: true, number: true },
+    });
+    if (!order) throw new MeasurementError("ORDER_NOT_FOUND");
+    const updated = await tx.measurement.update({
+      where: { id },
+      data: { orderId: order.id },
+      include: measurementInclude,
+    });
+    if (measurement.calendarTaskId)
+      await tx.calendarTask.update({ where: { id: measurement.calendarTaskId }, data: { orderId: order.id } });
+    await tx.measurementAudit.create({
+      data: {
+        measurementId: id,
+        action: "ORDER_LINKED",
+        actorId: actor.userId,
+        before: { orderId: measurement.orderId },
+        after: { orderId: order.id, orderNumber: order.number },
+      },
+    });
+    return measurementOperationalView(updated);
   });
 }
 

@@ -9,10 +9,12 @@ import {
   getMeasurement,
   handMeasurementToManager,
   inviteClientToOffice,
+  linkMeasurementToOrder,
   markReadyForContract,
   parseMeasurementDraft,
   rescheduleMeasurement,
   saveMeasurementComment,
+  saveMeasurementCommercialQuote,
   saveMeasurementDraft,
   startMeasurement,
   updateMeasurementDesignWorkflow,
@@ -50,11 +52,24 @@ export async function PATCH(request: Request, { params }: Context) {
       }));
     }
     if (action === "save-draft") return NextResponse.json(await saveMeasurementDraft(actor, id, parseMeasurementDraft(body, false)));
+    const commercial = () => ({
+      sourceProposalId: Number(body.sourceProposalId),
+      material: typeof body.quoteMaterial === "string" ? body.quoteMaterial : "",
+      discount: Number(body.quoteDiscount ?? 0),
+      comment: typeof body.quoteComment === "string" ? body.quoteComment : undefined,
+      confirmedWithClient: body.quoteConfirmedWithClient === true,
+    });
+    if (action === "save-quote") return NextResponse.json(await saveMeasurementCommercialQuote(actor, id, commercial()));
     if (action === "complete") {
       const clientOutcome = typeof body.clientOutcome === "string" && Object.values(MeasurementClientOutcome).includes(body.clientOutcome as MeasurementClientOutcome) ? body.clientOutcome as MeasurementClientOutcome : null;
       const refusalReason = typeof body.refusalReason === "string" && Object.values(LeadLostReason).includes(body.refusalReason as LeadLostReason) ? body.refusalReason as LeadLostReason : undefined;
       if (!clientOutcome) return NextResponse.json({ error: "Выберите результат общения с клиентом" }, { status: 400 });
-      return NextResponse.json(await completeMeasurement(actor, id, parseMeasurementDraft(body), { clientOutcome, refusalReason, outcomeComment: typeof body.outcomeComment === "string" ? body.outcomeComment : undefined }));
+      return NextResponse.json(await completeMeasurement(actor, id, parseMeasurementDraft(body), { clientOutcome, refusalReason, outcomeComment: typeof body.outcomeComment === "string" ? body.outcomeComment : undefined }, body.sourceProposalId ? commercial() : undefined));
+    }
+    if (action === "link-order") {
+      const orderId = Number(body.orderId);
+      if (!Number.isInteger(orderId) || orderId <= 0) return NextResponse.json({ error: "Выберите действующий заказ" }, { status: 400 });
+      return NextResponse.json(await linkMeasurementToOrder(actor, id, orderId));
     }
     if (action === "handoff") return NextResponse.json(await handMeasurementToManager(actor, id));
     if (action === "ready-contract") return NextResponse.json(await markReadyForContract(actor, id));
