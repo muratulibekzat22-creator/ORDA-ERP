@@ -83,6 +83,7 @@
     "test:application-go-live": "tsx scripts/test-application-lifecycle-go-live.ts",
     "test:reports": "tsx scripts/test-reports.ts",
     "test:marketing": "tsx scripts/test-management-marketing.ts",
+    "test:marketing-funnel": "tsx scripts/test-marketing-funnel.ts",
     "test:meta-ads:contract": "tsx scripts/test-meta-ads-contract.ts",
     "test:orders-module": "tsx scripts/test-orders-module.ts",
     "test:order-form-regression": "tsx scripts/test-order-form-regression.ts",

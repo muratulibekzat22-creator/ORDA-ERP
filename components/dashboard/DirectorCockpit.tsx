@@ -118,12 +118,21 @@ type ManagementPayload = {
     leads: number;
     orders: number;
     revenue: number;
+    metaSpend: number;
+    metaConversations: number;
+    metaLeadActions: number;
+    metaCrmLeads: number;
+    metaOrders: number;
+    metaRevenue: number;
+    costPerConversation: number | null;
     qualifiedShare: number | null;
     cpl: number | null;
     cac: number | null;
     roas: number | null;
     conversion: number | null;
+    metaConversion: number | null;
     spendTracked: boolean;
+    metaSpendTracked: boolean;
     crmTracked: boolean;
     metaAttributionMissing: boolean;
   };
@@ -414,7 +423,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
     data.orders.missingProductionPrice > 0 ? `${data.orders.missingProductionPrice} заказов без цены производства` : null,
     data.orders.incompleteData > 0 ? `${data.orders.incompleteData} заказов нужно дополнить` : null,
     data.finance.pendingOrderDates > 0 ? `${data.finance.pendingOrderDates} заказов ждут подтверждения фактической даты` : null,
-    !data.marketing.spendTracked ? "расход Meta ещё не подключён" : null,
+    !data.marketing.metaSpendTracked ? "расход Meta ещё не подключён" : null,
     data.marketing.leads === 0 ? "нет обращений в CRM за выбранный месяц" : null,
   ].filter((item): item is string => Boolean(item));
   const roleLabel: Record<string, string> = {
@@ -502,17 +511,20 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-lg font-bold text-white">Маркетинг и продажи</h2><p className="text-sm text-slate-400">Расход, результат и стоимость привлечения</p></div></div><Link href="/marketing" className="text-sm font-semibold text-fuchsia-300">Открыть маркетинг</Link></div>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-          <FounderEfficiency label="Расход рекламы" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint={data.marketing.spendTracked ? "В аналитике маркетинга" : "Доступ Meta не подключён"}/>
-          <FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Все новые заявки CRM"/>
-          <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По дате заказа за месяц"/>
-          <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="Продажи заказов месяца"/>
-          <FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint={data.marketing.metaAttributionMissing ? "Нужна связь с рекламой" : "Расход / обращения"}/>
-          <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint={data.marketing.metaAttributionMissing ? "Нужна связь с рекламой" : "Расход / заказы"}/>
-          <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint={data.marketing.metaAttributionMissing ? "Нужна связь с рекламой" : "Выручка / расход"}/>
-          <FounderEfficiency label="Конверсия" value={percent(data.marketing.conversion)} hint="Заказы / обращения"/>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          <FounderEfficiency label="Расход Meta" value={data.marketing.metaSpendTracked ? money(data.marketing.metaSpend) : "—"} hint={data.marketing.metaSpendTracked ? "Автоматически из рекламного кабинета" : "Доступ Meta не подключён"}/>
+          <FounderEfficiency label="Переписки Meta" value={String(data.marketing.metaConversations)} hint={`Lead-события Meta: ${data.marketing.metaLeadActions}`}/>
+          <FounderEfficiency label="Лиды CRM из Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`}/>
+          <FounderEfficiency label="Заказы из Meta" value={String(data.marketing.metaOrders)} hint={`Все заказы месяца: ${data.marketing.orders}`}/>
+          <FounderEfficiency label="Сумма заказов из Meta" value={money(data.marketing.metaRevenue)} hint={`Все каналы: ${money(data.marketing.revenue)}`}/>
+          <FounderEfficiency label="Цена обращения" value={data.marketing.costPerConversation === null ? "—" : money(data.marketing.costPerConversation)} hint="Расход Meta / начатые переписки"/>
+          <FounderEfficiency label="Цена лида CRM" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход Meta / CRM-лиды с источником Meta"/>
+          <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход Meta / заказы из Meta"/>
+          <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Сумма заказов из Meta / расход Meta"/>
+          <FounderEfficiency label="Конверсия Meta → заказ" value={percent(data.marketing.metaConversion)} hint="Заказы из Meta / CRM-лиды из Meta"/>
         </div>
-        {!data.marketing.spendTracked ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка считаются из CRM. Расход появится после подключения служебного доступа Meta.</p> : data.marketing.metaAttributionMissing ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Заявки CRM пока не связаны с кампаниями Meta. Стоимость привлечения и ROAS по всем источникам не рассчитываются.</p> : null}
+        <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения считает начатую переписку в Meta. Цена лида CRM считает отдельную карточку клиента с источником Instagram, Facebook, Meta или таргет. Эти показатели совпадут только тогда, когда каждая переписка станет одним лидом CRM.</p>
+        {!data.marketing.metaSpendTracked ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка CRM доступны, но расход появится после подключения служебного доступа Meta.</p> : data.marketing.metaAttributionMissing ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В Meta есть переписки, но в CRM нет лидов с источником Meta за этот месяц. Проверьте заполнение источника у обращений: без него цена CRM-лида, цена заказа и ROAS будут неполными.</p> : null}
       </section>
 
       <nav aria-label="Основные разделы собственника" className="flex flex-wrap gap-2">
@@ -651,18 +663,21 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
   return <>
     <section className="rounded-2xl border border-fuchsia-500/20 bg-[#101827] p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-xl font-bold">Маркетинг и CRM</h2><p className="text-sm text-slate-400">Расход рекламы и обращения выбранного месяца</p></div></div><Link href="/marketing" className="rounded-xl border border-fuchsia-500/30 px-3 py-2 text-sm font-semibold text-fuchsia-200">Открыть маркетинг</Link></div>
-      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        <FounderEfficiency label="Расход" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint="В аналитике маркетинга" />
-        <FounderEfficiency label="Обращения" value={String(data.marketing.leads)} hint="Все новые заявки CRM" />
-        <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По дате заказа за месяц" />
-        <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="Продажи заказов месяца" />
-        <FounderEfficiency label="Цена лида" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / лиды" />
-        <FounderEfficiency label="Цена клиента" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы" />
-        <FounderEfficiency label="Конверсия" value={percent(data.marketing.qualifiedShare)} hint="Лид → заказ" />
-        <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход" />
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <FounderEfficiency label="Расход Meta" value={data.marketing.metaSpendTracked ? money(data.marketing.metaSpend) : "—"} hint="Автоматически из рекламного кабинета" />
+        <FounderEfficiency label="Переписки Meta" value={String(data.marketing.metaConversations)} hint={`Lead-события Meta: ${data.marketing.metaLeadActions}`} />
+        <FounderEfficiency label="Лиды CRM из Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`} />
+        <FounderEfficiency label="Заказы из Meta" value={String(data.marketing.metaOrders)} hint={`Все заказы месяца: ${data.marketing.orders}`} />
+        <FounderEfficiency label="Сумма заказов из Meta" value={money(data.marketing.metaRevenue)} hint={`Все каналы: ${money(data.marketing.revenue)}`} />
+        <FounderEfficiency label="Цена обращения" value={data.marketing.costPerConversation === null ? "—" : money(data.marketing.costPerConversation)} hint="Расход Meta / переписки" />
+        <FounderEfficiency label="Цена лида CRM" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход Meta / лиды CRM из Meta" />
+        <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход Meta / заказы из Meta" />
+        <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Сумма заказов из Meta / расход" />
+        <FounderEfficiency label="Конверсия Meta → заказ" value={percent(data.marketing.metaConversion)} hint="Заказы / CRM-лиды из Meta" />
       </div>
-      {!data.marketing.spendTracked && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Расход Meta за этот месяц ещё не синхронизирован. Проверьте статус подключения в маркетинге.</p>}
-      {data.marketing.metaAttributionMissing && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Обращения и заказы CRM пока не связаны с кампаниями Meta; цена привлечения и ROAS не рассчитываются по всем источникам.</p>}
+      <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения считает переписку Meta, а цена лида CRM — карточку клиента с источником Meta. Поэтому эти две суммы могут отличаться.</p>
+      {!data.marketing.metaSpendTracked && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Расход Meta за этот месяц ещё не синхронизирован. Проверьте статус подключения в маркетинге.</p>}
+      {data.marketing.metaAttributionMissing && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">В Meta есть переписки, но обращения CRM не отмечены источником Meta. Проверьте источник заявок, чтобы цена лида, цена заказа и ROAS были полными.</p>}
       <div className="mt-4 rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300"><b className="text-white">3D после КП:</b> сделано {data.salesTools.designDone}, не использовано {data.salesTools.designSkipped}, заказов после 3D {data.salesTools.designConverted}. Фактическая конверсия: {percent(data.salesTools.designConversion)}.</div>
     </section>
     <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">

@@ -225,7 +225,7 @@ type Payload = {
   detailsAvailable?: boolean;
 };
 type Operation =
-  "salary" | "partialPayment" | "allowance" | "premium" | "deduction" | "payment" | "advanceReport" | "editAccrual" | "reversal";
+  "salary" | "advancePayment" | "partialPayment" | "allowance" | "premium" | "deduction" | "payment" | "advanceReport" | "editAccrual" | "reversal";
 type OrderOption = {
   id: number;
   number: string;
@@ -361,7 +361,10 @@ const partialSalaryAvailable = (row: PayrollRow) => {
         salaryPaymentTypes.has(item.type),
     )
     .reduce((sum, item) => sum + Number(item.amount), 0);
-  return Math.max(row.currentSalary - paidTowardSalary, 0);
+  return Math.max(
+    Math.min(row.currentSalary - paidTowardSalary, statementPayable(row)),
+    0,
+  );
 };
 const statementAccrued = (row: PayrollRow) =>
   row.calculation.approvedAmount ?? row.calculation.accrued;
@@ -397,6 +400,11 @@ const statementPayable = (row: PayrollRow) =>
   Math.max(statementPrepared(row) - statementPaid(row), 0);
 const statementPriorDebt = (row: PayrollRow) =>
   Math.max(row.calculation.priorDebt ?? 0, 0);
+const paymentLabel = (payment: Payment) =>
+  payment.type === "ADVANCE" &&
+  payment.comment?.startsWith("Частичная оплата зарплаты")
+    ? "Частичная выплата зарплаты"
+    : labels[payment.type] ?? payment.type;
 const missingBonusCount = (row: PayrollRow) =>
   row.calculation.missingBonusCount ??
   (row.orderBonuses ?? []).filter((item) => item.manualBonus == null).length;
@@ -528,6 +536,9 @@ export default function PayrollPage() {
     locked = Boolean(data.period && data.period.status !== "OPEN");
   const partialPaymentCandidates = data.rows.filter(
     (row) => partialSalaryAvailable(row) > 0,
+  );
+  const advancePaymentCandidates = data.rows.filter(
+    (row) => statementPayable(row) > 0,
   );
   const accrualCorrectionCandidates = data.rows.filter(
     (row) => editablePayrollAccruals(row).length > 0,
@@ -764,6 +775,13 @@ export default function PayrollPage() {
           date: `${selected.year}-${String(selected.month).padStart(2, "0")}-01`,
           reason: "Изменение оклада",
         }
+      : next === "advancePayment" && employee
+        ? {
+            ...emptyForm(),
+            type: "ADVANCE",
+            method: "kaspi",
+            reason: `Аванс за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+          }
       : next === "partialPayment" && employee
         ? {
             ...emptyForm(),
@@ -827,19 +845,27 @@ export default function PayrollPage() {
         amount,
         comment: form.reason,
       };
-    else if (operation === "payment" || operation === "partialPayment")
+    else if (
+      operation === "payment" ||
+      operation === "advancePayment" ||
+      operation === "partialPayment"
+    )
       body = {
         action: "payment",
         employeeId: target.id,
         periodId: data.period.id,
         amount,
-        type: operation === "partialPayment" ? "ADVANCE" : form.type,
+        type:
+          operation === "advancePayment" || operation === "partialPayment"
+            ? "ADVANCE"
+            : form.type,
         paymentDate: form.date,
         method: form.method,
         externalReference: form.externalReference,
         comment: form.reason,
         relatedAccrualId: form.accrualId ? Number(form.accrualId) : undefined,
-        partialSalary: operation === "partialPayment",
+        partialSalary:
+          operation === "advancePayment" || operation === "partialPayment",
       };
     else if (operation === "editAccrual")
       body = {
@@ -879,6 +905,11 @@ export default function PayrollPage() {
       };
     const saved = operation === "advanceReport"
       ? await runSelf(body, "Заявка на аванс отправлена и ожидает подтверждения")
+      : operation === "advancePayment"
+        ? await run(
+            body,
+            `Аванс ${currency(amount)} учтён. Осталось к выплате ${currency(Math.max(statementPayable(target) - amount, 0))}`,
+          )
       : operation === "partialPayment"
       ? await run(
           body,
@@ -1287,7 +1318,9 @@ export default function PayrollPage() {
           operation={operation}
           row={target}
           rows={
-            operation === "partialPayment"
+            operation === "advancePayment"
+              ? advancePaymentCandidates
+              : operation === "partialPayment"
                 ? partialPaymentCandidates
                 : operation === "editAccrual"
                   ? accrualCorrectionCandidates
@@ -1303,6 +1336,13 @@ export default function PayrollPage() {
                   date: `${selected.year}-${String(selected.month).padStart(2, "0")}-01`,
                   reason: "Изменение оклада",
                 }
+              : operation === "advancePayment"
+                ? {
+                    ...emptyForm(),
+                    type: "ADVANCE",
+                    method: "kaspi",
+                    reason: `Аванс за ${months[selected.month - 1].toLowerCase()} ${selected.year}`,
+                  }
               : operation === "partialPayment"
                 ? {
                     ...emptyForm(),
@@ -1697,7 +1737,7 @@ function EmployeeDrawer({
     ...row.payments.map((item) => ({
       id: `p-${item.id}`,
       date: item.paymentDate,
-      title: labels[item.type] ?? item.type,
+      title: paymentLabel(item),
       amount:
         item.type === "EMPLOYEE_REFUND"
           ? Number(item.amount)
@@ -1964,13 +2004,31 @@ function EmployeeDrawer({
                   Запросить аванс
                 </button>
               )}
-              {canPay && !closed && (
+              {canPay && !closed && remaining > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onOperation("advancePayment", row)}
+                  className="min-h-10 rounded-lg border border-blue-500/40 px-3 text-sm font-semibold text-blue-200"
+                >
+                  Выдать аванс
+                </button>
+              )}
+              {canPay && !closed && partialSalaryAvailable(row) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onOperation("partialPayment", row)}
+                  className="min-h-10 rounded-lg border border-emerald-500/40 px-3 text-sm font-semibold text-emerald-200"
+                >
+                  Частичная выплата
+                </button>
+              )}
+              {canPay && !closed && remaining > 0 && (
                 <button
                   type="button"
                   onClick={() => onOperation("payment", row)}
                   className="min-h-10 rounded-lg bg-emerald-600 px-3 text-sm font-semibold"
                 >
-                  Добавить выплату
+                  Выплатить остаток
                 </button>
               )}
             </div>
@@ -1989,7 +2047,7 @@ function EmployeeDrawer({
               >
                 <div>
                   <p className="font-medium">
-                    {labels[item.type] ?? item.type}
+                    {paymentLabel(item)}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
                     {dateLabel(item.paymentDate)}
@@ -2188,6 +2246,7 @@ function OperationModal({
 }) {
   const titles: Record<Operation, string> = {
       salary: "Изменить оклад",
+      advancePayment: "Выдать аванс",
       partialPayment: "Частичная оплата зарплаты",
       allowance: "Изменить гарантированный бонус",
       premium: "Назначить премию",
@@ -2204,6 +2263,7 @@ function OperationModal({
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const availablePartialSalary = partialSalaryAvailable(row);
+  const availableAdvance = statementPayable(row);
   const requestedPartialSalary = Number(form.amount) || 0;
   const remainingAfterPartialSalary = Math.max(
     availablePartialSalary - requestedPartialSalary,
@@ -2344,7 +2404,13 @@ function OperationModal({
                 autoFocus
                 type="number"
                 min={operation === "salary" ? "0" : "1"}
-                max={operation === "partialPayment" ? availablePartialSalary : undefined}
+                max={
+                  operation === "advancePayment"
+                    ? availableAdvance
+                    : operation === "partialPayment"
+                      ? availablePartialSalary
+                      : undefined
+                }
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 className="control"
@@ -2352,6 +2418,11 @@ function OperationModal({
               {operation === "partialPayment" && (
                 <span className="mt-1.5 block text-xs text-blue-300">
                   Доступно для частичной оплаты: {currency(availablePartialSalary)}.
+                </span>
+              )}
+              {operation === "advancePayment" && (
+                <span className="mt-1.5 block text-xs text-blue-300">
+                  Доступно для аванса: {currency(availableAdvance)}. После сохранения сумма сразу попадёт в «Выплачено» и уменьшит «Осталось выплатить».
                 </span>
               )}
             </Field>
@@ -2383,13 +2454,13 @@ function OperationModal({
               </select>
             </Field>
           )}
-          {(operation === "payment" || operation === "partialPayment" || operation === "advanceReport") && (
+          {(operation === "payment" || operation === "advancePayment" || operation === "partialPayment" || operation === "advanceReport") && (
             <Field label="Способ выплаты">
               <select value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })} className="control" disabled={operation === "payment" && (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT")}>
                 <option value="kaspi">Kaspi</option>
-                {(operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="cash">Наличные</option>}
-                {(operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="bank_transfer">Банковский перевод</option>}
-                {(operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="other">Другое</option>}
+                {(operation === "advancePayment" || operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="cash">Наличные</option>}
+                {(operation === "advancePayment" || operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="bank_transfer">Банковский перевод</option>}
+                {(operation === "advancePayment" || operation === "partialPayment" || operation === "advanceReport" || (form.type !== "SALARY_PAYMENT" && form.type !== "FINAL_SETTLEMENT")) && <option value="other">Другое</option>}
               </select>
             </Field>
           )}
@@ -2480,7 +2551,7 @@ function OperationModal({
               </div>
             </Field>
           )}
-          {(operation === "salary" || operation === "payment" || operation === "partialPayment" || operation === "advanceReport") && (
+          {(operation === "salary" || operation === "payment" || operation === "advancePayment" || operation === "partialPayment" || operation === "advanceReport") && (
             <Field
               label={
                 operation === "salary"
@@ -2547,6 +2618,8 @@ function OperationModal({
                   : Number(form.amount) <= 0 ||
                     (operation === "partialPayment" &&
                       Number(form.amount) > availablePartialSalary) ||
+                    (operation === "advancePayment" &&
+                      Number(form.amount) > availableAdvance) ||
                     (operation === "payment" &&
                       (form.type === "SALARY_PAYMENT" || form.type === "FINAL_SETTLEMENT") &&
                       (form.method !== "kaspi" ||
@@ -2556,7 +2629,9 @@ function OperationModal({
             }
             className="min-h-11 rounded-xl bg-blue-600 px-5 font-semibold disabled:opacity-40"
           >
-            {operation === "partialPayment"
+            {operation === "advancePayment"
+              ? "Выдать аванс"
+              : operation === "partialPayment"
                 ? "Учесть частичную оплату"
                 : operation === "advanceReport"
                   ? "Запросить аванс"

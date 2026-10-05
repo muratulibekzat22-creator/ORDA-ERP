@@ -348,6 +348,17 @@ assert.match(page, /const statementPaid =/);
 assert.match(page, /const statementPayable =/);
 assert.match(page, /const PAYROLL_PAGE_SIZE = 25/);
 assert.match(page, /Пустой бонус означает «Не указан»; 0 ₸ — сохранённое/);
+for (const action of ["Выдать аванс", "Частичная выплата", "Выплатить остаток"])
+  assert.ok(page.includes(action), `Payroll UI is missing payment action: ${action}`);
+assert.match(
+  page,
+  /partialSalary:\s*operation === "advancePayment" \|\| operation === "partialPayment"/,
+);
+pass("Аванс и частичная выплата доступны отдельными действиями", {
+  advanceReducesPayable: true,
+  partialPaymentReducesPayable: true,
+  fullBalancePaymentRemainsAvailable: true,
+});
 pass("Таблица и карточка используют единый контракт расчёта", {
   fields: ["prepared", "accrued", "paid", "remaining", "priorDebt"],
   pageSize: 25,

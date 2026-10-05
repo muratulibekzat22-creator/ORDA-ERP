@@ -66,11 +66,20 @@ type Data = {
     leads: number;
     orders: number;
     revenue: number;
+    metaSpend: number;
+    metaConversations: number;
+    metaLeadActions: number;
+    metaCrmLeads: number;
+    metaOrders: number;
+    metaRevenue: number;
+    costPerConversation: number | null;
     cpl: number | null;
     cac: number | null;
     roas: number | null;
     conversion: number | null;
+    metaConversion: number | null;
     spendTracked: boolean;
+    metaSpendTracked: boolean;
     crmTracked: boolean;
     metaAttributionMissing: boolean;
   };
@@ -269,7 +278,10 @@ export default function MarketingManagementPage() {
       <section className="rounded-2xl border border-blue-500/20 bg-[#101827] p-4 sm:p-5">
         <div><p className="text-xs font-bold uppercase tracking-[.18em] text-blue-300">Результат CRM за {monthName(selectedMonth)}</p><h2 className="mt-1 text-xl font-bold">Все каналы продаж</h2><p className="mt-1 text-sm text-slate-400">Сюда входят обращения из WhatsApp, звонков, Instagram, Meta и других источников. Это не только лиды рекламы Meta.</p></div>
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><OwnerMetric label="Все новые обращения CRM" value={number(data.summary.leads)} note="Созданы в CRM за месяц"/><OwnerMetric label="Заказы CRM" value={number(data.summary.orders)} note="Оформлены за месяц"/><OwnerMetric label="Сумма заказов" value={money(data.summary.revenue)} note="Не равно полученной оплате"/><OwnerMetric label="Конверсия в заказ" value={data.summary.conversion===null?"—":`${data.summary.conversion.toFixed(1)}%`} note="Заказы / обращения"/></div>
-        {data.summary.metaAttributionMissing?<p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Часть обращений CRM ещё не связана с конкретной кампанией Meta. Поэтому ORDA не смешивает все источники и пока не показывает недостоверный ROAS по рекламе.</p>:null}
+        <h3 className="mt-5 font-bold text-white">Связка Meta → CRM</h3>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4"><OwnerMetric label="Лиды CRM из Meta" value={number(data.summary.metaCrmLeads)} note={`Переписки Meta: ${number(data.summary.metaConversations)}`}/><OwnerMetric label="Заказы из Meta" value={number(data.summary.metaOrders)} note="По источнику клиента в CRM"/><OwnerMetric label="Сумма заказов из Meta" value={money(data.summary.metaRevenue)} note="Не равно полученной оплате"/><OwnerMetric label="Цена обращения" value={data.summary.costPerConversation===null?"—":money(data.summary.costPerConversation)} note="Расход / переписки Meta"/><OwnerMetric label="Цена лида CRM" value={data.summary.cpl===null?"—":money(data.summary.cpl)} note="Расход / лиды CRM из Meta"/><OwnerMetric label="Цена заказа" value={data.summary.cac===null?"—":money(data.summary.cac)} note="Расход / заказы из Meta"/><OwnerMetric label="ROAS" value={data.summary.roas===null?"—":`${data.summary.roas.toFixed(2)}×`} note="Сумма заказов / расход Meta"/><OwnerMetric label="Конверсия Meta → заказ" value={data.summary.metaConversion===null?"—":`${data.summary.metaConversion.toFixed(1)}%`} note="Заказы / лиды CRM из Meta"/></div>
+        <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения и цена лида совпадут только если каждая начатая переписка Meta создаёт ровно одну карточку лида CRM.</p>
+        {data.summary.metaAttributionMissing?<p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В Meta есть переписки, но в CRM нет лидов с источником Meta за этот месяц. Проверьте источник обращения, иначе цена CRM-лида, цена заказа и ROAS будут неполными.</p>:null}
       </section>
 
       <section id="manager-kpi" className="scroll-mt-5 rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
