@@ -374,6 +374,12 @@ assert.match(page, /const statementPendingAccrual =/);
 assert.match(page, /const statementAccrued =/);
 assert.match(page, /const statementPaid =/);
 assert.match(page, /const statementPayable =/);
+assert.match(
+  page,
+  /const partialSalaryAvailable = \(row: PayrollRow\) => statementPayable\(row\)/,
+);
+assert.match(page, /Текущий остаток зарплаты к выплате/);
+assert.doesNotMatch(page, /row\.currentSalary - paidTowardSalary/);
 assert.match(page, /const PAYROLL_PAGE_SIZE = 25/);
 assert.match(page, /Пустой бонус означает «Не указан»; 0 ₸ — сохранённое/);
 for (const action of ["Выдать аванс", "Частичная выплата", "Выплатить остаток"])

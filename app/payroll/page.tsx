@@ -316,11 +316,6 @@ const companyDateInput = (value = new Date()) => {
 };
 const employeePosition = (row: PayrollRow) =>
   row.position || roleNames[row.user.role] || row.user.role || "Сотрудник";
-const salaryPaymentTypes = new Set([
-  "ADVANCE",
-  "SALARY_PAYMENT",
-  "FINAL_SETTLEMENT",
-]);
 const editablePayrollAccruals = (row: PayrollRow) =>
   row.accruals.filter(
     (item) =>
@@ -351,21 +346,7 @@ const reversiblePayrollAccruals = (row: PayrollRow) =>
           !payment.reversedAt,
       ),
   );
-const partialSalaryAvailable = (row: PayrollRow) => {
-  if (!row.salaryPlanEnabled || row.employmentEnded) return 0;
-  const paidTowardSalary = row.payments
-    .filter(
-      (item) =>
-        !item.reversalOfId &&
-        !item.reversedAt &&
-        salaryPaymentTypes.has(item.type),
-    )
-    .reduce((sum, item) => sum + Number(item.amount), 0);
-  return Math.max(
-    Math.min(row.currentSalary - paidTowardSalary, statementPayable(row)),
-    0,
-  );
-};
+const partialSalaryAvailable = (row: PayrollRow) => statementPayable(row);
 const statementAccrued = (row: PayrollRow) =>
   row.calculation.approvedAmount ?? row.calculation.accrued;
 const savedOrderBonusTotal = (row: PayrollRow) =>
@@ -2431,7 +2412,7 @@ function OperationModal({
               />
               {operation === "partialPayment" && (
                 <span className="mt-1.5 block text-xs text-blue-300">
-                  Доступно для частичной оплаты: {currency(availablePartialSalary)}.
+                  Текущий остаток зарплаты к выплате: {currency(availablePartialSalary)}.
                 </span>
               )}
               {operation === "advancePayment" && (
@@ -2482,7 +2463,7 @@ function OperationModal({
             <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3 text-sm text-emerald-100">
               <p className="font-semibold">Остаток после оплаты</p>
               <p className="mt-1 text-xs text-emerald-200/80">
-                {currency(availablePartialSalary)} − {currency(requestedPartialSalary)} = {currency(remainingAfterPartialSalary)}. Оклад сотрудника не изменится; сумма будет учтена как подтверждённая выплата и уменьшит остаток к выплате. Начисление при этом не создаётся.
+                {currency(availablePartialSalary)} − {currency(requestedPartialSalary)} = {currency(remainingAfterPartialSalary)}. Расчёт идёт от полного подтверждённого остатка, включая оклад и бонусы. Оклад сотрудника не изменится; сумма будет учтена как выплата и уменьшит остаток к выплате.
               </p>
             </div>
           )}
