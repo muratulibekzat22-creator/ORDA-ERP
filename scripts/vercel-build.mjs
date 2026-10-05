@@ -15,6 +15,13 @@ function run(script) {
 
 run("prisma:generate");
 
+if (
+  process.env.VERCEL_ENV === "production" &&
+  process.env.RUN_RELEASE_MIGRATIONS === "true"
+) {
+  run("prisma:migrate:deploy");
+}
+
 if (process.env.DATABASE_URL?.trim() && process.env.RUN_RELEASE_PREPARATION === "true") {
   run("seed:training");
   run("prepare:director:release");

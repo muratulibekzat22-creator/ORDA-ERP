@@ -44,7 +44,7 @@ assert.match(cron, /timingSafeEqual/, "cron must use constant-time secret compar
 assert.match(cron, /company\.isDemo/, "cron must reject demo tenants");
 assert(vercel.crons?.some((item) => item.path === "/api/cron/daily-operations" && item.schedule === "0 5 * * *"), "10:00 Almaty daily cron is missing");
 assert.match(buildScript, /RUN_RELEASE_PREPARATION === "true"/, "ordinary deployments must not mutate staff tasks or payroll");
-assert.doesNotMatch(buildScript, /prisma:migrate:deploy/, "Vercel builds must not run concurrent database migrations");
+assert.match(buildScript, /VERCEL_ENV === "production"[\s\S]*RUN_RELEASE_MIGRATIONS === "true"[\s\S]*prisma:migrate:deploy/, "a selected production release must be able to apply migrations once");
 assert.match(dashboard, /Ежедневный CRM-контроль/, "manager/director CRM summary is missing");
 assert.match(founderControl, /data\.issues\.map\(\(group\)/, "founder control must show consolidated groups");
 assert.doesNotMatch(founderControl, /Отклонений:.*summary\.total/, "founder control must not lead with hundreds of raw exceptions");
