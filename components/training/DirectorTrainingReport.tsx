@@ -44,6 +44,7 @@ export default function DirectorTrainingReport({ course }: { course: CoursePrevi
   const [overrideId, setOverrideId] = useState<number | null>(null);
   const [reason, setReason] = useState("");
   const [hours, setHours] = useState("24");
+  const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +61,16 @@ export default function DirectorTrainingReport({ course }: { course: CoursePrevi
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  const syncProgram = async () => {
+    setSyncing(true);
+    setError("");
+    const response = await fetch("/api/training/report", { method: "POST" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error ?? "Не удалось обновить программу обучения");
+    else setRows(body.report as Row[]);
+    setSyncing(false);
+  };
 
   const grant = async () => {
     if (!overrideId) return;
@@ -83,7 +94,7 @@ export default function DirectorTrainingReport({ course }: { course: CoursePrevi
           <h1 className="mt-1 text-2xl font-bold text-white md:text-3xl">Обучение замерщиков</h1>
           <p className="mt-1 text-sm text-slate-400">Фактический просмотр, тестирование и допуск к началу замера.</p>
         </div>
-        <button onClick={() => void load()} disabled={loading} className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-800 px-4"><RefreshCw size={17} className={loading ? "animate-spin" : ""} /> Обновить</button>
+        <div className="flex flex-wrap gap-2"><button onClick={() => void load()} disabled={loading || syncing} className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-800 px-4"><RefreshCw size={17} className={loading ? "animate-spin" : ""} /> Обновить</button><button onClick={() => void syncProgram()} disabled={loading || syncing} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-700 px-4 font-semibold"><RefreshCw size={17} className={syncing ? "animate-spin" : ""} /> {syncing ? "Обновляем программу…" : "Установить актуальную программу"}</button></div>
       </header>
       {error && <p role="alert" className="rounded-xl border border-red-800 bg-red-950/30 p-4 text-red-200">{error}</p>}
       <section className="rounded-2xl border border-blue-500/25 bg-[#101827] p-4 md:p-5">

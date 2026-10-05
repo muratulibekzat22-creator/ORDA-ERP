@@ -65,6 +65,7 @@ const designPrompt = readFileSync("lib/orders/design-brief.ts", "utf8");
 const login = readFileSync("app/login/page.tsx", "utf8");
 const home = readFileSync("app/page.tsx", "utf8");
 const directorReport = readFileSync("components/training/DirectorTrainingReport.tsx", "utf8");
+const reportApi = readFileSync("app/api/training/report/route.ts", "utf8");
 
 assert(service.includes("select: { id: true, position: true, question: true, options: true }"), "quiz read projection can expose answers");
 assert(!readFileSync("app/api/training/attempts/route.ts", "utf8").includes("correctOption"), "quiz route exposes answers");
@@ -89,6 +90,7 @@ assert(employeeService.includes("ensureCurrentMeasurerTraining") && employeeUpda
 assert(login.includes('session?.user.role === "MEASURER"') && login.includes('router.replace(trainingResponse.ok && training.status === "PASSED" ? callbackUrl : "/training")'), "incomplete measurer training is not opened after login");
 assert(home.includes("measurerNeedsMandatoryTraining") && home.includes('redirect("/training")'), "measurer dashboard does not preserve the mandatory training entry point");
 assert(directorReport.includes("row.passedLessonsCount") && directorReport.includes("row.lessonsCount") && !directorReport.includes("row.bestScore}/15"), "director training report does not show per-video quiz progress");
+assert(reportApi.includes("syncMeasurerTrainingProgram") && reportApi.includes("requireTrainingRole(Role.DIRECTOR)"), "training program synchronization is not director-protected");
 assert(chatGptAccessApi.includes("Role.MEASURER") && chatGptAccessApi.includes('"Cache-Control": "private, no-store, max-age=0"'));
 assert(chatGptAccessApi.includes("ownerNotified") && service.includes("CHATGPT_ACCESS_REVEALED"));
 assert(chatGptAccessCard.includes("Получить рабочий логин и пароль") && chatGptAccessCard.includes("Не фотографируйте пароль"));

@@ -7,7 +7,12 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { MEASURER_KNOWLEDGE, MEASURER_QUESTIONS } from "@/lib/training-course";
+import {
+  MEASURER_COURSE,
+  MEASURER_KNOWLEDGE,
+  MEASURER_LESSONS,
+  MEASURER_QUESTIONS,
+} from "@/lib/training-course";
 import {
   acceptedHeartbeatRange,
   mergeWatchedRanges,
@@ -182,6 +187,81 @@ const activeCourse = (db: Db | typeof prisma) =>
     where: { targetRole: Role.MEASURER, active: true, mandatory: true },
     orderBy: { version: "desc" },
   });
+
+export async function syncMeasurerTrainingProgram() {
+  return prisma.$transaction(async (tx) => {
+    const courseData = {
+      ...MEASURER_COURSE,
+      videoLessons: MEASURER_LESSONS as unknown as Prisma.InputJsonValue,
+    };
+    const course = await tx.trainingCourse.upsert({
+      where: {
+        slug_version: {
+          slug: MEASURER_COURSE.slug,
+          version: MEASURER_COURSE.version,
+        },
+      },
+      update: courseData,
+      create: courseData,
+    });
+    await tx.trainingCourse.updateMany({
+      where: {
+        slug: MEASURER_COURSE.slug,
+        version: { not: MEASURER_COURSE.version },
+      },
+      data: { active: false },
+    });
+    for (const item of MEASURER_QUESTIONS) {
+      const question = {
+        position: item.position,
+        question: item.question,
+        options: item.options,
+        correctOption: item.correctOption,
+        explanation: item.explanation,
+      };
+      await tx.trainingQuestion.upsert({
+        where: {
+          courseId_position: { courseId: course.id, position: item.position },
+        },
+        update: question,
+        create: { courseId: course.id, ...question },
+      });
+    }
+    await tx.trainingQuestion.deleteMany({
+      where: {
+        courseId: course.id,
+        position: { notIn: MEASURER_QUESTIONS.map((item) => item.position) },
+      },
+    });
+    const measurers = await tx.user.findMany({
+      where: { role: Role.MEASURER, active: true },
+      select: { id: true },
+    });
+    for (const measurer of measurers) {
+      await tx.trainingAssignment.upsert({
+        where: { courseId_userId: { courseId: course.id, userId: measurer.id } },
+        update: {},
+        create: {
+          courseId: course.id,
+          userId: measurer.id,
+          audits: {
+            create: {
+              actorId: measurer.id,
+              action: TrainingAuditAction.ASSIGNED,
+              metadata: { source: "PROGRAM_SYNC" },
+            },
+          },
+        },
+      });
+    }
+    return {
+      version: course.version,
+      lessons: MEASURER_LESSONS.length,
+      questions: MEASURER_QUESTIONS.length,
+      assignments: measurers.length,
+    };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
 
 export async function ensureCurrentMeasurerTraining(db: Db, userId: number) {
   const measurer = await db.user.findFirst({
