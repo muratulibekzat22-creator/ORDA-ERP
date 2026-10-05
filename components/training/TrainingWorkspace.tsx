@@ -5,8 +5,8 @@ import { CheckCircle2, CircleAlert, PlayCircle } from "lucide-react";
 
 import ChatGptOfficeAccessCard from "@/components/training/ChatGptOfficeAccessCard";
 
-type AttemptHistory = { id: number; score: number | null; percent: number | null; status: string; startedAt: string; completedAt: string | null };
-type Lesson = { key: string; title: string; description: string; youtubeVideoId: string; progressPercent: number };
+type AttemptHistory = { id: number; score: number | null; percent: number | null; status: string; startedAt: string; completedAt: string | null; lessonKey: string | null; lessonTitle: string };
+type Lesson = { key: string; title: string; description: string; youtubeVideoId: string; progressPercent: number; questionsCount: number; quizPassed: boolean; quizAttempts: number; quizBestPercent: number; canStartQuiz: boolean };
 type KnowledgeSection = { title: string; items: readonly string[] };
 type Assignment = {
   id: number;
@@ -19,6 +19,8 @@ type Assignment = {
   passedAt: string | null;
   canAcknowledge: boolean;
   canStartQuiz: boolean;
+  passedLessonsCount: number;
+  lessonsCount: number;
   course: {
     version: number;
     title: string;
@@ -33,12 +35,15 @@ type Assignment = {
   attempts: AttemptHistory[];
 };
 type Question = { id: number; position: number; question: string; options: string[] };
-type Attempt = { attemptId: number; startedAt: string; questions: Question[] };
+type Attempt = { attemptId: number; startedAt: string; lessonKey: string; lessonTitle: string; questions: Question[] };
 type Result = {
   score: number;
   total: number;
   percent: number;
   passed: boolean;
+  lessonKey: string;
+  lessonTitle: string;
+  allLessonQuizzesPassed: boolean;
   review: Array<{ position: number; correct: boolean; correctOption: number; explanation: string }>;
 };
 type YouTubePlayer = { getCurrentTime: () => number; getDuration: () => number; getPlayerState: () => number; destroy: () => void };
@@ -53,7 +58,7 @@ declare global {
 const statusNames: Record<Assignment["status"], string> = {
   NOT_STARTED: "Не начато",
   IN_PROGRESS: "В процессе",
-  READY_FOR_TEST: "Готово к тесту",
+  READY_FOR_TEST: "Все тесты пройдены",
   FAILED: "Тест не пройден",
   PASSED: "Обучение пройдено",
 };
@@ -132,12 +137,16 @@ export default function TrainingWorkspace() {
       setAssignment((current) => current ? {
         ...current,
         progressPercent: Number(body.progressPercent ?? current.progressPercent),
-        canAcknowledge: Boolean(body.canAcknowledge),
-        canStartQuiz: Boolean(body.canStartQuiz),
+        canAcknowledge: current.canAcknowledge,
+        canStartQuiz: current.canStartQuiz || Boolean(body.canStartQuiz),
         status: current.status === "NOT_STARTED" && Number(body.progressPercent) > 0 ? "IN_PROGRESS" : current.status,
         course: {
           ...current.course,
-          lessons: current.course.lessons.map((lesson) => ({ ...lesson, progressPercent: lessonProgress.get(lesson.key) ?? lesson.progressPercent })),
+          lessons: current.course.lessons.map((lesson) => ({
+            ...lesson,
+            progressPercent: lessonProgress.get(lesson.key) ?? lesson.progressPercent,
+            canStartQuiz: lesson.key === body.lessonKey ? Boolean(body.canStartQuiz) : lesson.canStartQuiz,
+          })),
         },
       } : current);
       setProgressError(false);
@@ -197,9 +206,14 @@ export default function TrainingWorkspace() {
   };
 
   const startQuiz = async () => {
+    if (!selectedLessonKey) return;
     setBusy(true);
     setError("");
-    const response = await fetch("/api/training/attempts", { method: "POST" });
+    const response = await fetch("/api/training/attempts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lessonKey: selectedLessonKey }),
+    });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось открыть тест");
     else {
@@ -243,7 +257,7 @@ export default function TrainingWorkspace() {
   );
 
   const progress = Math.min(100, Math.round(assignment.progressPercent));
-  const requiredCorrect = Math.ceil((assignment.course.questionsCount * assignment.course.passScorePercent) / 100);
+  const requiredCorrect = Math.ceil(((attempt?.questions.length ?? selectedLesson?.questionsCount ?? 0) * assignment.course.passScorePercent) / 100);
   return (
     <main className="mx-auto w-full max-w-6xl space-y-5 overflow-x-hidden p-4 pb-24 md:p-8">
       <header>
@@ -261,7 +275,7 @@ export default function TrainingWorkspace() {
           <div className="text-right"><p className="text-sm text-slate-400">Общий прогресс</p><p className="mt-1 text-2xl font-bold text-blue-300">{progress}%</p></div>
         </div>
         <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-800" aria-label={`Прогресс просмотра ${progress}%`}><div className="h-full rounded-full bg-blue-500 transition-[width]" style={{ width: `${progress}%` }} /></div>
-        <p className="mt-3 text-xs text-slate-500">Для теста необходимо посмотреть минимум {assignment.course.requiredCoverage}% каждого урока.</p>
+        <p className="mt-3 text-xs text-slate-500">После просмотра минимум {assignment.course.requiredCoverage}% каждого видео откроется отдельный тест по этому уроку. Пройдено тестов: {assignment.passedLessonsCount}/{assignment.lessonsCount}.</p>
       </section>
 
       <ChatGptOfficeAccessCard />
@@ -279,7 +293,7 @@ export default function TrainingWorkspace() {
           {assignment.course.lessons.map((lesson, index) => {
             const done = lesson.progressPercent >= assignment.course.requiredCoverage;
             const active = lesson.key === selectedLessonKey;
-            return <button key={lesson.key} onClick={() => { void sendHeartbeat(); setSelectedLessonKey(lesson.key); }} className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-blue-500 bg-blue-950/40" : "border-slate-800 bg-slate-900 hover:border-slate-600"}`}><span className="flex items-start justify-between gap-3"><span className="text-sm font-semibold text-white">{index + 1}. {lesson.title}</span>{done ? <CheckCircle2 className="shrink-0 text-emerald-400" size={19} /> : <span className="shrink-0 text-xs font-bold text-slate-400">{Math.round(lesson.progressPercent)}%</span>}</span></button>;
+            return <button key={lesson.key} onClick={() => { void sendHeartbeat(); setSelectedLessonKey(lesson.key); setAttempt(null); setResult(null); setAnswers({}); setError(""); }} className={`w-full rounded-xl border p-3 text-left transition ${active ? "border-blue-500 bg-blue-950/40" : "border-slate-800 bg-slate-900 hover:border-slate-600"}`}><span className="flex items-start justify-between gap-3"><span className="text-sm font-semibold text-white">{index + 1}. {lesson.title}</span>{lesson.quizPassed ? <CheckCircle2 className="shrink-0 text-emerald-400" size={19} /> : <span className="shrink-0 text-xs font-bold text-slate-400">{Math.round(lesson.progressPercent)}%</span>}</span><span className={`mt-2 block text-xs ${lesson.quizPassed ? "text-emerald-300" : done ? "text-blue-300" : "text-slate-500"}`}>{lesson.quizPassed ? "Видео и тест пройдены" : done ? "Тест доступен" : `Сначала просмотрите ${assignment.course.requiredCoverage}% видео`}</span></button>;
           })}
         </div>
         <div className="min-w-0 overflow-hidden rounded-2xl border border-slate-800 bg-[#101827]">
@@ -292,27 +306,28 @@ export default function TrainingWorkspace() {
         <h2 className="text-lg font-semibold text-white">Подтверждение ознакомления</h2>
         {assignment.acknowledgedAt ? <p className="mt-3 flex items-start gap-2 text-emerald-300"><CheckCircle2 className="mt-0.5 shrink-0" size={20} /> Ознакомление со всеми материалами подтверждено.</p>
           : assignment.canAcknowledge ? <div className="mt-3 space-y-3"><label className="flex min-h-12 items-start gap-3 rounded-xl border border-slate-700 p-3 text-sm text-slate-200"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className="mt-1 size-5 shrink-0" />Подтверждаю, что ознакомился со всеми уроками и понял стандарты ALTYN SAPA, порядок замера и передачи результата.</label><button disabled={!acknowledged || busy} onClick={() => void confirmAcknowledgement()} className="min-h-12 w-full rounded-xl bg-blue-600 px-4 font-semibold disabled:opacity-50">Сохранить подтверждение</button></div>
-          : <p className="mt-3 flex items-start gap-2 text-slate-400"><CircleAlert className="mt-0.5 shrink-0" size={20} /> Доступно после фактического просмотра минимум {assignment.course.requiredCoverage}% каждого урока.</p>}
+          : <p className="mt-3 flex items-start gap-2 text-slate-400"><CircleAlert className="mt-0.5 shrink-0" size={20} /> Доступно после просмотра и успешного теста по каждому из {assignment.lessonsCount} видео.</p>}
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-xl font-semibold text-white">Проверочный тест</h2><p className="mt-1 text-sm text-slate-400">{assignment.course.questionsCount} вопросов · проходной результат {requiredCorrect} из {assignment.course.questionsCount} ({assignment.course.passScorePercent}%)</p></div>
-          {!attempt && <button disabled={!assignment.canStartQuiz || busy} onClick={() => void startQuiz()} className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold disabled:cursor-not-allowed disabled:opacity-40"><PlayCircle size={19} /> {assignment.attemptsCount ? "Пройти ещё раз" : "Пройти тест"}</button>}
+          <div><h2 className="text-xl font-semibold text-white">Тест по выбранному видео</h2><p className="mt-1 text-sm text-slate-400">{selectedLesson ? `${selectedLesson.title} · ${selectedLesson.questionsCount} вопросов · нужно ${requiredCorrect} правильных` : "Выберите видео"}</p></div>
+          {!attempt && selectedLesson && !selectedLesson.quizPassed && <button disabled={!selectedLesson.canStartQuiz || busy} onClick={() => void startQuiz()} className="flex min-h-12 items-center gap-2 rounded-xl bg-emerald-700 px-5 font-semibold disabled:cursor-not-allowed disabled:opacity-40"><PlayCircle size={19} /> {selectedLesson.quizAttempts ? "Пройти ещё раз" : "Пройти тест по видео"}</button>}
         </div>
-        {!assignment.canStartQuiz && !attempt && <p className="mt-4 rounded-xl bg-slate-900 p-4 text-sm text-slate-400">Тест откроется после просмотра {assignment.course.requiredCoverage}% каждого видео и подтверждения ознакомления.</p>}
+        {selectedLesson?.quizPassed && !attempt && <p className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-950/30 p-4 text-sm text-emerald-300"><CheckCircle2 size={20} /> Тест по этому видео пройден. Выберите следующий урок.</p>}
+        {selectedLesson && !selectedLesson.quizPassed && !selectedLesson.canStartQuiz && !attempt && <p className="mt-4 rounded-xl bg-slate-900 p-4 text-sm text-slate-400">Тест откроется после фактического просмотра минимум {assignment.course.requiredCoverage}% этого видео.</p>}
 
         {attempt && !result && <div className="mt-6 space-y-5">
           {attempt.questions.map((question) => <fieldset key={question.id} className="min-w-0 rounded-xl border border-slate-700 p-4"><legend className="max-w-full px-2 font-semibold text-white">{question.position}. {question.question}</legend><div className="mt-3 grid gap-2">{question.options.map((option, index) => <label key={option} className={`flex min-h-12 cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm ${answers[question.id] === index ? "border-blue-500 bg-blue-950/40 text-white" : "border-slate-700 text-slate-300"}`}><input type="radio" name={`question-${question.id}`} checked={answers[question.id] === index} onChange={() => choose(question.id, index)} className="mt-0.5 size-5 shrink-0" /><span>{String.fromCharCode(65 + index)}. {option}</span></label>)}</div></fieldset>)}
           <button disabled={busy || Object.keys(answers).length !== attempt.questions.length} onClick={() => void submitQuiz()} className="min-h-14 w-full rounded-xl bg-blue-600 px-5 text-lg font-semibold disabled:opacity-50">Отправить ответы</button>
         </div>}
 
-        {result && <div className={`mt-6 rounded-2xl border p-5 ${result.passed ? "border-emerald-700 bg-emerald-950/30" : "border-amber-700 bg-amber-950/30"}`}><h3 className="text-xl font-bold text-white">Ваш результат: {result.score} из {result.total}</h3><p className="mt-1 text-3xl font-bold text-white">{result.percent}%</p><p className="mt-2 font-semibold text-white">{result.passed ? "Обучение пройдено" : `Для прохождения необходимо минимум ${requiredCorrect} правильных ответов.`}</p><div className="mt-4 space-y-2 text-sm">{result.review.map((item) => <div key={item.position} className="rounded-lg bg-black/20 p-3 text-slate-200">Вопрос {item.position}: {item.correct ? "правильно" : "неправильно"}. {item.explanation}</div>)}</div><button onClick={() => { setAttempt(null); setResult(null); setAnswers({}); }} className="mt-4 min-h-12 rounded-xl bg-slate-800 px-5 font-semibold">{result.passed ? "Закрыть результат" : "Пройти ещё раз"}</button></div>}
+        {result && <div className={`mt-6 rounded-2xl border p-5 ${result.passed ? "border-emerald-700 bg-emerald-950/30" : "border-amber-700 bg-amber-950/30"}`}><h3 className="text-xl font-bold text-white">{result.lessonTitle}: {result.score} из {result.total}</h3><p className="mt-1 text-3xl font-bold text-white">{result.percent}%</p><p className="mt-2 font-semibold text-white">{result.passed ? result.allLessonQuizzesPassed ? "Все тесты пройдены. Подтвердите ознакомление ниже." : "Тест по видео пройден. Переходите к следующему уроку." : `Для прохождения необходимо минимум ${requiredCorrect} правильных ответов.`}</p><div className="mt-4 space-y-2 text-sm">{result.review.map((item) => <div key={item.position} className="rounded-lg bg-black/20 p-3 text-slate-200">Вопрос {item.position}: {item.correct ? "правильно" : "неправильно"}. {item.explanation}</div>)}</div><button onClick={() => { setAttempt(null); setResult(null); setAnswers({}); }} className="mt-4 min-h-12 rounded-xl bg-slate-800 px-5 font-semibold">{result.passed ? "Закрыть результат" : "Пройти ещё раз"}</button></div>}
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 md:p-6">
         <h2 className="text-lg font-semibold text-white">История попыток</h2>
-        {assignment.attempts.length ? <div className="mt-3 space-y-2">{assignment.attempts.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-900 p-3 text-sm"><span className="text-slate-300">{new Date(item.completedAt ?? item.startedAt).toLocaleString("ru-RU")}</span><b className={item.status === "PASSED" ? "text-emerald-300" : "text-amber-300"}>{item.score ?? 0} из {assignment.course.questionsCount} · {Math.round(item.percent ?? 0)}% · {item.status === "PASSED" ? "PASS" : "FAIL"}</b></div>)}</div> : <p className="mt-3 text-sm text-slate-400">Попыток пока нет.</p>}
+        {assignment.attempts.length ? <div className="mt-3 space-y-2">{assignment.attempts.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-900 p-3 text-sm"><span className="text-slate-300">{item.lessonTitle} · {new Date(item.completedAt ?? item.startedAt).toLocaleString("ru-RU")}</span><b className={item.status === "PASSED" ? "text-emerald-300" : "text-amber-300"}>{Math.round(item.percent ?? 0)}% · {item.status === "PASSED" ? "PASS" : "FAIL"}</b></div>)}</div> : <p className="mt-3 text-sm text-slate-400">Попыток пока нет.</p>}
       </section>
     </main>
   );

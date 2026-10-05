@@ -49,14 +49,18 @@ export function trainingError(error: unknown) {
     return NextResponse.json({ error: "Обучение не назначено" }, { status: 404 });
   if (code === "QUIZ_LOCKED")
     return NextResponse.json(
-      { error: "Сначала посмотрите не менее 90% каждого урока и подтвердите ознакомление" },
+      { error: "Сначала посмотрите не менее 90% выбранного видео" },
       { status: 409 },
     );
   if (code === "ACKNOWLEDGEMENT_LOCKED")
     return NextResponse.json(
-      { error: "Подтверждение доступно после просмотра 90% каждого урока" },
+      { error: "Подтверждение доступно после просмотра и успешного теста по каждому видео" },
       { status: 409 },
     );
+  if (code === "LESSON_QUIZ_PASSED")
+    return NextResponse.json({ error: "Тест по этому видео уже пройден" }, { status: 409 });
+  if (code === "INVALID_LESSON" || code === "QUIZ_NOT_CONFIGURED")
+    return NextResponse.json({ error: "Для выбранного видео тест не настроен" }, { status: 400 });
   if (code === "ATTEMPT_NOT_FOUND")
     return NextResponse.json({ error: "Попытка не найдена" }, { status: 404 });
   if (code === "ATTEMPT_COMPLETED")
