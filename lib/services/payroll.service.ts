@@ -286,11 +286,15 @@ export async function ensurePeriod(year: number, month: number) {
   });
 }
 
-async function openPeriod(tx: Prisma.TransactionClient, periodId: number) {
+async function openPeriod(
+  tx: Prisma.TransactionClient,
+  periodId: number,
+  options?: { allowReview?: boolean },
+) {
   const companyId = requireTenantIdentity().companyId;
-  // Every payroll writer takes a key-share lock before checking OPEN. Closing
-  // takes the conflicting update lock, so its final summary and status write
-  // cannot race an accrual, bonus decision, confirmation or payment commit.
+  // Every payroll writer takes a key-share lock before checking its allowed
+  // status. Closing takes the conflicting update lock, so its final summary
+  // and status write cannot race an accrual, confirmation or payment commit.
   await tx.$queryRaw`
     SELECT id
     FROM "PayrollPeriod"
@@ -301,7 +305,11 @@ async function openPeriod(tx: Prisma.TransactionClient, periodId: number) {
     where: { id: periodId, companyId },
   });
   if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
-  if (period.status !== PayrollPeriodStatus.OPEN)
+  const writable =
+    period.status === PayrollPeriodStatus.OPEN ||
+    (options?.allowReview === true &&
+      period.status === PayrollPeriodStatus.REVIEW);
+  if (!writable)
     throw new PayrollError(period.status === PayrollPeriodStatus.CLOSED ? "PERIOD_CLOSED" : "PERIOD_NOT_OPEN");
   return period;
 }
@@ -1776,7 +1784,7 @@ async function createPaymentTx(
       throw new PayrollError("IDEMPOTENCY_CONFLICT");
     return existing;
   }
-  const period = await openPeriod(tx, input.periodId);
+  const period = await openPeriod(tx, input.periodId, { allowReview: true });
   const employee = await tx.employeePayrollProfile.findFirst({
     where: {
       id: input.employeeId,

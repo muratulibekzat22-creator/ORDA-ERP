@@ -354,10 +354,16 @@ assert.match(
   page,
   /partialSalary:\s*operation === "advancePayment" \|\| operation === "partialPayment"/,
 );
+assert.match(page, /canPay=\{director && !closed\}/);
+assert.match(
+  service,
+  /openPeriod\(tx, input\.periodId, \{ allowReview: true \}\)/,
+);
 pass("Аванс и частичная выплата доступны отдельными действиями", {
   advanceReducesPayable: true,
   partialPaymentReducesPayable: true,
   fullBalancePaymentRemainsAvailable: true,
+  reviewPeriodPaymentsAllowed: true,
 });
 pass("Таблица и карточка используют единый контракт расчёта", {
   fields: ["prepared", "accrued", "paid", "remaining", "priorDebt"],

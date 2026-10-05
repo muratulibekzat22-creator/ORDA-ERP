@@ -1302,7 +1302,7 @@ export default function PayrollPage() {
           canReportAdvance={advanceSelfService && Boolean(data.period) && !locked}
           orderBonuses={details.orderBonuses ?? []}
           canCorrectOrderBonuses={canCorrectOrderBonuses}
-          canPay={director}
+          canPay={director && !closed}
           closed={locked}
           period={selected}
           onClose={closeDetails}
@@ -2004,7 +2004,7 @@ function EmployeeDrawer({
                   Запросить аванс
                 </button>
               )}
-              {canPay && !closed && remaining > 0 && (
+              {canPay && remaining > 0 && (
                 <button
                   type="button"
                   onClick={() => onOperation("advancePayment", row)}
@@ -2013,7 +2013,7 @@ function EmployeeDrawer({
                   Выдать аванс
                 </button>
               )}
-              {canPay && !closed && partialSalaryAvailable(row) > 0 && (
+              {canPay && partialSalaryAvailable(row) > 0 && (
                 <button
                   type="button"
                   onClick={() => onOperation("partialPayment", row)}
@@ -2022,7 +2022,7 @@ function EmployeeDrawer({
                   Частичная выплата
                 </button>
               )}
-              {canPay && !closed && remaining > 0 && (
+              {canPay && remaining > 0 && (
                 <button
                   type="button"
                   onClick={() => onOperation("payment", row)}
