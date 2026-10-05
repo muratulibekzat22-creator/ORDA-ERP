@@ -21,17 +21,36 @@ const names: Record<Summary["status"], string> = {
 
 export default function TrainingSummaryCard() {
   const [data, setData] = useState<Summary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void fetch("/api/training", { cache: "no-store", signal: controller.signal })
-        .then(async (response) => response.ok ? response.json() as Promise<Summary> : null)
-        .then(setData)
-        .catch(() => undefined);
+        .then(async (response) => {
+          if (!response.ok) throw new Error("training unavailable");
+          return response.json() as Promise<Summary>;
+        })
+        .then((next) => { setData(next); setUnavailable(false); })
+        .catch((error: unknown) => {
+          if (!(error instanceof DOMException && error.name === "AbortError")) setUnavailable(true);
+        })
+        .finally(() => setLoading(false));
     }, 0);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, []);
-  if (!data) return null;
+  if (loading) return (
+    <section aria-busy="true" className="rounded-2xl border border-blue-900 bg-blue-950/20 p-4 text-sm text-blue-100 md:p-6">
+      Загружаем обязательное обучение…
+    </section>
+  );
+  if (!data) return (
+    <section role={unavailable ? "alert" : undefined} className="rounded-2xl border border-amber-800 bg-amber-950/20 p-4 md:p-6">
+      <p className="font-semibold text-amber-100">Обязательное обучение не загрузилось</p>
+      <p className="mt-1 text-sm text-amber-200/80">Откройте курс напрямую. На странице обучения можно повторить загрузку.</p>
+      <Link href="/training" className="mt-4 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white">Открыть обучение<ChevronRight size={18} /></Link>
+    </section>
+  );
   const progress = Math.round(data.progressPercent);
   const action = data.status === "NOT_STARTED" ? "Начать обучение" : data.status === "PASSED" ? "Посмотреть результат" : data.status === "READY_FOR_TEST" || data.status === "FAILED" ? "Пройти тест" : "Продолжить";
   return (

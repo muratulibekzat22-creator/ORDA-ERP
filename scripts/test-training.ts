@@ -16,6 +16,7 @@ import {
   ensureCurrentMeasurerTraining,
   grantTrainingOverride,
   hasTrainingClearance,
+  measurerNeedsMandatoryTraining,
   recordTrainingHeartbeat,
   startTrainingAttempt,
   submitTrainingAttempt,
@@ -99,6 +100,7 @@ async function main() {
   assert(assignment, "new MEASURER did not receive an assignment");
   assert.equal(await prisma.trainingAssignment.count({ where: { userId: manager.id } }), 0);
   assert.equal(await prisma.$transaction((tx) => hasTrainingClearance(tx, measurer.id)), false);
+  assert.equal(await measurerNeedsMandatoryTraining(measurer.id), true);
 
   await recordTrainingHeartbeat(measurer.id, { lessonKey: "", currentTime: 99, duration: 100, playerState: "PLAYING", courseVersion: 999 });
   assert.equal((await prisma.trainingAssignment.findUniqueOrThrow({ where: { id: assignment.id } })).progressPercent, 0, "seek-to-end unlocked progress");
@@ -125,6 +127,7 @@ async function main() {
   assert.equal(passed.score, passingCount);
   assert.equal(passed.passed, true);
   assert.equal(await prisma.$transaction((tx) => hasTrainingClearance(tx, measurer.id)), true);
+  assert.equal(await measurerNeedsMandatoryTraining(measurer.id), false);
 
   const failedAssignment = await ready(secondMeasurer.id);
   const failedAttempt = await startTrainingAttempt(secondMeasurer.id);

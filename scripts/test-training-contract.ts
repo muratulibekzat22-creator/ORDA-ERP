@@ -60,6 +60,8 @@ const nextConfig = readFileSync("next.config.ts", "utf8");
 const chatGptAccessApi = readFileSync("app/api/training/chatgpt-access/route.ts", "utf8");
 const chatGptAccessCard = readFileSync("components/training/ChatGptOfficeAccessCard.tsx", "utf8");
 const designPrompt = readFileSync("lib/orders/design-brief.ts", "utf8");
+const login = readFileSync("app/login/page.tsx", "utf8");
+const home = readFileSync("app/page.tsx", "utf8");
 
 assert(service.includes("select: { id: true, position: true, question: true, options: true }"), "quiz read projection can expose answers");
 assert(!readFileSync("app/api/training/attempts/route.ts", "utf8").includes("correctOption"), "quiz route exposes answers");
@@ -79,6 +81,8 @@ assert(workspace.includes("overflow-x-hidden") && workspace.includes("aspect-vid
 assert(shell.includes('"/training"') && shell.includes('role === "MEASURER"'));
 assert(proxy.includes('firstSegment === "training"'));
 assert(employeeService.includes("ensureCurrentMeasurerTraining") && employeeUpdate.includes("ensureCurrentMeasurerTraining"));
+assert(login.includes('session?.user.role === "MEASURER"') && login.includes('router.replace(trainingResponse.ok && training.status === "PASSED" ? callbackUrl : "/training")'), "incomplete measurer training is not opened after login");
+assert(home.includes("measurerNeedsMandatoryTraining") && home.includes('redirect("/training")'), "measurer dashboard does not preserve the mandatory training entry point");
 assert(chatGptAccessApi.includes("Role.MEASURER") && chatGptAccessApi.includes('"Cache-Control": "private, no-store, max-age=0"'));
 assert(chatGptAccessApi.includes("ownerNotified") && service.includes("CHATGPT_ACCESS_REVEALED"));
 assert(chatGptAccessCard.includes("Получить рабочий логин и пароль") && chatGptAccessCard.includes("Не фотографируйте пароль"));

@@ -186,6 +186,13 @@ export async function hasTrainingClearance(db: Db, userId: number) {
   );
 }
 
+export async function measurerNeedsMandatoryTraining(userId: number) {
+  const assignment = await prisma.$transaction((tx) =>
+    ensureCurrentMeasurerTraining(tx, userId),
+  );
+  return Boolean(assignment && assignment.status !== TrainingStatus.PASSED);
+}
+
 export async function getMyTraining(userId: number) {
   const assignmentId = await prisma.$transaction(async (tx) =>
     (await ensureCurrentMeasurerTraining(tx, userId))?.id,

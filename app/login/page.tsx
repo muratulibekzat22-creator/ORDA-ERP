@@ -1,6 +1,7 @@
 "use client";
 
 import { Eye, EyeOff, LoaderCircle, LockKeyhole, Mail } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { getSession, signIn } from "next-auth/react";
 import { FormEvent, useEffect, useState } from "react";
 
@@ -17,6 +18,7 @@ function authMessage(code?: string | null) {
 }
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -63,7 +65,17 @@ export default function LoginPage() {
       }
 
       const session = await getSession();
-      window.location.assign(session?.user.role === "PARTNER" ? "/partner" : callbackUrl);
+      if (session?.user.role === "PARTNER") {
+        router.replace("/partner");
+        return;
+      }
+      if (session?.user.role === "MEASURER") {
+        const trainingResponse = await fetch("/api/training", { cache: "no-store" });
+        const training = await trainingResponse.json().catch(() => ({})) as { status?: string };
+        router.replace(trainingResponse.ok && training.status === "PASSED" ? callbackUrl : "/training");
+        return;
+      }
+      router.replace(callbackUrl);
     } catch {
       setError(CONNECTION_ERROR);
     } finally {
