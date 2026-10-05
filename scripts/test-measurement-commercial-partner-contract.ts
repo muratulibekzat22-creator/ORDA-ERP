@@ -9,11 +9,11 @@ const root = process.cwd();
 const source = (file: string) => readFile(path.join(root, file), "utf8");
 
 async function main() {
-  const [schema, service, measurementRoute, workspace, sheetRoute, documents, partnerRoute, partnerPage, convertRoute, migration] = await Promise.all([
+  const [schema, service, measurementRoute, workspace, sheetRoute, documents, partnerRoute, partnerPage, convertRoute, migration, proxy] = await Promise.all([
     source("prisma/schema.prisma"), source("lib/services/measurement.service.ts"), source("app/api/measurements/[id]/route.ts"),
     source("components/measurements/MeasurementWorkspace.tsx"), source("app/api/measurements/[id]/sheet/route.ts"),
     source("lib/services/document.service.ts"), source("app/api/partner/dashboard/route.ts"), source("app/partner/page.tsx"),
-    source("app/api/proposals/[id]/convert/route.ts"), source("prisma/migrations/20261006130000_measurement_final_quote_and_sheet/migration.sql"),
+    source("app/api/proposals/[id]/convert/route.ts"), source("prisma/migrations/20261006130000_measurement_final_quote_and_sheet/migration.sql"), source("proxy.ts"),
   ]);
   for (const field of ["sourceProposalId", "finalProposalId", "quoteBasePrice", "quoteDiscount", "quoteFinalPrice", "quoteConfirmedAt"])
     assert(schema.includes(field) && migration.includes(field), `missing persisted field ${field}`);
@@ -27,6 +27,7 @@ async function main() {
   assert(documents.includes("GENERATED_MEASUREMENT_SHEET") && documents.includes("actor.role === Role.MEASURER"), "generated sheet listing/scope missing");
   assert(convertRoute.includes("ORDER_AUTO_LINKED") && convertRoute.includes("measurement.updateMany"), "lead measurement is not auto-linked to converted order");
   assert(partnerPage.includes('fetch("/api/partner/dashboard"') && !partnerPage.includes("/api/orders?page="), "partner page must use only dedicated safe endpoint");
+  assert(proxy.includes('PARTNER: ["partner"]') && proxy.includes('firstSegment !== "partner"'), "partner can navigate to general ERP pages");
   const partnerOrderProjection = partnerRoute.slice(partnerRoute.indexOf("orders: orders.map"), partnerRoute.indexOf("activeOrders:"));
   for (const secret of ["amount: order.amount", "prepayment: order.prepayment", "balance: order.balance", "companyProfit", "calculations:"])
     assert(!partnerOrderProjection.includes(secret), `partner projection exposes ${secret}`);

@@ -16,6 +16,13 @@ assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "dir
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
 assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
 assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
+assert(
+  proxy.includes('PARTNER: ["partner"]') &&
+    proxy.includes('role === "PARTNER"') &&
+    proxy.includes('firstSegment !== "partner"') &&
+    proxy.includes('firstSegment !== "change-password"'),
+  "partner can open general ERP pages instead of the dedicated redacted cabinet",
+);
 assert(shell.includes('["/", "/clients", "/orders", "/sales-plan", "/measurements", "/catalog", "/calendar", "/production", "/payroll", "/kpi"]'), "manager navigation contract changed");
 assert(shell.includes('["/", "/marketing", "/calendar", "/payroll", "/kpi"]'), "marketer personal payroll and KPI navigation is missing");
 assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes("if (founder) return true"), "Founder navigation must retain every management section");

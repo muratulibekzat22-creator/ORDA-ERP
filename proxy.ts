@@ -78,11 +78,15 @@ export async function proxy(request: NextRequest) {
     DESIGNER: ["orders"],
     PRODUCTION: ["production", "calendar", "warehouse"],
     INSTALLER: ["production", "calendar", "warehouse"],
-    PARTNER: ["orders", "finance", "partners", "documents", "partner"],
+    PARTNER: ["partner"],
   };
   const firstSegment =
     request.nextUrl.pathname.split("/").filter(Boolean)[0] ?? "";
-  if (role === "PARTNER" && firstSegment === "finance")
+  if (
+    role === "PARTNER" &&
+    firstSegment !== "partner" &&
+    firstSegment !== "change-password"
+  )
     return redirect(new URL("/partner", request.url));
   const protectedSegment = [
     "clients",
