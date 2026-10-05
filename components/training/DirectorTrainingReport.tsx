@@ -15,7 +15,7 @@ type Row = {
   overrideReason: string | null;
   overrideExpiresAt: string | null;
   user: { id: number; name: string; role: string; active: boolean };
-  course: { title: string; version: number };
+  course: { title: string; version: number; _count: { questions: number } };
 };
 type CoursePreview = {
   title: string;
@@ -99,7 +99,7 @@ export default function DirectorTrainingReport({ course }: { course: CoursePrevi
             <p className="mt-3 text-sm text-slate-300">{row.course.title} · версия {row.course.version}</p>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div><dt className="text-slate-500">Просмотрено</dt><dd className="mt-1 font-semibold text-white">{Math.round(row.progressPercent)}%</dd></div>
-              <div><dt className="text-slate-500">Лучший результат</dt><dd className="mt-1 font-semibold text-white">{row.bestScore}/15 · {Math.round(row.bestPercent)}%</dd></div>
+              <div><dt className="text-slate-500">Лучший результат</dt><dd className="mt-1 font-semibold text-white">{row.bestScore}/{row.course._count.questions} · {Math.round(row.bestPercent)}%</dd></div>
               <div><dt className="text-slate-500">Попыток</dt><dd className="mt-1 font-semibold text-white">{row.attemptsCount}</dd></div>
               <div><dt className="text-slate-500">Последняя активность</dt><dd className="mt-1 font-semibold text-white">{row.lastViewedAt ? new Date(row.lastViewedAt).toLocaleDateString("ru-RU") : "—"}</dd></div>
               <div><dt className="text-slate-500">Дата прохождения</dt><dd className="mt-1 font-semibold text-white">{row.passedAt ? new Date(row.passedAt).toLocaleDateString("ru-RU") : "—"}</dd></div>

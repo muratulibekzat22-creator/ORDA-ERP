@@ -593,7 +593,13 @@ export async function trainingReport() {
       overrideReason: true,
       overrideExpiresAt: true,
       user: { select: { id: true, name: true, role: true, active: true } },
-      course: { select: { title: true, version: true } },
+      course: {
+        select: {
+          title: true,
+          version: true,
+          _count: { select: { questions: true } },
+        },
+      },
     },
     orderBy: [{ user: { name: "asc" } }, { course: { version: "desc" } }],
   });
