@@ -4,6 +4,7 @@ import {
   isAutomaticMetaMetric,
   metaConversationCount,
   metaFunnelKpis,
+  salesConversionPercent,
 } from "../lib/marketing-funnel";
 
 const metric = {
@@ -15,6 +16,9 @@ const metric = {
 
 assert.equal(isAutomaticMetaMetric(metric), true);
 assert.equal(metaConversationCount(metric), 29);
+assert.equal(salesConversionPercent(2, 34)?.toFixed(1), "5.9");
+assert.equal(salesConversionPercent(0, 4), 0);
+assert.equal(salesConversionPercent(0, 0), null);
 assert.deepEqual(
   metaFunnelKpis({
     spend: 145_000,

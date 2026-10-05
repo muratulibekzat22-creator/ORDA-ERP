@@ -15,6 +15,9 @@ export const metaConversationCount = (metric: StoredMarketingMetric) => {
   return Number.isFinite(value) ? value : 0;
 };
 
+export const salesConversionPercent = (orders: number, leads: number) =>
+  leads > 0 ? (orders / leads) * 100 : null;
+
 export function metaFunnelKpis(input: {
   spend: number;
   conversations: number;
@@ -36,7 +39,6 @@ export function metaFunnelKpis(input: {
         ? input.spend / input.orders
         : null,
     roas: input.spend > 0 ? input.revenue / input.spend : null,
-    conversion:
-      input.crmLeads > 0 ? (input.orders / input.crmLeads) * 100 : null,
+    conversion: salesConversionPercent(input.orders, input.crmLeads),
   };
 }
