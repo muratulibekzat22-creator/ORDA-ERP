@@ -1506,7 +1506,8 @@ async function payrollEntitlementTx(
     deductions,
     paid,
     total,
-    payable: (approvedAmount ?? total) - paid,
+    payable: Math.max((approvedAmount ?? 0) - paid, 0),
+    advanceAvailable: Math.max(total - paid, 0),
     incomplete: missingBonusCount > 0,
     missingBonusCount,
     previouslyRecognizedProfit,
@@ -1899,7 +1900,7 @@ async function assertPartialSalaryPaymentAvailable(
   });
   if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
   const entitlement = await payrollEntitlementTx(tx, input.employeeId, period);
-  if (Number(input.amount) > entitlement.payable + 0.01)
+  if (Number(input.amount) > entitlement.advanceAvailable + 0.01)
     throw new PayrollError("PAYMENT_EXCEEDS_PAYABLE");
 }
 
@@ -3453,8 +3454,7 @@ export async function payrollSummary(
       pendingAdvances,
       accrued: confirmedAccrued,
     });
-    const remaining =
-      (latestApproval ? Number(latestApproval.preparedAmount) : preparedAmount) - paid;
+    const remaining = calculated.amountToPay;
     const personalCalculationBase = {
       ...calculated,
       prepared: preparedAmount,
@@ -3645,9 +3645,7 @@ export async function payrollSummary(
             `${employee.id}:${priorPeriod.id}`,
           ) ?? [])
         .reduce((sum, payment) => sum + signedPayment(payment), 0);
-      const basis = priorSnapshot
-        ? Number(priorSnapshot.preparedAmount)
-        : priorPrepared;
+      const basis = priorSnapshot ? Number(priorSnapshot.preparedAmount) : 0;
       const remaining = basis - priorPaid;
       const hasActivity =
         Math.abs(basis) >= 0.01 ||

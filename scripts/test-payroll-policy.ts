@@ -261,7 +261,7 @@ assert.deepEqual(
     advances: 100_000,
     otherPayments: 0,
     pendingAdvances: 50_000,
-    accrued: 0,
+    accrued: 425_000,
   }),
   {
     salary: 400_000,
@@ -271,9 +271,9 @@ assert.deepEqual(
     advances: 100_000,
     otherPayments: 0,
     pendingAdvances: 50_000,
-    accrued: 0,
+    accrued: 425_000,
     totalToAccrue: 425_000,
-    remainingToAccrue: 425_000,
+    remainingToAccrue: 0,
     amountToPay: 325_000,
     amountToPayAfterPendingAdvances: 275_000,
   },
@@ -300,8 +300,8 @@ assert.deepEqual(
     accrued: 0,
     totalToAccrue: 200_000,
     remainingToAccrue: 200_000,
-    amountToPay: 150_000,
-    amountToPayAfterPendingAdvances: 150_000,
+    amountToPay: 0,
+    amountToPayAfterPendingAdvances: 0,
   },
   "an unfilled recommendation must not increase the employee calculation",
 );
@@ -419,8 +419,9 @@ assert.match(
 );
 assert.match(
   service,
-  /\(latestApproval \? Number\(latestApproval\.preparedAmount\) : preparedAmount\) - paid/,
+  /payable: Math\.max\(\(approvedAmount \?\? 0\) - paid, 0\)/,
 );
+assert.match(service, /const remaining = calculated\.amountToPay/);
 assert.match(service, /approvalStatus = !latestApproval[\s\S]*?NEEDS_CORRECTION/);
 assert.match(payrollRoute, /action === "confirm-calculation"/);
 assert.match(payrollRoute, /confirmPayrollCalculation/);

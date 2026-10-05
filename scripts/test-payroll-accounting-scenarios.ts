@@ -44,6 +44,7 @@ const statement = (input: {
   });
   return {
     prepared: calculation.totalToAccrue,
+    pendingAccrual: calculation.remainingToAccrue,
     accrued: calculation.accrued,
     paid: input.paid,
     remaining: calculation.amountToPay,
@@ -71,16 +72,17 @@ const akbota = statement({
 });
 assert.deepEqual(akbota, {
   prepared: 200_000,
+  pendingAccrual: 200_000,
   accrued: 0,
   paid: 50_000,
-  remaining: 150_000,
+  remaining: 0,
   incomplete: true,
   missingBonusCount: 3,
 });
 pass("Сентябрь — Акбота: пустые бонусы не заменяются подсказкой", akbota);
 
-// When the saved decisions really total 90 000 ₸, the September statement
-// matches the requested accounting example without creating an accrual.
+// Saved decisions form a calculation, but do not become an accrual until a
+// director confirms the calculation.
 const akbotaWithSavedBonuses = statement({
   salary: 200_000,
   savedBonuses: [50_000, 40_000],
@@ -88,24 +90,48 @@ const akbotaWithSavedBonuses = statement({
 });
 assert.deepEqual(akbotaWithSavedBonuses, {
   prepared: 290_000,
+  pendingAccrual: 290_000,
   accrued: 0,
+  paid: 50_000,
+  remaining: 0,
+  incomplete: false,
+  missingBonusCount: 0,
+});
+pass("Сентябрь — Акбота до начисления: 290 000 ожидает подтверждения", akbotaWithSavedBonuses);
+
+const akbotaConfirmed = statement({
+  salary: 200_000,
+  savedBonuses: [50_000, 40_000],
+  paid: 50_000,
+  accrued: 290_000,
+});
+assert.deepEqual(akbotaConfirmed, {
+  prepared: 290_000,
+  pendingAccrual: 0,
+  accrued: 290_000,
   paid: 50_000,
   remaining: 240_000,
   incomplete: false,
   missingBonusCount: 0,
 });
-pass("Сентябрь — Акбота 290 000 / 0 / 50 000 / 240 000", akbotaWithSavedBonuses);
+pass("Сентябрь — Акбота: 0 / 290 000 / 50 000 / 240 000", akbotaConfirmed);
 
-const alikhan = statement({ salary: 400_000, savedBonuses: [], paid: 83_000 });
+const alikhan = statement({
+  salary: 400_000,
+  savedBonuses: [],
+  paid: 83_000,
+  accrued: 400_000,
+});
 assert.deepEqual(alikhan, {
   prepared: 400_000,
-  accrued: 0,
+  pendingAccrual: 0,
+  accrued: 400_000,
   paid: 83_000,
   remaining: 317_000,
   incomplete: false,
   missingBonusCount: 0,
 });
-pass("Сентябрь — Алихан 400 000 / 0 / 83 000 / 317 000", alikhan);
+pass("Сентябрь — Алихан: 0 / 400 000 / 83 000 / 317 000", alikhan);
 
 const octoberStart = new Date("2026-09-30T19:00:00.000Z");
 const unconfiguredMeasurerSalary = {
@@ -275,9 +301,10 @@ const previewOnly = statement({
 });
 assert.deepEqual(previewOnly, {
   prepared: 200_000,
+  pendingAccrual: 200_000,
   accrued: 0,
   paid: 0,
-  remaining: 200_000,
+  remaining: 0,
   incomplete: true,
   missingBonusCount: 1,
 });
@@ -343,6 +370,7 @@ pass("Неподтверждённая ставка замерщиков отм�
 });
 
 assert.match(page, /const statementPrepared =/);
+assert.match(page, /const statementPendingAccrual =/);
 assert.match(page, /const statementAccrued =/);
 assert.match(page, /const statementPaid =/);
 assert.match(page, /const statementPayable =/);
@@ -366,7 +394,7 @@ pass("Аванс и частичная выплата доступны отде�
   reviewPeriodPaymentsAllowed: true,
 });
 pass("Таблица и карточка используют единый контракт расчёта", {
-  fields: ["prepared", "accrued", "paid", "remaining", "priorDebt"],
+  fields: ["pendingAccrual", "accrued", "paid", "remaining", "priorDebt"],
   pageSize: 25,
 });
 

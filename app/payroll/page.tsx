@@ -395,8 +395,19 @@ const statementPrepared = (row: PayrollRow) =>
   );
 const statementPaid = (row: PayrollRow) =>
   row.calculation.paid ?? row.totals.paid;
+const statementPendingAccrual = (row: PayrollRow) =>
+  Math.max(
+    row.calculation.remainingToAccrue ??
+      statementPrepared(row) - statementAccrued(row),
+    0,
+  );
 const statementPayable = (row: PayrollRow) =>
-  row.calculation.remaining ??
+  Math.max(
+    row.calculation.remaining ??
+      statementAccrued(row) - statementPaid(row),
+    0,
+  );
+const statementAdvanceAvailable = (row: PayrollRow) =>
   Math.max(statementPrepared(row) - statementPaid(row), 0);
 const statementPriorDebt = (row: PayrollRow) =>
   Math.max(row.calculation.priorDebt ?? 0, 0);
@@ -538,7 +549,7 @@ export default function PayrollPage() {
     (row) => partialSalaryAvailable(row) > 0,
   );
   const advancePaymentCandidates = data.rows.filter(
-    (row) => statementPayable(row) > 0,
+    (row) => statementAdvanceAvailable(row) > 0,
   );
   const accrualCorrectionCandidates = data.rows.filter(
     (row) => editablePayrollAccruals(row).length > 0,
@@ -981,8 +992,8 @@ export default function PayrollPage() {
     (currentPage - 1) * PAYROLL_PAGE_SIZE,
     currentPage * PAYROLL_PAGE_SIZE,
   );
-  const statementPreparedTotal = statementRows.reduce(
-    (sum, row) => sum + statementPrepared(row),
+  const statementPendingAccrualTotal = statementRows.reduce(
+    (sum, row) => sum + statementPendingAccrual(row),
     0,
   );
   const statementAccruedTotal = statementRows.reduce(
@@ -1012,7 +1023,7 @@ export default function PayrollPage() {
     );
   });
   const stats: Array<[string, number, LucideIcon, string]> = [
-    ["К начислению", statementPreparedTotal, CircleDollarSign, "text-blue-200"],
+    ["К начислению", statementPendingAccrualTotal, CircleDollarSign, "text-blue-200"],
     ["Начислено", statementAccruedTotal, CircleDollarSign, "text-white"],
     ["Выплачено", statementPaidTotal, Check, "text-emerald-300"],
     ["Осталось выплатить", statementPayableTotal, Banknote, "text-amber-300"],
@@ -1143,9 +1154,10 @@ export default function PayrollPage() {
                 Сотрудники
               </h2>
               <p className="mt-1 max-w-2xl text-xs text-slate-400">
-                «К начислению» — полный расчёт выбранного месяца до вычета
-                выплат. «Начислено» показывает только сумму, подтверждённую
-                руководителем. До подтверждения расчёт предварительный.
+                «К начислению» — сумма, которую ещё нужно подтвердить.
+                «Начислено» — уже подтверждённая зарплата, «Выплачено» —
+                фактические выплаты и авансы, «Осталось выплатить» —
+                начислено минус выплачено.
               </p>
             </div>
             {data.rows.length > 0 && (
@@ -1232,7 +1244,7 @@ export default function PayrollPage() {
                     <div className="mt-4 grid grid-cols-2 gap-2 text-sm min-[520px]:grid-cols-4">
                       <Metric
                         label="К начислению"
-                        value={statementPrepared(row)}
+                        value={statementPendingAccrual(row)}
                       />
                       <Metric label="Начислено" value={statementAccrued(row)} />
                       <Metric label="Выплачено" value={statementPaid(row)} />
@@ -1409,7 +1421,7 @@ function PayrollTableRow({
         </span>
       </td>
       <td className="px-3 py-4 tabular-nums xl:px-4">
-        {currency(statementPrepared(row))}
+        {currency(statementPendingAccrual(row))}
       </td>
       <td className="px-3 py-4 tabular-nums xl:px-4">
         {currency(statementAccrued(row))}
@@ -1438,19 +1450,19 @@ function PayrollTableRow({
 function Status({ row }: { row: PayrollRow }) {
   const payable = statementPayable(row);
   const paid = statementPaid(row);
-  const prepared = statementPrepared(row);
+  const accrued = statementAccrued(row);
   const approval = calculationApprovalStatus(row);
   const value = calculationIncomplete(row)
     ? "Расчёт неполный"
     : approval === "NEEDS_CORRECTION"
       ? "Нужна корректировка"
       : approval !== "CONFIRMED"
-        ? "Предварительный"
+        ? "Не начислено"
         : payable > 0 && paid > 0
           ? "Частично выплачено"
           : payable > 0
             ? "Начислено"
-            : prepared > 0 && paid > 0
+            : accrued > 0 && paid > 0
               ? "Выплачено"
               : "Подтверждено";
   const tone =
@@ -1458,7 +1470,7 @@ function Status({ row }: { row: PayrollRow }) {
       ? "bg-amber-500/15 text-amber-200"
       : value === "Выплачено"
         ? "bg-emerald-500/15 text-emerald-300"
-        : value === "Предварительный"
+        : value === "Не начислено"
           ? "bg-slate-700/60 text-slate-200"
           : "bg-blue-500/15 text-blue-300";
   return (
@@ -1787,6 +1799,7 @@ function EmployeeDrawer({
   const editableAccruals = editablePayrollAccruals(row);
   const reversibleAccruals = reversiblePayrollAccruals(row);
   const prepared = statementPrepared(row);
+  const pendingAccrual = statementPendingAccrual(row);
   const accrued = statementAccrued(row);
   const paid = statementPaid(row);
   const remaining = statementPayable(row);
@@ -1853,14 +1866,15 @@ function EmployeeDrawer({
             Обновляем расчёт, заказы и историю сотрудника…
           </div>
         )}
-        <div className="mt-5 grid gap-2 min-[480px]:grid-cols-3">
+        <div className="mt-5 grid grid-cols-2 gap-2 min-[720px]:grid-cols-4">
+          <Metric label="К начислению" value={pendingAccrual} />
           <Metric label="Начислено" value={accrued} />
           <Metric label="Выплачено" value={paid} />
           <Metric
             label="Осталось выплатить"
             value={remaining}
             accent
-            hint={confirmed ? "По утверждённому расчёту" : "Предварительно"}
+            hint={confirmed ? "По утверждённому расчёту" : "После начисления"}
           />
         </div>
         <section className="mt-4 rounded-2xl border border-slate-800 bg-slate-900 p-4">
@@ -1897,7 +1911,7 @@ function EmployeeDrawer({
               </div>
             ))}
             <div className="flex items-center justify-between gap-3 rounded-xl bg-blue-500/10 px-3 py-2 text-blue-100">
-              <span className="font-semibold">К начислению</span>
+              <span className="font-semibold">Всего рассчитано</span>
               <b className="shrink-0 tabular-nums">{currency(prepared)}</b>
             </div>
             <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-950 px-3 py-2">
@@ -2263,7 +2277,7 @@ function OperationModal({
   const [orders, setOrders] = useState<OrderOption[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const availablePartialSalary = partialSalaryAvailable(row);
-  const availableAdvance = statementPayable(row);
+  const availableAdvance = statementAdvanceAvailable(row);
   const requestedPartialSalary = Number(form.amount) || 0;
   const remainingAfterPartialSalary = Math.max(
     availablePartialSalary - requestedPartialSalary,

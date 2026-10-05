@@ -240,8 +240,9 @@ export const personalPayrollCalculation = (input: {
   const totalToAccrue = money(
     input.salary + input.bonuses + input.premiums - input.deductions,
   );
+  const remainingToAccrue = money(Math.max(totalToAccrue - input.accrued, 0));
   const amountToPay = money(
-    totalToAccrue - input.advances - input.otherPayments,
+    Math.max(input.accrued - input.advances - input.otherPayments, 0),
   );
   return {
     salary: money(input.salary),
@@ -253,10 +254,10 @@ export const personalPayrollCalculation = (input: {
     pendingAdvances: money(input.pendingAdvances),
     accrued: money(input.accrued),
     totalToAccrue,
-    remainingToAccrue: money(totalToAccrue - input.accrued),
+    remainingToAccrue,
     amountToPay,
     amountToPayAfterPendingAdvances: money(
-      amountToPay - input.pendingAdvances,
+      Math.max(amountToPay - input.pendingAdvances, 0),
     ),
   };
 };
