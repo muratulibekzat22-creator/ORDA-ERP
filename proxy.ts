@@ -36,6 +36,7 @@ export async function proxy(request: NextRequest) {
     response.headers.set("x-request-id", requestId);
     response.headers.set("Content-Security-Policy", contentSecurityPolicy);
     response.headers.set("Cache-Control", "private, no-store, max-age=0");
+    response.headers.set("Access-Control-Allow-Origin", request.nextUrl.origin);
     if (process.env.ENABLE_HSTS === "true") response.headers.set("Strict-Transport-Security", "max-age=31536000");
     return response;
   };
