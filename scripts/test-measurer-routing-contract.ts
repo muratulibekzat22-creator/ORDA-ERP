@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { Role } from "@prisma/client";
 
 import {
   ALMATY_MEASURER_TERRITORY,
@@ -10,7 +11,23 @@ import {
   SEMEY_MEASURER_TERRITORY,
   SHYMKENT_MEASURER_TERRITORY,
 } from "@/lib/measurements/measurer-territory";
-import { measurementMeasurerWhatsAppText, measurementWhatsAppText } from "@/lib/services/measurement.service";
+import {
+  isMeasurementLeader,
+  MEASUREMENT_PERFORMER_ROLES,
+  measurementMeasurerWhatsAppText,
+  measurementScope,
+  measurementWhatsAppText,
+} from "@/lib/services/measurement.service";
+
+assert.equal(isMeasurementLeader(Role.DIRECTOR), true);
+assert.equal(isMeasurementLeader(Role.OPERATIONS_DIRECTOR), true);
+assert.equal(isMeasurementLeader(Role.MANAGER), false);
+assert.deepEqual(measurementScope({ userId: 7, role: Role.DIRECTOR, name: "Основатель" }), {});
+assert.deepEqual(measurementScope({ userId: 8, role: Role.OPERATIONS_DIRECTOR, name: "Директор" }), {});
+assert.deepEqual(measurementScope({ userId: 9, role: Role.MEASURER, name: "Замерщик" }), { measurerUserId: 9 });
+assert(MEASUREMENT_PERFORMER_ROLES.includes(Role.DIRECTOR));
+assert(MEASUREMENT_PERFORMER_ROLES.includes(Role.OPERATIONS_DIRECTOR));
+assert(MEASUREMENT_PERFORMER_ROLES.includes(Role.MEASURER));
 
 const profile = {
   homeCity: "Семей",
@@ -62,8 +79,8 @@ const group = measurementWhatsAppText({
   measurerPhone: "+77020000000",
   managerName: "Менеджер",
 });
-assert.match(group, /Замерщик: Еркебулан/);
-assert.match(group, /Телефон замерщика: \+77020000000/);
+assert.match(group, /Ответственный за замер: Еркебулан/);
+assert.match(group, /Телефон ответственного: \+77020000000/);
 
 const direct = measurementMeasurerWhatsAppText({
   measurerName: "Еркебулан",
@@ -82,6 +99,7 @@ const service = readFileSync("lib/services/measurement.service.ts", "utf8");
 const leadPanel = readFileSync("components/measurements/LeadMeasurementPanel.tsx", "utf8");
 const workspace = readFileSync("components/measurements/MeasurementWorkspace.tsx", "utf8");
 const employeePage = readFileSync("components/pages/EmployeesPage.tsx", "utf8");
+const measurementRoute = readFileSync("app/api/measurements/[id]/route.ts", "utf8");
 for (const marker of ["MEASURER_OUTSIDE_SERVICE_AREA", "MEASURER_TRAVEL_APPROVAL_REQUIRED"])
   assert(service.includes(marker), `missing server territory gate ${marker}`);
 for (const source of [leadPanel, workspace]) {
@@ -92,5 +110,8 @@ for (const source of [leadPanel, workspace]) {
 assert(employeePage.includes("MEASURER_TERRITORY_TEMPLATES.map"));
 assert(employeePage.includes("applyTerritoryTemplate"));
 assert(employeePage.includes("Территория замерщика"));
+assert(service.includes("CLAIMED_BY_LEADER"));
+assert(measurementRoute.includes('action === "claim"'));
+assert(workspace.includes("Взять свободный замер себе"));
 
-console.log("measurer territory, WhatsApp and assignment contracts passed");
+console.log("measurer territory, leader access, WhatsApp and assignment contracts passed");

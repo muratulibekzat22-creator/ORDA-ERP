@@ -5,6 +5,7 @@ import { measurementActor, measurementError } from "@/lib/measurement-api";
 import { requirePermission } from "@/lib/server-auth";
 import {
   cancelMeasurement,
+  claimMeasurement,
   completeMeasurement,
   getMeasurement,
   handMeasurementToManager,
@@ -43,6 +44,7 @@ export async function PATCH(request: Request, { params }: Context) {
     const actor = measurementActor(auth.session!);
     if (action === undefined && typeof body.comment === "string" && Object.keys(body).every((key) => key === "comment")) return NextResponse.json(await saveMeasurementComment(actor, id, body.comment));
     if (action === "start") return NextResponse.json(await startMeasurement(actor, id));
+    if (action === "claim") return NextResponse.json(await claimMeasurement(actor, id));
     if (action === "design-workflow") {
       const event = body.event === "PROMPT_COPIED" || body.event === "SHOWN_TO_CLIENT" ? body.event : undefined;
       return NextResponse.json(await updateMeasurementDesignWorkflow(actor, id, {

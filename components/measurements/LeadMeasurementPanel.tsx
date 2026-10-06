@@ -48,7 +48,7 @@ type Measurement = {
   attachments: Array<{ id: number; type: string; fileName: string }>;
   auditEvents: Array<{ id: number; action: string; comment?: string | null; createdAt: string; actor?: { id: number; name: string } | null }>;
 };
-type Measurer = { id: number; name: string; phone?: string | null; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
+type Measurer = { id: number; name: string; phone?: string | null; role: string; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
 
 const input =
   "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none focus:border-blue-500";
@@ -136,7 +136,7 @@ export default function LeadMeasurementPanel({
       }));
     } else {
       setMeasurersLoaded(true);
-      setError("Не удалось загрузить активных замерщиков");
+      setError("Не удалось загрузить ответственных за замер");
     }
   }, [clientId]);
   useEffect(() => {
@@ -171,7 +171,7 @@ export default function LeadMeasurementPanel({
     const body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
     else {
-      setNotice(form.measurerUserId ? "Замер назначен и добавлен в календарь замерщика" : "Замер сохранён. Замерщика можно назначить позже");
+      setNotice(form.measurerUserId ? "Замер назначен и добавлен в календарь ответственного" : "Замер сохранён. Ответственного можно назначить позже");
       setWhatsappText(body.whatsappGroupText ?? body.whatsappText ?? "");
       setWhatsappMeasurerText(body.whatsappMeasurerText ?? "");
       setWhatsappMeasurerPhone(body.measurerPhone ?? "");
@@ -183,11 +183,11 @@ export default function LeadMeasurementPanel({
   }
 
   const availableMeasurers = measurers
-    .map((row) => ({ row, match: measurerTerritoryMatch(row, form.city) }))
+    .map((row) => ({ row, match: row.role === "MEASURER" ? measurerTerritoryMatch(row, form.city) : { status: "UNCONFIGURED" as const, area: null } }))
     .filter(({ match }) => match.status !== "OUTSIDE_AREA")
     .sort((a, b) => territoryRank[a.match.status] - territoryRank[b.match.status]);
   const selectedMeasurer = measurers.find((row) => String(row.id) === form.measurerUserId);
-  const selectedTerritory = selectedMeasurer ? measurerTerritoryMatch(selectedMeasurer, form.city) : null;
+  const selectedTerritory = selectedMeasurer?.role === "MEASURER" ? measurerTerritoryMatch(selectedMeasurer, form.city) : null;
 
   async function action(id: number, body: Record<string, unknown>, ok: string) {
     setBusy(true);
@@ -248,9 +248,9 @@ export default function LeadMeasurementPanel({
         <span><b className="block text-white">{form.city || "Город не указан"}</b>Город</span>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {!measurersLoaded ? <p className="rounded-xl bg-slate-900 p-3 text-slate-400">Загрузка замерщиков…</p> :
+        {!measurersLoaded ? <p className="rounded-xl bg-slate-900 p-3 text-slate-400">Загрузка ответственных…</p> :
         <label className="text-sm text-slate-300">
-          Замерщик (необязательно)
+          Ответственный за замер (необязательно)
           <select
             className={`${input} mt-1`}
             value={form.measurerUserId}
@@ -258,15 +258,15 @@ export default function LeadMeasurementPanel({
               setForm({ ...form, measurerUserId: event.target.value })
             }
           >
-            <option value="">Замерщик не выбран</option>
+            <option value="">Ответственный не выбран</option>
             {availableMeasurers.map(({ row, match }) => (
               <option key={row.id} value={row.id}>
-                {row.name}{match.area ? ` · ${match.area.city}, ${travelTimeLabel(match.area.estimatedMinutes)}` : " · зона не настроена"}{match.status === "APPROVAL_REQUIRED" ? " · по согласованию" : ""}
+                {row.name}{row.role === "DIRECTOR" ? " · основатель" : row.role === "OPERATIONS_DIRECTOR" ? " · директор" : match.area ? ` · ${match.area.city}, ${travelTimeLabel(match.area.estimatedMinutes)}` : " · зона не настроена"}{match.status === "APPROVAL_REQUIRED" ? " · по согласованию" : ""}
               </option>
             ))}
           </select>
-          {form.city && availableMeasurers.length === 0 && <span className="mt-1 block text-xs text-red-300">Для этого города нет настроенного замерщика.</span>}
-          {selectedMeasurer && <span className="mt-1 block text-xs text-slate-400">{selectedMeasurer.homeCity ? `База: ${selectedMeasurer.homeCity}` : "Базовый город не настроен"}{selectedMeasurer.phone ? ` · ${selectedMeasurer.phone}` : " · телефон не указан"}</span>}
+          {form.city && availableMeasurers.length === 0 && <span className="mt-1 block text-xs text-red-300">Для этого города нет доступного сотрудника.</span>}
+          {selectedMeasurer && <span className="mt-1 block text-xs text-slate-400">{selectedMeasurer.role === "MEASURER" ? selectedMeasurer.homeCity ? `База: ${selectedMeasurer.homeCity}` : "Базовый город не настроен" : "Руководитель компании"}{selectedMeasurer.phone ? ` · ${selectedMeasurer.phone}` : " · телефон не указан"}</span>}
         </label>
         }
         {selectedTerritory?.status === "APPROVAL_REQUIRED" && <label className="flex min-h-12 items-center gap-3 rounded-xl border border-amber-700 bg-amber-950/20 px-3 text-sm text-amber-100"><input type="checkbox" checked={form.travelApproved} onChange={(event) => setForm({ ...form, travelApproved: event.target.checked })} />Дальний выезд согласован с замерщиком</label>}
@@ -379,8 +379,8 @@ export default function LeadMeasurementPanel({
                       timeZone: "Asia/Almaty",
                     }).format(new Date(row.visitDate))}
                   </b>
-                  <p className="mt-1 text-sm text-slate-400">
-                    {row.measurerUser?.name} · {row.city} · {row.address}
+                    <p className="mt-1 text-sm text-slate-400">
+                    {row.measurerUser?.name ?? "Ответственный не выбран"} · {row.city} · {row.address}
                   </p>
                 </div>
                 <div className="flex items-start gap-2">
@@ -401,9 +401,9 @@ export default function LeadMeasurementPanel({
               {rescheduleId === row.id && (
                 <div className="mt-3 grid gap-3 rounded-xl border border-amber-800 bg-amber-950/20 p-3 sm:grid-cols-2">
                   <label className="text-sm text-slate-300">Новая дата и время<input type="datetime-local" className={`${input} mt-1`} value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} /></label>
-                  <label className="text-sm text-slate-300">Замерщик<select className={`${input} mt-1`} value={rescheduleMeasurerId} onChange={(event) => { setRescheduleMeasurerId(event.target.value); setRescheduleTravelApproved(false); }}><option value="">Выберите</option>{measurers.filter((item) => measurerTerritoryMatch(item, row.city).status !== "OUTSIDE_AREA").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                  {(() => { const person = measurers.find((item) => String(item.id) === rescheduleMeasurerId); return person && measurerTerritoryMatch(person, row.city).status === "APPROVAL_REQUIRED" ? <label className="flex min-h-11 items-center gap-2 rounded-xl border border-amber-700 px-3 text-sm text-amber-100 sm:col-span-2"><input type="checkbox" checked={rescheduleTravelApproved} onChange={(event) => setRescheduleTravelApproved(event.target.checked)}/>Дальний выезд согласован</label> : null; })()}
-                  <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => setRescheduleId(null)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button><button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId || (() => { const person = measurers.find((item) => String(item.id) === rescheduleMeasurerId); return Boolean(person && measurerTerritoryMatch(person, row.city).status === "APPROVAL_REQUIRED" && !rescheduleTravelApproved); })()} onClick={() => void action(row.id, { action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: row.city, address: row.address, mapLink: row.mapLink, travelApproved: rescheduleTravelApproved }, "Замер перенесён").then(() => setRescheduleId(null))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button></div>
+                   <label className="text-sm text-slate-300">Ответственный за замер<select className={`${input} mt-1`} value={rescheduleMeasurerId} onChange={(event) => { setRescheduleMeasurerId(event.target.value); setRescheduleTravelApproved(false); }}><option value="">Выберите</option>{measurers.filter((item) => item.role !== "MEASURER" || measurerTerritoryMatch(item, row.city).status !== "OUTSIDE_AREA").map((item) => <option key={item.id} value={item.id}>{item.name}{item.role === "DIRECTOR" ? " · основатель" : item.role === "OPERATIONS_DIRECTOR" ? " · директор" : ""}</option>)}</select></label>
+                   {(() => { const person = measurers.find((item) => String(item.id) === rescheduleMeasurerId); return person?.role === "MEASURER" && measurerTerritoryMatch(person, row.city).status === "APPROVAL_REQUIRED" ? <label className="flex min-h-11 items-center gap-2 rounded-xl border border-amber-700 px-3 text-sm text-amber-100 sm:col-span-2"><input type="checkbox" checked={rescheduleTravelApproved} onChange={(event) => setRescheduleTravelApproved(event.target.checked)}/>Дальний выезд согласован</label> : null; })()}
+                   <div className="flex gap-2 sm:col-span-2"><button type="button" onClick={() => setRescheduleId(null)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button><button type="button" disabled={busy || !rescheduleDate || !rescheduleMeasurerId || (() => { const person = measurers.find((item) => String(item.id) === rescheduleMeasurerId); return Boolean(person?.role === "MEASURER" && measurerTerritoryMatch(person, row.city).status === "APPROVAL_REQUIRED" && !rescheduleTravelApproved); })()} onClick={() => void action(row.id, { action: "reschedule", visitDate: rescheduleDate, measurerUserId: Number(rescheduleMeasurerId), city: row.city, address: row.address, mapLink: row.mapLink, travelApproved: rescheduleTravelApproved }, "Замер перенесён").then(() => setRescheduleId(null))} className="min-h-11 flex-1 rounded-xl bg-amber-500 px-3 font-semibold text-slate-950 disabled:opacity-50">Сохранить</button></div>
                 </div>
               )}
               {cancelId === row.id && (

@@ -10,7 +10,8 @@ export function measurementError(error: unknown) {
   const code = error instanceof Error ? error.message : "";
   if (code === "FORBIDDEN") return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   if (["NOT_FOUND", "CLIENT_NOT_FOUND"].includes(code)) return NextResponse.json({ error: "Замер или заявка не найдены" }, { status: 404 });
-  if (code === "MEASURER_NOT_FOUND") return NextResponse.json({ error: "Активный замерщик не найден" }, { status: 404 });
+  if (code === "MEASURER_NOT_FOUND") return NextResponse.json({ error: "Активный ответственный за замер не найден" }, { status: 404 });
+  if (code === "MEASUREMENT_ALREADY_ASSIGNED") return NextResponse.json({ error: "Замер уже назначен другому сотруднику" }, { status: 409 });
   if (code === "MEASURER_OUTSIDE_SERVICE_AREA") return NextResponse.json({ error: "Этот город не входит в зону выездов выбранного замерщика. Выберите другого сотрудника." }, { status: 409 });
   if (code === "MEASURER_TRAVEL_APPROVAL_REQUIRED") return NextResponse.json({ error: "Это дальний выезд. Подтвердите согласование поездки с замерщиком." }, { status: 409 });
   if (code === "CLIENT_PHONE_REQUIRED") return NextResponse.json({ error: "У клиента должен быть указан телефон" }, { status: 400 });

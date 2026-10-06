@@ -39,6 +39,22 @@ const COMPLETED_STATUSES: MeasurementStatus[] = [
   MeasurementStatus.COMPLETED,
   MeasurementStatus.HANDED_TO_MANAGER,
 ];
+export const MEASUREMENT_LEADER_ROLES: Role[] = [
+  Role.DIRECTOR,
+  Role.OPERATIONS_DIRECTOR,
+];
+export const MEASUREMENT_PERFORMER_ROLES: Role[] = [
+  ...MEASUREMENT_LEADER_ROLES,
+  Role.MEASURER,
+];
+
+export function isMeasurementLeader(role: Role) {
+  return MEASUREMENT_LEADER_ROLES.includes(role);
+}
+
+function isMeasurementPerformer(role: Role) {
+  return MEASUREMENT_PERFORMER_ROLES.includes(role);
+}
 
 export type MeasurementDraft = {
   stepsCount: number;
@@ -145,7 +161,7 @@ export async function selfScheduleMeasurement(actor: MeasurementActor, input: Se
 }
 
 const measurementInclude = {
-  measurerUser: { select: { id: true, name: true } },
+  measurerUser: { select: { id: true, name: true, role: true } },
   client: {
     select: {
       id: true,
@@ -297,7 +313,7 @@ export function measurementOperationalView(
 export function measurementScope(
   actor: MeasurementActor,
 ): Prisma.MeasurementWhereInput {
-  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) return {};
+  if (isMeasurementLeader(actor.role)) return {};
   if (actor.role === Role.MEASURER) return { measurerUserId: actor.userId };
   if (actor.role === Role.MANAGER)
     return {
@@ -316,7 +332,7 @@ function canManage(
   measurement: { client: { managerUserId: number | null; manager?: string } },
 ) {
   return (
-    actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR ||
+    isMeasurementLeader(actor.role) ||
     (actor.role === Role.MANAGER &&
       (measurement.client.managerUserId === actor.userId ||
         (!measurement.client.managerUserId &&
@@ -503,8 +519,8 @@ export function measurementWhatsAppText(input: {
     `Город: ${input.city || "не указан"}`,
     `Адрес: ${input.address || "по ссылке"}`,
     input.mapLink ? `Локация: ${input.mapLink}` : "",
-    `Замерщик: ${input.measurerName}`,
-    input.measurerPhone ? `Телефон замерщика: ${input.measurerPhone}` : "",
+    `Ответственный за замер: ${input.measurerName}`,
+    input.measurerPhone ? `Телефон ответственного: ${input.measurerPhone}` : "",
     `Менеджер: ${input.managerName}`,
     input.managerPhone ? `Телефон менеджера: ${input.managerPhone}` : "",
     input.comment ? `Комментарий: ${input.comment}` : "",
@@ -619,9 +635,9 @@ export async function measurementWorkspace(
       gte: new Date(now.getTime() - 30 * 86_400_000),
     };
   }
-  if (actor.role === Role.DIRECTOR && filters.measurerUserId)
+  if (isMeasurementLeader(actor.role) && filters.measurerUserId)
     workspaceWhere.measurerUserId = filters.measurerUserId;
-  if (actor.role === Role.DIRECTOR && filters.managerUserId)
+  if (isMeasurementLeader(actor.role) && filters.managerUserId)
     workspaceWhere.client = { managerUserId: filters.managerUserId };
   const search = filters.search?.trim().slice(0, 120);
   if (search) {
@@ -680,7 +696,7 @@ export async function measurementWorkspace(
     manager_name: string | null;
   };
   const companyId = requireTenantIdentity().companyId;
-  const summaryScopeSql = actor.role === Role.DIRECTOR
+  const summaryScopeSql = isMeasurementLeader(actor.role)
     ? Prisma.sql`m."companyId" = ${companyId}`
     : actor.role === Role.MEASURER
       ? Prisma.sql`m."companyId" = ${companyId} AND m."measurerUserId" = ${actor.userId}`
@@ -878,7 +894,7 @@ export async function measurementWorkspace(
           },
         }
       : null;
-  const measurerStats = actor.role === Role.DIRECTOR
+  const measurerStats = isMeasurementLeader(actor.role)
     ? await prisma.$queryRaw<
         Array<{
           id: number;
@@ -997,7 +1013,7 @@ export async function scheduleMeasurement(
   actor: MeasurementActor,
   input: ScheduleMeasurementInput,
 ) {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER)
+  if (!isMeasurementLeader(actor.role) && actor.role !== Role.MANAGER)
     throw new MeasurementError("FORBIDDEN");
   if (
     !Number.isInteger(input.clientId) ||
@@ -1048,7 +1064,7 @@ export async function scheduleMeasurement(
         throw new MeasurementError("CLIENT_NOT_FOUND");
       if (!client.phone.trim())
         throw new MeasurementError("CLIENT_PHONE_REQUIRED");
-      if (input.measurerUserId && (!measurer?.active || measurer.role !== Role.MEASURER))
+      if (input.measurerUserId && (!measurer?.active || !isMeasurementPerformer(measurer.role)))
         throw new MeasurementError("MEASURER_NOT_FOUND");
       if (input.orderId && (!order || order.clientId !== client.id))
         throw new MeasurementError("INVALID_INPUT");
@@ -1056,7 +1072,7 @@ export async function scheduleMeasurement(
       const address = trim(input.address, 1000) ?? client.address.trim();
       const mapLink = trim(input.mapLink, 2000);
       if (!address && !mapLink) throw new MeasurementError("LOCATION_REQUIRED");
-      const territory = measurer ? measurerTerritoryMatch({
+      const territory = measurer?.role === Role.MEASURER ? measurerTerritoryMatch({
         homeCity: measurer.payrollProfile?.homeCity,
         maxTravelMinutes: measurer.payrollProfile?.maxTravelMinutes,
         serviceAreas: sanitizeMeasurerServiceAreas(measurer.payrollProfile?.measurerServiceArea),
@@ -1220,7 +1236,10 @@ async function editableMeasurement(
   actor: MeasurementActor,
   id: number,
 ) {
-  const measurement = await tx.measurement.findUnique({ where: { id } });
+  const measurement = await tx.measurement.findUnique({
+    where: { id },
+    include: { measurerUser: { select: { id: true, role: true } } },
+  });
   if (!measurement) throw new MeasurementError("NOT_FOUND");
   if (
     actor.role === Role.MEASURER &&
@@ -1238,12 +1257,35 @@ async function editableMeasurement(
   return { ...measurement, client, attachments };
 }
 
+function canPerformMeasurement(
+  actor: MeasurementActor,
+  measurement: {
+    measurerUserId: number | null;
+    measurerUser?: { id: number; role: Role } | null;
+  },
+) {
+  if (!isMeasurementPerformer(actor.role) || !measurement.measurerUserId)
+    return false;
+  if (measurement.measurerUserId === actor.userId) return true;
+  return (
+    isMeasurementLeader(actor.role) &&
+    Boolean(
+      measurement.measurerUser &&
+        isMeasurementLeader(measurement.measurerUser.role),
+    )
+  );
+}
+
 export async function startMeasurement(actor: MeasurementActor, id: number) {
-  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
-    if (!(await hasTrainingClearance(tx, actor.userId)))
-      throw new MeasurementError("TRAINING_REQUIRED");
     const current = await editableMeasurement(tx, actor, id);
+    if (!canPerformMeasurement(actor, current))
+      throw new MeasurementError("NOT_FOUND");
+    if (
+      actor.role === Role.MEASURER &&
+      !(await hasTrainingClearance(tx, actor.userId))
+    )
+      throw new MeasurementError("TRAINING_REQUIRED");
     if (current.status !== MeasurementStatus.ASSIGNED)
       throw new MeasurementError("INVALID_STATE");
     const now = new Date();
@@ -1274,9 +1316,10 @@ export async function saveMeasurementDraft(
   id: number,
   draft: MeasurementDraft,
 ) {
-  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
+    if (!canPerformMeasurement(actor, current))
+      throw new MeasurementError("NOT_FOUND");
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     const result = await tx.measurement.update({
@@ -1311,9 +1354,10 @@ export async function saveMeasurementComment(
   id: number,
   comment: string,
 ) {
-  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
+    if (!canPerformMeasurement(actor, current))
+      throw new MeasurementError("NOT_FOUND");
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     const value = trim(comment);
@@ -1339,9 +1383,10 @@ export async function updateMeasurementDesignWorkflow(
   id: number,
   input: MeasurementDesignWorkflowInput,
 ) {
-  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
+    if (!canPerformMeasurement(actor, current))
+      throw new MeasurementError("NOT_FOUND");
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     const types = current.attachments.map((attachment) => attachment.type);
@@ -1577,9 +1622,10 @@ export async function completeMeasurement(
   outcome?: MeasurementOutcomeInput,
   commercial?: MeasurementCommercialInput,
 ) {
-  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
+    if (!canPerformMeasurement(actor, current))
+      throw new MeasurementError("NOT_FOUND");
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     const photoTypes = current.attachments.map((photo) => photo.type);
@@ -1870,7 +1916,7 @@ export async function handMeasurementToManager(
   actor: MeasurementActor,
   id: number,
 ) {
-  if (actor.role !== Role.MEASURER && actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (actor.role !== Role.MEASURER && !isMeasurementLeader(actor.role))
     throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const current = await editableMeasurement(tx, actor, id);
@@ -2149,6 +2195,103 @@ export async function inviteClientToOffice(
   });
 }
 
+export async function claimMeasurement(
+  actor: MeasurementActor,
+  id: number,
+) {
+  if (!isMeasurementLeader(actor.role))
+    throw new MeasurementError("FORBIDDEN");
+  return prisma.$transaction(async (tx) => {
+    const current = await editableMeasurement(tx, actor, id);
+    if (!EDITABLE_STATUSES.includes(current.status))
+      throw new MeasurementError("IMMUTABLE_MEASUREMENT");
+    if (current.measurerUserId === actor.userId)
+      return tx.measurement.findUniqueOrThrow({
+        where: { id },
+        include: measurementInclude,
+      });
+    if (current.measurerUserId)
+      throw new MeasurementError("MEASUREMENT_ALREADY_ASSIGNED");
+    const leader = await tx.user.findFirst({
+      where: {
+        id: actor.userId,
+        active: true,
+        role: { in: MEASUREMENT_LEADER_ROLES },
+      },
+      select: { id: true, name: true },
+    });
+    if (!leader) throw new MeasurementError("FORBIDDEN");
+
+    let calendarTaskId = current.calendarTaskId;
+    if (calendarTaskId) {
+      await tx.calendarTask.update({
+        where: { id: calendarTaskId },
+        data: { assigneeId: leader.id, dueAt: current.visitDate },
+      });
+      await tx.calendarTaskAudit.create({
+        data: {
+          taskId: calendarTaskId,
+          action: "ASSIGNED_TO_LEADER",
+          actorId: actor.userId,
+          after: { assigneeId: leader.id, measurementId: id },
+        },
+      });
+    } else {
+      const task = await tx.calendarTask.create({
+        data: {
+          title: `Замер: ${current.client.name}`,
+          description: [
+            current.city,
+            current.address,
+            current.mapLink,
+            current.managerComment,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          type: CalendarTaskType.MEASUREMENT,
+          dueAt: current.visitDate,
+          priority: CalendarTaskPriority.IMPORTANT,
+          assigneeId: leader.id,
+          creatorId: actor.userId,
+          clientId: current.clientId,
+          orderId: current.orderId,
+        },
+      });
+      calendarTaskId = task.id;
+      await tx.calendarTaskAudit.create({
+        data: {
+          taskId: task.id,
+          action: "CREATED_FROM_UNASSIGNED_MEASUREMENT",
+          actorId: actor.userId,
+          after: {
+            assigneeId: leader.id,
+            measurementId: id,
+            clientId: current.clientId,
+          },
+        },
+      });
+    }
+    await tx.measurementAudit.create({
+      data: {
+        measurementId: id,
+        action: "CLAIMED_BY_LEADER",
+        actorId: actor.userId,
+        before: { measurerUserId: null },
+        after: { measurerUserId: leader.id },
+      },
+    });
+    return tx.measurement.update({
+      where: { id },
+      data: {
+        calendarTaskId,
+        measurerUserId: leader.id,
+        measurer: leader.name,
+      },
+      include: measurementInclude,
+    });
+  });
+}
+
 export async function rescheduleMeasurement(
   actor: MeasurementActor,
   id: number,
@@ -2173,8 +2316,23 @@ export async function rescheduleMeasurement(
     if (ownMeasurement && input.measurerUserId !== actor.userId)
       throw new MeasurementError("FORBIDDEN");
     const measurer = await tx.user.findFirst({
-      where: { id: input.measurerUserId, role: Role.MEASURER, active: true },
-      select: { id: true, name: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } },
+      where: {
+        id: input.measurerUserId,
+        role: { in: MEASUREMENT_PERFORMER_ROLES },
+        active: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        payrollProfile: {
+          select: {
+            homeCity: true,
+            maxTravelMinutes: true,
+            measurerServiceArea: true,
+          },
+        },
+      },
     });
     if (!measurer || Number.isNaN(input.visitDate.getTime()))
       throw new MeasurementError("MEASURER_NOT_FOUND");
@@ -2182,13 +2340,13 @@ export async function rescheduleMeasurement(
       address = trim(input.address, 1000) ?? current.address,
       mapLink = trim(input.mapLink, 2000) ?? current.mapLink;
     if (!address && !mapLink) throw new MeasurementError("LOCATION_REQUIRED");
-    const territory = measurerTerritoryMatch({
+    const territory = measurer.role === Role.MEASURER ? measurerTerritoryMatch({
       homeCity: measurer.payrollProfile?.homeCity,
       maxTravelMinutes: measurer.payrollProfile?.maxTravelMinutes,
       serviceAreas: sanitizeMeasurerServiceAreas(measurer.payrollProfile?.measurerServiceArea),
-    }, city);
-    if (territory.status === "OUTSIDE_AREA") throw new MeasurementError("MEASURER_OUTSIDE_SERVICE_AREA");
-    if (territory.status === "APPROVAL_REQUIRED" && !input.travelApproved)
+    }, city) : null;
+    if (territory?.status === "OUTSIDE_AREA") throw new MeasurementError("MEASURER_OUTSIDE_SERVICE_AREA");
+    if (territory?.status === "APPROVAL_REQUIRED" && !input.travelApproved)
       throw new MeasurementError("MEASURER_TRAVEL_APPROVAL_REQUIRED");
     let calendarTaskId = current.calendarTaskId;
     if (calendarTaskId) {

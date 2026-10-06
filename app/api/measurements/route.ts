@@ -4,7 +4,14 @@ import { parseBusinessDateTime } from "@/lib/calendar-time";
 import { measurementActor, measurementError } from "@/lib/measurement-api";
 import { requirePermission } from "@/lib/server-auth";
 import { prisma } from "@/lib/prisma";
-import { listMeasurements, measurementWorkspace, scheduleMeasurement, type MeasurementWorkspaceFilter } from "@/lib/services/measurement.service";
+import {
+  isMeasurementLeader,
+  listMeasurements,
+  MEASUREMENT_PERFORMER_ROLES,
+  measurementWorkspace,
+  scheduleMeasurement,
+  type MeasurementWorkspaceFilter,
+} from "@/lib/services/measurement.service";
 import { selfScheduleMeasurement } from "@/lib/services/measurement.service";
 import { normalizePhone } from "@/lib/leads/domain";
 import { sanitizeMeasurerServiceAreas } from "@/lib/measurements/measurer-territory";
@@ -21,13 +28,13 @@ export async function GET(request: Request) {
   const auth = await requirePermission("measurements");
   if (auth.response) return auth.response;
   const actor = measurementActor(auth.session!);
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER && actor.role !== Role.MEASURER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!isMeasurementLeader(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.MEASURER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const url = new URL(request.url);
   if (url.searchParams.get("meta") === "1") {
-    if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+    if (!isMeasurementLeader(actor.role) && actor.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
     const [measurerRows, managers] = await Promise.all([
-      prisma.user.findMany({ where: { role: Role.MEASURER, active: true }, select: { id: true, name: true, phone: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } }, orderBy: { name: "asc" } }),
-      actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR
+      prisma.user.findMany({ where: { role: { in: MEASUREMENT_PERFORMER_ROLES }, active: true }, select: { id: true, name: true, phone: true, role: true, payrollProfile: { select: { homeCity: true, maxTravelMinutes: true, measurerServiceArea: true } } }, orderBy: [{ role: "asc" }, { name: "asc" }] }),
+      isMeasurementLeader(actor.role)
         ? prisma.user.findMany({ where: { role: Role.MANAGER, active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } })
         : Promise.resolve([]),
     ]);
@@ -35,6 +42,7 @@ export async function GET(request: Request) {
       id: row.id,
       name: row.name,
       phone: row.phone,
+      role: row.role,
       homeCity: row.payrollProfile?.homeCity ?? "",
       maxTravelMinutes: row.payrollProfile?.maxTravelMinutes ?? 240,
       serviceAreas: sanitizeMeasurerServiceAreas(row.payrollProfile?.measurerServiceArea),

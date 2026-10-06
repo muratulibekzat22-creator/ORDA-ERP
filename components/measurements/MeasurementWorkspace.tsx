@@ -73,7 +73,7 @@ type Measurement = {
     commercialProposals: Array<{ id: number; number: string; status: string; total?: string | number | null; snapshot: unknown; createdAt: string }>;
     orders: Array<{ id: number; number: string; status: string; lifecycle: string }>;
   };
-  measurerUser?: { id: number; name: string } | null;
+  measurerUser?: { id: number; name: string; role?: string } | null;
   attachments: Photo[];
   order?: { id: number; number: string } | null;
   readyForContractAt?: string | null;
@@ -127,7 +127,7 @@ type Payload = {
   }>;
 };
 type ScheduleClient = { id: number; name: string; phone: string; whatsapp: string; city: string; address: string };
-type ActiveMeasurer = { id: number; name: string; phone?: string | null; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
+type ActiveMeasurer = { id: number; name: string; phone?: string | null; role: string; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
 type QuoteForm = { sourceProposalId: string; material: string; discount: string; comment: string; confirmedWithClient: boolean };
 type Form = {
   stepsCount: string;
@@ -276,8 +276,20 @@ function dimensions(value: string, withComment = false) {
 
 export default function MeasurementWorkspace() {
   const { data: session } = useSession();
-  if (session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR") return <DirectorMeasurementControl />;
+  if (session?.user.role === "DIRECTOR" || session?.user.role === "OPERATIONS_DIRECTOR")
+    return <LeadershipMeasurementWorkspace />;
   return <OperationalMeasurementWorkspace />;
+}
+
+function LeadershipMeasurementWorkspace() {
+  const [mode, setMode] = useState<"control" | "field">("control");
+  return <>
+    <div className="mx-4 mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-800 bg-[#101827] p-2 md:mx-8">
+      <button type="button" onClick={() => setMode("control")} className={`min-h-11 rounded-xl px-3 text-sm font-semibold ${mode === "control" ? "bg-amber-300 text-slate-950" : "bg-slate-900 text-slate-300"}`}>Контроль всех замеров</button>
+      <button type="button" onClick={() => setMode("field")} className={`min-h-11 rounded-xl px-3 text-sm font-semibold ${mode === "field" ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-300"}`}>Провести замер</button>
+    </div>
+    {mode === "control" ? <DirectorMeasurementControl /> : <OperationalMeasurementWorkspace />}
+  </>;
 }
 
 function OperationalMeasurementWorkspace() {
@@ -338,9 +350,10 @@ function OperationalMeasurementWorkspace() {
     [scheduleForm, setScheduleForm] = useState({ clientId: "", measurerUserId: "", visitDate: "", city: "", address: "", mapLink: "", comment: "", travelApproved: false });
   const photoRef = useRef<HTMLInputElement>(null),
     [photoType, setPhotoType] = useState("SHEET");
-  const measurer = session?.user.role === "MEASURER";
-  const canSchedule = session?.user.role === "MANAGER";
-  const canCloseOutcome = canSchedule || measurer;
+  const role = session?.user.role;
+  const leadership = role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR";
+  const measurer = role === "MEASURER";
+  const canSchedule = role === "MANAGER" || leadership;
   const selectMeasurement = (row: Measurement) => {
     setSelectedId(row.id);
     setForm(formOf(row));
@@ -444,6 +457,19 @@ function OperationalMeasurementWorkspace() {
   const quoteVariant = quoteVariants.find((item) => item.material === quote.material);
   const quoteFinalPrice = Math.max(0, (quoteVariant?.total ?? 0) - Number(quote.discount || 0));
   const rows = data.measurements;
+  const currentUserId = Number(session?.user.id);
+  const selectedLeader = selected?.measurerUser?.role === "DIRECTOR" || selected?.measurerUser?.role === "OPERATIONS_DIRECTOR";
+  const canPerformSelected = Boolean(
+    selected?.measurerUser &&
+      (selected.measurerUser.id === currentUserId || (leadership && selectedLeader)),
+  );
+  const canClaimSelected = Boolean(
+    leadership &&
+      selected &&
+      !selected.measurerUser &&
+      ["ASSIGNED", "IN_PROGRESS"].includes(selected.status),
+  );
+  const canCloseOutcome = canSchedule || canPerformSelected;
   const patchForm = (key: keyof Form, value: string | boolean) =>
     setForm((current) => ({ ...current, [key]: value }));
   const payload = (action: string) => ({
@@ -585,7 +611,7 @@ function OperationalMeasurementWorkspace() {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) setError(body.error ?? "Не удалось назначить замер");
     else {
-      setNotice(body.measurement?.measurerUserId ? "Замер назначен и появился в календаре замерщика" : "Замер сохранён. Замерщика можно назначить позже");
+      setNotice(body.measurement?.measurerUserId ? "Замер назначен и появился в календаре ответственного" : "Замер сохранён. Ответственного можно назначить позже");
       setWhatsappText(body.whatsappGroupText ?? body.whatsappText ?? "");
       setWhatsappMeasurerText(body.whatsappMeasurerText ?? "");
       setWhatsappMeasurerPhone(body.measurerPhone ?? "");
@@ -599,19 +625,19 @@ function OperationalMeasurementWorkspace() {
     setBusy(false);
   }
   const availableScheduleMeasurers = scheduleMeasurers
-    .map((row) => ({ row, match: measurerTerritoryMatch(row, scheduleForm.city) }))
+    .map((row) => ({ row, match: row.role === "MEASURER" ? measurerTerritoryMatch(row, scheduleForm.city) : { status: "UNCONFIGURED" as const, area: null } }))
     .filter(({ match }) => match.status !== "OUTSIDE_AREA")
     .sort((a, b) => territoryRank[a.match.status] - territoryRank[b.match.status]);
   const selectedScheduleMeasurer = scheduleMeasurers.find((row) => String(row.id) === scheduleForm.measurerUserId);
-  const selectedScheduleTerritory = selectedScheduleMeasurer ? measurerTerritoryMatch(selectedScheduleMeasurer, scheduleForm.city) : null;
+  const selectedScheduleTerritory = selectedScheduleMeasurer?.role === "MEASURER" ? measurerTerritoryMatch(selectedScheduleMeasurer, scheduleForm.city) : null;
   const selectedRescheduleMeasurer = scheduleMeasurers.find((row) => String(row.id) === rescheduleMeasurerId);
-  const selectedRescheduleTerritory = selected && selectedRescheduleMeasurer ? measurerTerritoryMatch(selectedRescheduleMeasurer, selected.city) : null;
+  const selectedRescheduleTerritory = selected && selectedRescheduleMeasurer?.role === "MEASURER" ? measurerTerritoryMatch(selectedRescheduleMeasurer, selected.city) : null;
   return (
     <main className="space-y-5 p-4 pb-24 md:p-8">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white md:text-3xl">
-            {measurer ? "Кабинет замерщика" : "Замеры клиентов"}
+            {measurer ? "Кабинет замерщика" : leadership ? "Рабочий режим замера" : "Замеры клиентов"}
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Расписание, фактические размеры и передача результата менеджеру
@@ -663,7 +689,7 @@ function OperationalMeasurementWorkspace() {
             <button type="button" onClick={() => { setScheduleSelectedClient(null); setScheduleClients([]); setScheduleClientSearching(scheduleClientSearch.trim().length >= 2); setScheduleForm((current) => ({ ...current, clientId: "", city: "", address: "" })); }} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm text-white">Изменить</button>
           </div>}
         </div>
-        <Field label="Замерщик (необязательно)"><select className={input} value={scheduleForm.measurerUserId} onChange={(event) => setScheduleForm({...scheduleForm, measurerUserId:event.target.value, travelApproved: false})}><option value="">Замерщик не выбран</option>{availableScheduleMeasurers.map(({ row, match }) => <option key={row.id} value={row.id}>{row.name}{match.area ? ` · ${match.area.city}, ${travelTimeLabel(match.area.estimatedMinutes)}` : " · зона не настроена"}{match.status === "APPROVAL_REQUIRED" ? " · по согласованию" : ""}</option>)}</select><span className="mt-1 block text-xs text-slate-500">{selectedScheduleMeasurer ? `${selectedScheduleMeasurer.homeCity ? `База: ${selectedScheduleMeasurer.homeCity}` : "База не настроена"}${selectedScheduleMeasurer.phone ? ` · ${selectedScheduleMeasurer.phone}` : " · телефон не указан"}` : scheduleForm.city && !availableScheduleMeasurers.length ? "Для города нет настроенного замерщика" : "Можно назначить сотрудника позже."}</span></Field>
+        <Field label="Ответственный за замер (необязательно)"><select className={input} value={scheduleForm.measurerUserId} onChange={(event) => setScheduleForm({...scheduleForm, measurerUserId:event.target.value, travelApproved: false})}><option value="">Ответственный не выбран</option>{availableScheduleMeasurers.map(({ row, match }) => <option key={row.id} value={row.id}>{row.name}{row.role === "DIRECTOR" ? " · основатель" : row.role === "OPERATIONS_DIRECTOR" ? " · директор" : match.area ? ` · ${match.area.city}, ${travelTimeLabel(match.area.estimatedMinutes)}` : " · зона не настроена"}{match.status === "APPROVAL_REQUIRED" ? " · по согласованию" : ""}</option>)}</select><span className="mt-1 block text-xs text-slate-500">{selectedScheduleMeasurer ? `${selectedScheduleMeasurer.role === "MEASURER" ? selectedScheduleMeasurer.homeCity ? `База: ${selectedScheduleMeasurer.homeCity}` : "База не настроена" : "Руководитель компании"}${selectedScheduleMeasurer.phone ? ` · ${selectedScheduleMeasurer.phone}` : " · телефон не указан"}` : scheduleForm.city && !availableScheduleMeasurers.length ? "Для города нет доступного сотрудника" : "Можно оставить свободным и назначить позже."}</span></Field>
         {selectedScheduleTerritory?.status === "APPROVAL_REQUIRED" && <Field label="Дальний маршрут"><label className="flex min-h-11 items-center gap-3 rounded-xl border border-amber-700 bg-amber-950/20 px-3 text-sm text-amber-100"><input type="checkbox" checked={scheduleForm.travelApproved} onChange={(event) => setScheduleForm({ ...scheduleForm, travelApproved: event.target.checked })}/>Выезд согласован с замерщиком</label></Field>}
         <Field label="Дата замера"><input required type="date" className={input} value={scheduleForm.visitDate.split("T")[0] ?? ""} onChange={(event) => setScheduleForm({...scheduleForm,visitDate:event.target.value ? `${event.target.value}T${scheduleForm.visitDate.split("T")[1] || "09:00"}` : ""})}/></Field>
         <Field label="Время"><input required type="time" className={input} value={scheduleForm.visitDate.split("T")[1] ?? ""} onChange={(event) => setScheduleForm({...scheduleForm,visitDate:scheduleForm.visitDate.split("T")[0] ? `${scheduleForm.visitDate.split("T")[0]}T${event.target.value}` : ""})}/></Field>
@@ -826,7 +852,7 @@ function OperationalMeasurementWorkspace() {
                       Назначил:{" "}
                       {row.client.managerUser?.name ?? "менеджер не указан"}
                     </span>
-                    <span className="mt-1 block text-xs text-slate-500">Замерщик: {row.measurerUser?.name ?? "не выбран"}</span>
+                    <span className="mt-1 block text-xs text-slate-500">Ответственный за замер: {row.measurerUser?.name ?? "не выбран"}</span>
                     <span className="mt-3 block text-sm font-semibold text-blue-300">
                       Открыть замер →
                     </span>
@@ -907,7 +933,7 @@ function OperationalMeasurementWorkspace() {
               <section className="grid gap-3 rounded-xl border border-amber-800 bg-amber-950/20 p-4 sm:grid-cols-2">
                 <h3 className="font-semibold text-white sm:col-span-2">Перенести замер</h3>
                 <Field label="Новая дата и время"><input type="datetime-local" className={input} value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} /></Field>
-                {measurer ? <div className="text-sm text-slate-300">Замерщик<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{selected.measurerUser?.name ?? "Текущий замерщик"}</b></div> : <Field label="Замерщик"><select className={input} value={rescheduleMeasurerId} onChange={(event) => { setRescheduleMeasurerId(event.target.value); setRescheduleTravelApproved(false); }}><option value="">Выберите</option>{scheduleMeasurers.filter((row) => measurerTerritoryMatch(row, selected.city).status !== "OUTSIDE_AREA").map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></Field>}
+                {measurer ? <div className="text-sm text-slate-300">Ответственный за замер<b className="mt-1 flex min-h-11 items-center rounded-xl border border-slate-700 bg-slate-900 px-3 text-white">{selected.measurerUser?.name ?? "Текущий ответственный"}</b></div> : <Field label="Ответственный за замер"><select className={input} value={rescheduleMeasurerId} onChange={(event) => { setRescheduleMeasurerId(event.target.value); setRescheduleTravelApproved(false); }}><option value="">Выберите</option>{scheduleMeasurers.filter((row) => row.role !== "MEASURER" || measurerTerritoryMatch(row, selected.city).status !== "OUTSIDE_AREA").map((row) => <option key={row.id} value={row.id}>{row.name}{row.role === "DIRECTOR" ? " · основатель" : row.role === "OPERATIONS_DIRECTOR" ? " · директор" : ""}</option>)}</select></Field>}
                 {!measurer && selectedRescheduleTerritory?.status === "APPROVAL_REQUIRED" && <label className="flex min-h-11 items-center gap-2 rounded-xl border border-amber-700 px-3 text-sm text-amber-100 sm:col-span-2"><input type="checkbox" checked={rescheduleTravelApproved} onChange={(event) => setRescheduleTravelApproved(event.target.checked)}/>Дальний выезд согласован с замерщиком</label>}
                 <div className="flex gap-2 sm:col-span-2">
                   <button type="button" onClick={() => setRescheduleOpen(false)} className="min-h-11 flex-1 rounded-xl bg-slate-800 px-3">Отмена</button>
@@ -961,6 +987,7 @@ function OperationalMeasurementWorkspace() {
             <div className="rounded-xl bg-slate-900 p-4 text-sm text-slate-300">
               <b className="text-white">Ответственный менеджер:</b>{" "}
               {selected.client.managerUser?.name ?? "не указан"}
+              <p className="mt-2"><b className="text-white">Ответственный за замер:</b>{" "}{selected.measurerUser?.name ?? "не выбран"}</p>
               {selected.managerComment && (
                 <p className="mt-2">
                   <b className="text-white">Комментарий:</b>{" "}
@@ -981,7 +1008,19 @@ function OperationalMeasurementWorkspace() {
                 </div>
               </section>
             )}
-            {measurer && selected.status === "ASSIGNED" && (
+            {canClaimSelected && (
+              <button
+                disabled={busy}
+                onClick={() => void run({ action: "claim" }, "Замер назначен вам и добавлен в календарь")}
+                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:opacity-50"
+              >
+                Взять свободный замер себе
+              </button>
+            )}
+            {leadership && selected.measurerUser && !canPerformSelected && ["ASSIGNED", "IN_PROGRESS"].includes(selected.status) && (
+              <p className="rounded-xl border border-slate-700 bg-slate-950/50 p-3 text-sm text-slate-300">Замер выполняет {selected.measurerUser.name}. Вы можете контролировать результат или переназначить ответственного через меню действий.</p>
+            )}
+            {canPerformSelected && selected.status === "ASSIGNED" && (
               <button
                 disabled={busy}
                 onClick={() => void run({ action: "start" }, "Замер начат")}
@@ -991,7 +1030,7 @@ function OperationalMeasurementWorkspace() {
                 Начать замер
               </button>
             )}
-            {measurer && selected.status === "IN_PROGRESS" && (
+            {canPerformSelected && selected.status === "IN_PROGRESS" && (
               <>
                 <MeasurementDesignWorkflow
                   key={selected.id}
@@ -1254,7 +1293,7 @@ function OperationalMeasurementWorkspace() {
             {["COMPLETED", "HANDED_TO_MANAGER"].includes(selected.status) && (
               <MeasurementResult row={selected} />
             )}
-            {measurer && selected.status === "COMPLETED" && !selected.clientOutcome && (
+            {canPerformSelected && selected.status === "COMPLETED" && !selected.clientOutcome && (
               <button
                 disabled={busy}
                 onClick={() =>
@@ -1275,7 +1314,7 @@ function OperationalMeasurementWorkspace() {
                 })()}
               </section>
             )}
-            {measurer && selected.status === "HANDED_TO_MANAGER" && (
+            {canPerformSelected && selected.status === "HANDED_TO_MANAGER" && (
               <section className="space-y-3 rounded-xl border border-violet-900 bg-violet-950/20 p-4">
                 <h3 className="font-semibold text-white">
                   Продолжение с менеджером

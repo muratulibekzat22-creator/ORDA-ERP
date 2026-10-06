@@ -8,6 +8,7 @@ import { createPayment, payrollSummary } from "@/lib/services/payroll.service";
 import {
   completeMeasurement,
   cancelMeasurement,
+  claimMeasurement,
   ensureMeasurerBonusForOrder,
   handMeasurementToManager,
   inviteClientToOffice,
@@ -19,6 +20,7 @@ import {
   saveMeasurementDraft,
   scheduleMeasurement,
   rescheduleMeasurement,
+  startMeasurement,
   type MeasurementActor,
   type MeasurementDraft,
 } from "@/lib/services/measurement.service";
@@ -158,15 +160,17 @@ async function main() {
   try {
     await prisma.systemSettings.update({ where: { companyId: 1 }, data: { measurerOrderBonus: 20_000 } });
     const director = await prisma.user.create({ data: { name: `${tag}-director`, email: `${tag}-director@test.local`, password: "test", role: Role.DIRECTOR } });
+    const operationsDirector = await prisma.user.create({ data: { name: `${tag}-operations-director`, email: `${tag}-operations-director@test.local`, password: "test", role: Role.OPERATIONS_DIRECTOR } });
     const manager = await prisma.user.create({ data: { name: `${tag}-manager`, email: `${tag}-manager@test.local`, password: "test", role: Role.MANAGER } });
     const otherManager = await prisma.user.create({ data: { name: `${tag}-other-manager`, email: `${tag}-other-manager@test.local`, password: "test", role: Role.MANAGER } });
     const measurerA = await prisma.user.create({ data: { name: `${tag}-a`, email: `${tag}-a@test.local`, password: "test", role: Role.MEASURER } });
     const measurerB = await prisma.user.create({ data: { name: `${tag}-b`, email: `${tag}-b@test.local`, password: "test", role: Role.MEASURER } });
     const accountant = await prisma.user.create({ data: { name: `${tag}-accountant`, email: `${tag}-accountant@test.local`, password: "test", role: Role.ACCOUNTANT } });
-    ids.users.push(director.id, manager.id, otherManager.id, measurerA.id, measurerB.id, accountant.id);
+    ids.users.push(director.id, operationsDirector.id, manager.id, otherManager.id, measurerA.id, measurerB.id, accountant.id);
     console.log("measurement test: actors created");
     const managerActor: MeasurementActor = { userId: manager.id, role: Role.MANAGER, name: manager.name };
     const directorActor: MeasurementActor = { userId: director.id, role: Role.DIRECTOR, name: director.name };
+    const operationsDirectorActor: MeasurementActor = { userId: operationsDirector.id, role: Role.OPERATIONS_DIRECTOR, name: operationsDirector.name };
     const otherManagerActor: MeasurementActor = { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name };
     const actorA: MeasurementActor = { userId: measurerA.id, role: Role.MEASURER, name: measurerA.name };
     const actorB: MeasurementActor = { userId: measurerB.id, role: Role.MEASURER, name: measurerB.name };
@@ -200,12 +204,29 @@ async function main() {
     assert.equal(unassigned.measurement.measurerUserId, null, "Manager can save a measurement without choosing a measurer");
     assert.equal(unassigned.measurement.calendarTaskId, null, "Unassigned measurement must not create a fake employee calendar task");
     assert.equal(unassigned.measurement.measurer, "Замерщик не выбран");
-    assert.match(unassigned.whatsappText, /Замерщик: не выбран/);
+    assert.match(unassigned.whatsappText, /Ответственный за замер: не выбран/);
+    await assert.rejects(
+      () => claimMeasurement(managerActor, unassigned.measurement.id),
+      (error) => error instanceof MeasurementError && error.message === "FORBIDDEN",
+      "Manager cannot claim a measurement as a field performer",
+    );
+    const claimedByDirector = await claimMeasurement(operationsDirectorActor, unassigned.measurement.id);
+    assert.equal(claimedByDirector.measurerUserId, operationsDirector.id, "Operations director can claim an unassigned measurement");
+    assert.ok(claimedByDirector.calendarTaskId, "Claiming an unassigned measurement creates the director calendar task");
+    const leaderStarted = await startMeasurement(operationsDirectorActor, unassigned.measurement.id);
+    assert.equal(leaderStarted.status, MeasurementStatus.IN_PROGRESS, "Operations director can start a claimed measurement without a measurer training assignment");
+    const leaderDraft = await saveMeasurementDraft(operationsDirectorActor, unassigned.measurement.id, draft);
+    assert.equal(leaderDraft.stepsCount, draft.stepsCount, "Operations director can fill the measurement sheet");
     await rescheduleMeasurement(managerActor, unassigned.measurement.id, { visitDate: parseBusinessDateTime("2026-08-11T11:00")!, measurerUserId: measurerB.id, address: unassignedClient.address });
     const assignedLater = await prisma.measurement.findUniqueOrThrow({ where: { id: unassigned.measurement.id } });
     assert.equal(assignedLater.measurerUserId, measurerB.id, "An unassigned measurement can be assigned later");
     assert.ok(assignedLater.calendarTaskId, "Later assignment creates the employee calendar task");
     assert.equal(await prisma.calendarTask.count({ where: { clientId: unassignedClient.id, type: "MEASUREMENT" } }), 1, "Later assignment creates exactly one calendar task");
+    const founderMeasurement = await scheduleMeasurement(directorActor, { clientId: noOrderClient.id, measurerUserId: director.id, visitDate: parseBusinessDateTime("2026-08-11T13:00")!, address: noOrderClient.address });
+    ids.measurements.push(founderMeasurement.measurement.id);
+    assert.equal(founderMeasurement.measurement.measurerUserId, director.id, "Founder can be assigned as the measurement performer");
+    assert.equal((await startMeasurement(directorActor, founderMeasurement.measurement.id)).status, MeasurementStatus.IN_PROGRESS, "Founder can start an assigned measurement");
+    await cancelMeasurement(directorActor, founderMeasurement.measurement.id, { reason: "Тест полномочий основателя" });
     const overdueAt = new Date(Date.now() - 2 * 3_600_000);
     await rescheduleMeasurement(actorA, scheduled.measurement.id, { visitDate: overdueAt, measurerUserId: measurerA.id, address: "ул. Абая, 10", comment: "Клиент попросил изменить время" });
     await assert.rejects(
@@ -221,6 +242,7 @@ async function main() {
     assert.equal(attentionMeasurement?.latestReschedule?.comment, "Клиент попросил изменить время");
     assert.equal(await prisma.calendarTask.count({ where: { clientId: client.id, type: "MEASUREMENT" } }), 1, "Measurer reschedule must not duplicate CalendarTask");
     assert.equal((await listMeasurements(actorA)).some((row) => row.id === scheduled.measurement.id), true, "Measurer A sees assigned measurement");
+    assert.equal((await listMeasurements(operationsDirectorActor)).some((row) => row.id === scheduled.measurement.id), true, "Operations director sees every company measurement");
     assert.equal((await listMeasurements(actorB)).some((row) => row.id === scheduled.measurement.id), false, "Measurer B cannot see A measurement");
     assert.equal((await listMeasurements(otherManagerActor)).some((row) => row.id === scheduled.measurement.id), false, "Another manager cannot see the lead measurement");
     await assert.rejects(() => saveMeasurementDraft(actorB, scheduled.measurement.id, draft), (error) => error instanceof MeasurementError && error.message === "NOT_FOUND");

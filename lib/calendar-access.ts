@@ -15,7 +15,7 @@ export function isScopedCalendarRole(role: Role) {
 }
 
 export function canCreateCalendarEvent(role: Role, userId: number, event: CalendarEventAccess) {
-  if (role === Role.DIRECTOR || role === Role.MANAGER) return true;
+  if (role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER) return true;
   if (event.assignedUserId !== userId) return false;
   if (role === Role.MEASURER) return event.sourceType === "measurement";
   if (role === Role.PRODUCTION) return event.sourceType === "production" && event.stage !== installationStage;
@@ -23,7 +23,7 @@ export function canCreateCalendarEvent(role: Role, userId: number, event: Calend
 }
 
 export function canManageCalendarEvent(role: Role, userId: number, event: CalendarEventAccess) {
-  if (role === Role.DIRECTOR || role === Role.MANAGER) return true;
+  if (role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER) return true;
   if (event.assignedUserId !== userId) return false;
   if (role === Role.MEASURER) return event.sourceType === "measurement";
   if (role === Role.PRODUCTION) return event.sourceType === "production" && event.stage !== installationStage;

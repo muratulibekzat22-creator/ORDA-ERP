@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { del, get, put } from "@/lib/private-blob";
 import { MeasurementPhotoType, MeasurementStatus, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { measurementScope, type MeasurementActor } from "@/lib/services/measurement.service";
+import { isMeasurementLeader, measurementScope, type MeasurementActor } from "@/lib/services/measurement.service";
 
 export const MAX_MEASUREMENT_PHOTO_SIZE = 15 * 1024 * 1024;
 export const MEASUREMENT_PHOTO_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -31,7 +31,7 @@ export async function listMeasurementAttachments(actor: MeasurementActor, measur
 }
 
 export async function uploadMeasurementAttachment(input: { actor: MeasurementActor; measurementId: number; type: MeasurementPhotoType; file: File }) {
-  if (input.actor.role !== Role.MEASURER && input.actor.role !== Role.DIRECTOR) throw new Error("FORBIDDEN");
+  if (input.actor.role !== Role.MEASURER && !isMeasurementLeader(input.actor.role)) throw new Error("FORBIDDEN");
   const measurement = await prisma.measurement.findFirst({ where: { id: input.measurementId, AND: [measurementScope(input.actor)] }, select: { id: true, status: true } });
   if (!measurement) return null;
   if (!EDITABLE_STATUSES.includes(measurement.status)) throw new Error("IMMUTABLE_MEASUREMENT");
@@ -61,7 +61,7 @@ export async function getMeasurementAttachment(actor: MeasurementActor, id: numb
 export async function deleteMeasurementAttachment(actor: MeasurementActor, id: number) {
   const attachment = await prisma.measurementAttachment.findFirst({ where: { id, measurement: { AND: [measurementScope(actor)] } }, include: { measurement: { select: { id: true, status: true, measurerUserId: true } } } });
   if (!attachment) return null;
-  if (actor.role !== Role.DIRECTOR && (actor.role !== Role.MEASURER || attachment.measurement.measurerUserId !== actor.userId)) throw new Error("FORBIDDEN");
+  if (!isMeasurementLeader(actor.role) && (actor.role !== Role.MEASURER || attachment.measurement.measurerUserId !== actor.userId)) throw new Error("FORBIDDEN");
   if (!EDITABLE_STATUSES.includes(attachment.measurement.status)) throw new Error("IMMUTABLE_MEASUREMENT");
   await del(attachment.pathname);
   await prisma.$transaction(async (tx) => {
