@@ -27,7 +27,8 @@ async function main() {
   assert(documents.includes("GENERATED_MEASUREMENT_SHEET") && documents.includes("actor.role === Role.MEASURER"), "generated sheet listing/scope missing");
   assert(convertRoute.includes("ORDER_AUTO_LINKED") && convertRoute.includes("measurement.updateMany"), "lead measurement is not auto-linked to converted order");
   assert(partnerPage.includes('fetch("/api/partner/dashboard"') && !partnerPage.includes("/api/orders?page="), "partner page must use only dedicated safe endpoint");
-  assert(partnerPage.includes('useState<Language>("uz")') && partnerPage.includes("O‘zbekcha") && partnerPage.includes("Yangi nazorat o‘lchovi"), "partner cabinet is not Uzbek-first");
+  assert(partnerPage.includes('useState<Language>("uz")') && partnerPage.includes("O‘zbekcha") && partnerPage.includes("Shu buyurtmaga o‘lchov qo‘shish"), "partner cabinet is not Uzbek-first");
+  assert(partnerPage.includes("Новый контрольный замер будет сохранён только в заказе {number}") && partnerPage.includes("Новый заказ или отдельная заявка здесь не создаются"), "partner measurement ownership is not clear in the UI");
   assert(partnerPage.includes('fetch("/api/partner/measurements"') && partnerPage.includes("controlSheet"), "partner control measurement UI missing");
   assert(partnerMeasurementRoute.includes('requirePermission("partners")') && partnerMeasurementRoute.includes("Role.PARTNER") && partnerMeasurementRoute.includes("readIdempotencyKey"), "partner control measurement API lacks role or idempotency guard");
   assert(service.includes("createPartnerControlMeasurement") && service.includes("PARTNER_CONTROL_MEASUREMENT_CREATED") && service.includes("controlMeasurementCompletedAt"), "partner control measurement persistence/audit missing");

@@ -111,8 +111,10 @@ const texts = {
     paidTotal: "To‘langan",
     remainingTotal: "Olish qolgan",
     completedTotal: "Yakunlangan",
-    ordersTitle: "Berilgan buyurtmalar",
-    ordersSubtitle: "Texnik ma’lumotlar va kompaniyaning siz bilan kelishilgan summasi.",
+    ordersTitle: "Sizning sexingizga berilgan buyurtmalar",
+    ordersSubtitle: "Pastdagi har bir karta kompaniya tomonidan sizning sexingizga berilgan alohida buyurtma.",
+    ordersGuide: "Nazorat o‘lchovi qilish uchun kerakli buyurtma kartasi ichidagi tugmani bosing. O‘lchov avtomatik shu buyurtmaga biriktiriladi.",
+    transferredOrder: "Sizga berilgan buyurtma",
     active: "Ishda",
     completed: "Yakunlangan",
     all: "Barchasi",
@@ -159,15 +161,16 @@ const texts = {
     rejected: "Rad etilgan",
     cancelled: "Bekor qilingan",
     pending: "Tekshiruvda",
-    sheets: "O‘lchov varaqlari",
+    sheets: "Shu buyurtmaning o‘lchovlari va hujjatlari",
     sheet: "O‘lchov",
     controlSheet: "Nazorat o‘lchovi",
     stepsShort: "pog‘ona",
     noSheet: "Bu buyurtmaga yakunlangan o‘lchov hali biriktirilmagan.",
-    newControl: "Yangi nazorat o‘lchovi",
+    measurementScope: "Yangi nazorat o‘lchovi faqat {number} buyurtmasiga saqlanadi. Bu yerda yangi buyurtma yoki alohida ariza yaratilmaydi.",
+    newControl: "Shu buyurtmaga o‘lchov qo‘shish",
     hideControl: "O‘lchov formasini yopish",
-    controlTitle: "Buyurtma bo‘yicha nazorat o‘lchovi",
-    controlHint: "Aniq o‘lchamlarni kiriting. Saqlangandan keyin tizim PDF o‘lchov varaqasini yaratadi.",
+    controlTitle: "{number} buyurtmasi bo‘yicha nazorat o‘lchovi",
+    controlHint: "Siz aynan shu buyurtmaning haqiqiy o‘lchamlarini qayta tekshiryapsiz. Saqlangandan keyin tizim shu buyurtma uchun PDF o‘lchov varaqasini yaratadi.",
     visitDate: "O‘lchov sanasi",
     floorHeight: "Qavat balandligi, mm",
     staircaseWidth: "Zina kengligi, mm",
@@ -213,8 +216,10 @@ const texts = {
     paidTotal: "Выплачено",
     remainingTotal: "Осталось получить",
     completedTotal: "Завершено",
-    ordersTitle: "Переданные заказы",
-    ordersSubtitle: "Технические данные и сумма договора компании с вами.",
+    ordersTitle: "Заказы, переданные вашему цеху",
+    ordersSubtitle: "Каждая карточка ниже — отдельный заказ компании, назначенный вашему цеху.",
+    ordersGuide: "Чтобы снять контрольные размеры, используйте кнопку внутри нужного заказа. Замер автоматически привяжется именно к этой карточке.",
+    transferredOrder: "Переданный заказ",
     active: "В работе",
     completed: "Завершённые",
     all: "Все",
@@ -261,15 +266,16 @@ const texts = {
     rejected: "Отклонено",
     cancelled: "Отменено",
     pending: "На проверке",
-    sheets: "Замерные листы",
+    sheets: "Замеры и документы этого заказа",
     sheet: "Замер",
     controlSheet: "Контрольный замер",
     stepsShort: "ступ.",
     noSheet: "Завершённый замер пока не привязан.",
-    newControl: "Новый контрольный замер",
+    measurementScope: "Новый контрольный замер будет сохранён только в заказе {number}. Новый заказ или отдельная заявка здесь не создаются.",
+    newControl: "Добавить замер к этому заказу",
     hideControl: "Закрыть форму замера",
-    controlTitle: "Контрольный замер по заказу",
-    controlHint: "Укажите фактические размеры. После сохранения система сформирует PDF замерного листа.",
+    controlTitle: "Контрольный замер по заказу {number}",
+    controlHint: "Вы повторно проверяете фактические размеры именно по этому заказу. После сохранения система сформирует для него PDF замерного листа.",
     visitDate: "Дата замера",
     floorHeight: "Высота этажа, мм",
     staircaseWidth: "Ширина лестницы, мм",
@@ -436,6 +442,7 @@ export default function PartnerPage() {
       <section className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-5">{[[t.working, dashboard.activeOrders], [t.agreedTotal, money(dashboard.totals.price, language)], [t.paidTotal, money(dashboard.totals.paid, language)], [t.remainingTotal, money(dashboard.totals.balance, language)], [t.completedTotal, dashboard.completedOrders]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">{label}</p><b className="mt-1 block text-lg">{value}</b></div>)}</section>
       <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-4 md:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">{t.ordersTitle}</h2><p className="text-sm text-slate-400">{t.ordersSubtitle}</p></div><div className="flex gap-2">{(["active", "completed", "all"] as const).map((value) => <button key={value} onClick={() => setMode(value)} className={`min-h-10 rounded-lg px-3 text-sm ${mode === value ? "bg-blue-600" : "bg-slate-800"}`}>{value === "active" ? t.active : value === "completed" ? t.completed : t.all}</button>)}</div></div>
+        <p className="mt-4 rounded-xl border border-blue-900/80 bg-blue-950/30 px-4 py-3 text-sm leading-6 text-blue-100">{t.ordersGuide}</p>
         <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} className="mt-4 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 outline-none focus:border-blue-500" />
         <div className="mt-4 space-y-4">{orders.map((order) => <PartnerOrderCard key={order.id} order={order} busy={busy} language={language} onUpdate={updateOrder} onPayout={submitPayoutAcknowledgement} onControlMeasurement={submitControlMeasurement} />)}{!orders.length && <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-slate-400">{t.noOrders}</p>}</div>
       </section>
@@ -472,8 +479,8 @@ function PartnerOrderCard({ order, busy, language, onUpdate, onPayout, onControl
     }
   };
 
-  return <article className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-bold">{order.number}</h3><p className="text-sm text-slate-400">{order.client.name} · <a href={`tel:${order.client.phone}`} className="text-blue-300">{order.client.phone}</a></p><p className="mt-1 text-sm text-slate-400">{order.client.city} · {order.address}</p></div><span className="rounded-full bg-blue-950 px-3 py-1 text-sm text-blue-200">{orderStatus(order.status, language)}</span></div>
+  return <article className="rounded-2xl border border-slate-700 border-l-4 border-l-blue-500 bg-slate-950/70 p-4 shadow-lg shadow-black/10">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="mb-1 text-xs font-bold uppercase tracking-wider text-blue-300">{t.transferredOrder}</p><h3 className="text-lg font-bold">{order.number}</h3><p className="text-sm text-slate-400">{order.client.name} · <a href={`tel:${order.client.phone}`} className="text-blue-300">{order.client.phone}</a></p><p className="mt-1 text-sm text-slate-400">{order.client.city} · {order.address}</p></div><span className="rounded-full bg-blue-950 px-3 py-1 text-sm text-blue-200">{orderStatus(order.status, language)}</span></div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Info label={t.staircase} value={order.staircase}/><Info label={t.material} value={order.material}/><Info label={t.color} value={order.color}/><Info label={t.productionDeadline} value={day(order.productionDeadline, language)}/><Info label={t.railing} value={order.railingType}/><Info label={t.support} value={order.supportType}/><Info label={t.lighting} value={order.lighting ? order.lightingDetails || t.yes : t.no}/><Info label={t.cladding} value={order.cladding ? order.claddingDetails || t.yes : t.no}/></div>
     {[order.frameComment, order.additionalDetails, order.designStyle, order.designNotes].some(Boolean) && <div className="mt-3 rounded-lg bg-slate-900 p-3 text-sm text-slate-300">{[order.frameComment, order.additionalDetails, order.designStyle, order.designNotes].filter(Boolean).join(" · ")}</div>}
     <div className="mt-4 rounded-xl border border-emerald-900 bg-emerald-950/20 p-3"><h4 className="font-semibold text-white">{t.settlement}</h4><div className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4"><Info label={t.agreed} value={money(order.partnerPrice, language)}/><Info label={t.paid} value={money(order.partnerPaid, language)}/><Info label={t.remaining} value={money(order.partnerBalance, language)}/><Info label={t.review} value={money(pendingAmount, language)}/></div>
@@ -481,8 +488,8 @@ function PartnerOrderCard({ order, busy, language, onUpdate, onPayout, onControl
       {payoutOpen ? <form onSubmit={submitPayout} className="mt-3 grid gap-3 rounded-xl border border-slate-700 bg-slate-950/70 p-3 sm:grid-cols-2 lg:grid-cols-4"><Field label={t.received}><input required min="1" max={available} step="0.01" type="number" value={payoutAmount} onChange={(event) => setPayoutAmount(event.target.value)} className={inputClass}/></Field><Field label={t.receivedDate}><input required type="date" value={payoutDate} onChange={(event) => setPayoutDate(event.target.value)} className={inputClass}/></Field><Field label={t.method}><select value={payoutMethod} onChange={(event) => setPayoutMethod(event.target.value)} className={inputClass}><option value="Kaspi">Kaspi</option><option value="Наличные">{t.cash}</option><option value="Банковский перевод">{t.bank}</option><option value="Другое">{t.other}</option></select></Field><Field label={t.comment}><input value={payoutComment} onChange={(event) => setPayoutComment(event.target.value)} className={inputClass}/></Field><button disabled={busy || Number(payoutAmount) <= 0 || Number(payoutAmount) > available} className="min-h-11 rounded-lg bg-emerald-700 px-4 font-semibold disabled:opacity-50 sm:col-span-2 lg:col-span-4">{t.sendDirector}</button></form> : null}
       {order.payoutAcknowledgements.length ? <div className="mt-3 space-y-2"><p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t.history}</p>{order.payoutAcknowledgements.slice(0, 5).map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-950/70 px-3 py-2 text-sm"><span>{money(item.amount, language)} · {day(item.operationDate, language)} · {item.method || t.methodMissing}</span><span className={item.status === "POSTED" ? "text-emerald-300" : item.status === "PENDING" ? "text-amber-300" : "text-red-300"}>{payoutStatus(item.status, language)}</span>{item.comment ? <span className="w-full text-xs text-slate-500">{item.comment}</span> : null}</div>)}</div> : null}
     </div>
-    <div className="mt-4 rounded-xl border border-blue-900 bg-blue-950/10 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">{t.sheets}</h4><button type="button" disabled={busy} onClick={() => setControlOpen((value) => !value)} className="min-h-10 rounded-lg bg-blue-700 px-3 text-sm font-semibold disabled:opacity-50">{controlOpen ? t.hideControl : t.newControl}</button></div>{order.measurements.length ? <div className="mt-2 flex flex-wrap gap-2">{order.measurements.map((measurement) => <a key={measurement.id} href={`${measurement.sheetHref}?lang=${language}`} target="_blank" rel="noreferrer" className="rounded-lg bg-blue-800 px-3 py-2 text-sm">{measurement.isPartnerControl ? t.controlSheet : t.sheet} №{measurement.id} · {measurement.stepsCount ?? "—"} {t.stepsShort}</a>)}</div> : <p className="mt-2 text-sm text-slate-500">{t.noSheet}</p>}
-      {controlOpen && <ControlMeasurementForm orderId={order.id} language={language} busy={busy} onSubmit={async (payload) => { const saved = await onControlMeasurement(payload); if (saved) setControlOpen(false); return saved; }}/>}</div>
+    <div className="mt-4 rounded-xl border border-blue-800 bg-blue-950/20 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-semibold text-blue-100">{t.sheets}</h4><p className="mt-1 max-w-3xl text-sm leading-5 text-slate-400">{t.measurementScope.replace("{number}", order.number)}</p></div><button type="button" disabled={busy} onClick={() => setControlOpen((value) => !value)} className="min-h-10 rounded-lg bg-blue-700 px-3 text-sm font-semibold disabled:opacity-50">{controlOpen ? t.hideControl : t.newControl}</button></div>{order.measurements.length ? <div className="mt-3 flex flex-wrap gap-2">{order.measurements.map((measurement) => <a key={measurement.id} href={`${measurement.sheetHref}?lang=${language}`} target="_blank" rel="noreferrer" className="rounded-lg bg-blue-800 px-3 py-2 text-sm">{measurement.isPartnerControl ? t.controlSheet : t.sheet} №{measurement.id} · {measurement.stepsCount ?? "—"} {t.stepsShort}</a>)}</div> : <p className="mt-3 text-sm text-slate-500">{t.noSheet}</p>}
+      {controlOpen && <ControlMeasurementForm orderId={order.id} orderNumber={order.number} language={language} busy={busy} onSubmit={async (payload) => { const saved = await onControlMeasurement(payload); if (saved) setControlOpen(false); return saved; }}/>}</div>
     <div className="mt-4 grid gap-3 md:grid-cols-2"><Field label={t.stage}><select value={status} onChange={(event) => setStatus(event.target.value)} className={inputClass}>{!statuses.includes(status as never) && <option value={status}>{orderStatus(status, language)}</option>}{statuses.map((value) => <option key={value} value={value}>{orderStatus(value, language)}</option>)}</select></Field><Field label={t.plannedReady}><input type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value)} className={inputClass}/></Field><Field label={t.partnerComment} wide><textarea value={comment} onChange={(event) => setComment(event.target.value)} className={`${inputClass} min-h-20`}/></Field></div>
     <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void onUpdate(order.id, { status, partnerPlannedReadyAt: dateValue || null, partnerComment: comment })} className="min-h-11 rounded-lg bg-blue-600 px-4">{t.save}</button><button onClick={() => void onUpdate(order.id, { readyForInstallation: true, partnerComment: comment })} className="min-h-11 rounded-lg bg-green-700 px-4">{t.readyInstall}</button><button onClick={() => void onUpdate(order.id, { installationCompleted: true, status: "Заказ завершён", partnerComment: comment })} className="min-h-11 rounded-lg bg-emerald-800 px-4">{t.installed}</button>{order.mapUrl && <a href={order.mapUrl} target="_blank" rel="noreferrer" className="min-h-11 rounded-lg bg-slate-800 px-4 py-3">{t.map}</a>}</div>
   </article>;
@@ -524,8 +531,9 @@ function dimensionRows(value: string) {
   });
 }
 
-function ControlMeasurementForm({ orderId, language, busy, onSubmit }: {
+function ControlMeasurementForm({ orderId, orderNumber, language, busy, onSubmit }: {
   orderId: number;
+  orderNumber: string;
   language: Language;
   busy: boolean;
   onSubmit: (payload: ControlMeasurementPayload) => Promise<boolean>;
@@ -559,7 +567,7 @@ function ControlMeasurementForm({ orderId, language, busy, onSubmit }: {
     if (await onSubmit(payload)) setForm(initialControlForm());
   };
   return <form onSubmit={submit} className="mt-4 grid gap-3 rounded-xl border border-blue-800 bg-slate-950/80 p-4 sm:grid-cols-2 lg:grid-cols-3">
-    <div className="sm:col-span-2 lg:col-span-3"><h5 className="font-bold text-white">{t.controlTitle}</h5><p className="mt-1 text-sm text-slate-400">{t.controlHint}</p></div>
+    <div className="sm:col-span-2 lg:col-span-3"><h5 className="font-bold text-white">{t.controlTitle.replace("{number}", orderNumber)}</h5><p className="mt-1 text-sm text-slate-400">{t.controlHint}</p></div>
     <Field label={t.visitDate}><input required type="date" value={form.visitDate} onChange={(event) => patch("visitDate", event.target.value)} className={inputClass}/></Field>
     <Field label={t.floorHeight}><input required min="1" step="1" type="number" value={form.floorHeight} onChange={(event) => patch("floorHeight", event.target.value)} className={inputClass}/></Field>
     <Field label={t.staircaseWidth}><input required min="1" step="1" type="number" value={form.staircaseWidth} onChange={(event) => patch("staircaseWidth", event.target.value)} className={inputClass}/></Field>
