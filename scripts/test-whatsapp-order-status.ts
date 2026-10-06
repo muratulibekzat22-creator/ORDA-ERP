@@ -8,6 +8,7 @@ import {
   presentWhatsappOrderStatus,
 } from "@/lib/integrations/whatsapp-order-status";
 import { parseWhatsappMeasurementIntake } from "@/lib/integrations/whatsapp-measurement-intake";
+import { buildWhatsappStairPriceEstimate } from "@/lib/integrations/whatsapp-stair-pricing";
 
 const normalizeToken = (value: string) => createHash("sha256").update(value).digest("hex");
 assert.equal(normalizeToken("integration-token"), normalizeToken("integration-token"));
@@ -78,6 +79,10 @@ const measurement = parseWhatsappMeasurementIntake({
   fields: {
     stairs_step_count: 18,
     stairs_landing_count: 1,
+    stairs_estimate_material: "pine",
+    stairs_estimate_min: 1_235_000,
+    stairs_estimate_max: 1_300_000,
+    stairs_estimate_basis: "steps_only",
     stairs_measurement_time: "завтра после 15:00",
     untrusted_extra: "must be ignored",
   },
@@ -85,7 +90,30 @@ const measurement = parseWhatsappMeasurementIntake({
 assert.ok(measurement);
 assert.equal(measurement.customer.whatsappE164, "+77089125048");
 assert.equal(measurement.fields.stairs_step_count, 18);
+assert.equal(measurement.fields.stairs_estimate_min, 1_235_000);
 assert.equal("untrusted_extra" in measurement.fields, false);
 assert.equal(parseWhatsappMeasurementIntake({ ...measurement, event: "different" }), null);
+
+const priceEstimate = buildWhatsappStairPriceEstimate(
+  { regularSteps: 17, landingCount: 1, material: "pine" },
+  [{
+    code: "PINE_STEP",
+    uiName: "Сосна",
+    kind: "STAIR_MATERIAL",
+    unit: "экв. ступень",
+    salePrice: 65_000,
+    internalPrice: 45_000,
+    managerMinimumPrice: 0,
+    defaultQuantity: 0,
+    manualPriceAllowed: false,
+    active: true,
+    sortOrder: 10,
+  }],
+);
+assert.equal(priceEstimate.variants[0]?.equivalentStepsMin, 19);
+assert.equal(priceEstimate.variants[0]?.equivalentStepsMax, 20);
+assert.equal(priceEstimate.variants[0]?.priceMin, 1_235_000);
+assert.equal(priceEstimate.variants[0]?.priceMax, 1_300_000);
+assert.equal(priceEstimate.basis, "steps_only");
 
 console.log("WhatsApp order-status and measurement-intake integration tests passed");
