@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import RouteShell from "@/components/layout/RouteShell";
@@ -30,11 +31,15 @@ export const viewport: Viewport = {
   interactiveWidget: "resizes-content",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Nonce-based CSP requires request-time rendering so Next.js can apply the
+  // request nonce to its framework and hydration scripts.
+  await headers();
+
   return (
     <html
       lang="ru"
