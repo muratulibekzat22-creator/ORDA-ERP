@@ -10,7 +10,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const actor: DocumentActor = { userId: Number(auth.session!.user.id), role: auth.session!.user.role as Role, name: auth.session!.user.name ?? "" };
   const measurement = await getGeneratedMeasurementSheetData(id, actor); if (!measurement) return NextResponse.json({ error: "Замерный лист не найден" }, { status: 404 });
   const redactCommercial = actor.role === Role.PARTNER || actor.role === Role.PRODUCTION || actor.role === Role.INSTALLER || actor.role === Role.DESIGNER;
-  const pdf = await buildMeasurementSheetPdf({ ...(measurement as unknown as Record<string, unknown>), redactCommercial });
-  const disposition = new URL(request.url).searchParams.get("download") === "1" ? "attachment" : "inline";
+  const url = new URL(request.url);
+  const language = url.searchParams.get("lang") === "uz" ? "uz" : "ru";
+  const pdf = await buildMeasurementSheetPdf({ ...(measurement as unknown as Record<string, unknown>), redactCommercial, language });
+  const disposition = url.searchParams.get("download") === "1" ? "attachment" : "inline";
   return new NextResponse(new Uint8Array(pdf), { headers: { "Content-Type": "application/pdf", "Content-Length": String(pdf.byteLength), "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(`zamer-${id}.pdf`)}`, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
 }

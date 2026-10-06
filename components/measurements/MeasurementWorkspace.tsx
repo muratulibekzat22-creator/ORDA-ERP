@@ -883,6 +883,7 @@ function OperationalMeasurementWorkspace() {
                       {row.client.managerUser?.name ?? "менеджер не указан"}
                     </span>
                     <span className={`mt-1 block text-xs ${row.measurerUser ? "text-slate-500" : "font-semibold text-amber-300"}`}>Ответственный за замер: {row.measurerUser?.name ?? "не выбран — можно взять себе"}</span>
+                    {row.measurerUser?.role === "PARTNER" && <span className="mt-2 inline-flex rounded-full bg-cyan-950 px-2 py-1 text-xs font-semibold text-cyan-200">Контрольный замер подрядчика</span>}
                     <span className="mt-3 block text-sm font-semibold text-blue-300">
                       Открыть замер →
                     </span>
@@ -937,6 +938,7 @@ function OperationalMeasurementWorkspace() {
                 <p className="mt-1 text-slate-400">
                   {selected.city} · {selected.address}
                 </p>
+                {selected.measurerUser?.role === "PARTNER" && <p className="mt-2 inline-flex rounded-full bg-cyan-950 px-2.5 py-1 text-xs font-semibold text-cyan-200">Контрольный замер подрядчика</p>}
               </div>
               <div className="flex items-start gap-2">
                 <span className={`rounded-full px-3 py-1 text-sm ${statusTone[selected.status]}`}>

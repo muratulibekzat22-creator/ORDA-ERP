@@ -13,6 +13,14 @@ import {
   submitPartnerPayoutAcknowledgement,
 } from "@/lib/services/partner-management.service";
 
+const isPartnerControlSnapshot = (value: unknown) =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).kind === "PARTNER_CONTROL",
+  );
+
 export async function GET() {
   const auth = await requirePermission("partners");
   if (auth.response) return auth.response;
@@ -90,7 +98,7 @@ export async function GET() {
         client: { select: { id: true, name: true, phone: true, city: true } },
         measurements: {
           where: { completedAt: { not: null } },
-          select: { id: true, status: true, completedAt: true, visitDate: true, stepsCount: true, measurer: true },
+          select: { id: true, status: true, completedAt: true, visitDate: true, stepsCount: true, measurer: true, completedSnapshot: true },
           orderBy: { completedAt: "desc" },
         },
       },
@@ -154,7 +162,16 @@ export async function GET() {
               ? "REJECTED"
               : operation.status,
         })) ?? [],
-      measurements: order.measurements.map((measurement) => ({ ...measurement, sheetHref: `/api/measurements/${measurement.id}/sheet` })),
+      measurements: order.measurements.map((measurement) => ({
+        id: measurement.id,
+        status: measurement.status,
+        completedAt: measurement.completedAt,
+        visitDate: measurement.visitDate,
+        stepsCount: measurement.stepsCount,
+        measurer: measurement.measurer,
+        isPartnerControl: isPartnerControlSnapshot(measurement.completedSnapshot),
+        sheetHref: `/api/measurements/${measurement.id}/sheet`,
+      })),
     })),
     activeOrders: orders.filter((order) => order.lifecycle !== OrderLifecycle.COMPLETED && order.lifecycle !== OrderLifecycle.CANCELLED).length,
     completedOrders: orders.filter((order) => order.lifecycle === OrderLifecycle.COMPLETED).length,

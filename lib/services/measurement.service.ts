@@ -16,7 +16,11 @@ import {
   MeasurementClientOutcome,
   OrderResponsibleType,
 } from "@prisma/client";
-import { createRequestHash } from "@/lib/idempotency";
+import {
+  compareRequestHash,
+  createRequestHash,
+  isPrismaUniqueConflict,
+} from "@/lib/idempotency";
 import { publicCalculationSnapshot } from "@/lib/lead-calculation-view";
 import { PROPOSAL_VALIDITY_DAYS } from "@/lib/proposals/presentation";
 import { BUSINESS_TIME_ZONE } from "@/lib/calendar-time";
@@ -57,6 +61,8 @@ export function isMeasurementPerformer(role: Role) {
 }
 
 export type MeasurementDraft = {
+  floorHeight?: number | null;
+  staircaseWidth?: number | null;
   stepsCount: number;
   sameSize: boolean;
   stepLength?: number | null;
@@ -399,6 +405,15 @@ function positive(value: unknown, optional = false) {
   return number;
 }
 
+function nonNegative(value: unknown, optional = false) {
+  if ((value === null || value === undefined || value === "") && optional)
+    return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0)
+    throw new MeasurementError("INVALID_DIMENSIONS");
+  return number;
+}
+
 function nonNegativeInteger(value: unknown) {
   const number = Number(value);
   if (!Number.isInteger(number) || number < 0 || number > 500)
@@ -459,6 +474,8 @@ export function parseMeasurementDraft(
   if (strict && winders && winders.length !== winderCount)
     throw new MeasurementError("INVALID_DIMENSIONS");
   return {
+    floorHeight: positive(body.floorHeight, true),
+    staircaseWidth: positive(body.staircaseWidth, true),
     stepsCount,
     sameSize,
     stepLength: sameSize ? positive(body.stepLength, !strict) : null,
@@ -470,7 +487,7 @@ export function parseMeasurementDraft(
     winders,
     platformsCount,
     platforms,
-    railingLength: positive(body.railingLength, !strict) ?? 0,
+    railingLength: nonNegative(body.railingLength, !strict) ?? 0,
     railingComment: trim(
       typeof body.railingComment === "string" ? body.railingComment : undefined,
       1000,
@@ -482,8 +499,10 @@ export function parseMeasurementDraft(
   };
 }
 
-function draftData(input: MeasurementDraft): Prisma.MeasurementUpdateInput {
+function draftData(input: MeasurementDraft) {
   return {
+    floorHeight: input.floorHeight,
+    staircaseWidth: input.staircaseWidth,
     stepsCount: input.stepsCount,
     sameSize: input.sameSize,
     stepLength: input.stepLength,
@@ -500,6 +519,161 @@ function draftData(input: MeasurementDraft): Prisma.MeasurementUpdateInput {
     objectNotes: input.objectNotes,
     comment: input.comment,
   };
+}
+
+export type PartnerControlMeasurementInput = {
+  orderId: number;
+  visitDate: Date;
+  draft: MeasurementDraft;
+  idempotencyKey: string;
+  requestHash: string;
+};
+
+export async function createPartnerControlMeasurement(
+  actor: MeasurementActor,
+  input: PartnerControlMeasurementInput,
+) {
+  if (actor.role !== Role.PARTNER) throw new MeasurementError("FORBIDDEN");
+  if (
+    !Number.isInteger(input.orderId) ||
+    input.orderId <= 0 ||
+    Number.isNaN(input.visitDate.getTime()) ||
+    !input.idempotencyKey.trim() ||
+    !input.requestHash.trim()
+  )
+    throw new MeasurementError("INVALID_INPUT");
+
+  const partner = await prisma.partner.findFirst({
+    where: {
+      userId: actor.userId,
+      active: true,
+      archived: false,
+      isTest: false,
+    },
+    select: { id: true },
+  });
+  if (!partner) throw new MeasurementError("FORBIDDEN");
+  const ownedOrder = await prisma.order.findFirst({
+    where: {
+      id: input.orderId,
+      partnerId: partner.id,
+      deletedAt: null,
+      lifecycle: { not: "CANCELLED" },
+    },
+    select: { id: true },
+  });
+  if (!ownedOrder) throw new MeasurementError("ORDER_NOT_FOUND");
+
+  const repeated = await prisma.measurement.findUnique({
+    where: { idempotencyKey: input.idempotencyKey },
+    select: { id: true, orderId: true, requestHash: true },
+  });
+  if (repeated) {
+    if (
+      repeated.orderId !== input.orderId ||
+      !compareRequestHash(repeated.requestHash, input.requestHash)
+    )
+      throw new MeasurementError("IDEMPOTENCY_CONFLICT");
+    return { measurement: repeated, created: false };
+  }
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const partner = await tx.partner.findFirst({
+        where: {
+          userId: actor.userId,
+          active: true,
+          archived: false,
+          isTest: false,
+        },
+        select: { id: true, name: true },
+      });
+      if (!partner) throw new MeasurementError("FORBIDDEN");
+
+      const order = await tx.order.findFirst({
+        where: {
+          id: input.orderId,
+          partnerId: partner.id,
+          deletedAt: null,
+          lifecycle: { not: "CANCELLED" },
+        },
+        select: {
+          id: true,
+          clientId: true,
+          address: true,
+          mapUrl: true,
+          client: { select: { city: true, address: true } },
+        },
+      });
+      if (!order) throw new MeasurementError("ORDER_NOT_FOUND");
+
+      const now = new Date();
+      const measurement = await tx.measurement.create({
+        data: {
+          orderId: order.id,
+          clientId: order.clientId,
+          measurer: partner.name,
+          measurerUserId: actor.userId,
+          visitDate: input.visitDate,
+          status: MeasurementStatus.COMPLETED,
+          city: order.client.city,
+          address: order.address.trim() || order.client.address,
+          mapLink: order.mapUrl || null,
+          managerComment: "Контрольный замер подрядчика",
+          ...draftData(input.draft),
+          startedAt: input.visitDate,
+          completedAt: now,
+          handedAt: now,
+          completedSnapshot: {
+            kind: "PARTNER_CONTROL",
+            measurement: input.draft,
+            partnerId: partner.id,
+            partnerName: partner.name,
+          } as unknown as Prisma.InputJsonValue,
+          idempotencyKey: input.idempotencyKey,
+          requestHash: input.requestHash,
+        },
+        select: {
+          id: true,
+          orderId: true,
+          status: true,
+          completedAt: true,
+          stepsCount: true,
+        },
+      });
+      await tx.measurementAudit.create({
+        data: {
+          measurementId: measurement.id,
+          action: "PARTNER_CONTROL_MEASUREMENT_CREATED",
+          actorId: actor.userId,
+          after: {
+            orderId: order.id,
+            partnerId: partner.id,
+            visitDate: input.visitDate.toISOString(),
+            stepsCount: input.draft.stepsCount,
+          },
+        },
+      });
+      await tx.order.update({
+        where: { id: order.id },
+        data: { controlMeasurementCompletedAt: now },
+      });
+      return { measurement, created: true };
+    });
+  } catch (error) {
+    if (!isPrismaUniqueConflict(error)) throw error;
+    const repeatedAfterConflict = await prisma.measurement.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      select: { id: true, orderId: true, requestHash: true },
+    });
+    if (
+      !repeatedAfterConflict ||
+      repeatedAfterConflict.orderId !== input.orderId ||
+      !compareRequestHash(repeatedAfterConflict.requestHash, input.requestHash)
+    )
+      throw new MeasurementError("IDEMPOTENCY_CONFLICT");
+    return { measurement: repeatedAfterConflict, created: false };
+  }
 }
 
 export function measurementWhatsAppText(input: {
