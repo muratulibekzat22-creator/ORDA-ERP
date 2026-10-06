@@ -781,7 +781,7 @@ model Client {
 model LeadActivity {
   id         Int      @id @default(autoincrement())
   clientId   Int
-  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   type       String
   comment    String
   authorId   Int?
@@ -794,7 +794,7 @@ model LeadActivity {
 model LeadStatusHistory {
   id         Int        @id @default(autoincrement())
   clientId   Int
-  client     Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client     Client     @relation(fields: [clientId], references: [id], onDelete: Restrict)
   fromStatus String?
   toStatus   String
   fromStage  LeadStage?
@@ -811,7 +811,7 @@ model LeadStatusHistory {
 model LeadNextAction {
   id                Int                 @id @default(autoincrement())
   clientId          Int
-  client            Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client            Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
   nextActionType    LeadNextActionType
   nextActionAt      DateTime
   nextActionComment String?
@@ -837,7 +837,7 @@ model LeadNextAction {
 model LeadCalculation {
   id              Int                    @id @default(autoincrement())
   clientId        Int
-  client          Client                 @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client          Client                 @relation(fields: [clientId], references: [id], onDelete: Restrict)
   material        String
   baseClientPrice Decimal                @db.Decimal(12, 2)
   clientPrice     Decimal                @db.Decimal(12, 2)
@@ -857,7 +857,7 @@ model LeadCalculation {
 model LeadPriceAdjustment {
   id            Int             @id @default(autoincrement())
   calculationId Int
-  calculation   LeadCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  calculation   LeadCalculation @relation(fields: [calculationId], references: [id], onDelete: Restrict)
   originalPrice Decimal         @db.Decimal(12, 2)
   newPrice      Decimal         @db.Decimal(12, 2)
   authorId      Int?
@@ -913,7 +913,7 @@ model CommercialProposal {
 model LeadFollowUp {
   id              Int       @id @default(autoincrement())
   clientId        Int
-  client          Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client          Client    @relation(fields: [clientId], references: [id], onDelete: Restrict)
   calculationId   Int?
   proposalId      Int?
   oldPrice        Decimal   @db.Decimal(12, 2)
@@ -940,9 +940,9 @@ model PriceApprovalRequest {
   companyId          Int                 @default(dbgenerated())
   company            Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
   clientId           Int
-  client             Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client             Client              @relation(fields: [clientId], references: [id], onDelete: Restrict)
   calculationId      Int
-  calculation        LeadCalculation     @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  calculation        LeadCalculation     @relation(fields: [calculationId], references: [id], onDelete: Restrict)
   proposalId         Int?
   proposal           CommercialProposal? @relation(fields: [proposalId], references: [id], onDelete: SetNull)
   managerUserId      Int
@@ -985,7 +985,7 @@ model LeadConversion {
 model ClientInteraction {
   id         Int      @id @default(autoincrement())
   clientId   Int
-  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   authorId   Int?
   author     User?    @relation("ClientInteractionAuthor", fields: [authorId], references: [id], onDelete: SetNull)
   authorName String
@@ -998,7 +998,7 @@ model ClientInteraction {
 model ClientAttachment {
   id           Int      @id @default(autoincrement())
   clientId     Int
-  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Restrict)
   uploadedById Int?
   uploadedBy   User?    @relation("ClientAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   fileName     String
@@ -1078,7 +1078,7 @@ model Order {
   number    String  @unique
 
   clientId Int
-  client   Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
   partnerId Int?
   partner   Partner? @relation(fields: [partnerId], references: [id])
@@ -1219,7 +1219,7 @@ model SalesPlan {
 model SalesPlanTier {
   id               Int       @id @default(autoincrement())
   planId           Int
-  plan             SalesPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  plan             SalesPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
   thresholdPercent Int
   label            String
   rewardAmount     Decimal   @default(0) @db.Decimal(14, 2)
@@ -1234,7 +1234,7 @@ model SalesPlanTier {
 model SalesPlanManagerTarget {
   id            Int       @id @default(autoincrement())
   planId        Int
-  plan          SalesPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  plan          SalesPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
   managerId     Int
   manager       User      @relation(fields: [managerId], references: [id], onDelete: Restrict)
   revenueTarget Decimal   @db.Decimal(14, 2)
@@ -1417,7 +1417,7 @@ model OrderInstallation {
 model OrderStatusHistory {
   id              Int      @id @default(autoincrement())
   orderId         Int
-  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
   fromStatus      String?
   toStatus        String
   changedByUserId Int?
@@ -1434,7 +1434,7 @@ model OrderStatusHistory {
 model OrderCalculation {
   id                   Int                    @id @default(autoincrement())
   orderId              Int
-  order                Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order                Order                  @relation(fields: [orderId], references: [id], onDelete: Restrict)
   material             String
   regularSteps         Int
   platformEquivalents  Int[]
@@ -1471,7 +1471,7 @@ model OrderCalculation {
 model OrderCalculationLine {
   id            Int              @id @default(autoincrement())
   calculationId Int
-  calculation   OrderCalculation @relation(fields: [calculationId], references: [id], onDelete: Cascade)
+  calculation   OrderCalculation @relation(fields: [calculationId], references: [id], onDelete: Restrict)
   kind          String
   code          String?
   name          String
@@ -1617,7 +1617,7 @@ model BankStatementTransaction {
   companyId                       Int                   @default(dbgenerated())
   company                         Company               @relation(fields: [companyId], references: [id], onDelete: Restrict)
   importId                        Int
-  import                          BankStatementImport   @relation(fields: [importId], references: [id], onDelete: Cascade)
+  import                          BankStatementImport   @relation(fields: [importId], references: [id], onDelete: Restrict)
   fingerprint                     String
   rowNumber                       Int
   operationDate                   DateTime
@@ -2178,9 +2178,9 @@ model Attachment {
   companyId      Int       @default(dbgenerated())
   company        Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
   orderId        Int
-  order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order          Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
   documentId     Int?
-  document       Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document       Document? @relation(fields: [documentId], references: [id], onDelete: Restrict)
   uploadedById   Int?
   uploadedBy     User?     @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
   fileName       String
@@ -2251,7 +2251,7 @@ model WarehouseCodeCounter {
 model MaterialPriceHistory {
   id           Int      @id @default(autoincrement())
   materialId   Int
-  material     Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  material     Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
   sellingPrice Decimal  @db.Decimal(18, 2)
   changedById  Int?
   changedBy    User?    @relation("MaterialPriceChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
@@ -2444,7 +2444,7 @@ model MaterialMovement {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   materialId Int
-  material   Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  material   Material @relation(fields: [materialId], references: [id], onDelete: Restrict)
 
   orderId Int?
   order   Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
@@ -3175,7 +3175,7 @@ model Production {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   stage   String
   percent Int    @default(0)
@@ -3216,7 +3216,7 @@ model Production {
 model ProductionStageHistory {
   id              Int        @id @default(autoincrement())
   productionId    Int
-  production      Production @relation(fields: [productionId], references: [id], onDelete: Cascade)
+  production      Production @relation(fields: [productionId], references: [id], onDelete: Restrict)
   fromStage       String?
   toStage         String
   changedByUserId Int?
@@ -3280,7 +3280,7 @@ model OrderEvent {
   company   Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   orderId Int
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
 
   title       String
   description String?

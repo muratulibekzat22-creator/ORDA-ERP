@@ -22,6 +22,7 @@
     "test:e2e:playwright": "playwright test",
     "test:api:security": "tsx scripts/test-api-security.ts",
     "test:database-safety": "tsx scripts/test-database-safety-regression.ts",
+    "test:foreign-key-retention": "tsx scripts/verify-restrict-foreign-keys.ts",
     "test:tenant-isolation": "tsx scripts/test-tenant-isolation.ts",
     "test:tenant-safety": "tsx scripts/test-tenant-safety-static.ts",
     "test:ui-baseline": "tsx scripts/test-approved-ui-baseline.ts",
