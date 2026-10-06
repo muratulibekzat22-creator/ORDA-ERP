@@ -750,7 +750,7 @@ export async function submitPartnerPayoutAcknowledgement(input: {
   if (!method) throw new PartnerManagementError("PAYMENT_METHOD_REQUIRED");
   const metrics = calculateLoadedPartnerRelation(relation);
   const pending = relation.operations
-    .filter((operation) => operation.type === PartnerSettlementOperationType.COMPANY_TO_PARTNER && operation.status === PartnerSettlementOperationStatus.PENDING)
+    .filter((operation) => operation.type === PartnerSettlementOperationType.COMPANY_TO_PARTNER && operation.status === PartnerSettlementOperationStatus.DISPUTED && operation.account === "PARTNER_ACKNOWLEDGEMENT_PENDING")
     .reduce((total, operation) => total.add(operation.amount), new Prisma.Decimal(0));
   const available = metrics.companyDebt.sub(pending);
   if (amount.gt(available)) throw new PartnerManagementError("PAYOUT_ACKNOWLEDGEMENT_EXCEEDS_BALANCE");
@@ -762,10 +762,11 @@ export async function submitPartnerPayoutAcknowledgement(input: {
         partnerId: relation.partnerId,
         orderId: relation.orderId,
         type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
-        status: PartnerSettlementOperationStatus.PENDING,
+        status: PartnerSettlementOperationStatus.DISPUTED,
         amount,
         operationDate: input.operationDate,
         method,
+        account: "PARTNER_ACKNOWLEDGEMENT_PENDING",
         comment: input.comment?.trim().slice(0, 2000) || null,
         createdById: actor.userId,
         idempotencyKey: input.idempotencyKey,
@@ -802,14 +803,15 @@ export async function reviewPartnerPayoutAcknowledgement(input: {
       id: input.operationId,
       companyId: tenant,
       type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+      account: { startsWith: "PARTNER_ACKNOWLEDGEMENT_" },
     },
     include: { relation: { include: relationInclude } },
   });
   if (!operation) throw new PartnerManagementError("OPERATION_NOT_FOUND");
-  if (operation.status !== PartnerSettlementOperationStatus.PENDING) {
+  if (operation.status !== PartnerSettlementOperationStatus.DISPUTED || operation.account !== "PARTNER_ACKNOWLEDGEMENT_PENDING") {
     const alreadyMatches = input.decision === "APPROVE"
       ? operation.status === PartnerSettlementOperationStatus.POSTED && Boolean(operation.paymentId)
-      : operation.status === PartnerSettlementOperationStatus.REJECTED;
+      : operation.status === PartnerSettlementOperationStatus.REVERSED && operation.account === "PARTNER_ACKNOWLEDGEMENT_REJECTED";
     if (alreadyMatches)
       return { operation, relation: await refreshRelation(operation.relationId), created: false };
     throw new PartnerManagementError("PAYOUT_ACKNOWLEDGEMENT_ALREADY_REVIEWED");
@@ -820,7 +822,7 @@ export async function reviewPartnerPayoutAcknowledgement(input: {
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.partnerSettlementOperation.update({
         where: { id: operation.id },
-        data: { status: PartnerSettlementOperationStatus.REJECTED },
+        data: { status: PartnerSettlementOperationStatus.REVERSED, account: "PARTNER_ACKNOWLEDGEMENT_REJECTED" },
       });
       await tx.partnerAuditEvent.create({
         data: {
@@ -868,7 +870,7 @@ export async function reviewPartnerPayoutAcknowledgement(input: {
   const result = await prisma.$transaction(async (tx) => {
     const updated = await tx.partnerSettlementOperation.update({
       where: { id: operation.id },
-      data: { status: PartnerSettlementOperationStatus.POSTED, paymentId: financial.payment.id },
+      data: { status: PartnerSettlementOperationStatus.POSTED, account: "PARTNER_ACKNOWLEDGEMENT_APPROVED", paymentId: financial.payment.id },
     });
     await tx.partnerAuditEvent.create({
       data: {

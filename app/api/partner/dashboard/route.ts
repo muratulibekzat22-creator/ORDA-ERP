@@ -77,6 +77,7 @@ export async function GET() {
                 amount: true,
                 operationDate: true,
                 method: true,
+                account: true,
                 comment: true,
                 status: true,
                 createdAt: true,
@@ -142,10 +143,17 @@ export async function GET() {
       partnerPaid: Number(order.partnerPaid), partnerBalance: Math.max(Number(order.partnerBalance), 0),
       partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment,
       readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted,
-      payoutAcknowledgements: order.partnerRelation?.operations.map((operation) => ({
-        ...operation,
-        amount: Number(operation.amount),
-      })) ?? [],
+      payoutAcknowledgements: order.partnerRelation?.operations
+        .filter((operation) => operation.account?.startsWith("PARTNER_ACKNOWLEDGEMENT_"))
+        .map((operation) => ({
+          ...operation,
+          amount: Number(operation.amount),
+          status: operation.account === "PARTNER_ACKNOWLEDGEMENT_PENDING"
+            ? "PENDING"
+            : operation.account === "PARTNER_ACKNOWLEDGEMENT_REJECTED"
+              ? "REJECTED"
+              : operation.status,
+        })) ?? [],
       measurements: order.measurements.map((measurement) => ({ ...measurement, sheetHref: `/api/measurements/${measurement.id}/sheet` })),
     })),
     activeOrders: orders.filter((order) => order.lifecycle !== OrderLifecycle.COMPLETED && order.lifecycle !== OrderLifecycle.CANCELLED).length,
