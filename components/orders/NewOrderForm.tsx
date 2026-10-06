@@ -138,6 +138,7 @@ export default function NewOrderForm() {
     try {
       const payload = {
         ...form,
+        messageTemplateVersion: 1,
         clientId: existingClient?.id,
         managerUserId: Number(form.managerUserId),
         amount: Number(form.amount),
@@ -196,14 +197,15 @@ export default function NewOrderForm() {
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Клиент" required><input required value={form.clientName} onChange={(event) => set("clientName", event.target.value)} className={control} /></Field>
           <Field label="Телефон" required><input required inputMode="tel" value={form.phone} onChange={(event) => { set("phone", event.target.value); setExistingClient(null); }} onBlur={() => void lookupClient()} className={control} /></Field>
-          <Field label="Город / адрес" required><input required value={form.location} onChange={(event) => set("location", event.target.value)} placeholder="Кызылорда, ул. …" className={control} /></Field>
+          <Field label="Город / точный адрес" required><input required value={form.location} onChange={(event) => set("location", event.target.value)} placeholder="Алматы, Нурлы таң 39" className={control} /></Field>
+          <Field label="Ссылка на локацию 2GIS / Maps" required><input required type="url" value={form.mapUrl} onChange={(event) => set("mapUrl", event.target.value)} placeholder="https://2gis.kz/…" className={control} /><span className="mt-1 block text-xs text-slate-500">Эта ссылка автоматически попадёт в сообщение для WhatsApp.</span></Field>
           <Field label="Ответственный" required><select required disabled={options.role === "MANAGER"} value={form.managerUserId} onChange={(event) => set("managerUserId", event.target.value)} className={control}>{options.managers.map((manager) => <option key={manager.id} value={manager.id}>{manager.name}</option>)}</select></Field>
           <Field label="Цена клиенту" required><input required type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(event) => set("amount", event.target.value)} className={control} /></Field>
           <Field label="Полученная оплата"><input type="number" min="0" step="0.01" inputMode="decimal" value={form.initialPayment} onChange={(event) => set("initialPayment", event.target.value)} className={control} /></Field>
           <Field label="Способ оплаты" required><select required value={form.paymentMethod} onChange={(event) => set("paymentMethod", event.target.value)} className={control}>{options.paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select><span className="mt-1 block text-xs text-emerald-300">Указанная полученная сумма сразу попадёт в финансы и получит квитанцию — повторно подтверждать поступление не нужно.</span></Field>
           <Field label="Фактическая дата оформления заказа" required><input required type="date" max={todayForInput()} value={form.orderReceivedAt} onChange={(event) => set("orderReceivedAt", event.target.value)} className={control} /><span className="mt-1 block text-xs text-slate-500">Укажите дату договора или фактического оформления. Для старого заказа не ставьте дату внесения карточки в ORDA.</span></Field>
-          <Field label="Срок заказа (обещанный клиенту)"><input type="date" min={form.orderReceivedAt || undefined} value={form.readinessDate} onChange={(event) => set("readinessDate", event.target.value)} className={control} /><span className="mt-1 block text-xs text-slate-500">Дата, к которой заказ обещан клиенту.</span></Field>
-          <Field label="Комментарий"><textarea rows={3} value={form.comment} onChange={(event) => set("comment", event.target.value)} className={`${control} py-3`} /></Field>
+          <Field label="Срок заказа (обещанный клиенту)" required><input required type="date" min={form.orderReceivedAt || undefined} value={form.readinessDate} onChange={(event) => set("readinessDate", event.target.value)} className={control} /><span className="mt-1 block text-xs text-slate-500">Дата автоматически попадёт в сообщение для WhatsApp.</span></Field>
+          <Field label="Дополнительно / срочность"><textarea rows={3} value={form.comment} onChange={(event) => set("comment", event.target.value)} placeholder="Например: СРОЧНЫЙ ЗАКАЗ — 30-на дейін біту керек" className={`${control} py-3`} /></Field>
         </div>
         {existingClient && <p className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-500/10 p-3 text-sm text-emerald-300"><CheckCircle2 size={17} /> Используется существующий клиент. Дубль не создаётся.</p>}
         <div className="mt-4 rounded-xl border border-blue-500/25 bg-blue-500/5 p-4">
@@ -216,13 +218,14 @@ export default function NewOrderForm() {
         </div>
       </section>
 
-      <details className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+      <details open className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <summary className="flex cursor-pointer list-none items-center justify-between font-semibold text-white">Технические параметры <ChevronDown size={18} /></summary>
-        <p className="mt-1 text-sm text-slate-400">Необязательно. Можно заполнить позже в карточке заказа.</p>
+        <p className="mt-1 text-sm text-slate-400">Заполните сразу — из этих данных ORDA соберёт готовый текст заказа для WhatsApp.</p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Field label="Каркас"><select value={form.frameType} onChange={(event) => set("frameType", event.target.value)} className={control}>{options.frameTypes.map((value) => <option key={value}>{value}</option>)}</select></Field>
-          <Field label="Материал"><select value={form.material} onChange={(event) => set("material", event.target.value)} className={control}>{options.materials.map((value) => <option key={value}>{value}</option>)}</select></Field>
-          <Field label="Ограждение"><select value={form.railingType} onChange={(event) => set("railingType", event.target.value)} className={control}>{options.railingTypes.map((value) => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Каркас" required><select required value={form.frameType} onChange={(event) => set("frameType", event.target.value)} className={control}>{options.frameTypes.map((value) => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Материал" required><select required value={form.material} onChange={(event) => set("material", event.target.value)} className={control}>{options.materials.map((value) => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Балясины / ограждение" required><select required value={form.railingType} onChange={(event) => set("railingType", event.target.value)} className={control}>{options.railingTypes.map((value) => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Стойка / опора"><input value={form.supportType} onChange={(event) => set("supportType", event.target.value)} placeholder="Если нет — оставьте пустым" className={control} /></Field>
           <Field label="Цвет"><input value={form.color} onChange={(event) => set("color", event.target.value)} className={control} /></Field>
           <label className="rounded-xl border border-slate-800 p-3 text-sm text-slate-300"><span className="flex items-center gap-2"><input type="checkbox" checked={form.lighting} onChange={(event) => set("lighting", event.target.checked)} /> Подсветка</span>{form.lighting && <input value={form.lightingDetails} onChange={(event) => set("lightingDetails", event.target.value)} placeholder="Комментарий" className={control} />}</label>
           <label className="rounded-xl border border-slate-800 p-3 text-sm text-slate-300"><span className="flex items-center gap-2"><input type="checkbox" checked={form.cladding} onChange={(event) => set("cladding", event.target.checked)} /> Обшивка</span>{form.cladding && <input value={form.claddingDetails} onChange={(event) => set("claddingDetails", event.target.value)} placeholder="Комментарий" className={control} />}</label>

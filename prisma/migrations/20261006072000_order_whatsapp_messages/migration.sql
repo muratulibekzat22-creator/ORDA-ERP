@@ -1,0 +1,2 @@
+ALTER TABLE "Order"
+ADD COLUMN "messageTemplateVersion" INTEGER NOT NULL DEFAULT 0;

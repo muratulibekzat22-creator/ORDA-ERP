@@ -1073,6 +1073,7 @@ model Order {
   staircase            String
   material             String
   mapUrl               String   @default("")
+  messageTemplateVersion Int    @default(0)
   orderReceivedAt      DateTime @default(now())
   orderDateNeedsReview Boolean  @default(false)
   frameComment         String   @default("")

@@ -88,6 +88,7 @@
     "test:meta-ads:contract": "tsx scripts/test-meta-ads-contract.ts",
     "test:orders-module": "tsx scripts/test-orders-module.ts",
     "test:order-form-regression": "tsx scripts/test-order-form-regression.ts",
+    "test:order-whatsapp-messages": "tsx scripts/test-order-whatsapp-messages.ts",
     "test:actual-order-date": "tsx scripts/test-actual-order-date.ts",
     "test:order-soft-delete": "tsx scripts/test-order-soft-delete.ts",
     "test:manager-orders": "tsx scripts/test-manager-order-registration.ts",

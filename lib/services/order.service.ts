@@ -369,6 +369,7 @@ type CreateOrderInput = {
   staircase: string;
   material: string;
   mapUrl?: string;
+  messageTemplateVersion?: number;
   orderReceivedAt?: Date;
   orderDateNeedsReview?: boolean;
   promisedAt?: Date | null;
@@ -591,6 +592,7 @@ export async function createOrder(data: CreateOrderInput) {
               staircase: data.staircase,
               material: data.material,
               mapUrl: data.mapUrl ?? "",
+              messageTemplateVersion: data.messageTemplateVersion ?? 0,
               orderReceivedAt,
               orderDateNeedsReview:
                 data.orderDateNeedsReview ?? !data.orderReceivedAt,

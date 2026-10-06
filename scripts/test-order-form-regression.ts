@@ -40,6 +40,10 @@ async function main() {
   assert.match(formSource, /existingOrderId/);
   assert.match(formSource, /Открыть существующий заказ/);
   assert.match(formSource, /Срок заказа \(обещанный клиенту\)/);
+  assert.match(formSource, /messageTemplateVersion: 1/);
+  assert.match(formSource, /Ссылка на локацию 2GIS \/ Maps/);
+  assert.match(formSource, /supportType/);
+  assert.match(workspaceSource, /OrderWhatsAppMessages/);
   assert.match(workspaceSource, /promisedAt: order\.promisedAt \? dateInput\(order\.promisedAt\) : ""/);
   assert.match(workspaceSource, /Срок заказа \(обещанный клиенту\)/);
   assert.match(workspaceSource, /!form\.promisedAt/);

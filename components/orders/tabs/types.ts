@@ -12,6 +12,7 @@ export type OrderTabData = {
   promisedAt: Date | string | null;
   address: string;
   mapUrl: string;
+  messageTemplateVersion: number;
   staircase: string;
   material: string;
   frameComment: string;

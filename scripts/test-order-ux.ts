@@ -158,7 +158,7 @@ assert.doesNotMatch(
   orderPageAuth.slice(orderPageAuth.indexOf("lines: calculation.lines.map")),
   /unitCost: line\.unitCost/,
 );
-for (const label of ["Клиент", "Телефон", "Город / адрес", "Ответственный", "Цена клиенту", "Полученная оплата", "Срок", "Комментарий"])
+for (const label of ["Клиент", "Телефон", "Город / точный адрес", "Ссылка на локацию", "Ответственный", "Цена клиенту", "Полученная оплата", "Срок", "Дополнительно / срочность"])
   assert.match(newOrderForm, new RegExp(label));
 assert.match(newOrderForm, /router\.push\(`\/orders\/\$\{body\.id\}`\)/);
 assert.match(newOrderForm, /existingClient\?\.id/);

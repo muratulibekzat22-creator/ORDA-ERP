@@ -263,6 +263,11 @@ export async function POST(request: Request) {
     const orderReceivedAt = dateValue(body.orderReceivedAt) ?? new Date();
     const promisedAt = dateValue(body.readinessDate ?? body.promisedAt);
     const paymentMethod = text(body.paymentMethod) ?? "BANK_TRANSFER";
+    const messageTemplateVersion = body.messageTemplateVersion === 1 ? 1 : 0;
+    const mapUrl = text(body.mapUrl);
+    const staircase = text(body.frameType ?? body.staircase);
+    const material = text(body.materialOther ?? body.material);
+    const railingType = text(body.railingType);
     const initialPaymentDate = dateValue(body.paymentDate) ?? new Date();
     const hasPaymentPromiseInput = (value: unknown) => value !== undefined && value !== null && value !== "";
     const paymentPromiseProvided = hasPaymentPromiseInput(body.paymentPromiseAmount) ||
@@ -290,7 +295,8 @@ export async function POST(request: Request) {
       (partnerId !== null && !isProductionPriceAmount(partnerPrice)) ||
       (partnerId === null && partnerPrice !== 0) ||
       partnerPaid > partnerPrice ||
-      !paymentMethods.has(paymentMethod)
+      !paymentMethods.has(paymentMethod) ||
+      (messageTemplateVersion === 1 && (!mapUrl || !promisedAt || !staircase || !material || !railingType))
     )
       return NextResponse.json({ error: "Проверьте обязательные поля заказа" }, { status: 400 });
 
@@ -318,14 +324,15 @@ export async function POST(request: Request) {
         : {}),
       partnerId,
       address,
-      staircase: text(body.frameType ?? body.staircase) ?? "Не указано",
-      material: text(body.materialOther ?? body.material) ?? "Не указано",
-      mapUrl: text(body.mapUrl) ?? "",
+      staircase: staircase ?? "Не указано",
+      material: material ?? "Не указано",
+      mapUrl: mapUrl ?? "",
+      messageTemplateVersion,
       orderReceivedAt,
       orderDateNeedsReview: body.orderReceivedAt === undefined,
       promisedAt,
       frameComment: text(body.frameComment) ?? "",
-      railingType: text(body.railingType) ?? "",
+      railingType: railingType ?? "",
       supportType: text(body.supportType) ?? "",
       color: text(body.color) ?? "",
       lighting: body.lighting === true,

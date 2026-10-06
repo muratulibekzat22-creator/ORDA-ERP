@@ -20,6 +20,7 @@ import { type ReactNode, useEffect, useState } from "react";
 
 import ProjectPayments from "@/components/project/ProjectPayments";
 import PaymentFollowUpPanel from "@/components/orders/PaymentFollowUpPanel";
+import OrderWhatsAppMessages from "@/components/orders/OrderWhatsAppMessages";
 import { orderBoardLabel } from "@/lib/orders/board";
 import { orderDeadline } from "@/lib/orders/presentation";
 import { PAYMENT_METHODS, paymentMethodLabel } from "@/lib/orders/registration";
@@ -155,6 +156,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const canAddPayment =
     !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canSeeFinance = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
+  const canPrepareWhatsApp = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
   const [responsibleOptions, setResponsibleOptions] = useState<
     Array<{ id: number; name: string }>
   >([]);
@@ -323,6 +325,8 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
       </header>
 
       {paymentOpen && !archived ? <ProjectPayments orderId={order.id} /> : null}
+
+      {canPrepareWhatsApp && order.messageTemplateVersion >= 1 ? <OrderWhatsAppMessages order={order} /> : null}
 
       {canSeeFinance ? (
         <section className={panel}>

@@ -2,6 +2,7 @@ export type NewOrderFormValues = {
   clientName: string;
   phone: string;
   location: string;
+  mapUrl: string;
   managerUserId: string;
   amount: string;
   initialPayment: string;
@@ -14,6 +15,7 @@ export type NewOrderFormValues = {
   frameType: string;
   material: string;
   railingType: string;
+  supportType: string;
   color: string;
   lighting: boolean;
   lightingDetails: string;
@@ -50,6 +52,7 @@ export const EMPTY_NEW_ORDER_FORM: NewOrderFormValues = {
   clientName: "",
   phone: "",
   location: "",
+  mapUrl: "",
   managerUserId: "",
   amount: "",
   initialPayment: "0",
@@ -62,6 +65,7 @@ export const EMPTY_NEW_ORDER_FORM: NewOrderFormValues = {
   frameType: "Металлический каркас",
   material: "",
   railingType: "",
+  supportType: "",
   color: "",
   lighting: false,
   lightingDetails: "",
@@ -84,6 +88,7 @@ function parseForm(value: unknown): NewOrderFormValues | null {
     clientName: stringValue(candidate.clientName),
     phone: stringValue(candidate.phone),
     location: stringValue(candidate.location),
+    mapUrl: stringValue(candidate.mapUrl),
     managerUserId: stringValue(candidate.managerUserId),
     amount: stringValue(candidate.amount),
     initialPayment: stringValue(candidate.initialPayment, "0"),
@@ -96,6 +101,7 @@ function parseForm(value: unknown): NewOrderFormValues | null {
     frameType: stringValue(candidate.frameType, EMPTY_NEW_ORDER_FORM.frameType),
     material: stringValue(candidate.material),
     railingType: stringValue(candidate.railingType),
+    supportType: stringValue(candidate.supportType),
     color: stringValue(candidate.color),
     lighting: candidate.lighting === true,
     lightingDetails: stringValue(candidate.lightingDetails),

@@ -47,11 +47,15 @@ test("new order survives polling, failures, reload and duplicate submission", as
 
   const clientName = page.getByLabel("Клиент *", { exact: true });
   const phone = page.getByLabel("Телефон *", { exact: true });
-  const location = page.getByLabel("Город / адрес *", { exact: true });
+  const location = page.getByLabel("Город / точный адрес *", { exact: true });
+  const mapUrl = page.getByLabel("Ссылка на локацию 2GIS / Maps *", { exact: true });
+  const readinessDate = page.getByLabel("Срок заказа (обещанный клиенту) *", { exact: true });
   const amount = page.getByLabel("Цена клиенту *", { exact: true });
   await clientName.fill("Synthetic Order Draft");
   await phone.fill(`+7700${Date.now().toString().slice(-7)}`);
   await location.fill("Кызылорда, тестовый адрес");
+  await mapUrl.fill("https://2gis.kz/kyzylorda/test-object");
+  await readinessDate.fill("2026-12-31");
   await amount.fill("125000");
 
   followUpMode = "pending";
