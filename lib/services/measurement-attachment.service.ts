@@ -32,8 +32,9 @@ export async function listMeasurementAttachments(actor: MeasurementActor, measur
 
 export async function uploadMeasurementAttachment(input: { actor: MeasurementActor; measurementId: number; type: MeasurementPhotoType; file: File }) {
   if (input.actor.role !== Role.MEASURER && !isMeasurementLeader(input.actor.role)) throw new Error("FORBIDDEN");
-  const measurement = await prisma.measurement.findFirst({ where: { id: input.measurementId, AND: [measurementScope(input.actor)] }, select: { id: true, status: true } });
+  const measurement = await prisma.measurement.findFirst({ where: { id: input.measurementId, AND: [measurementScope(input.actor)] }, select: { id: true, status: true, measurerUserId: true } });
   if (!measurement) return null;
+  if (input.actor.role === Role.MEASURER && measurement.measurerUserId !== input.actor.userId) return null;
   if (!EDITABLE_STATUSES.includes(measurement.status)) throw new Error("IMMUTABLE_MEASUREMENT");
   const fileName = safeName(input.file.name), bytes = Buffer.from(await input.file.arrayBuffer());
   if (!validImage(fileName, input.file.type, bytes)) throw new Error("INVALID_FILE_TYPE");

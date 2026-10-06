@@ -24,7 +24,12 @@ assert.equal(isMeasurementLeader(Role.OPERATIONS_DIRECTOR), true);
 assert.equal(isMeasurementLeader(Role.MANAGER), false);
 assert.deepEqual(measurementScope({ userId: 7, role: Role.DIRECTOR, name: "Основатель" }), {});
 assert.deepEqual(measurementScope({ userId: 8, role: Role.OPERATIONS_DIRECTOR, name: "Директор" }), {});
-assert.deepEqual(measurementScope({ userId: 9, role: Role.MEASURER, name: "Замерщик" }), { measurerUserId: 9 });
+assert.deepEqual(measurementScope({ userId: 9, role: Role.MEASURER, name: "Замерщик" }), {
+  OR: [
+    { measurerUserId: 9 },
+    { measurerUserId: null, status: { in: ["ASSIGNED", "IN_PROGRESS"] } },
+  ],
+});
 assert(MEASUREMENT_PERFORMER_ROLES.includes(Role.DIRECTOR));
 assert(MEASUREMENT_PERFORMER_ROLES.includes(Role.OPERATIONS_DIRECTOR));
 assert(MEASUREMENT_PERFORMER_ROLES.includes(Role.MEASURER));
@@ -100,6 +105,7 @@ const leadPanel = readFileSync("components/measurements/LeadMeasurementPanel.tsx
 const workspace = readFileSync("components/measurements/MeasurementWorkspace.tsx", "utf8");
 const employeePage = readFileSync("components/pages/EmployeesPage.tsx", "utf8");
 const measurementRoute = readFileSync("app/api/measurements/[id]/route.ts", "utf8");
+const measurementsRoute = readFileSync("app/api/measurements/route.ts", "utf8");
 for (const marker of ["MEASURER_OUTSIDE_SERVICE_AREA", "MEASURER_TRAVEL_APPROVAL_REQUIRED"])
   assert(service.includes(marker), `missing server territory gate ${marker}`);
 for (const source of [leadPanel, workspace]) {
@@ -111,7 +117,12 @@ assert(employeePage.includes("MEASURER_TERRITORY_TEMPLATES.map"));
 assert(employeePage.includes("applyTerritoryTemplate"));
 assert(employeePage.includes("Территория замерщика"));
 assert(service.includes("CLAIMED_BY_LEADER"));
+assert(service.includes("CLAIMED_BY_MEASURER"));
 assert(measurementRoute.includes('action === "claim"'));
+assert(measurementsRoute.includes("isMeasurementPerformer(actor.role)"));
 assert(workspace.includes("Взять свободный замер себе"));
+assert(workspace.includes("не выбран — можно взять себе"));
+assert(workspace.includes("Заявка клиента (без заказа)"));
+assert(workspace.includes("Новый клиент и замер"));
 
 console.log("measurer territory, leader access, WhatsApp and assignment contracts passed");

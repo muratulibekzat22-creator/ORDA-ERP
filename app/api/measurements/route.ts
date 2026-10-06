@@ -6,6 +6,7 @@ import { requirePermission } from "@/lib/server-auth";
 import { prisma } from "@/lib/prisma";
 import {
   isMeasurementLeader,
+  isMeasurementPerformer,
   listMeasurements,
   MEASUREMENT_PERFORMER_ROLES,
   measurementWorkspace,
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as Record<string, unknown>;
     const actor = measurementActor(auth.session!);
-    if (actor.role === Role.MEASURER && !body.clientId && !body.orderId) {
+    if (isMeasurementPerformer(actor.role) && !body.clientId && !body.orderId) {
       const phone = normalizePhone(typeof body.phone === "string" ? body.phone : "");
       const visitDate = parseBusinessDateTime(body.visitDate);
       if (!phone || !visitDate) return NextResponse.json({ error: "Укажите корректные телефон, дату и время" }, { status: 400 });

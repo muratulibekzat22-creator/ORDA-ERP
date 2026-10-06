@@ -227,6 +227,12 @@ async function main() {
     assert.equal(founderMeasurement.measurement.measurerUserId, director.id, "Founder can be assigned as the measurement performer");
     assert.equal((await startMeasurement(directorActor, founderMeasurement.measurement.id)).status, MeasurementStatus.IN_PROGRESS, "Founder can start an assigned measurement");
     await cancelMeasurement(directorActor, founderMeasurement.measurement.id, { reason: "Тест полномочий основателя" });
+    const freeForMeasurer = await scheduleMeasurement(managerActor, { clientId: noOrderClient.id, visitDate: parseBusinessDateTime("2026-08-11T15:00")!, address: noOrderClient.address });
+    ids.measurements.push(freeForMeasurer.measurement.id);
+    assert.equal((await listMeasurements(actorA)).some((row) => row.id === freeForMeasurer.measurement.id), true, "Measurer sees an unassigned measurement in the shared pool");
+    const claimedByMeasurer = await claimMeasurement(actorA, freeForMeasurer.measurement.id);
+    assert.equal(claimedByMeasurer.measurerUserId, measurerA.id, "Measurer can claim an unassigned measurement");
+    assert.ok(claimedByMeasurer.calendarTaskId, "Claiming creates the measurer calendar task");
     const overdueAt = new Date(Date.now() - 2 * 3_600_000);
     await rescheduleMeasurement(actorA, scheduled.measurement.id, { visitDate: overdueAt, measurerUserId: measurerA.id, address: "ул. Абая, 10", comment: "Клиент попросил изменить время" });
     await assert.rejects(

@@ -73,9 +73,11 @@ export async function applyCatalogItemAsMeasurementReference(input: {
       id: input.measurementId,
       AND: [measurementScope(input.actor)],
     },
-    select: { id: true, status: true },
+    select: { id: true, status: true, measurerUserId: true },
   });
   if (!measurement) return null;
+  if (input.actor.role === Role.MEASURER && measurement.measurerUserId !== input.actor.userId)
+    return null;
   if (!editableStatuses.includes(measurement.status))
     throw new Error("IMMUTABLE_MEASUREMENT");
   const source = await getDesignCatalogContent(input.catalogItemId);

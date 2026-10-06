@@ -52,7 +52,7 @@ export function isMeasurementLeader(role: Role) {
   return MEASUREMENT_LEADER_ROLES.includes(role);
 }
 
-function isMeasurementPerformer(role: Role) {
+export function isMeasurementPerformer(role: Role) {
   return MEASUREMENT_PERFORMER_ROLES.includes(role);
 }
 
@@ -121,12 +121,12 @@ export type SelfScheduleMeasurementInput = {
 };
 
 export async function selfScheduleMeasurement(actor: MeasurementActor, input: SelfScheduleMeasurementInput) {
-  if (actor.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
+  if (!isMeasurementPerformer(actor.role)) throw new MeasurementError("FORBIDDEN");
   const phone = input.phone.trim(), city = trim(input.city, 200), address = trim(input.address, 1000);
   if (!phone || !city || !address || Number.isNaN(input.visitDate.getTime())) throw new MeasurementError("INVALID_INPUT");
   return prisma.$transaction(async (tx) => {
-    const measurer = await tx.user.findUnique({ where: { id: actor.userId }, select: { id: true, name: true, role: true, active: true } });
-    if (!measurer?.active || measurer.role !== Role.MEASURER) throw new MeasurementError("FORBIDDEN");
+    const performer = await tx.user.findUnique({ where: { id: actor.userId }, select: { id: true, name: true, role: true, active: true } });
+    if (!performer?.active || !isMeasurementPerformer(performer.role)) throw new MeasurementError("FORBIDDEN");
     let client = await tx.client.findFirst({
       where: {
         active: true,
@@ -138,23 +138,23 @@ export async function selfScheduleMeasurement(actor: MeasurementActor, input: Se
     if (!client) client = await tx.client.create({ data: {
       name: trim(input.clientName, 200) ?? "", phone, whatsapp: phone, city, address,
       manager: "Менеджер не назначен", amount: "0", status: LeadStage.NEW, stage: LeadStage.NEW,
-      source: "MEASURER_SELF_CREATED", sourceCode: LeadSource.OTHER, comment: trim(input.comment, 2000) ?? "",
+      source: actor.role === Role.MEASURER ? "MEASURER_SELF_CREATED" : "LEADERSHIP_SELF_CREATED", sourceCode: LeadSource.OTHER, comment: trim(input.comment, 2000) ?? "",
     } });
     const mapLink = trim(input.mapLink, 2000), note = trim(input.comment, 2000);
     const task = await tx.calendarTask.create({ data: {
       title: `Замер: ${client.name || client.phone}`, description: [city, address, mapLink, note].filter(Boolean).join(" · "),
       type: CalendarTaskType.MEASUREMENT, dueAt: input.visitDate, priority: CalendarTaskPriority.IMPORTANT,
-      assigneeId: measurer.id, creatorId: measurer.id, clientId: client.id,
+      assigneeId: performer.id, creatorId: performer.id, clientId: client.id,
     } });
-    await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CREATED_BY_MEASURER", actorId: measurer.id, after: { dueAt: input.visitDate, assigneeId: measurer.id, clientId: client.id } } });
+    await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: actor.role === Role.MEASURER ? "CREATED_BY_MEASURER" : "CREATED_BY_LEADER", actorId: performer.id, after: { dueAt: input.visitDate, assigneeId: performer.id, clientId: client.id } } });
     const measurement = await tx.measurement.create({ data: {
-      clientId: client.id, calendarTaskId: task.id, measurer: measurer.name, measurerUserId: measurer.id,
+      clientId: client.id, calendarTaskId: task.id, measurer: performer.name, measurerUserId: performer.id,
       visitDate: input.visitDate, city, address, mapLink, managerComment: note,
     }, include: measurementInclude });
-    await tx.measurementAudit.create({ data: { measurementId: measurement.id, action: "SELF_CREATED", actorId: measurer.id, after: { clientId: client.id, existingClient, visitDate: input.visitDate } } });
+    await tx.measurementAudit.create({ data: { measurementId: measurement.id, action: "SELF_CREATED", actorId: performer.id, after: { clientId: client.id, existingClient, visitDate: input.visitDate } } });
     if (!client.managerUserId) await tx.leadNextAction.create({ data: {
       clientId: client.id, nextActionType: LeadNextActionType.OTHER, nextActionAt: new Date(),
-      nextActionComment: "Новый замер от замерщика — назначить менеджера", createdByUserId: measurer.id,
+      nextActionComment: actor.role === Role.MEASURER ? "Новый замер от замерщика — назначить менеджера" : "Новый замер от руководителя — назначить менеджера", createdByUserId: performer.id,
     } });
     return { measurement, existingClient };
   });
@@ -314,7 +314,16 @@ export function measurementScope(
   actor: MeasurementActor,
 ): Prisma.MeasurementWhereInput {
   if (isMeasurementLeader(actor.role)) return {};
-  if (actor.role === Role.MEASURER) return { measurerUserId: actor.userId };
+  if (actor.role === Role.MEASURER)
+    return {
+      OR: [
+        { measurerUserId: actor.userId },
+        {
+          measurerUserId: null,
+          status: { in: EDITABLE_STATUSES },
+        },
+      ],
+    };
   if (actor.role === Role.MANAGER)
     return {
       client: {
@@ -601,6 +610,9 @@ export async function measurementWorkspace(
   const today = dayBounds(now),
     month = monthBounds(now);
   const scope = measurementScope(actor);
+  const personalScope: Prisma.MeasurementWhereInput = actor.role === Role.MEASURER
+    ? { measurerUserId: actor.userId }
+    : scope;
   const sort = filters.sort === "desc" ? "desc" : "asc";
   const limit = Math.min(100, Math.max(1, Math.trunc(filters.limit ?? 30)));
   const cursor = decodeDateIdCursor(filters.cursor);
@@ -725,37 +737,37 @@ export async function measurementWorkspace(
     }),
     prisma.measurement.count({
       where: {
-        AND: [scope],
+        AND: [personalScope],
         visitDate: { gte: today.start, lt: today.end },
         status: { not: MeasurementStatus.CANCELLED },
       },
     }),
     prisma.measurement.count({
       where: {
-        AND: [scope],
+        AND: [personalScope],
         visitDate: { gt: now },
         status: { in: active },
       },
     }),
     prisma.measurement.count({
-      where: { AND: [scope], visitDate: { lt: now }, status: { in: active } },
+      where: { AND: [personalScope], visitDate: { lt: now }, status: { in: active } },
     }),
     prisma.measurement.count({
-      where: { AND: [scope], handedAt: { gte: month.start, lt: month.end } },
+      where: { AND: [personalScope], handedAt: { gte: month.start, lt: month.end } },
     }),
     prisma.measurement.count({
-      where: { AND: [scope], completedAt: { gte: month.start, lt: month.end } },
+      where: { AND: [personalScope], completedAt: { gte: month.start, lt: month.end } },
     }),
     prisma.measurement.count({
       where: {
-        AND: [scope],
+        AND: [personalScope],
         visitDate: { gte: month.start, lt: month.end },
         status: { not: MeasurementStatus.CANCELLED },
       },
     }),
     prisma.measurement.count({
       where: {
-        AND: [scope],
+        AND: [personalScope],
         completedAt: { gte: month.start, lt: month.end },
         order: { is: { deletedAt: null, lifecycle: { not: "CANCELLED" } } },
       },
@@ -1235,6 +1247,7 @@ async function editableMeasurement(
   tx: Prisma.TransactionClient,
   actor: MeasurementActor,
   id: number,
+  options: { allowUnassignedForMeasurer?: boolean } = {},
 ) {
   const measurement = await tx.measurement.findUnique({
     where: { id },
@@ -1243,7 +1256,8 @@ async function editableMeasurement(
   if (!measurement) throw new MeasurementError("NOT_FOUND");
   if (
     actor.role === Role.MEASURER &&
-    measurement.measurerUserId !== actor.userId
+    measurement.measurerUserId !== actor.userId &&
+    !(options.allowUnassignedForMeasurer && measurement.measurerUserId === null)
   )
     throw new MeasurementError("NOT_FOUND");
   const client = await tx.client.findUniqueOrThrow({
@@ -2199,10 +2213,12 @@ export async function claimMeasurement(
   actor: MeasurementActor,
   id: number,
 ) {
-  if (!isMeasurementLeader(actor.role))
+  if (!isMeasurementPerformer(actor.role))
     throw new MeasurementError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
-    const current = await editableMeasurement(tx, actor, id);
+    const current = await editableMeasurement(tx, actor, id, {
+      allowUnassignedForMeasurer: true,
+    });
     if (!EDITABLE_STATUSES.includes(current.status))
       throw new MeasurementError("IMMUTABLE_MEASUREMENT");
     if (current.measurerUserId === actor.userId)
@@ -2212,28 +2228,42 @@ export async function claimMeasurement(
       });
     if (current.measurerUserId)
       throw new MeasurementError("MEASUREMENT_ALREADY_ASSIGNED");
-    const leader = await tx.user.findFirst({
+    const performer = await tx.user.findFirst({
       where: {
         id: actor.userId,
         active: true,
-        role: { in: MEASUREMENT_LEADER_ROLES },
+        role: { in: MEASUREMENT_PERFORMER_ROLES },
       },
       select: { id: true, name: true },
     });
-    if (!leader) throw new MeasurementError("FORBIDDEN");
+    if (!performer) throw new MeasurementError("FORBIDDEN");
+
+    const claimed = await tx.measurement.updateMany({
+      where: {
+        id,
+        measurerUserId: null,
+        status: { in: EDITABLE_STATUSES },
+      },
+      data: {
+        measurerUserId: performer.id,
+        measurer: performer.name,
+      },
+    });
+    if (claimed.count !== 1)
+      throw new MeasurementError("MEASUREMENT_ALREADY_ASSIGNED");
 
     let calendarTaskId = current.calendarTaskId;
     if (calendarTaskId) {
       await tx.calendarTask.update({
         where: { id: calendarTaskId },
-        data: { assigneeId: leader.id, dueAt: current.visitDate },
+        data: { assigneeId: performer.id, dueAt: current.visitDate },
       });
       await tx.calendarTaskAudit.create({
         data: {
           taskId: calendarTaskId,
-          action: "ASSIGNED_TO_LEADER",
+          action: isMeasurementLeader(actor.role) ? "ASSIGNED_TO_LEADER" : "ASSIGNED_TO_MEASURER",
           actorId: actor.userId,
-          after: { assigneeId: leader.id, measurementId: id },
+          after: { assigneeId: performer.id, measurementId: id },
         },
       });
     } else {
@@ -2251,7 +2281,7 @@ export async function claimMeasurement(
           type: CalendarTaskType.MEASUREMENT,
           dueAt: current.visitDate,
           priority: CalendarTaskPriority.IMPORTANT,
-          assigneeId: leader.id,
+          assigneeId: performer.id,
           creatorId: actor.userId,
           clientId: current.clientId,
           orderId: current.orderId,
@@ -2264,7 +2294,7 @@ export async function claimMeasurement(
           action: "CREATED_FROM_UNASSIGNED_MEASUREMENT",
           actorId: actor.userId,
           after: {
-            assigneeId: leader.id,
+            assigneeId: performer.id,
             measurementId: id,
             clientId: current.clientId,
           },
@@ -2274,18 +2304,18 @@ export async function claimMeasurement(
     await tx.measurementAudit.create({
       data: {
         measurementId: id,
-        action: "CLAIMED_BY_LEADER",
+        action: isMeasurementLeader(actor.role) ? "CLAIMED_BY_LEADER" : "CLAIMED_BY_MEASURER",
         actorId: actor.userId,
         before: { measurerUserId: null },
-        after: { measurerUserId: leader.id },
+        after: { measurerUserId: performer.id },
       },
     });
     return tx.measurement.update({
       where: { id },
       data: {
         calendarTaskId,
-        measurerUserId: leader.id,
-        measurer: leader.name,
+        measurerUserId: performer.id,
+        measurer: performer.name,
       },
       include: measurementInclude,
     });
