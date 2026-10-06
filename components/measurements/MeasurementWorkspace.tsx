@@ -285,9 +285,9 @@ export default function MeasurementWorkspace() {
 function LeadershipMeasurementWorkspace() {
   const [mode, setMode] = useState<"control" | "field">("control");
   return <>
-    <div className="mx-4 mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-800 bg-[#101827] p-2 md:mx-8">
-      <button type="button" onClick={() => setMode("control")} className={`min-h-11 rounded-xl px-3 text-sm font-semibold ${mode === "control" ? "bg-amber-300 text-slate-950" : "bg-slate-900 text-slate-300"}`}>Контроль всех замеров</button>
-      <button type="button" onClick={() => setMode("field")} className={`min-h-11 rounded-xl px-3 text-sm font-semibold ${mode === "field" ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-300"}`}>Провести замер</button>
+    <div className="mx-4 mt-4 grid gap-2 rounded-2xl border border-slate-800 bg-[#101827] p-2 md:mx-8 md:grid-cols-2">
+      <button type="button" onClick={() => setMode("control")} className={`min-h-20 rounded-xl px-4 py-3 text-left ${mode === "control" ? "bg-amber-300 text-slate-950" : "bg-slate-900 text-slate-300"}`}><b className="block text-sm">Контроль всех замеров</b><span className={`mt-1 block text-xs leading-5 ${mode === "control" ? "text-slate-800" : "text-slate-500"}`}>Проверить расписание, ответственных, просрочки и результаты всей команды.</span></button>
+      <button type="button" onClick={() => setMode("field")} className={`min-h-20 rounded-xl px-4 py-3 text-left ${mode === "field" ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-300"}`}><b className="block text-sm">Провести назначенный замер</b><span className={`mt-1 block text-xs leading-5 ${mode === "field" ? "text-blue-100" : "text-slate-500"}`}>Открыть существующий замер и заполнить размеры, фотографии и результат.</span></button>
     </div>
     {mode === "control" ? <DirectorMeasurementControl /> : <OperationalMeasurementWorkspace />}
   </>;
@@ -656,14 +656,14 @@ function OperationalMeasurementWorkspace() {
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-white md:text-3xl">
-            {measurer ? "Кабинет замерщика" : leadership ? "Рабочий режим замера" : "Замеры клиентов"}
+            {measurer ? "Кабинет замерщика" : leadership ? "Провести назначенный замер" : "Замеры клиентов"}
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            Расписание, фактические размеры и передача результата менеджеру
+            {leadership ? "Выберите существующий замер из списка или назначьте новый по заявке либо заказу." : "Расписание, фактические размеры и передача результата менеджеру"}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {measurementPerformer && <button type="button" onClick={() => setCreateOpen((value) => !value)} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold"><Plus size={17}/>Новый клиент и замер</button>}
+          {measurer && <button type="button" onClick={() => setCreateOpen((value) => !value)} className="flex min-h-11 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold"><Plus size={17}/>Новый замер без заявки</button>}
           {measurer && <Link
             href="/payroll"
             className="flex min-h-11 items-center gap-2 rounded-xl bg-slate-800 px-4 text-sm text-white"
@@ -676,6 +676,7 @@ function OperationalMeasurementWorkspace() {
       </header>
       {canSchedule && scheduleOpen && <form onSubmit={scheduleMeasurement} className="grid gap-3 rounded-2xl border border-amber-800 bg-[#101827] p-4 sm:grid-cols-2 lg:grid-cols-3">
         <h2 className="text-lg font-semibold text-white sm:col-span-2 lg:col-span-3">Назначить замер по заявке или заказу</h2>
+        <p className="rounded-xl border border-amber-900/70 bg-amber-950/20 px-3 py-2 text-sm leading-6 text-amber-100 sm:col-span-2 lg:col-span-3">Здесь выбирается существующий клиент из CRM. Если клиента ещё нет, сначала создайте его в разделе <Link href="/clients" className="font-semibold underline underline-offset-2">«Заявки»</Link>, затем вернитесь и назначьте замер.</p>
         <div className="relative sm:col-span-2 lg:col-span-3">
           <label htmlFor="measurement-client-search" className="mb-1 block text-sm text-slate-300">Телефон или имя клиента</label>
           <input
@@ -730,8 +731,8 @@ function OperationalMeasurementWorkspace() {
         <button disabled={busy || !scheduleForm.clientId || !scheduleForm.visitDate || (!scheduleForm.address.trim() && !scheduleForm.mapLink.trim()) || (selectedScheduleTerritory?.status === "APPROVAL_REQUIRED" && !scheduleForm.travelApproved)} className="min-h-12 rounded-xl bg-amber-500 px-4 font-semibold text-slate-950 disabled:opacity-50 sm:col-span-2 lg:col-span-3">Сохранить замер</button>
       </form>}
       {whatsappText && <section className="rounded-2xl border border-green-900 bg-green-950/20 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><b className="text-green-200">Сообщение в общую WhatsApp-группу</b><button type="button" onClick={() => void navigator.clipboard.writeText(whatsappText).then(() => setNotice("Текст для группы скопирован"))} className="min-h-11 rounded-xl bg-green-700 px-4 text-sm font-semibold">Копировать в группу</button></div><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-200">{whatsappText}</pre>{whatsappMeasurerText && <div className="mt-4 border-t border-green-900 pt-4"><div className="flex flex-wrap items-center justify-between gap-3"><b className="text-green-200">Личное сообщение замерщику</b><div className="flex flex-wrap gap-2">{whatsappMeasurerPhone && <a href={`https://wa.me/${whatsappMeasurerPhone.replace(/\D/g, "")}?text=${encodeURIComponent(whatsappMeasurerText)}`} target="_blank" rel="noreferrer" className="min-h-11 rounded-xl bg-green-700 px-4 py-3 text-sm font-semibold">Открыть WhatsApp</a>}<button type="button" onClick={() => void navigator.clipboard.writeText(whatsappMeasurerText).then(() => setNotice("Сообщение замерщику скопировано"))} className="min-h-11 rounded-xl bg-slate-700 px-4 text-sm font-semibold">Копировать замерщику</button></div></div><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-200">{whatsappMeasurerText}</pre></div>}</section>}
-      {measurementPerformer && createOpen && <form onSubmit={createOwnMeasurement} className="grid gap-3 rounded-2xl border border-blue-900 bg-[#101827] p-4 sm:grid-cols-2">
-        <h2 className="text-lg font-semibold text-white sm:col-span-2">Новый клиент и замер на себя</h2>
+      {measurer && createOpen && <form onSubmit={createOwnMeasurement} className="grid gap-3 rounded-2xl border border-blue-900 bg-[#101827] p-4 sm:grid-cols-2">
+        <div className="sm:col-span-2"><h2 className="text-lg font-semibold text-white">Новый замер без заявки</h2><p className="mt-1 text-sm leading-6 text-slate-400">Используйте только при выезде к клиенту, которого ещё нет в CRM. Система проверит телефон, создаст клиента при необходимости и назначит замер вам.</p></div>
         {([ ["clientName", "Имя клиента (необязательно)", "text"], ["phone", "Телефон / WhatsApp", "tel"], ["city", "Город", "text"], ["visitDate", "Дата и время", "datetime-local"], ["address", "Адрес", "text"], ["mapLink", "Ссылка на карту (необязательно)", "url"], ["comment", "Комментарий", "text"] ] as const).map(([key,label,type]) => <Field key={key} label={label}><input required={["phone","city","visitDate","address"].includes(key)} type={type} className={input} value={createForm[key]} onChange={(event) => setCreateForm({...createForm,[key]:event.target.value})}/></Field>)}
         <button disabled={creating} className="min-h-12 rounded-xl bg-emerald-700 px-4 font-semibold sm:col-span-2">{creating ? "Создание…" : "Создать замер"}</button>
       </form>}

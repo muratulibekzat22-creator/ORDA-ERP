@@ -123,6 +123,9 @@ assert(measurementsRoute.includes("isMeasurementPerformer(actor.role)"));
 assert(workspace.includes("Взять свободный замер себе"));
 assert(workspace.includes("не выбран — можно взять себе"));
 assert(workspace.includes("Заявка клиента (без заказа)"));
-assert(workspace.includes("Новый клиент и замер"));
+assert(workspace.includes("Провести назначенный замер"));
+assert(workspace.includes("Новый замер без заявки"));
+assert(workspace.includes("{measurer && <button") && !workspace.includes("{measurementPerformer && <button type=\"button\" onClick={() => setCreateOpen"));
+assert(workspace.includes('сначала создайте его в разделе <Link href="/clients"'));
 
 console.log("measurer territory, leader access, WhatsApp and assignment contracts passed");

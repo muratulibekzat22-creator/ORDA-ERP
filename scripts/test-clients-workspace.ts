@@ -123,9 +123,9 @@ for (const protectedKey of [
 ])
   if (!read("lib/lead-calculation-view.ts").includes(protectedKey))
     throw new Error(`Manager redaction misses ${protectedKey}`);
-for (const marker of ["+ Назначить замер", "Замерщик не выбран", "Замерщика можно назначить позже", "Дата замера", "Время"])
+for (const marker of ["+ Назначить замер", "Ответственный не выбран", "Можно оставить свободным и назначить позже", "Дата замера", "Время"])
   if (!measurementPanel.includes(marker) && !measurementWorkspace.includes(marker)) throw new Error(`Manager measurement UI misses ${marker}`);
-if (!measurementsApi.includes("role: Role.MEASURER, active: true")) throw new Error("Measurement selector must only use active MEASURER users");
+if (!measurementsApi.includes("MEASUREMENT_PERFORMER_ROLES") || !measurementsApi.includes("active: true")) throw new Error("Measurement selector must only use active measurement performers");
 if (!card.includes("#measurement-scheduling")) throw new Error("Client card must expose measurement scheduling action");
 for (const marker of ["Удалить заявку из рабочего списка?", "Связанные замеры и история будут сохранены", "Удалить только заявку из рабочего списка", "Причина (необязательно)"])
   if (!card.includes(marker)) throw new Error(`Application soft-delete UI misses ${marker}`);
