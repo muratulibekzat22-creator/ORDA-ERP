@@ -519,7 +519,7 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           <FounderEfficiency label="Расход Meta" value={data.marketing.metaSpendTracked ? money(data.marketing.metaSpend) : "—"} hint={data.marketing.metaSpendTracked ? "Автоматически из рекламного кабинета" : "Доступ Meta не подключён"}/>
           <FounderEfficiency label="Переписки Meta" value={String(data.marketing.metaConversations)} hint={`Lead-события Meta: ${data.marketing.metaLeadActions}`}/>
-          <FounderEfficiency label="Лиды CRM из Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`}/>
+          <FounderEfficiency label="Заявки из WhatsApp/Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`}/>
           <FounderEfficiency label="Заказы из Meta" value={String(data.marketing.metaOrders)} hint={`Все заказы месяца: ${data.marketing.orders}`}/>
           <FounderEfficiency label="Сумма заказов из Meta" value={money(data.marketing.metaRevenue)} hint={`Все каналы: ${money(data.marketing.revenue)}`}/>
           <FounderEfficiency label="Цена обращения" value={data.marketing.costPerConversation === null ? "—" : money(data.marketing.costPerConversation)} hint="Расход Meta / начатые переписки"/>
@@ -528,8 +528,8 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
           <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Сумма заказов из Meta / расход Meta"/>
           <FounderEfficiency label="Конверсия Meta → заказ" value={percent(data.marketing.metaConversion)} hint="Заказы из Meta / CRM-лиды из Meta"/>
         </div>
-        <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения считает начатую переписку в Meta. Цена лида CRM считает отдельную карточку клиента с источником Instagram, Facebook, Meta или таргет. Эти показатели совпадут только тогда, когда каждая переписка станет одним лидом CRM.</p>
-        {!data.marketing.metaSpendTracked ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка CRM доступны, но расход появится после подключения служебного доступа Meta.</p> : data.marketing.metaAttributionMissing ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В Meta есть переписки, но в CRM нет лидов с источником Meta за этот месяц. Проверьте заполнение источника у обращений: без него цена CRM-лида, цена заказа и ROAS будут неполными.</p> : null}
+        <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения считает начатую переписку в Meta. Цена заявки считает карточку клиента, которую менеджер создал из WhatsApp/Meta только после подтверждённого интереса к лестнице.</p>
+        {!data.marketing.metaSpendTracked ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка CRM доступны, но расход появится после подключения служебного доступа Meta.</p> : data.marketing.metaAttributionMissing ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В Meta есть переписки, но в CRM нет заявок с источником WhatsApp/Meta за этот месяц. Проверьте заполнение источника: без него цена заявки, цена заказа и ROAS будут неполными.</p> : null}
       </section>
 
       <nav aria-label="Основные разделы собственника" className="flex flex-wrap gap-2">
@@ -671,7 +671,7 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
         <FounderEfficiency label="Расход Meta" value={data.marketing.metaSpendTracked ? money(data.marketing.metaSpend) : "—"} hint="Автоматически из рекламного кабинета" />
         <FounderEfficiency label="Переписки Meta" value={String(data.marketing.metaConversations)} hint={`Lead-события Meta: ${data.marketing.metaLeadActions}`} />
-        <FounderEfficiency label="Лиды CRM из Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`} />
+        <FounderEfficiency label="Заявки из WhatsApp/Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`} />
         <FounderEfficiency label="Заказы из Meta" value={String(data.marketing.metaOrders)} hint={`Все заказы месяца: ${data.marketing.orders}`} />
         <FounderEfficiency label="Сумма заказов из Meta" value={money(data.marketing.metaRevenue)} hint={`Все каналы: ${money(data.marketing.revenue)}`} />
         <FounderEfficiency label="Цена обращения" value={data.marketing.costPerConversation === null ? "—" : money(data.marketing.costPerConversation)} hint="Расход Meta / переписки" />
@@ -680,9 +680,9 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
         <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Сумма заказов из Meta / расход" />
         <FounderEfficiency label="Конверсия Meta → заказ" value={percent(data.marketing.metaConversion)} hint="Заказы / CRM-лиды из Meta" />
       </div>
-      <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения считает переписку Meta, а цена лида CRM — карточку клиента с источником Meta. Поэтому эти две суммы могут отличаться.</p>
+      <p className="mt-3 text-xs leading-5 text-slate-400">Цена обращения считает переписку Meta, а цена заявки — квалифицированную карточку, созданную менеджером из WhatsApp/Meta. Поэтому эти две суммы могут отличаться.</p>
       {!data.marketing.metaSpendTracked && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Расход Meta за этот месяц ещё не синхронизирован. Проверьте статус подключения в маркетинге.</p>}
-      {data.marketing.metaAttributionMissing && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">В Meta есть переписки, но обращения CRM не отмечены источником Meta. Проверьте источник заявок, чтобы цена лида, цена заказа и ROAS были полными.</p>}
+      {data.marketing.metaAttributionMissing && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">В Meta есть переписки, но заявки CRM не отмечены источником WhatsApp/Meta. Проверьте источник, чтобы цена заявки, цена заказа и ROAS были полными.</p>}
       <div className="mt-4 rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300"><b className="text-white">3D после КП:</b> сделано {data.salesTools.designDone}, не использовано {data.salesTools.designSkipped}, заказов после 3D {data.salesTools.designConverted}. Фактическая конверсия: {percent(data.salesTools.designConversion)}.</div>
     </section>
     <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">

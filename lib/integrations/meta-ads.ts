@@ -245,7 +245,10 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
       companyId,
       deletedAt: null,
       OR: [
+        { sourceCode: LeadSource.WHATSAPP },
         { sourceCode: LeadSource.INSTAGRAM },
+        { source: { contains: "whatsapp", mode: "insensitive" } },
+        { source: { contains: "ватсап", mode: "insensitive" } },
         { source: { contains: "instagram", mode: "insensitive" } },
         { source: { contains: "facebook", mode: "insensitive" } },
         { source: { contains: "meta", mode: "insensitive" } },

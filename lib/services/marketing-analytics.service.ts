@@ -45,7 +45,9 @@ export type MarketingAnalytics = {
 /**
  * Marketing spend is taken from recorded channel metrics. The all-channel CRM
  * totals stay separate from the Meta funnel. Meta conversations come from the
- * automatic sync note, while Meta leads and orders use the CRM source field.
+ * automatic sync note, while qualified leads use the WhatsApp/Meta CRM source.
+ * In ORDA, Meta ads open WhatsApp and managers create only qualified staircase
+ * applications there, so WHATSAPP is part of this funnel by design.
  * This keeps the cost and ROAS denominators explicit on the owner dashboard.
  */
 export async function getMarketingAnalytics(input: {
@@ -95,7 +97,10 @@ export async function getMarketingAnalytics(input: {
         active: true,
         deletedAt: null,
         OR: [
+          { sourceCode: "WHATSAPP" },
           { sourceCode: "INSTAGRAM" },
+          { source: { contains: "whatsapp", mode: "insensitive" } },
+          { source: { contains: "ватсап", mode: "insensitive" } },
           { source: { contains: "instagram", mode: "insensitive" } },
           { source: { contains: "facebook", mode: "insensitive" } },
           { source: { contains: "meta", mode: "insensitive" } },

@@ -107,8 +107,8 @@ async function main() {
           managerUserId: director.id,
           amount: "350000",
           status: "WON",
-          source: "Instagram",
-          sourceCode: "INSTAGRAM",
+          source: "WhatsApp",
+          sourceCode: "WHATSAPP",
           createdAt: testDate(10),
         },
       });
@@ -191,6 +191,7 @@ async function main() {
       assert.equal(metaAnalytics.leads, 1, "CRM totals must remain visible alongside Meta spend");
       assert.equal(metaAnalytics.metaConversations, 10);
       assert.equal(metaAnalytics.metaCrmLeads, 1);
+      assert.equal(metaAnalytics.metaAttributionMissing, false, "qualified WhatsApp applications must enter the Meta funnel");
       assert.equal(metaAnalytics.metaProposals, 1, "unique Meta clients with a proposal are missing");
       assert.equal(metaAnalytics.metaMeasurements, 1, "Meta measurements are missing from the funnel");
       assert.equal(metaAnalytics.metaOrders, 1);
