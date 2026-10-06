@@ -17,12 +17,12 @@ assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVer
 assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
 assert(proxy.includes('role !== "PARTNER" && role !== "OPERATIONS_DIRECTOR"') && proxy.includes("!selfPayroll"), "protected payroll route is not enforced by page RBAC");
 assert(
-  proxy.includes('PARTNER: ["partner"]') &&
+  proxy.includes('PARTNER: ["partner", "orders"]') &&
     proxy.includes('role === "PARTNER"') &&
-    proxy.includes('firstSegment !== "partner"') &&
-    proxy.includes('firstSegment !== "change-password"'),
-  "partner can open general ERP pages instead of the dedicated redacted cabinet",
+    proxy.includes('["partner", "orders", "proposal", "change-password"].includes(firstSegment)'),
+  "partner can open pages outside the dedicated and server-scoped cabinet",
 );
+assert(proxy.includes('request.nextUrl.pathname === "/sw.js"') && proxy.includes('request.nextUrl.pathname === "/manifest.webmanifest"') && !proxy.includes("?!login|"), "login or PWA shell bypasses the security middleware");
 assert(shell.includes('["/", "/clients", "/orders", "/sales-plan", "/measurements", "/catalog", "/calendar", "/production", "/payroll", "/kpi"]'), "manager navigation contract changed");
 assert(shell.includes('["/", "/marketing", "/calendar", "/payroll", "/kpi"]'), "marketer personal payroll and KPI navigation is missing");
 assert(shell.includes('accountRole === "DIRECTOR"') && shell.includes("if (founder) return true"), "Founder navigation must retain every management section");

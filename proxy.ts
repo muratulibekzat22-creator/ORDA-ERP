@@ -78,6 +78,14 @@ export async function proxy(request: NextRequest) {
     return next();
   }
 
+  if (
+    request.nextUrl.pathname === "/login" ||
+    request.nextUrl.pathname === "/offline" ||
+    request.nextUrl.pathname === "/manifest.webmanifest" ||
+    request.nextUrl.pathname === "/sw.js"
+  )
+    return next();
+
   const token = await getToken({
     req: request,
     secret: process.env.NEXTAUTH_SECRET,
@@ -209,5 +217,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!login|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
