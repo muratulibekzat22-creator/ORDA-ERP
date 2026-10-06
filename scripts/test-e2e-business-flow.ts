@@ -8,6 +8,7 @@ import { createMaterialMovement } from "@/lib/services/warehouse.service";
 import { createProduction, updateProduction } from "@/lib/services/production.service";
 import { createCalendarEvent, moveCalendarEvent } from "@/lib/services/calendar.service";
 import { createOrder } from "@/lib/services/order.service";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 const tag = `e2e-${Date.now()}`;
 const assert = (value: boolean, step: string) => { if (!value) throw new Error(`FAILED: ${step}`); };
@@ -41,23 +42,25 @@ async function main() {
     const client = await prisma.client.create({ data: { name: tag, phone: `+7${Date.now()}`, city: "E2E", manager: `${tag}-MANAGER`, managerUserId: managerId, amount: "0", status: "Новый" } }); ids.client = client.id;
 
     step = "create generated order";
-    const generatedOrder = (await createOrder({ clientId: client.id, partnerId: partner.id, address: "E2E generated", staircase: "Straight", material: "Oak", amount: 100, prepayment: 10, partnerPrice: 40, partnerPriceSet: true, partnerPaid: 5, manager: `${tag}-MANAGER`, managerUserId: managerId, actorRole: Role.MANAGER, idempotencyKey: `${tag}:generated-order`, requestHash: "generated-order" })).order;
-    assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(generatedOrder.number) && Number(generatedOrder.balance) === 90 && Number(generatedOrder.partnerBalance) === 35 && Number(generatedOrder.companyProfit) === 60, step);
-    await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: generatedOrder.id } });
-    await prisma.orderEvent.deleteMany({ where: { orderId: generatedOrder.id } });
-    await deleteReceiptData(generatedOrder.id);
-    await prisma.payment.deleteMany({ where: { orderId: generatedOrder.id } });
-    await prisma.production.deleteMany({ where: { orderId: generatedOrder.id } });
-    await prisma.order.delete({ where: { id: generatedOrder.id } });
+    const generatedOrder = (await createOrder({ clientId: client.id, partnerId: partner.id, address: "E2E generated", staircase: "Straight", material: "Oak", amount: 100_000, prepayment: 10_000, partnerPrice: 40_000, partnerPriceSet: true, partnerPaid: 5_000, manager: `${tag}-MANAGER`, managerUserId: managerId, actorRole: Role.MANAGER, idempotencyKey: `${tag}:generated-order`, requestHash: "generated-order" })).order;
+    assert(/^ORD-\d{8}-[A-F0-9]{12}$/.test(generatedOrder.number) && Number(generatedOrder.balance) === 90_000 && Number(generatedOrder.partnerBalance) === 35_000 && Number(generatedOrder.companyProfit) === 60_000, step);
+    await runWithSystemAccess(async () => {
+      await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: generatedOrder.id } });
+      await prisma.orderEvent.deleteMany({ where: { orderId: generatedOrder.id } });
+      await deleteReceiptData(generatedOrder.id);
+      await prisma.payment.deleteMany({ where: { orderId: generatedOrder.id } });
+      await prisma.production.deleteMany({ where: { orderId: generatedOrder.id } });
+      await prisma.order.delete({ where: { id: generatedOrder.id } });
+    });
     step = "create order";
-    const order = await prisma.order.create({ data: { number: tag, clientId: client.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "1000", prepayment: "0", balance: "1000", partnerPrice: "400", partnerPaid: "0", partnerBalance: "400", companyProfit: "600", manager: `${tag}-MANAGER`, managerUserId: managerId, status: "Новая заявка" } }); ids.order = order.id;
+    const order = await prisma.order.create({ data: { number: tag, clientId: client.id, address: "E2E", staircase: "Прямая", material: "Дуб", amount: "100000", prepayment: "0", balance: "100000", partnerPrice: "40000", partnerPaid: "0", partnerBalance: "40000", companyProfit: "60000", manager: `${tag}-MANAGER`, managerUserId: managerId, status: "Новая заявка" } }); ids.order = order.id;
     await prisma.orderEvent.create({ data: { orderId: order.id, title: "Создан заказ", user: `${tag}-MANAGER` } });
 
     step = "client payment and idempotency";
-    const payment = { orderId: order.id, amount: 500, method: "Kaspi", type: "Предоплата", idempotencyKey: `${tag}:payment`, requestHash: "payment" };
+    const payment = { orderId: order.id, amount: 50_000, method: "Kaspi", type: "Предоплата", idempotencyKey: `${tag}:payment`, requestHash: "payment" };
     await createPayment(payment); await createPayment(payment);
     let current = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
-    assert(Number(current.prepayment) === 500 && Number(current.balance) === 500, step);
+    assert(Number(current.prepayment) === 50_000 && Number(current.balance) === 50_000, step);
     assert(await prisma.payment.count({ where: { orderId: order.id } }) === 1, `${step} duplicate`);
 
     step = "measurement create and edit";
@@ -66,14 +69,14 @@ async function main() {
     assert((await prisma.measurement.findUniqueOrThrow({ where: { id: measurement.id } })).measurerUserId === measurerId, step);
 
     step = "assign partner";
-    const assigned = await assignPartnerToOrder({ orderId: order.id, partnerId: partner.id, partnerPrice: 400, manager: `${tag}-MANAGER` });
-    assert(assigned?.partnerId === partner.id && Number(assigned.partnerPrice) === 400 && Number(assigned.companyProfit) === 600, step);
+    const assigned = await assignPartnerToOrder({ orderId: order.id, partnerId: partner.id, partnerPrice: 40_000, manager: `${tag}-MANAGER` });
+    assert(assigned?.partnerId === partner.id && Number(assigned.partnerPrice) === 40_000 && Number(assigned.companyProfit) === 60_000, step);
 
     step = "partner payout and idempotency";
-    const payout = { orderId: order.id, amount: 100, method: "Kaspi", idempotencyKey: `${tag}:payout`, requestHash: "payout" };
+    const payout = { orderId: order.id, amount: 10_000, method: "Kaspi", idempotencyKey: `${tag}:payout`, requestHash: "payout" };
     await payPartner(payout); await payPartner(payout);
     current = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
-    assert(Number(current.partnerPaid) === 100 && Number(current.partnerBalance) === 300, `${step}: paid=${current.partnerPaid} balance=${current.partnerBalance}`);
+    assert(Number(current.partnerPaid) === 10_000 && Number(current.partnerBalance) === 30_000, `${step}: paid=${current.partnerPaid} balance=${current.partnerBalance}`);
 
     step = "production stages";
     const production = await createProduction({ orderId: order.id, stage: "Дерево", percent: 10, master: `${tag}-PRODUCTION`, masterUserId: productionId, startDate: new Date() });
@@ -104,13 +107,15 @@ async function main() {
     console.error(step, error);
     process.exitCode = 1;
   } finally {
-    if (ids.order) { await prisma.orderGateOverride.deleteMany({ where: { orderId: ids.order } }); await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: ids.order } }); await prisma.orderBlocker.deleteMany({ where: { orderId: ids.order } }); await prisma.orderInstallation.deleteMany({ where: { orderId: ids.order } }); await prisma.orderEvent.deleteMany({ where: { orderId: ids.order } }); await deleteReceiptData(ids.order); await prisma.payment.deleteMany({ where: { orderId: ids.order } }); await prisma.materialMovement.deleteMany({ where: { orderId: ids.order } }); await prisma.measurement.deleteMany({ where: { orderId: ids.order } }); await prisma.production.deleteMany({ where: { orderId: ids.order } }); }
-    if (ids.material) await prisma.material.delete({ where: { id: ids.material } });
-    if (ids.order) await prisma.order.delete({ where: { id: ids.order } });
-    if (ids.partner) await prisma.partner.delete({ where: { id: ids.partner } });
-    if (ids.client) await prisma.client.delete({ where: { id: ids.client } });
-    if (ids.users.length) await prisma.cashShift.deleteMany({ where: { responsibleManagerId: { in: ids.users } } });
-    if (ids.users.length) await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
+    await runWithSystemAccess(async () => {
+      if (ids.order) { await prisma.orderGateOverride.deleteMany({ where: { orderId: ids.order } }); await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: ids.order } }); await prisma.orderBlocker.deleteMany({ where: { orderId: ids.order } }); await prisma.orderInstallation.deleteMany({ where: { orderId: ids.order } }); await prisma.orderEvent.deleteMany({ where: { orderId: ids.order } }); await deleteReceiptData(ids.order); await prisma.payment.deleteMany({ where: { orderId: ids.order } }); await prisma.materialMovement.deleteMany({ where: { orderId: ids.order } }); await prisma.measurement.deleteMany({ where: { orderId: ids.order } }); await prisma.production.deleteMany({ where: { orderId: ids.order } }); }
+      if (ids.material) await prisma.material.delete({ where: { id: ids.material } });
+      if (ids.order) await prisma.order.delete({ where: { id: ids.order } });
+      if (ids.partner) await prisma.partner.delete({ where: { id: ids.partner } });
+      if (ids.client) await prisma.client.delete({ where: { id: ids.client } });
+      if (ids.users.length) await prisma.cashShift.deleteMany({ where: { responsibleManagerId: { in: ids.users } } });
+      if (ids.users.length) await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
+    });
     await prisma.$disconnect();
   }
 }

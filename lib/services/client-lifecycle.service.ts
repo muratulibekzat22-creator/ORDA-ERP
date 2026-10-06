@@ -141,8 +141,9 @@ export async function deleteClientFromWork(
       });
       const deleted = await tx.client.update({
         where: { id: clientId },
-        data: { active: false, deletedAt: now, deletedById: actor.userId },
+        data: { active: false, deletedAt: now, deletedById: actor.userId, deleteReason: reason?.trim().slice(0, 1000) || "Удалено из рабочего списка", version: { increment: 1 } },
       });
+      await tx.deletionLog.create({ data: { actorUserId: actor.userId, actorRole: actor.role, entityType: "Client", entityId: String(clientId), reason: reason?.trim().slice(0, 1000) || "Удалено из рабочего списка" } });
       await tx.leadActivity.create({
         data: {
           clientId,
@@ -190,7 +191,7 @@ export async function restoreClient(
     throw new ClientLifecycleError("FORBIDDEN");
   return prisma.$transaction(async (tx) => {
     const client = await tx.client.findUnique({
-      where: { id: clientId },
+      where: { id: clientId, deletedAt: { not: null } },
       select: {
         id: true,
         active: true,
@@ -201,9 +202,10 @@ export async function restoreClient(
     if (!client) throw new ClientLifecycleError("NOT_FOUND");
     if (!client.deletedAt) return { client, alreadyRestored: true };
     const restored = await tx.client.update({
-      where: { id: clientId },
-      data: { active: true, deletedAt: null, deletedById: null },
+      where: { id: clientId, deletedAt: { not: null } },
+      data: { active: true, deletedAt: null, deletedById: null, deleteReason: null, version: { increment: 1 } },
     });
+    await tx.deletionLog.updateMany({ where: { entityType: "Client", entityId: String(clientId), restoredAt: null }, data: { restoredAt: new Date(), restoredById: actor.userId } });
     await tx.leadActivity.create({
       data: {
         clientId,

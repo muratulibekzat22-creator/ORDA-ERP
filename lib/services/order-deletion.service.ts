@@ -87,7 +87,7 @@ export async function deleteOrderFromWork(
   return prisma.$transaction(
     async (tx) => {
       const order = await tx.order.findUnique({
-        where: { id: orderId },
+        where: { id: orderId, deletedAt: {} },
         select: deletionSelect,
       });
       if (!order) throw new OrderDeletionError("NOT_FOUND");
@@ -124,8 +124,9 @@ export async function deleteOrderFromWork(
 
       const deleted = await tx.order.update({
         where: { id: orderId },
-        data: { deletedAt: now, deletedById: actor.userId },
+        data: { deletedAt: now, deletedById: actor.userId, deleteReason: reasonText, version: { increment: 1 } },
       });
+      await tx.deletionLog.create({ data: { actorUserId: actor.userId, actorRole: actor.role, entityType: "Order", entityId: String(orderId), reason: reasonText || "Удалено из рабочего списка" } });
       await tx.orderLifecycleEvent.create({
         data: {
           orderId,
@@ -160,7 +161,7 @@ export async function restoreOrder(actor: OrderDeletionActor, orderId: number) {
 
   return prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
-      where: { id: orderId },
+      where: { id: orderId, deletedAt: { not: null } },
       select: {
         id: true,
         lifecycle: true,
@@ -175,9 +176,10 @@ export async function restoreOrder(actor: OrderDeletionActor, orderId: number) {
       data: { archivedAt: null, archiveReason: null },
     });
     const restored = await tx.order.update({
-      where: { id: orderId },
-      data: { deletedAt: null, deletedById: null },
+      where: { id: orderId, deletedAt: { not: null } },
+      data: { deletedAt: null, deletedById: null, deleteReason: null, version: { increment: 1 } },
     });
+    await tx.deletionLog.updateMany({ where: { entityType: "Order", entityId: String(orderId), restoredAt: null }, data: { restoredAt: new Date(), restoredById: actor.userId } });
     await tx.orderLifecycleEvent.create({
       data: {
         orderId,

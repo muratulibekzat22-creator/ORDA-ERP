@@ -6,6 +6,7 @@ import { payPartner } from "@/lib/services/partner.service";
 import { createMaterial, createMaterialMovement } from "@/lib/services/warehouse.service";
 import { createOrder } from "@/lib/services/order.service";
 import { Role } from "@prisma/client";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 const tag = `idem-${Date.now()}`;
 
@@ -87,12 +88,15 @@ async function main() {
     const parallelOrders = await Promise.all(["one", "two"].map((suffix) => createOrder({ ...orderInput, idempotencyKey: key(`order-${suffix}`), requestHash: hash(`order-${suffix}`) })));
     ensure(parallelOrders[0].order.number !== parallelOrders[1].order.number, "parallel order numbers");
     ensure(Number(createdOrder.balance) === 900 && Number(createdOrder.partnerBalance) === 350 && Number(createdOrder.companyProfit) === 600, "order calculated totals");
-    await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
-    await prisma.orderEvent.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
-    await deleteReceiptDocuments(parallelOrders.map((result) => result.order.id));
-    await prisma.payment.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
-    await prisma.production.deleteMany({ where: { orderId: { in: parallelOrders.map((result) => result.order.id) } } });
-    await prisma.order.deleteMany({ where: { id: { in: parallelOrders.map((result) => result.order.id) } } });
+    await runWithSystemAccess(async () => {
+      const parallelOrderIds = parallelOrders.map((result) => result.order.id);
+      await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: parallelOrderIds } } });
+      await prisma.orderEvent.deleteMany({ where: { orderId: { in: parallelOrderIds } } });
+      await deleteReceiptDocuments(parallelOrderIds);
+      await prisma.payment.deleteMany({ where: { orderId: { in: parallelOrderIds } } });
+      await prisma.production.deleteMany({ where: { orderId: { in: parallelOrderIds } } });
+      await prisma.order.deleteMany({ where: { id: { in: parallelOrderIds } } });
+    });
 
     const material = await prisma.material.create({
       data: {
@@ -310,34 +314,66 @@ async function main() {
     );
     console.log("all idempotency scenarios passed");
   } finally {
-    if (orderId) {
-      await deleteReceiptDocuments([orderId]);
-      await prisma.orderGateOverride.deleteMany({ where: { orderId } });
-      await prisma.orderLifecycleEvent.deleteMany({ where: { orderId } });
-      await prisma.orderBlocker.deleteMany({ where: { orderId } });
-      await prisma.orderInstallation.deleteMany({ where: { orderId } });
-      await prisma.orderEvent.deleteMany({ where: { orderId } });
-      await prisma.payment.deleteMany({ where: { orderId } });
-      await prisma.inventoryCogsEntry.deleteMany({ where: { orderId } });
-      await prisma.materialMovement.deleteMany({ where: { orderId } });
-    }
-    await prisma.payment.deleteMany({ where: { idempotencyKey: { startsWith: tag } } });
+    await runWithSystemAccess(async () => {
+      const cleanupOrderIds = clientId
+        ? (await prisma.order.findMany({ where: { clientId }, select: { id: true } })).map((item) => item.id)
+        : orderId
+          ? [orderId]
+          : [];
+      if (cleanupOrderIds.length) {
+        await deleteReceiptDocuments(cleanupOrderIds);
+        await prisma.orderGateOverride.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.orderBlocker.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.orderInstallation.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.orderEvent.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        const orderDocuments = await prisma.document.findMany({
+          where: {
+            OR: [
+              { orderId: { in: cleanupOrderIds } },
+              ...(clientId ? [{ clientId }] : []),
+            ],
+          },
+          select: { id: true },
+        });
+        const orderDocumentIds = orderDocuments.map((item) => item.id);
+        if (orderDocumentIds.length) {
+          await prisma.documentAudit.deleteMany({ where: { documentId: { in: orderDocumentIds } } });
+          await prisma.documentVersion.deleteMany({ where: { documentId: { in: orderDocumentIds } } });
+          await prisma.paymentReceipt.deleteMany({ where: { documentId: { in: orderDocumentIds } } });
+          await prisma.document.deleteMany({ where: { id: { in: orderDocumentIds } } });
+        }
+        await prisma.payment.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.production.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.inventoryCogsEntry.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.materialMovement.deleteMany({ where: { orderId: { in: cleanupOrderIds } } });
+        await prisma.order.deleteMany({ where: { id: { in: cleanupOrderIds } } });
+      }
+      await prisma.payment.deleteMany({ where: { idempotencyKey: { startsWith: tag } } });
 
-    if (initializedMaterialId) await prisma.material.delete({ where: { id: initializedMaterialId } });
-    if (materialId) await prisma.material.delete({ where: { id: materialId } });
-    if (orderId) {
-      await prisma.order.delete({ where: { id: orderId } });
-    }
-    if (partnerId) {
-      await prisma.partner.delete({ where: { id: partnerId } });
-    }
-    if (clientId) {
-      await prisma.client.delete({ where: { id: clientId } });
-    }
-    if (managerUserId) {
-      await prisma.cashShift.deleteMany({ where: { responsibleManagerId: managerUserId } });
-      await prisma.user.delete({ where: { id: managerUserId } });
-    }
+      if (initializedMaterialId) await prisma.material.delete({ where: { id: initializedMaterialId } });
+      if (materialId) await prisma.material.delete({ where: { id: materialId } });
+      if (partnerId) await prisma.partner.delete({ where: { id: partnerId } });
+      if (clientId) {
+        const remainingDocuments = await prisma.document.findMany({
+          where: { clientId },
+          select: { id: true },
+        });
+        const documentIds = remainingDocuments.map((item) => item.id);
+        if (documentIds.length) {
+          await prisma.documentAudit.deleteMany({ where: { documentId: { in: documentIds } } });
+          await prisma.documentVersion.deleteMany({ where: { documentId: { in: documentIds } } });
+          await prisma.paymentReceipt.deleteMany({ where: { documentId: { in: documentIds } } });
+          await prisma.document.deleteMany({ where: { id: { in: documentIds } } });
+        }
+        await prisma.client.delete({ where: { id: clientId } });
+      }
+      if (managerUserId) {
+        await prisma.cashShift.deleteMany({ where: { responsibleManagerId: managerUserId } });
+        await prisma.user.delete({ where: { id: managerUserId } });
+      }
+    });
   }
 }
 

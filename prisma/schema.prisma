@@ -138,6 +138,10 @@ model Company {
   employeeKpiTargets            EmployeeKpiTarget[]
   employeeKpiRequests           EmployeeKpiRequest[]
   employeeHandovers             EmployeeHandover[]
+  auditLogs                     AuditLog[]
+  deletionLogs                  DeletionLog[]
+  idempotencyRecords            IdempotencyRecord[]
+  priceApprovalRequests         PriceApprovalRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -523,6 +527,10 @@ model User {
   passwordChangedAt   DateTime  @default(now())
   mustChangePassword  Boolean   @default(false)
   sessionVersion      Int       @default(1)
+  mfaEnabled          Boolean   @default(false)
+  mfaSecretEncrypted  String?
+  mfaRecoveryHashes   Json?
+  mfaSetupCompletedAt DateTime?
   employeeCode        String?   @unique
 
   partnerProfile                      Partner?
@@ -614,6 +622,7 @@ model User {
   handoversPrepared                   EmployeeHandover[]             @relation("HandoverPreparedBy")
   handoversConfirmed                  EmployeeHandover[]             @relation("HandoverConfirmedBy")
   handoverNotices                     EmployeeHandoverNotice[]
+  auditLogs                           AuditLog[]                     @relation("AuditLogActor")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -733,6 +742,8 @@ model Client {
   deletedAt       DateTime?
   deletedById     Int?
   deletedBy       User?           @relation("ClientDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  deleteReason    String?
+  version         Int             @default(1)
 
   orders                    Order[]
   interactions              ClientInteraction[]
@@ -926,6 +937,8 @@ model LeadFollowUp {
 
 model PriceApprovalRequest {
   id                 Int                 @id @default(autoincrement())
+  companyId          Int                 @default(dbgenerated())
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
   clientId           Int
   client             Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
   calculationId      Int
@@ -951,6 +964,7 @@ model PriceApprovalRequest {
   updatedAt          DateTime            @updatedAt
 
   @@unique([calculationId, managerUserId, status])
+  @@index([companyId, status, createdAt])
   @@index([status, createdAt])
   @@index([managerUserId, createdAt])
 }
@@ -1106,6 +1120,7 @@ model Order {
   deletedAt                     DateTime?
   deletedById                   Int?
   deletedBy                     User?                @relation("OrderDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  deleteReason                  String?
   lifecycle                     OrderLifecycle       @default(CREATED)
   version                       Int                  @default(1)
   promisedAt                    DateTime?
@@ -1265,6 +1280,10 @@ model CalendarTask {
   controlKey              String?
   controlRemindedAt       DateTime?
   controlVerifiedAt       DateTime?
+  deletedAt               DateTime?
+  deletedById             Int?
+  deleteReason            String?
+  version                 Int                            @default(1)
   createdAt               DateTime                       @default(now())
   updatedAt               DateTime                       @updatedAt
   auditEvents             CalendarTaskAudit[]
@@ -1278,6 +1297,7 @@ model CalendarTask {
   @@index([clientId, dueAt])
   @@index([orderId, dueAt])
   @@index([companyId, dueAt, status])
+  @@index([companyId, deletedAt, dueAt])
   @@index([assigneeId, acknowledgementRequired, acknowledgedAt])
   @@index([assigneeId, plannedCompletionAt, resultSubmittedAt])
   @@index([assigneeId, workflow, dueAt, status])
@@ -1911,6 +1931,10 @@ model PayrollAccrual {
   ledgerEntry             CompanyLedgerEntry?
   payments                PayrollPayment[]
   createdAt               DateTime               @default(now())
+  deletedAt               DateTime?
+  deletedById             Int?
+  deleteReason            String?
+  version                 Int                    @default(1)
 
   @@index([employeeId, periodId])
   @@index([orderId])
@@ -1943,6 +1967,10 @@ model PayrollPayment {
   confirmation      PayrollPaymentConfirmation?
   ledgerEntry       CompanyLedgerEntry?
   createdAt         DateTime                    @default(now())
+  deletedAt         DateTime?
+  deletedById       Int?
+  deleteReason      String?
+  version           Int                         @default(1)
 
   @@index([employeeId, periodId])
 }
@@ -2054,6 +2082,10 @@ model Document {
   signedChecksum                 String?
   idempotencyKey                 String?                       @unique
   requestHash                    String?
+  deletedAt                      DateTime?
+  deletedById                    Int?
+  deleteReason                   String?
+  version                        Int                           @default(1)
   attachments                    Attachment[]
   versions                       DocumentVersion[]
   auditEvents                    DocumentAudit[]
@@ -2073,6 +2105,7 @@ model Document {
   @@index([authorId, documentDate])
   @@index([documentDate, id])
   @@index([companyId, documentDate, id])
+  @@index([companyId, deletedAt, documentDate])
 }
 
 model DocumentVersion {
@@ -2103,6 +2136,9 @@ model DocumentVersion {
 
   @@unique([documentId, version])
   @@index([documentId, createdAt])
+  // Production already contains a legacy contract-snapshot table named
+  // DocumentVersion. Keep those rows intact and isolate business documents.
+  @@map("BusinessDocumentVersion")
 }
 
 model CustomerMemoAcknowledgement {
@@ -2721,6 +2757,10 @@ model Measurement {
   outcomeAt          DateTime?
   idempotencyKey     String?                   @unique
   requestHash        String?
+  deletedAt          DateTime?
+  deletedById        Int?
+  deleteReason       String?
+  version            Int                       @default(1)
 
   attachments  MeasurementAttachment[]
   auditEvents  MeasurementAudit[]
@@ -2738,6 +2778,7 @@ model Measurement {
   @@index([measurerUserId, status, visitDate])
   @@index([completedAt])
   @@index([companyId, status, visitDate])
+  @@index([companyId, deletedAt, visitDate])
 }
 
 model MeasurementAttachment {
@@ -2904,6 +2945,10 @@ model Payment {
   reversalOf                 Payment?                    @relation("PaymentReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversal                   Payment?                    @relation("PaymentReversal")
   reversalReason             String?
+  deletedAt                  DateTime?
+  deletedById                Int?
+  deleteReason               String?
+  version                    Int                         @default(1)
   cashShiftId                Int?
   cashShift                  CashShift?                  @relation(fields: [cashShiftId], references: [id], onDelete: Restrict)
   registeredByUserId         Int?
@@ -2924,6 +2969,7 @@ model Payment {
   @@index([cashShiftId, operationDate])
   @@index([registeredByUserId, operationDate])
   @@index([companyId, operationDate, id])
+  @@index([companyId, deletedAt, operationDate])
 }
 
 model CashShift {
@@ -3152,6 +3198,10 @@ model Production {
   stageHistory   ProductionStageHistory[]
   idempotencyKey String?                  @unique
   requestHash    String?
+  deletedAt      DateTime?
+  deletedById    Int?
+  deleteReason   String?
+  version        Int                      @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3160,6 +3210,7 @@ model Production {
   @@index([archivedAt, priority, createdAt, id])
   @@index([orderId])
   @@index([companyId, archivedAt, stage])
+  @@index([companyId, deletedAt, stage])
 }
 
 model ProductionStageHistory {
@@ -3243,4 +3294,63 @@ model OrderEvent {
   @@index([createdAt])
   @@index([orderId, createdAt])
   @@index([companyId, createdAt])
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  companyId   Int      @default(dbgenerated())
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actorId     Int?
+  actorUserId Int?
+  actor       User?    @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorRole   String?
+  action      String
+  entityType  String
+  entityId    String
+  reason      String   @default("")
+  before      Json?
+  after       Json?
+  requestId   String?
+  ipHash      String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([companyId, createdAt])
+  @@index([companyId, entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([requestId])
+}
+
+model DeletionLog {
+  id           BigInt    @id @default(autoincrement())
+  companyId    Int       @default(dbgenerated())
+  company      Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actorUserId  Int
+  actorRole    String
+  entityType   String
+  entityId     String
+  reason       String
+  restoredAt   DateTime?
+  restoredById Int?
+  createdAt    DateTime  @default(now())
+
+  @@index([companyId, entityType, entityId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model IdempotencyRecord {
+  id           BigInt   @id @default(autoincrement())
+  companyId    Int      @default(dbgenerated())
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actorUserId  Int
+  scope        String
+  key          String
+  requestHash  String
+  statusCode   Int
+  responseBody Json
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@unique([companyId, actorUserId, scope, key])
+  @@index([expiresAt])
 }

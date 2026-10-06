@@ -1,7 +1,7 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/server-auth";
-import { ClientDeletionError, forceDeleteClient, previewClientForceDelete } from "@/lib/services/client-force-delete.service";
+import { ClientDeletionError, previewClientForceDelete } from "@/lib/services/client-force-delete.service";
 
 type Context = { params: Promise<{ id: string }> };
 const actor = (session: { user: { id: string; role: string; name?: string | null } }) => ({ userId: Number(session.user.id), role: session.user.role as Role, name: session.user.name ?? "" });
@@ -22,5 +22,6 @@ export async function GET(_: Request, context: Context) {
 export async function DELETE(request: Request, context: Context) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
   const id = await idOf(context); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  try { const body = await request.json() as { confirmation?: string; reason?: string }; return NextResponse.json(await forceDeleteClient({ clientId: id, confirmation: body.confirmation ?? "", reason: body.reason ?? "" }, actor(auth.session!))); } catch (error) { return failure(error); }
+  await request.json().catch(() => ({}));
+  return NextResponse.json({ error: "Физическое удаление отключено. Используйте мягкое удаление и восстановление.", code: "PHYSICAL_DELETE_FORBIDDEN" }, { status: 405, headers: { Allow: "GET" } });
 }

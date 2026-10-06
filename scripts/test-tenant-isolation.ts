@@ -21,6 +21,7 @@ assertSafeTestDatabaseUrl(process.env.TEST_DATABASE_URL);
 assert.equal(process.env.DATABASE_URL, process.env.TEST_DATABASE_URL);
 
 const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const payrollTestYear = 2500 + (Date.now() % 100_000);
 const live: TenantIdentity = {
   companyId: 1,
   companySlug: "altyn-sapa-company",
@@ -148,7 +149,7 @@ async function createFixture(tenant: TenantIdentity, label: string): Promise<Fix
       position: "Менеджер",
       hiredAt: new Date(),
     } });
-    const period = await prisma.payrollPeriod.create({ data: { year: 2099, month: label === "live" ? 1 : 2 } });
+    const period = await prisma.payrollPeriod.create({ data: { year: payrollTestYear, month: label === "live" ? 1 : 2 } });
     const ledger = await prisma.companyLedgerEntry.create({ data: {
       type: "MANUAL",
       category: "TENANT_TEST",

@@ -4,6 +4,7 @@ import crypto from "crypto";
 import path from "path";
 import dotenv from "dotenv";
 import { OrderResponsibleType, PartnerPayoutPurpose, Role, type PrismaClient } from "@prisma/client";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 const parsed = dotenv.config({ path: path.join(process.cwd(), ".env.test.local"), quiet: true }).parsed;
 const testUrl = process.env.TEST_DATABASE_URL ?? parsed?.TEST_DATABASE_URL;
@@ -70,7 +71,8 @@ async function main() {
     ensure(deleteBlocked, "database allowed hard-delete of financially posted order");
     console.log("FINANCE INTEGRITY SUMMARY: concurrency=passed; reconciliation=passed; adjustment=passed; production-price=audited; payout-purpose=structured; hard-delete=blocked; reassignment=audited; reversal=passed; cost-redaction=passed");
   } finally {
-    if (orderId) {
+    await runWithSystemAccess(async () => {
+      if (orderId) {
       const receiptDocuments = (await prisma.paymentReceipt.findMany({ where: { orderId }, select: { documentId: true } })).map((item) => item.documentId);
       if (receiptDocuments.length) {
         await prisma.documentAudit.deleteMany({ where: { documentId: { in: receiptDocuments } } });
@@ -79,8 +81,10 @@ async function main() {
         await prisma.document.deleteMany({ where: { id: { in: receiptDocuments } } });
       }
       await prisma.financeAuditEvent.deleteMany({ where: { orderId } }); await prisma.partnerAssignmentHistory.deleteMany({ where: { orderId } }); await prisma.commercialAdjustment.deleteMany({ where: { orderId } }); await prisma.orderEvent.deleteMany({ where: { orderId } }); await prisma.production.deleteMany({ where: { orderId } }); await prisma.payment.deleteMany({ where: { orderId, reversalOfId: { not: null } } }); await prisma.payment.deleteMany({ where: { orderId } }); await prisma.cashShift.deleteMany({ where: { responsibleManagerId: managerUserId } }); await prisma.order.deleteMany({ where: { id: orderId } });
-    }
-    if (partnerIds.length) await prisma.partner.deleteMany({ where: { id: { in: partnerIds } } }); if (clientId) await prisma.client.deleteMany({ where: { id: clientId } }); if (userId || managerUserId) await prisma.user.deleteMany({ where: { id: { in: [userId, managerUserId].filter(Boolean) } } }); await prisma.$disconnect(); console.log("cleanup completed");
+      }
+      if (partnerIds.length) await prisma.partner.deleteMany({ where: { id: { in: partnerIds } } }); if (clientId) await prisma.client.deleteMany({ where: { id: clientId } }); if (userId || managerUserId) await prisma.user.deleteMany({ where: { id: { in: [userId, managerUserId].filter(Boolean) } } });
+    });
+    await prisma.$disconnect(); console.log("cleanup completed");
   }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

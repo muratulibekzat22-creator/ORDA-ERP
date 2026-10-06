@@ -6,7 +6,7 @@ const sourceUrl = process.env.SOURCE_DATABASE_URL;
 const restoreUrl = process.env.RESTORE_DATABASE_URL;
 if (!sourceUrl || !restoreUrl) throw new Error("SOURCE_DATABASE_URL and RESTORE_DATABASE_URL are required");
 if (sourceUrl === restoreUrl) throw new Error("Source and restore targets must be different");
-if (process.env.RESTORE_DRILL_CONFIRM_ISOLATED !== "true") throw new Error("Set RESTORE_DRILL_CONFIRM_ISOLATED=true after confirming both targets are non-production isolated branches");
+if (process.env.RESTORE_DRILL_CONFIRM_ISOLATED !== "true") throw new Error("Set RESTORE_DRILL_CONFIRM_ISOLATED=true after confirming the restore target is an isolated branch/database");
 
 const tables = ["User", "Client", "Order", "OrderCalculation", "Payment", "Material", "MaterialMovement", "Document"] as const;
 const excludedColumns: Record<(typeof tables)[number], string[]> = {
@@ -51,14 +51,18 @@ async function snapshot(database: PrismaClient) {
   return { tables: result, migrations: Number(migrations[0]?.count ?? 0), relations: Object.fromEntries(Object.entries(relations[0] ?? {}).map(([key, value]) => [key, Number(value)])) };
 }
 
-const source = client(sourceUrl);
-const restored = client(restoreUrl);
-try {
-  const [before, after] = await Promise.all([snapshot(source), snapshot(restored)]);
-  if (before.migrations !== 33 || after.migrations !== 33) throw new Error(`Expected 33 applied migrations; source=${before.migrations}, restore=${after.migrations}`);
-  if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error("Restore verification failed: safe counts, hashes, identifiers or relations differ");
-  if (Object.values(before.relations).some((count) => count !== 0)) throw new Error("Restore verification failed: orphan relations detected");
-  console.log(JSON.stringify({ status: "passed", appliedMigrations: after.migrations, tables: after.tables, relations: after.relations }, null, 2));
-} finally {
-  await Promise.allSettled([source.$disconnect(), restored.$disconnect()]);
+async function main() {
+  const source = client(sourceUrl!);
+  const restored = client(restoreUrl!);
+  try {
+    const [before, after] = await Promise.all([snapshot(source), snapshot(restored)]);
+    if (before.migrations < 1 || before.migrations !== after.migrations) throw new Error(`Applied migrations differ: source=${before.migrations}, restore=${after.migrations}`);
+    if (JSON.stringify(before) !== JSON.stringify(after)) throw new Error("Restore verification failed: safe counts, hashes, identifiers or relations differ");
+    if (Object.values(before.relations).some((count) => count !== 0)) throw new Error("Restore verification failed: orphan relations detected");
+    console.log(JSON.stringify({ status: "passed", appliedMigrations: after.migrations, tables: after.tables, relations: after.relations }, null, 2));
+  } finally {
+    await Promise.allSettled([source.$disconnect(), restored.$disconnect()]);
+  }
 }
+
+void main();

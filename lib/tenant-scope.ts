@@ -17,6 +17,7 @@ export const TENANT_MODELS = new Set([
   "Partner",
   "Order",
   "CalendarTask",
+  "CalendarTaskResultAttachment",
   "CompanyLedgerEntry",
   "FinanceCategory",
   "RecurringExpensePlan",
@@ -58,6 +59,20 @@ export const TENANT_MODELS = new Set([
   "EmployeeKpiTarget",
   "EmployeeKpiRequest",
   "EmployeeHandover",
+  "PriceApprovalRequest",
+  "AuditLog",
+  "DeletionLog",
+  "IdempotencyRecord",
+]);
+
+export const SOFT_DELETE_MODELS = new Set([
+  "Client",
+  "Order",
+  "Payment",
+  "Measurement",
+  "Document",
+  "CalendarTask",
+  "Production",
 ]);
 
 const WHERE_OPERATIONS = new Set([
@@ -95,7 +110,15 @@ export function applyTenantScope(
 
   const companyId = context.companyId;
   if (WHERE_OPERATIONS.has(operation)) {
-    args.where = { ...(args.where ?? {}), companyId };
+    if (SOFT_DELETE_MODELS.has(model) && (operation === "delete" || operation === "deleteMany")) {
+      throw new Error(`PHYSICAL_DELETE_FORBIDDEN:${model}`);
+    }
+    const where = args.where ?? {};
+    args.where = {
+      ...where,
+      companyId,
+      ...(SOFT_DELETE_MODELS.has(model) && where.deletedAt === undefined ? { deletedAt: null } : {}),
+    };
   } else if (operation === "create") {
     args.data = tenantData(args.data as DataRow | undefined, companyId);
   } else if (operation === "createMany" || operation === "createManyAndReturn") {

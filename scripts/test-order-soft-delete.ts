@@ -23,6 +23,7 @@ import {
 import { getOrders } from "@/lib/services/order.service";
 import { getFinanceDashboard } from "@/lib/services/payment.service";
 import { getProductions } from "@/lib/services/production.service";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 if (
   !process.env.TEST_DATABASE_URL ||
@@ -43,6 +44,7 @@ const ids = {
 };
 
 async function cleanup() {
+  return runWithSystemAccess(async () => {
   if (ids.orders.length) {
     const measurements = await prisma.measurement.findMany({
       where: { orderId: { in: ids.orders } },
@@ -143,6 +145,7 @@ async function cleanup() {
   if (ids.partner) await prisma.partner.delete({ where: { id: ids.partner } });
   if (ids.users.length)
     await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
+  });
 }
 
 async function createClient(
@@ -152,8 +155,8 @@ async function createClient(
   const client = await prisma.client.create({
     data: {
       name: `${tag}-${suffix}`,
-      phone: `+7707${String(ids.clients.length + 1).padStart(7, "0")}`,
-      whatsapp: `+7707${String(ids.clients.length + 1).padStart(7, "0")}`,
+      phone: `+7${String(Date.now()).slice(-9)}${suffix.endsWith("a") ? "1" : "2"}`,
+      whatsapp: `+7${String(Date.now()).slice(-9)}${suffix.endsWith("a") ? "1" : "2"}`,
       city: "Алматы",
       address: "Тестовый адрес",
       manager: manager.name,
@@ -482,9 +485,9 @@ async function main() {
     assert.equal(deleted.impact.partnerSettlements, 1);
     assert.equal(deleted.impact.payrollAccruals, 1);
 
-    const archivedOrder = await prisma.order.findUniqueOrThrow({
-      where: { id: orderA.id },
-    });
+    const archivedOrder = await runWithSystemAccess(() =>
+      prisma.order.findUniqueOrThrow({ where: { id: orderA.id } }),
+    );
     assert.ok(archivedOrder.deletedAt);
     assert.equal(archivedOrder.deletedById, gulsim.id);
     assert.equal(
