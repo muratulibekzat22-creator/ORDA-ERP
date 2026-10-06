@@ -280,16 +280,15 @@ async function managementProjection(scope: DashboardScope) {
         orderDateNeedsReview: false,
         orderReceivedAt: { gte: week.start, lt: week.end },
       },
-      select: { amount: true, partnerPrice: true, partnerAgreedAt: true },
+      select: { id: true, amount: true },
     }),
-    prisma.payment.groupBy({
-      by: ["type"],
+    prisma.payment.findMany({
       where: {
         operationDate: { gte: week.start, lt: week.end },
         type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] },
         order: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
       },
-      _sum: { amount: true },
+      select: { orderId: true, type: true, amount: true },
     }),
     prisma.client.count({
       where: {
@@ -461,11 +460,10 @@ async function managementProjection(scope: DashboardScope) {
     (order) => orderDataGaps(order).length > 0,
   ).length;
   const weeklyRevenue = weeklyOrders.reduce((sum, order) => sum + Number(order.amount), 0);
-  const weeklyReceived = weeklyPayments.reduce((sum, row) => {
-    const amount = Number(row._sum.amount ?? 0);
-    return sum + (row.type === "REFUND" ? -amount : amount);
-  }, 0);
-  const weeklyPricedOrders = weeklyOrders.filter((order) => hasProductionPrice(order.partnerPrice, order.partnerAgreedAt));
+  const weeklyReceipts = splitDashboardReceipts(
+    weeklyPayments,
+    new Set(weeklyOrders.map((order) => order.id)),
+  );
 
   const attention = activeOrders
     .map((order) => {
@@ -517,8 +515,9 @@ async function managementProjection(scope: DashboardScope) {
       orders: weeklyOrders.length,
       leads: weeklyLeads,
       revenue: weeklyRevenue,
-      received: weeklyReceived,
-      ordersWithProductionPrice: weeklyPricedOrders.length,
+      received: weeklyReceipts.received,
+      receivedForWeekOrders: weeklyReceipts.receivedForPeriodOrders,
+      receivedFromPriorOrders: weeklyReceipts.receivedFromOtherOrders,
       activeOrders: activeOrders.length,
       overdueOrders: overdue,
       incompleteOrders: incompleteData,

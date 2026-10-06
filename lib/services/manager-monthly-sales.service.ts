@@ -102,8 +102,13 @@ export async function getManagerMonthlySales(input: { companyId: number; start: 
   return {
     rows: rows.filter((row) => {
       const profile = users.find((user) => user.id === row.userId)?.payrollProfile;
-      const workedInPeriod = Boolean(profile && profile.hiredAt < input.end && (!profile.terminatedAt || profile.terminatedAt >= input.start));
-      return row.active || workedInPeriod || row.orders > 0 || row.leads > 0;
+      const formerEmployeeWorkedInPeriod = Boolean(
+        !row.active &&
+        profile?.terminatedAt &&
+        profile.hiredAt < input.end &&
+        profile.terminatedAt >= input.start,
+      );
+      return row.active || formerEmployeeWorkedInPeriod || row.orders > 0 || row.leads > 0 || row.planOrders !== null || row.planSales !== null;
     }),
     otherOrders,
     otherSales,

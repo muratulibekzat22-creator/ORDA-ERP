@@ -48,6 +48,8 @@ assert.match(service, /const grossMargin = pricedSales - productionCost/, "gross
 assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| pricedOrders.length !== orders.length \? null : netProfit/, "incomplete totals must not be exposed as company net profit");
 assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows a confirmed business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
+assert.match(service, /prisma\.measurement\.findMany\(\{ where: \{ companyId, deletedAt: null, visitDate:/, "measurements must be counted by their own tenant and visit date");
+assert.match(service, /item\.order \? historicalOwner\(item\.order, item\.visitDate\)[\s\S]*ownerAt\(item\.client\.managerUserId/, "lead measurements without an order must remain in reports");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
 assert.match(service, /prisma\.payrollCalculationSnapshot\.findMany/, "confirmed payroll must come from calculation snapshots");
 assert.match(service, /snapshot\.period\.year \* 100 \+ snapshot\.period\.month/, "report payroll period must match the selected business months");

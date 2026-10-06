@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { splitDashboardReceipts } from "../lib/finance/dashboard-receipts";
 
 async function main() {
@@ -26,6 +27,13 @@ async function main() {
   const refunded = splitDashboardReceipts([...payments, { orderId: 9, type: "REFUND", amount: 500_000 }], new Set([10]));
   assert.equal(refunded.received, 10_500_000);
   assert.equal(refunded.receivedFromOtherOrders, 6_500_000);
+  const dashboardService = readFileSync("lib/services/dashboard.service.ts", "utf8");
+  const dashboardPage = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
+  assert.match(dashboardService, /receivedForWeekOrders: weeklyReceipts\.receivedForPeriodOrders/);
+  assert.match(dashboardService, /receivedFromPriorOrders: weeklyReceipts\.receivedFromOtherOrders/);
+  assert.match(dashboardPage, /Заказы за неделю/);
+  assert.match(dashboardPage, /по ранее оформленным/);
+  assert.doesNotMatch(dashboardPage.slice(dashboardPage.indexOf("Недельный отчёт собственника"), dashboardPage.indexOf("Главная картина бизнеса")), /Цена производства заполнена/);
   console.log("Founder month boundaries and mixed-month customer receipts passed");
 }
 

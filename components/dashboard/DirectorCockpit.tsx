@@ -36,7 +36,8 @@ type ManagementPayload = {
     leads: number;
     revenue: number;
     received: number;
-    ordersWithProductionPrice: number;
+    receivedForWeekOrders: number;
+    receivedFromPriorOrders: number;
     activeOrders: number;
     overdueOrders: number;
     incompleteOrders: number;
@@ -440,10 +441,10 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
       <section className="rounded-2xl border border-blue-500/25 bg-[#101827] p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Недельный отчёт собственника</h2><p className="text-sm text-slate-400">Сформирован автоматически за последние 7 дней · без ручного ввода</p></div><span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{date(data.weekly.from)} — {date(data.weekly.to)}</span></div>
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint={`${data.weekly.orders} заказов по дате заказа`} tone="blue" />
-          <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint="Фактические поступления минус возвраты" tone="emerald" />
+          <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint="Сумма новых договоров по подтверждённой дате" tone="blue" />
+          <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint={`По заказам недели ${money(data.weekly.receivedForWeekOrders)} · по ранее оформленным ${money(data.weekly.receivedFromPriorOrders)}`} tone="emerald" />
+          <FounderEfficiency label="Заказы за неделю" value={String(data.weekly.orders)} hint="Новые договоры по подтверждённой дате" href="/orders" tone="blue" />
           <FounderEfficiency label="Обращения в CRM" value={String(data.weekly.leads)} hint="Новые заявки за 7 дней" href="/clients" tone="blue" />
-          <FounderEfficiency label="Цена производства заполнена" value={`${data.weekly.ordersWithProductionPrice} / ${data.weekly.orders}`} hint="По новым заказам недели" tone={data.weekly.ordersWithProductionPrice < data.weekly.orders ? "amber" : "neutral"} />
         </div>
         <p className="mt-4 text-sm font-semibold text-white">Открытые вопросы директору сейчас</p>
         <div className="mt-2 grid gap-3 sm:grid-cols-3">

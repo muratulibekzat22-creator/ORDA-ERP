@@ -26,6 +26,8 @@ export type MarketingAnalytics = {
   metaConversations: number;
   metaLeadActions: number;
   metaCrmLeads: number;
+  metaProposals: number;
+  metaMeasurements: number;
   metaOrders: number;
   metaRevenue: number;
   costPerConversation: number | null;
@@ -77,7 +79,7 @@ export async function getMarketingAnalytics(input: {
     { spend: 0, leads: 0, orders: 0, revenue: 0 },
   );
 
-  const [crmClients, metaSourceClients, crmOrders] = await Promise.all([
+  const [crmClients, metaSourceClients, crmOrders, proposalRows, measurementRows] = await Promise.all([
     prisma.client.findMany({
       where: {
         companyId: input.companyId,
@@ -112,6 +114,22 @@ export async function getMarketingAnalytics(input: {
       },
       select: { amount: true, clientId: true },
     }),
+    prisma.commercialProposal.findMany({
+      where: {
+        companyId: input.companyId,
+        createdAt: { gte: input.start, lt: input.end },
+      },
+      select: { clientId: true },
+    }),
+    prisma.measurement.findMany({
+      where: {
+        companyId: input.companyId,
+        deletedAt: null,
+        visitDate: { gte: input.start, lt: input.end },
+        client: { active: true, deletedAt: null },
+      },
+      select: { clientId: true },
+    }),
   ]);
 
   const crmTracked = crmClients.length > 0 || crmOrders.length > 0;
@@ -129,6 +147,16 @@ export async function getMarketingAnalytics(input: {
   const metaCrmLeads = metaSourceClients.filter(
     (client) => client.createdAt >= input.start && client.createdAt < input.end,
   ).length;
+  const metaProposals = new Set(
+    proposalRows
+      .filter((proposal) => metaClientIds.has(proposal.clientId))
+      .map((proposal) => proposal.clientId),
+  ).size;
+  const metaMeasurements = new Set(
+    measurementRows
+      .filter((measurement) => metaClientIds.has(measurement.clientId))
+      .map((measurement) => measurement.clientId),
+  ).size;
   const metaOrders = crmOrders.filter((order) => metaClientIds.has(order.clientId));
   const metaRevenue = metaOrders.reduce(
     (sum, order) => sum + Number(order.amount),
@@ -167,6 +195,8 @@ export async function getMarketingAnalytics(input: {
     metaConversations,
     metaLeadActions,
     metaCrmLeads,
+    metaProposals,
+    metaMeasurements,
     metaOrders: metaOrders.length,
     metaRevenue,
     costPerConversation:

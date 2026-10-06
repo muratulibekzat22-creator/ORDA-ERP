@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { OrderLifecycle, OrderResponsibleType, Role } from "@prisma/client";
 import { dashboardPeriodRange, getDashboardSummary } from "../lib/services/dashboard.service";
 import { prisma } from "../lib/prisma";
+import { runWithSystemAccess } from "../lib/tenant-context";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Dashboard integration requires TEST_DATABASE_URL");
 const tag = `dashboard-${Date.now()}`;
@@ -92,11 +93,13 @@ async function main() {
     assert(home.includes("getServerSession"), "home role projection is not server-side");
     console.log("dashboard role projections, own scope, cancelled exclusion, balances, empty state and routes passed");
   } finally {
-    await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
-    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
-    if (partnerId) await prisma.partner.deleteMany({ where: { id: partnerId } });
-    await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
-    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    await runWithSystemAccess(async () => {
+      await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
+      await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+      if (partnerId) await prisma.partner.deleteMany({ where: { id: partnerId } });
+      await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    });
   }
 }
 

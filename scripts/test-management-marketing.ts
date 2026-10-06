@@ -12,7 +12,7 @@ import {
 import { prisma } from "../lib/prisma";
 import { marketingMonthRange } from "../lib/marketing";
 import { getMarketingAnalytics } from "../lib/services/marketing-analytics.service";
-import { runWithTenant } from "../lib/tenant-context";
+import { runWithSystemAccess, runWithTenant } from "../lib/tenant-context";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
   throw new Error("Marketing integration requires TEST_DATABASE_URL");
@@ -30,6 +30,11 @@ assert.equal(september.end.toISOString(), "2026-09-30T19:00:00.000Z");
 
 async function main() {
   const tag = `marketing-test-${Date.now()}`;
+  const runNumber = Date.now();
+  const testYear = 2100 + (runNumber % 7000);
+  const testMonthIndex = Math.floor(runNumber / 7000) % 12;
+  const testDate = (day: number, hour = 8) => new Date(Date.UTC(testYear, testMonthIndex, day, hour));
+  const testMonth = `${testYear}-${String(testMonthIndex + 1).padStart(2, "0")}`;
   await runWithTenant(tenant, async () => {
     const director = await prisma.user.create({
       data: {
@@ -46,7 +51,7 @@ async function main() {
         }),
         prisma.managementMarketingMetric.create({
           data: {
-            metricMonth: new Date("2097-01-01T00:00:00+05:00"),
+            metricMonth: testDate(1),
             channel: tag,
             spend: 100_000,
             leads: 20,
@@ -58,8 +63,8 @@ async function main() {
         prisma.managementMarketingReport.create({
           data: {
             periodType: ManagementMarketingReportPeriod.WEEKLY,
-            periodStart: new Date("2097-01-01T00:00:00Z"),
-            periodEnd: new Date("2097-01-07T00:00:00Z"),
+            periodStart: testDate(1),
+            periodEnd: testDate(7),
             workCompleted: "Запущены тестовые креативы",
             resultSummary: "Получены тестовые обращения",
             bestResult: "Видео-креатив",
@@ -96,7 +101,7 @@ async function main() {
       const crmClient = await prisma.client.create({
         data: {
           name: `${tag}-client`,
-          phone: "77000000000",
+          phone: `81${Date.now().toString().slice(-10)}`,
           city: "Test",
           manager: director.name,
           managerUserId: director.id,
@@ -104,7 +109,7 @@ async function main() {
           status: "WON",
           source: "Instagram",
           sourceCode: "INSTAGRAM",
-          createdAt: new Date("2097-01-10T08:00:00+05:00"),
+          createdAt: testDate(10),
         },
       });
       const crmOrder = await prisma.order.create({
@@ -118,11 +123,46 @@ async function main() {
           balance: 350_000,
           manager: director.name,
           managerUserId: director.id,
-          orderReceivedAt: new Date("2097-01-12T09:00:00+05:00"),
+          orderReceivedAt: testDate(12, 9),
           orderDateNeedsReview: false,
         },
       });
-      const january = marketingMonthRange("2097-01");
+      const calculation = await prisma.leadCalculation.create({
+        data: {
+          clientId: crmClient.id,
+          material: "Test",
+          baseClientPrice: 350_000,
+          clientPrice: 350_000,
+          internalCost: 200_000,
+          snapshot: {},
+          authorName: director.name,
+        },
+      });
+      const proposal = await prisma.commercialProposal.create({
+        data: {
+          clientId: crmClient.id,
+          calculationId: calculation.id,
+          number: `MKT-KP-${Date.now()}`,
+          snapshot: {},
+          validUntil: new Date(Date.UTC(testYear, testMonthIndex + 1, 1)),
+          executionTerm: "30 дней",
+          paymentTerms: "50/50",
+          warranty: "12 месяцев",
+          managerContact: director.name,
+          createdByName: director.name,
+          createdAt: testDate(11),
+        },
+      });
+      const measurement = await prisma.measurement.create({
+        data: {
+          clientId: crmClient.id,
+          measurer: director.name,
+          visitDate: testDate(11, 10),
+          city: "Test",
+          address: "Test",
+        },
+      });
+      const january = marketingMonthRange(testMonth);
       const analytics = await getMarketingAnalytics({
         companyId: tenant.companyId,
         start: january.start,
@@ -151,6 +191,8 @@ async function main() {
       assert.equal(metaAnalytics.leads, 1, "CRM totals must remain visible alongside Meta spend");
       assert.equal(metaAnalytics.metaConversations, 10);
       assert.equal(metaAnalytics.metaCrmLeads, 1);
+      assert.equal(metaAnalytics.metaProposals, 1, "unique Meta clients with a proposal are missing");
+      assert.equal(metaAnalytics.metaMeasurements, 1, "Meta measurements are missing from the funnel");
       assert.equal(metaAnalytics.metaOrders, 1);
       assert.equal(metaAnalytics.metaRevenue, 350_000);
       assert.equal(metaAnalytics.costPerConversation, 10_000);
@@ -159,20 +201,27 @@ async function main() {
       assert.equal(metaAnalytics.roas, 3.5, "Meta attributed revenue / spend is incorrect");
       assert.equal(metaAnalytics.metaConversion, 100);
       assert.equal(metaAnalytics.metaAttributionMissing, false);
-      await prisma.order.delete({ where: { id: crmOrder.id } });
-      await prisma.client.delete({ where: { id: crmClient.id } });
-      await prisma.managementMarketingTask.delete({ where: { id: task.id } });
-      await prisma.managementMarketingMetric.delete({ where: { id: metric.id } });
-      await prisma.managementMarketingReport.delete({ where: { id: report.id } });
-      await prisma.recruitmentVacancy.delete({ where: { id: vacancy.id } });
+      await runWithSystemAccess(async () => {
+        await prisma.measurement.delete({ where: { id: measurement.id } });
+        await prisma.commercialProposal.delete({ where: { id: proposal.id } });
+        await prisma.leadCalculation.delete({ where: { id: calculation.id } });
+        await prisma.order.delete({ where: { id: crmOrder.id } });
+        await prisma.client.delete({ where: { id: crmClient.id } });
+        await prisma.managementMarketingTask.delete({ where: { id: task.id } });
+        await prisma.managementMarketingMetric.delete({ where: { id: metric.id } });
+        await prisma.managementMarketingReport.delete({ where: { id: report.id } });
+        await prisma.recruitmentVacancy.delete({ where: { id: vacancy.id } });
+      });
       assert.equal(await prisma.managementMarketingTask.count({ where: { title: `${tag}-task` } }), 0);
     } finally {
-      await prisma.managementMarketingTask.deleteMany({ where: { createdById: director.id } });
-      await prisma.managementMarketingMetric.deleteMany({ where: { createdById: director.id } });
-      await prisma.managementMarketingReport.deleteMany({ where: { authorId: director.id } });
-      await prisma.recruitmentVacancy.deleteMany({ where: { createdById: director.id } });
-      await prisma.employeePayrollProfile.deleteMany({ where: { userId: director.id } });
-      await prisma.user.deleteMany({ where: { id: director.id } });
+      await runWithSystemAccess(async () => {
+        await prisma.managementMarketingTask.deleteMany({ where: { createdById: director.id } });
+        await prisma.managementMarketingMetric.deleteMany({ where: { createdById: director.id } });
+        await prisma.managementMarketingReport.deleteMany({ where: { authorId: director.id } });
+        await prisma.recruitmentVacancy.deleteMany({ where: { createdById: director.id } });
+        await prisma.employeePayrollProfile.deleteMany({ where: { userId: director.id } });
+        await prisma.user.deleteMany({ where: { id: director.id } });
+      });
     }
   });
   console.log("marketing KPI, Kanban, vacancy lifecycle and cleanup checks passed");
