@@ -105,7 +105,9 @@ const proxy = read("proxy.ts");
 includesAll(
   proxy,
   [
-    'role === "PARTNER" && firstSegment === "finance"',
+    'role === "PARTNER" &&',
+    'firstSegment !== "partner"',
+    'firstSegment !== "change-password"',
     'new URL("/partner", request.url)',
     'firstSegment === "calculator"',
     '? "orders"',
