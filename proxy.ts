@@ -2,6 +2,22 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
+  const nonce = btoa(crypto.randomUUID());
+  const contentSecurityPolicy = [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' blob: data:",
+    "media-src 'self' blob:",
+    "font-src 'self'",
+    "connect-src 'self' https://*.blob.vercel-storage.com",
+    "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests",
+  ].join("; ");
   const incomingRequestId = request.headers.get("x-request-id") ?? "";
   const requestId =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -11,20 +27,56 @@ export async function proxy(request: NextRequest) {
       : crypto.randomUUID();
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-request-id", requestId);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
   const next = () => {
     const response = NextResponse.next({
       request: { headers: requestHeaders },
     });
     response.headers.set("x-request-id", requestId);
+    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
+    if (process.env.ENABLE_HSTS === "true") response.headers.set("Strict-Transport-Security", "max-age=31536000");
     return response;
   };
-  const redirect = (url: URL) => {
-    const response = NextResponse.redirect(url);
+  const redirect = (url: URL, status: 307 | 308 = 307) => {
+    const response = NextResponse.redirect(url, status);
     response.headers.set("x-request-id", requestId);
+    response.headers.set("Content-Security-Policy", contentSecurityPolicy);
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
+    if (process.env.ENABLE_HSTS === "true") response.headers.set("Strict-Transport-Security", "max-age=31536000");
     return response;
   };
 
-  if (request.nextUrl.pathname.startsWith("/api/")) return next();
+  const requestHost = request.headers.get("host")?.split(":")[0]?.toLowerCase();
+  if (
+    process.env.VERCEL_ENV === "production" &&
+    requestHost === "orda-erp-staging.vercel.app"
+  ) {
+    const canonicalUrl = new URL(request.nextUrl.pathname + request.nextUrl.search, "https://erp.bekzatmuratuly.kz");
+    return redirect(canonicalUrl, 308);
+  }
+
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    const mutation = !["GET", "HEAD", "OPTIONS"].includes(request.method);
+    const origin = request.headers.get("origin");
+    if (mutation && origin) {
+      const allowed = new Set([request.nextUrl.origin, process.env.NEXTAUTH_URL, "https://erp.bekzatmuratuly.kz"].filter(Boolean));
+      if (!allowed.has(origin) && !/^https:\/\/orda-erp-staging(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin))
+        return NextResponse.json({ error: "Недопустимый источник", code: "ORIGIN_FORBIDDEN", requestId }, { status: 403, headers: { "x-request-id": requestId, "Cache-Control": "no-store", "Content-Security-Policy": contentSecurityPolicy } });
+    }
+    const declaredLength = Number(request.headers.get("content-length") ?? 0);
+    const uploadRoute = /\/(attachments|documents|statements)(\/|$)/.test(request.nextUrl.pathname);
+    const offlineSyncRoute = request.nextUrl.pathname === "/api/offline/sync";
+    const maximum = uploadRoute
+      ? 110 * 1024 * 1024
+      : offlineSyncRoute
+        ? 6 * 1024 * 1024
+        : 2 * 1024 * 1024;
+    if (declaredLength > maximum)
+      return NextResponse.json({ error: "Тело запроса слишком большое", code: "PAYLOAD_TOO_LARGE", requestId }, { status: 413, headers: { "x-request-id": requestId, "Cache-Control": "no-store" } });
+    return next();
+  }
 
   const token = await getToken({
     req: request,
@@ -55,7 +107,7 @@ export async function proxy(request: NextRequest) {
   const role = String(token.role ?? "");
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
-    OPERATIONS_DIRECTOR: ["*"],
+    OPERATIONS_DIRECTOR: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse", "partners", "reports"],
     MARKETER: ["marketing", "calendar"],
     MANAGER: [
       "clients",
@@ -78,14 +130,13 @@ export async function proxy(request: NextRequest) {
     DESIGNER: ["orders"],
     PRODUCTION: ["production", "calendar", "warehouse"],
     INSTALLER: ["production", "calendar", "warehouse"],
-    PARTNER: ["partner"],
+    PARTNER: ["partner", "orders"],
   };
   const firstSegment =
     request.nextUrl.pathname.split("/").filter(Boolean)[0] ?? "";
   if (
     role === "PARTNER" &&
-    firstSegment !== "partner" &&
-    firstSegment !== "change-password"
+    !["partner", "orders", "proposal", "change-password"].includes(firstSegment)
   )
     return redirect(new URL("/partner", request.url));
   const protectedSegment = [
@@ -123,7 +174,6 @@ export async function proxy(request: NextRequest) {
   if (
     firstSegment === "calculator-config" &&
     role !== "DIRECTOR" &&
-    role !== "OPERATIONS_DIRECTOR" &&
     role !== "ACCOUNTANT"
   )
     return redirect(new URL("/", request.url));
@@ -138,7 +188,7 @@ export async function proxy(request: NextRequest) {
           ? "reports"
           : firstSegment;
   const allowed = permissions[role] ?? [];
-  const selfPayroll = firstSegment === "payroll" && role !== "PARTNER";
+  const selfPayroll = firstSegment === "payroll" && role !== "PARTNER" && role !== "OPERATIONS_DIRECTOR";
   const trainingWorkspace =
     firstSegment === "training" &&
     (role === "MEASURER" || role === "DIRECTOR" || role === "OPERATIONS_DIRECTOR");

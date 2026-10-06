@@ -1,4 +1,5 @@
 import { readSheet } from "read-excel-file/node";
+import JSZip from "jszip";
 
 export const MAX_BANK_STATEMENT_SIZE = 10 * 1024 * 1024;
 export const MAX_BANK_STATEMENT_ROWS = 2_000;
@@ -80,6 +81,8 @@ function parseDelimitedLine(line: string, delimiter: string) {
 
 function parseDelimited(text: string) {
   const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  if (lines.length > MAX_BANK_STATEMENT_ROWS + 100)
+    throw new Error("STATEMENT_TOO_MANY_ROWS");
   const sample = lines.slice(0, 10).join("\n");
   const delimiters = [";", "\t", ","];
   const delimiter = delimiters
@@ -240,6 +243,8 @@ function parseOneC(text: string): ParsedBankStatement | null {
   if (!/^1CClientBankExchange/im.test(text) && !/СекцияРасчСчет=/i.test(text)) return null;
   const account = text.match(/^РасчСчет=(.+)$/im)?.[1]?.trim() ?? null;
   const sections = text.split(/^СекцияДокумент=.*$/gim).slice(1);
+  if (sections.length > MAX_BANK_STATEMENT_ROWS)
+    throw new Error("STATEMENT_TOO_MANY_ROWS");
   const transactions: ParsedBankStatementTransaction[] = [];
   let skippedRows = 0;
   sections.forEach((section, index) => {
@@ -271,6 +276,31 @@ function parseOneC(text: string): ParsedBankStatement | null {
   return { provider: "KASPI", accountLabel: account ? `Kaspi • ${account.slice(-4)}` : "Рабочий Kaspi", totalRows: transactions.length + skippedRows, skippedRows, transactions };
 }
 
+async function validateXlsxArchive(bytes: Buffer) {
+  const zip = await JSZip.loadAsync(bytes, { checkCRC32: false });
+  const entries = Object.values(zip.files).filter((entry) => !entry.dir);
+  if (entries.length === 0 || entries.length > 500)
+    throw new Error("INVALID_STATEMENT_CONTENT");
+  if (!zip.file("[Content_Types].xml") || !zip.file("xl/workbook.xml"))
+    throw new Error("INVALID_STATEMENT_CONTENT");
+
+  let totalUncompressed = 0;
+  for (const entry of entries) {
+    const metadata = (entry as unknown as {
+      _data?: { uncompressedSize?: number; compressedSize?: number };
+    })._data;
+    const uncompressed = metadata?.uncompressedSize ?? 0;
+    const compressed = metadata?.compressedSize ?? 0;
+    totalUncompressed += uncompressed;
+    if (uncompressed > 20 * 1024 * 1024)
+      throw new Error("INVALID_STATEMENT_CONTENT");
+    if (compressed > 0 && uncompressed / compressed > 100)
+      throw new Error("INVALID_STATEMENT_CONTENT");
+  }
+  if (totalUncompressed > 30 * 1024 * 1024)
+    throw new Error("INVALID_STATEMENT_CONTENT");
+}
+
 export async function parseKaspiStatement(input: { fileName: string; contentType: string; bytes: Buffer }) {
   if (input.bytes.byteLength <= 0 || input.bytes.byteLength > MAX_BANK_STATEMENT_SIZE) throw new Error("INVALID_STATEMENT_SIZE");
   const ext = extension(input.fileName);
@@ -278,7 +308,10 @@ export async function parseKaspiStatement(input: { fileName: string; contentType
   if (!BANK_STATEMENT_EXTENSIONS.has(ext)) throw new Error("UNSUPPORTED_STATEMENT_FORMAT");
   if (ext === "xlsx") {
     if (input.bytes[0] !== 0x50 || input.bytes[1] !== 0x4b) throw new Error("INVALID_STATEMENT_CONTENT");
+    await validateXlsxArchive(input.bytes);
     const rows = await readSheet(input.bytes, { trim: true });
+    if (rows.length > MAX_BANK_STATEMENT_ROWS + 100)
+      throw new Error("STATEMENT_TOO_MANY_ROWS");
     return parseTable(rows as unknown as Cell[][]);
   }
   const text = decodeText(input.bytes);

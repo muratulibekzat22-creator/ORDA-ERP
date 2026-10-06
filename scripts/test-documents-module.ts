@@ -6,6 +6,7 @@ import { DocumentType, MeasurementPhotoType, OrderResponsibleType, Role } from "
 import { del } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
 import { addDocumentVersion, allowedDocumentTypes, createDocument, getDocument, getDocuments, getDocumentVersionContent, MAX_DOCUMENT_SIZE } from "@/lib/services/document.service";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Documents integration requires DATABASE_URL=TEST_DATABASE_URL");
 process.env.TEST_BLOB_DIR ||= path.join(process.cwd(), "tmp", "test-blobs", "documents");
@@ -15,6 +16,7 @@ const emails = (role: string) => `${tag}-${role.toLowerCase()}@test.local`;
 const blobPaths: string[] = [];
 
 async function cleanup() {
+  await runWithSystemAccess(async () => {
   const users = await prisma.user.findMany({ where: { email: { startsWith: "documents-", endsWith: "@test.local" } }, select: { id: true } });
   const userIds = users.map((item) => item.id);
   if (!userIds.length) return;
@@ -40,6 +42,7 @@ async function cleanup() {
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   if (blobPaths.length) await del([...new Set(blobPaths)]).catch(() => undefined);
   blobPaths.length = 0;
+  });
 }
 
 const actor = (user: { id: number; name: string; role: Role }) => ({ userId: user.id, name: user.name, role: user.role });

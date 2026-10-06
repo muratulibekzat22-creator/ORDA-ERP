@@ -11,7 +11,7 @@ import {
   listDesignCatalogItems,
 } from "@/lib/services/design-catalog.service";
 
-const MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 
 function safeName(value: string) {
   return value
@@ -49,7 +49,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          "Каталог больше 200 МБ. Скачайте нужные фотографии по отдельности.",
+          "Каталог больше 50 МБ. Скачайте нужные фотографии по отдельности.",
       },
       { status: 413 },
     );

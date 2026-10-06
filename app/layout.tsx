@@ -4,6 +4,8 @@ import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import RouteShell from "@/components/layout/RouteShell";
 import NetworkStatus from "@/components/NetworkStatus";
+import MfaEnrollmentBanner from "@/components/MfaEnrollmentBanner";
+import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -41,6 +43,8 @@ export default function RootLayout({
       <body className="min-h-screen bg-slate-950 text-white">
         <AuthProvider>
           <NetworkStatus />
+          <MfaEnrollmentBanner />
+          <ServiceWorkerRegistration />
           <RouteShell>{children}</RouteShell>
         </AuthProvider>
       </body>

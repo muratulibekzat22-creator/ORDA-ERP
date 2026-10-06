@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { pdfBuffer } from "@/lib/documents/pdf-utils";
 import { getManagedPartner } from "@/lib/services/partner-management.service";
+import { csvDocument } from "@/lib/csv";
 
 type Statement = Awaited<ReturnType<typeof getManagedPartner>>;
 
@@ -9,8 +10,6 @@ const money = (value: Prisma.Decimal.Value) =>
   `${new Prisma.Decimal(value).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, " ")} ₸`;
 
 const date = (value: Date | string) => new Intl.DateTimeFormat("ru-RU").format(new Date(value));
-
-const csvCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 
 export function partnerStatementCsv(statement: Statement, from?: Date, to?: Date) {
   const operations = statement.operations.filter((item) =>
@@ -40,7 +39,7 @@ export function partnerStatementCsv(statement: Statement, from?: Date, to?: Date
       item.account ?? "", item.comment ?? "", item.status,
     ]),
   ];
-  return `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
+  return csvDocument(rows);
 }
 
 export async function partnerStatementPdf(statement: Statement, from?: Date, to?: Date) {
