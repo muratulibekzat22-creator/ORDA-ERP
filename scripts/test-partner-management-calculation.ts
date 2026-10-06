@@ -24,6 +24,8 @@ const settlement = calculatePartnerSettlement({
     { type: PartnerSettlementOperationType.PARTNER_TO_COMPANY, status: PartnerSettlementOperationStatus.POSTED, amount: "100000.01" },
     { type: PartnerSettlementOperationType.ADJUSTMENT, status: PartnerSettlementOperationStatus.POSTED, amount: "1", adjustmentEffect: "10.11" },
     { type: PartnerSettlementOperationType.CLIENT_TO_PARTNER, status: PartnerSettlementOperationStatus.REVERSED, amount: "999999" },
+    { type: PartnerSettlementOperationType.COMPANY_TO_PARTNER, status: PartnerSettlementOperationStatus.PENDING, amount: "25000" },
+    { type: PartnerSettlementOperationType.COMPANY_TO_PARTNER, status: PartnerSettlementOperationStatus.REJECTED, amount: "35000" },
   ],
 });
 equal(settlement.received, "700000.07", "received includes direct partner payment exactly once");
@@ -33,6 +35,7 @@ equal(settlement.companyAmount, "630000.06", "company amount");
 equal(settlement.partnerBalance, "-179989.91", "partner balance formula");
 equal(settlement.partnerDebt, "179989.91", "partner debt");
 assert.equal(settlement.status, PartnerSettlementStatus.PARTNER_OWES_COMPANY);
+assert.equal(settlement.companyPaidPartner.toFixed(2), "50000.01", "pending and rejected partner acknowledgements do not create a payout");
 
 const closed = calculatePartnerSettlement({ orderAmount: "1000000", companyProfit: "900000", companyClientReceived: "100000", companyPaidPartner: "100000", rewardRule: PartnerRewardRule.FIXED, fixedAmount: "100000", operations: [] });
 assert.equal(closed.status, PartnerSettlementStatus.CLOSED);

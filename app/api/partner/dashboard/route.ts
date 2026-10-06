@@ -1,8 +1,17 @@
-import { OrderLifecycle, Role } from "@prisma/client";
+import {
+  OrderLifecycle,
+  PartnerSettlementOperationType,
+  Role,
+} from "@prisma/client";
 import { NextResponse } from "next/server";
 
+import { createRequestHash, idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
+import {
+  PartnerManagementError,
+  submitPartnerPayoutAcknowledgement,
+} from "@/lib/services/partner-management.service";
 
 export async function GET() {
   const auth = await requirePermission("partners");
@@ -59,6 +68,24 @@ export async function GET() {
         partnerComment: true,
         readyForInstallation: true,
         installationCompleted: true,
+        partnerRelation: {
+          select: {
+            operations: {
+              where: { type: PartnerSettlementOperationType.COMPANY_TO_PARTNER },
+              select: {
+                id: true,
+                amount: true,
+                operationDate: true,
+                method: true,
+                comment: true,
+                status: true,
+                createdAt: true,
+              },
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              take: 20,
+            },
+          },
+        },
         client: { select: { id: true, name: true, phone: true, city: true } },
         measurements: {
           where: { completedAt: { not: null } },
@@ -115,6 +142,10 @@ export async function GET() {
       partnerPaid: Number(order.partnerPaid), partnerBalance: Math.max(Number(order.partnerBalance), 0),
       partnerPlannedReadyAt: order.partnerPlannedReadyAt, partnerComment: order.partnerComment,
       readyForInstallation: order.readyForInstallation, installationCompleted: order.installationCompleted,
+      payoutAcknowledgements: order.partnerRelation?.operations.map((operation) => ({
+        ...operation,
+        amount: Number(operation.amount),
+      })) ?? [],
       measurements: order.measurements.map((measurement) => ({ ...measurement, sheetHref: `/api/measurements/${measurement.id}/sheet` })),
     })),
     activeOrders: orders.filter((order) => order.lifecycle !== OrderLifecycle.COMPLETED && order.lifecycle !== OrderLifecycle.CANCELLED).length,
@@ -126,4 +157,51 @@ export async function GET() {
     }, {}),
     recentPayments,
   });
+}
+
+export async function POST(request: Request) {
+  const auth = await requirePermission("partners");
+  if (auth.response) return auth.response;
+  if (auth.session!.user.role !== Role.PARTNER)
+    return NextResponse.json({ error: "Раздел доступен только партнёрам" }, { status: 403 });
+  const idempotency = readIdempotencyKey(request);
+  if ("response" in idempotency) return idempotency.response;
+  try {
+    const body = await request.json() as Record<string, unknown>;
+    const orderId = Number(body.orderId);
+    const amount = Number(body.amount);
+    const method = typeof body.method === "string" ? body.method.trim() : "";
+    const operationDate = typeof body.operationDate === "string" && body.operationDate
+      ? new Date(`${body.operationDate}T12:00:00+05:00`)
+      : new Date();
+    if (!Number.isInteger(orderId) || orderId <= 0 || !Number.isFinite(amount) || amount <= 0 || !method)
+      return NextResponse.json({ error: "Проверьте заказ, сумму и способ выплаты" }, { status: 400 });
+    if (Number.isNaN(operationDate.getTime()))
+      return NextResponse.json({ error: "Некорректная дата выплаты" }, { status: 400 });
+    const comment = typeof body.comment === "string" ? body.comment.trim() : undefined;
+    const requestHash = createRequestHash({ orderId, amount, method, operationDate: operationDate.toISOString(), comment: comment || null });
+    const result = await submitPartnerPayoutAcknowledgement({
+      orderId,
+      amount,
+      method,
+      operationDate,
+      comment,
+      idempotencyKey: idempotency.key,
+      requestHash,
+    }, {
+      userId: Number(auth.session!.user.id),
+      role: Role.PARTNER,
+      name: auth.session!.user.name?.trim() || "Подрядчик",
+    });
+    return NextResponse.json(result, { status: result.created ? 201 : 200 });
+  } catch (error) {
+    if (error instanceof PartnerManagementError) {
+      if (error.message === "IDEMPOTENCY_CONFLICT") return idempotencyConflict();
+      const notFound = error.message === "RELATION_NOT_FOUND";
+      const conflict = ["PAYOUT_ACKNOWLEDGEMENT_EXCEEDS_BALANCE", "PARTNER_COST_NOT_AGREED"].includes(error.message);
+      return NextResponse.json({ error: error.message }, { status: notFound ? 404 : conflict ? 409 : error.message === "FORBIDDEN" ? 403 : 400 });
+    }
+    console.error("Не удалось сохранить подтверждение выплаты подрядчика", error);
+    return NextResponse.json({ error: "Не удалось сохранить выплату. Повторите попытку." }, { status: 500 });
+  }
 }

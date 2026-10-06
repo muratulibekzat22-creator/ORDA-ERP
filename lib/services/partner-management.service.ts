@@ -12,7 +12,7 @@ import {
   Role,
 } from "@prisma/client";
 
-import { compareRequestHash } from "@/lib/idempotency";
+import { compareRequestHash, createRequestHash } from "@/lib/idempotency";
 import { normalizePhone } from "@/lib/leads/domain";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
 import { hasProductionPrice, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
@@ -80,7 +80,8 @@ const positiveMoney = (value: Prisma.Decimal.Value, code = "INVALID_AMOUNT") => 
   return result;
 };
 const director = (actor: PartnerManagementActor) => {
-  if (actor.role !== Role.DIRECTOR) throw new PartnerManagementError("FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new PartnerManagementError("FORBIDDEN");
 };
 const companyId = () => requireTenantIdentity().companyId;
 
@@ -704,6 +705,187 @@ export async function createPartnerSettlementOperation(input: {
   });
   relation = await loadedRelation(relation.id);
   return { operation, relation: await refreshRelation(relation!.id), created: true };
+}
+
+export async function submitPartnerPayoutAcknowledgement(input: {
+  orderId: number;
+  amount: Prisma.Decimal.Value;
+  operationDate: Date;
+  method: string;
+  comment?: string;
+  idempotencyKey: string;
+  requestHash: string;
+}, actor: PartnerManagementActor) {
+  if (actor.role !== Role.PARTNER) throw new PartnerManagementError("FORBIDDEN");
+  const tenant = companyId();
+  const replay = await prisma.partnerSettlementOperation.findFirst({
+    where: { companyId: tenant, idempotencyKey: input.idempotencyKey, createdById: actor.userId },
+  });
+  if (replay) {
+    if (!compareRequestHash(replay.requestHash, input.requestHash))
+      throw new PartnerManagementError("IDEMPOTENCY_CONFLICT");
+    return { operation: replay, relation: await refreshRelation(replay.relationId), created: false };
+  }
+  const relation = await prisma.partnerOrderRelation.findFirst({
+    where: {
+      companyId: tenant,
+      orderId: input.orderId,
+      partner: {
+        userId: actor.userId,
+        active: true,
+        archived: false,
+        isTest: false,
+        businessStatus: PartnerBusinessStatus.ACTIVE,
+      },
+      order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
+    },
+    include: relationInclude,
+  });
+  if (!relation) throw new PartnerManagementError("RELATION_NOT_FOUND");
+  if (!hasProductionPrice(relation.order.partnerPrice, relation.order.partnerAgreedAt))
+    throw new PartnerManagementError("PARTNER_COST_NOT_AGREED");
+  const amount = positiveMoney(input.amount);
+  if (Number.isNaN(input.operationDate.getTime())) throw new PartnerManagementError("INVALID_DATE");
+  const method = input.method.trim().slice(0, 100);
+  if (!method) throw new PartnerManagementError("PAYMENT_METHOD_REQUIRED");
+  const metrics = calculateLoadedPartnerRelation(relation);
+  const pending = relation.operations
+    .filter((operation) => operation.type === PartnerSettlementOperationType.COMPANY_TO_PARTNER && operation.status === PartnerSettlementOperationStatus.PENDING)
+    .reduce((total, operation) => total.add(operation.amount), new Prisma.Decimal(0));
+  const available = metrics.companyDebt.sub(pending);
+  if (amount.gt(available)) throw new PartnerManagementError("PAYOUT_ACKNOWLEDGEMENT_EXCEEDS_BALANCE");
+  const operation = await prisma.$transaction(async (tx) => {
+    const created = await tx.partnerSettlementOperation.create({
+      data: {
+        companyId: tenant,
+        relationId: relation.id,
+        partnerId: relation.partnerId,
+        orderId: relation.orderId,
+        type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+        status: PartnerSettlementOperationStatus.PENDING,
+        amount,
+        operationDate: input.operationDate,
+        method,
+        comment: input.comment?.trim().slice(0, 2000) || null,
+        createdById: actor.userId,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: input.requestHash,
+      },
+    });
+    await tx.partnerAuditEvent.create({
+      data: {
+        companyId: tenant,
+        partnerId: relation.partnerId,
+        relationId: relation.id,
+        operationId: created.id,
+        action: "PARTNER_PAYOUT_ACKNOWLEDGEMENT_SUBMITTED",
+        before: { balance: metrics.companyDebt.toString(), pending: pending.toString() },
+        after: { amount: amount.toString(), method, operationDate: input.operationDate.toISOString() },
+        comment: created.comment,
+        actorId: actor.userId,
+      },
+    });
+    return created;
+  });
+  return { operation, relation: await refreshRelation(relation.id), created: true };
+}
+
+export async function reviewPartnerPayoutAcknowledgement(input: {
+  operationId: number;
+  decision: "APPROVE" | "REJECT";
+  comment?: string;
+}, actor: PartnerManagementActor) {
+  director(actor);
+  const tenant = companyId();
+  const operation = await prisma.partnerSettlementOperation.findFirst({
+    where: {
+      id: input.operationId,
+      companyId: tenant,
+      type: PartnerSettlementOperationType.COMPANY_TO_PARTNER,
+    },
+    include: { relation: { include: relationInclude } },
+  });
+  if (!operation) throw new PartnerManagementError("OPERATION_NOT_FOUND");
+  if (operation.status !== PartnerSettlementOperationStatus.PENDING) {
+    const alreadyMatches = input.decision === "APPROVE"
+      ? operation.status === PartnerSettlementOperationStatus.POSTED && Boolean(operation.paymentId)
+      : operation.status === PartnerSettlementOperationStatus.REJECTED;
+    if (alreadyMatches)
+      return { operation, relation: await refreshRelation(operation.relationId), created: false };
+    throw new PartnerManagementError("PAYOUT_ACKNOWLEDGEMENT_ALREADY_REVIEWED");
+  }
+  const comment = input.comment?.trim().slice(0, 2000) || "";
+  if (input.decision === "REJECT") {
+    if (!comment) throw new PartnerManagementError("REJECTION_REASON_REQUIRED");
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.partnerSettlementOperation.update({
+        where: { id: operation.id },
+        data: { status: PartnerSettlementOperationStatus.REJECTED },
+      });
+      await tx.partnerAuditEvent.create({
+        data: {
+          companyId: tenant,
+          partnerId: operation.partnerId,
+          relationId: operation.relationId,
+          operationId: operation.id,
+          action: "PARTNER_PAYOUT_ACKNOWLEDGEMENT_REJECTED",
+          before: { status: operation.status, amount: operation.amount.toString() },
+          after: { status: updated.status },
+          comment,
+          actorId: actor.userId,
+        },
+      });
+      return updated;
+    });
+    return { operation: result, relation: await refreshRelation(operation.relationId), created: true };
+  }
+  const metrics = calculateLoadedPartnerRelation(operation.relation);
+  if (operation.amount.gt(metrics.companyDebt))
+    throw new PartnerManagementError("PAYOUT_EXCEEDS_PARTNER_BALANCE");
+  const paymentKey = `partner-payout-acknowledgement:${operation.id}:payment`;
+  const paymentHash = createRequestHash({
+    operationId: operation.id,
+    orderId: operation.orderId,
+    partnerId: operation.partnerId,
+    amount: operation.amount.toString(),
+    operationDate: operation.operationDate.toISOString(),
+    method: operation.method || "other",
+  });
+  const financial = await createFinanceOperation({
+    type: "PARTNER_PAYOUT",
+    orderId: operation.orderId,
+    partnerId: operation.partnerId,
+    amount: Number(operation.amount),
+    method: operation.method || "other",
+    operationDate: operation.operationDate,
+    comment: ["Подтверждено по сообщению подрядчика", operation.comment, comment].filter(Boolean).join(" · "),
+    author: actor.name,
+    authorId: actor.userId,
+    idempotencyKey: paymentKey,
+    requestHash: paymentHash,
+  });
+  if (!financial) throw new PartnerManagementError("ORDER_NOT_FOUND");
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.partnerSettlementOperation.update({
+      where: { id: operation.id },
+      data: { status: PartnerSettlementOperationStatus.POSTED, paymentId: financial.payment.id },
+    });
+    await tx.partnerAuditEvent.create({
+      data: {
+        companyId: tenant,
+        partnerId: operation.partnerId,
+        relationId: operation.relationId,
+        operationId: operation.id,
+        action: "PARTNER_PAYOUT_ACKNOWLEDGEMENT_APPROVED",
+        before: { status: operation.status, balance: metrics.companyDebt.toString() },
+        after: { status: updated.status, paymentId: financial.payment.id, amount: operation.amount.toString() },
+        comment: comment || null,
+        actorId: actor.userId,
+      },
+    });
+    return updated;
+  });
+  return { operation: result, relation: await refreshRelation(operation.relationId), created: true };
 }
 
 export async function reversePartnerSettlementOperation(input: {

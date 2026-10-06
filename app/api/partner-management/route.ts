@@ -17,6 +17,7 @@ import {
   getPartnerManagementReadModel,
   linkPartnerOrder,
   PartnerManagementError,
+  reviewPartnerPayoutAcknowledgement,
   reversePartnerSettlementOperation,
   searchPartnerClients,
   searchPartnerOrders,
@@ -55,7 +56,7 @@ function actor(session: { user: { id: string; role?: string; name?: string | nul
 async function directorAuth() {
   const auth = await requirePermission("partners");
   if (auth.response) return { response: auth.response };
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
     return { response: NextResponse.json({ error: "Недостаточно прав" }, { status: 403 }) };
   return { session: auth.session! };
 }
@@ -72,7 +73,7 @@ function reward(body: Body) {
 function errorResponse(error: unknown) {
   if (error instanceof PartnerManagementError) {
     const notFound = ["PARTNER_NOT_FOUND", "ORDER_NOT_FOUND", "RELATION_NOT_FOUND", "OPERATION_NOT_FOUND", "MANAGER_NOT_FOUND"];
-    const conflict = ["ORDER_ALREADY_LINKED", "ORDER_ALREADY_HAS_PRIMARY_PARTNER", "IDEMPOTENCY_CONFLICT", "ALREADY_REVERSED", "SETTLEMENT_HAS_BALANCE"];
+    const conflict = ["ORDER_ALREADY_LINKED", "ORDER_ALREADY_HAS_PRIMARY_PARTNER", "IDEMPOTENCY_CONFLICT", "ALREADY_REVERSED", "SETTLEMENT_HAS_BALANCE", "PAYOUT_ACKNOWLEDGEMENT_ALREADY_REVIEWED", "PAYOUT_EXCEEDS_PARTNER_BALANCE"];
     return NextResponse.json(
       { error: error.message },
       { status: error.message === "FORBIDDEN" ? 403 : notFound.includes(error.message) ? 404 : conflict.includes(error.message) ? 409 : 400 },
@@ -202,6 +203,16 @@ export async function POST(request: Request) {
       const key = readIdempotencyKey(request); if ("response" in key) return key.response;
       const operationId = asNumber(body.operationId); if (!operationId) throw new PartnerManagementError("OPERATION_NOT_FOUND");
       return NextResponse.json(await reversePartnerSettlementOperation({ operationId, reason: asString(body.reason) ?? "", idempotencyKey: key.key, requestHash: createRequestHash(body) }, user), { status: 201 });
+    }
+    if (action === "review-payout-acknowledgement") {
+      const operationId = asNumber(body.operationId);
+      const decision = enumValue(["APPROVE", "REJECT"] as const, body.decision);
+      if (!operationId || !decision) throw new PartnerManagementError("INVALID_REVIEW");
+      return NextResponse.json(await reviewPartnerPayoutAcknowledgement({
+        operationId,
+        decision,
+        comment: asString(body.comment),
+      }, user));
     }
     if (action === "settlement-state") {
       const relationId = asNumber(body.relationId);

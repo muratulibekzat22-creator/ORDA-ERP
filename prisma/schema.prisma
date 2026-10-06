@@ -72,9 +72,11 @@ enum PartnerSettlementOperationType {
 }
 
 enum PartnerSettlementOperationStatus {
+  PENDING
   POSTED
   REVERSED
   DISPUTED
+  REJECTED
 }
 
 model Company {

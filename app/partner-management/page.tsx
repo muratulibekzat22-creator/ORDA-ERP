@@ -8,6 +8,6 @@ import PartnerManagementWorkspace from "@/components/partners/PartnerManagementW
 export default async function PartnerManagementPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
-  if (session.user.role !== Role.DIRECTOR) notFound();
+  if (session.user.role !== Role.DIRECTOR && session.user.role !== Role.OPERATIONS_DIRECTOR) notFound();
   return <PartnerManagementWorkspace />;
 }

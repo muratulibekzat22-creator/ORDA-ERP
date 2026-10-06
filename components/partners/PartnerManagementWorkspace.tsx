@@ -62,6 +62,9 @@ const friendlyError = (value: string) => ({
   PARTNER_NOT_FOUND: "Цех не найден или находится в архиве.",
   ORDER_ALREADY_LINKED: "Этот заказ уже привязан к другому цеху.",
   ORDER_ALREADY_HAS_PRIMARY_PARTNER: "В заказе уже выбран другой цех.",
+  PAYOUT_EXCEEDS_PARTNER_BALANCE: "Сумма больше текущего остатка по заказу. Обновите данные и проверьте сумму.",
+  PAYOUT_ACKNOWLEDGEMENT_ALREADY_REVIEWED: "Эта запись уже была проверена другим руководителем.",
+  REJECTION_REASON_REQUIRED: "Укажите причину отклонения.",
 } as Record<string, string>)[value] ?? value;
 
 export default function PartnerManagementWorkspace() {
@@ -113,7 +116,7 @@ export default function PartnerManagementWorkspace() {
       {tab === "overview" && <Overview data={data}/>}
       {tab === "partners" && <Partners data={data} busy={busy} mutate={mutate}/>}
       {tab === "orders" && <Orders data={data} busy={busy} mutate={mutate} query={query} setQuery={setQuery}/>}
-      {tab === "settlements" && <Settlements orders={data.orders} busy={busy} mutate={mutate}/>}
+      {tab === "settlements" && <Settlements data={data} busy={busy} mutate={mutate}/>}
       {tab === "operations" && <Operations data={data} busy={busy} mutate={mutate}/>}
       {tab === "reports" && <Reports data={data}/>}
     </>}
@@ -121,6 +124,7 @@ export default function PartnerManagementWorkspace() {
 }
 
 function Overview({ data }: { data: Payload }) {
+  const pendingPayouts = data.operations.filter((operation) => operation.type === "COMPANY_TO_PARTNER" && operation.status === "PENDING");
   const cards: Array<[string, DecimalLike, string]> = [
     ["Продажи за весь период", data.totals.orderAmount, `${data.totals.orders} заказов, привязанных к цехам`],
     ["Получено от клиентов", data.totals.received, "Фактические поступления"],
@@ -133,6 +137,7 @@ function Overview({ data }: { data: Payload }) {
   ];
   const max = Math.max(1, ...data.charts.partners.map((item) => Number(item.sales)));
   return <div className="space-y-5">
+    {pendingPayouts.length > 0 ? <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100"><b>{pendingPayouts.length} подтверждений выплат ждут проверки.</b> Откройте «Взаиморасчёты», чтобы подтвердить или отклонить записи подрядчиков.</div> : null}
     <div className="rounded-2xl border border-blue-400/20 bg-blue-400/5 p-4 text-sm text-slate-300"><b className="text-white">Важно:</b> сводка ниже показывает весь портфель цехов за все месяцы, а не продажи выбранного месяца. Разбивка по месяцам находится внизу. Всего активных заказов ORDA: {data.totals.activeOrdaOrders}; из них привязано к цехам: {data.totals.activeOrders}; без выбранного цеха: {data.totals.unassignedOrders}.</div>
     {data.totals.activeOrdersWithoutProductionCost > 0 && <div className="rounded-2xl border border-amber-400/30 bg-amber-400/5 p-4 text-sm text-amber-100"><b>{data.totals.activeOrdersWithoutProductionCost} активных заказов ORDA</b> без подтверждённой цены производства. По ним прибыль не считается окончательной. Среди уже привязанных к цехам без цены: {data.totals.ordersWithoutProductionCost}.</div>}
     <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">{cards.map(([label, value, hint]) => <div key={label} className={panel}><p className="text-xs text-slate-400 sm:text-sm">{label}</p><p className="mt-2 break-words text-lg font-bold text-white sm:text-2xl">{money(value)}</p><p className="mt-1 text-xs text-slate-500">{hint}</p></div>)}</section>
@@ -256,8 +261,13 @@ function AgreedCostEditor({ item, busy, mutate }: { item: PartnerOrder; busy: bo
   return <>{!open ? <button type="button" disabled={busy} className={secondary} onClick={() => setOpen(true)}>{item.allocation.dataComplete ? "Изменить цену производства" : "Указать цену производства"}</button> : <form onSubmit={submit} className="grid w-full gap-2 rounded-xl border border-amber-300/20 bg-amber-300/5 p-3 sm:grid-cols-[minmax(0,220px)_minmax(0,1fr)_auto_auto] sm:items-end"><Input label="Согласованная цена, ₸" type="number" required value={amount} onChange={setAmount}/><Input label="Комментарий" value={comment} onChange={setComment}/><button className={primary} disabled={busy || Number(amount) < 2}>Сохранить</button><button type="button" className={secondary} onClick={() => setOpen(false)}>Отмена</button></form>}</>;
 }
 
-function Settlements({ orders, busy, mutate }: { orders: PartnerOrder[]; busy: boolean; mutate: (body: Record<string, unknown>, idem?: boolean) => Promise<boolean> }) {
-  return <div className="space-y-4"><h2 className="text-xl font-bold">Текущие взаиморасчёты</h2><OrderCards orders={[...orders].sort((a, b) => Math.abs(Number(b.metrics.partnerBalance)) - Math.abs(Number(a.metrics.partnerBalance)))} actions={(item) => <><button type="button" disabled={busy || Number(item.metrics.partnerBalance) !== 0} className={secondary} onClick={() => void mutate({ action: "settlement-state", relationId: item.id, state: "CLOSE", comment: "Закрыто директором" })}>Закрыть взаиморасчёт</button><button type="button" disabled={busy} className={secondary} onClick={() => { const comment = window.prompt("Причина спорного статуса") ?? ""; if (comment) void mutate({ action: "settlement-state", relationId: item.id, state: "DISPUTE", comment }); }}>Отметить спорным</button></>}/></div>;
+function Settlements({ data, busy, mutate }: { data: Payload; busy: boolean; mutate: (body: Record<string, unknown>, idem?: boolean) => Promise<boolean> }) {
+  const pending = data.operations.filter((operation) => operation.type === "COMPANY_TO_PARTNER" && operation.status === "PENDING");
+  return <div className="space-y-4"><h2 className="text-xl font-bold">Текущие взаиморасчёты</h2>
+    <section className={`${panel} border-amber-300/25`}><div className="flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-lg font-bold text-white">Подтверждения от подрядчиков</h3><p className="mt-1 text-sm text-slate-400">Подрядчик сообщил о полученной сумме. До подтверждения запись не меняет «Выплачено» и остаток.</p></div><span className="rounded-full bg-amber-300 px-3 py-1 text-sm font-bold text-slate-950">На проверке: {pending.length}</span></div>
+      <div className="mt-4 space-y-3">{pending.map((item) => <article key={item.id} className="rounded-xl border border-amber-300/20 bg-slate-950 p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="min-w-0"><p className="font-bold text-white">{item.orderNumber} · {item.partnerName} · {money(item.amount)}</p><p className="mt-1 break-words text-sm text-slate-400">Получено {date(item.operationDate)} · {item.method || "способ не указан"} · сообщил {item.createdBy?.name ?? "подрядчик"}{item.comment ? ` · ${item.comment}` : ""}</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={busy} className={primary} onClick={() => void mutate({ action: "review-payout-acknowledgement", operationId: item.id, decision: "APPROVE" })}>Подтвердить выплату</button><button type="button" disabled={busy} className={secondary} onClick={() => { const comment = window.prompt("Почему запись отклоняется?")?.trim() ?? ""; if (comment) void mutate({ action: "review-payout-acknowledgement", operationId: item.id, decision: "REJECT", comment }); }}>Отклонить</button></div></div></article>)}{!pending.length ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-center text-sm text-slate-500">Новых подтверждений нет</p> : null}</div>
+    </section>
+    <OrderCards orders={[...data.orders].sort((a, b) => Math.abs(Number(b.metrics.partnerBalance)) - Math.abs(Number(a.metrics.partnerBalance)))} actions={(item) => <><button type="button" disabled={busy || Number(item.metrics.partnerBalance) !== 0} className={secondary} onClick={() => void mutate({ action: "settlement-state", relationId: item.id, state: "CLOSE", comment: "Закрыто директором" })}>Закрыть взаиморасчёт</button><button type="button" disabled={busy} className={secondary} onClick={() => { const comment = window.prompt("Причина спорного статуса") ?? ""; if (comment) void mutate({ action: "settlement-state", relationId: item.id, state: "DISPUTE", comment }); }}>Отметить спорным</button></>}/></div>;
 }
 
 function Operations({ data, busy, mutate }: { data: Payload; busy: boolean; mutate: (body: Record<string, unknown>, idem?: boolean) => Promise<boolean> }) {
@@ -285,4 +295,4 @@ const rewardRules: Array<[string, string]> = [["FIXED", "Фиксированн�
 const operationTypes: Array<[string, string]> = [["CLIENT_TO_COMPANY", "Клиент → компания"], ["CLIENT_TO_PARTNER", "Клиент → партнёр"], ["PARTNER_TO_COMPANY", "Партнёр → компания"], ["COMPANY_TO_PARTNER", "Компания → партнёр"], ["CLIENT_REFUND", "Возврат клиенту"], ["PARTNER_REFUND", "Возврат от партнёра"], ["ADJUSTMENT", "Корректировка"]];
 const kindLabel = (value: string) => partnerKinds.find(([key]) => key === value)?.[1] ?? value;
 const operationLabel = (value: string) => operationTypes.find(([key]) => key === value)?.[1] ?? (value === "REVERSAL" ? "Сторно" : value);
-const statusLabel = (value: string) => ({ ACTIVE: "Активный", SUSPENDED: "Приостановлен", ARCHIVED: "Архивный", NOT_CALCULATED: "Не рассчитан", CALCULATED: "Рассчитан", PARTIALLY_PAID: "Частично выплачен", CLOSED: "Закрыт", PARTNER_OWES_COMPANY: "Партнёр должен", COMPANY_OWES_PARTNER: "Компания должна", DISPUTED: "Спорный", CANCELLED: "Отменён", POSTED: "Проведена", REVERSED: "Сторнирована" } as Record<string, string>)[value] ?? value;
+const statusLabel = (value: string) => ({ ACTIVE: "Активный", SUSPENDED: "Приостановлен", ARCHIVED: "Архивный", NOT_CALCULATED: "Не рассчитан", CALCULATED: "Рассчитан", PARTIALLY_PAID: "Частично выплачен", CLOSED: "Закрыт", PARTNER_OWES_COMPANY: "Партнёр должен", COMPANY_OWES_PARTNER: "Компания должна", DISPUTED: "Спорный", CANCELLED: "Отменён", PENDING: "На проверке", POSTED: "Проведена", REJECTED: "Отклонена", REVERSED: "Сторнирована" } as Record<string, string>)[value] ?? value;
