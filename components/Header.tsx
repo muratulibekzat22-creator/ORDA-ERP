@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { roleNames, type Role } from "@/lib/roles";
+import { prepareOfflineLogout } from "@/lib/offline-outbox";
 
 export default function Header({
   onOpenMenu,
@@ -23,6 +24,7 @@ export default function Header({
   const [time, setTime] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [handoverNotices, setHandoverNotices] = useState<{ id: number; text: string }[]>([]);
+  const logout = async () => { if (await prepareOfflineLogout()) await signOut({ callbackUrl: "/login" }); };
 
   useEffect(() => {
     const update = () => setTime(new Date().toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }));
@@ -67,7 +69,7 @@ export default function Header({
             {canManageWorkSchedule && <Link href="/settings/work-schedule" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><CalendarDays size={17}/>Выходные и отчёты</Link>}
           </div>}
         </div>
-        {session && <button type="button" aria-label="Выйти из системы" title="Выйти" onClick={() => signOut({ callbackUrl: "/login" })} className="grid size-11 shrink-0 place-items-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><LogOut size={20}/></button>}
+        {session && <button type="button" aria-label="Выйти из системы" title="Выйти" onClick={() => void logout()} className="grid size-11 shrink-0 place-items-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><LogOut size={20}/></button>}
       </div>
     </header>
   );

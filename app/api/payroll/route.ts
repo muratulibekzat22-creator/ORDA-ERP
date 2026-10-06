@@ -71,9 +71,7 @@ export async function GET(request: Request) {
     )
       throw new PayrollError("EMPLOYEE_NOT_FOUND");
     const identity = actor(auth.session!);
-    const canManageAccruals =
-      identity.role === Role.DIRECTOR ||
-      identity.role === Role.OPERATIONS_DIRECTOR;
+    const canManageAccruals = identity.role === Role.DIRECTOR;
     let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
@@ -145,10 +143,7 @@ export async function POST(request: Request) {
     const action = String(body.action ?? "");
     const hash = createRequestHash(body);
     if (action === "create-period") {
-      if (
-        identity.role !== Role.DIRECTOR &&
-        identity.role !== Role.OPERATIONS_DIRECTOR
-      )
+      if (identity.role !== Role.DIRECTOR)
         throw new PayrollError("FORBIDDEN");
       return NextResponse.json(
         await ensurePeriod(Number(body.year), Number(body.month)),

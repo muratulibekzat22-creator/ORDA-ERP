@@ -8,7 +8,7 @@ const hash = (value: unknown) => crypto.createHash("sha256").update(JSON.stringi
 
 export async function GET() {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
+  const role = auth.session!.user.accountRole as Role;
   if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const rows = await prisma.priceApprovalRequest.findMany({
     where: role === Role.MANAGER ? { managerUserId: Number(auth.session!.user.id) } : undefined,
@@ -19,15 +19,20 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.MANAGER) return NextResponse.json({ error: "Запрос создаёт менеджер" }, { status: 403 });
+  if (auth.session!.user.accountRole !== Role.MANAGER) return NextResponse.json({ error: "Запрос создаёт менеджер" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     const calculationId = Number(body.calculationId), requested = Number(body.requestedSalePrice);
     if (!Number.isInteger(calculationId) || !Number.isFinite(requested) || requested <= 0) return NextResponse.json({ error: "Некорректная цена" }, { status: 400 });
     const calculation = await prisma.leadCalculation.findUnique({ where: { id: calculationId }, include: { client: true } });
-    if (!calculation || calculation.client.managerUserId !== Number(auth.session!.user.id)) return NextResponse.json({ error: "Расчёт не найден" }, { status: 404 });
+    if (!calculation || calculation.client.companyId !== auth.session!.user.companyId || calculation.client.managerUserId !== Number(auth.session!.user.id)) return NextResponse.json({ error: "Расчёт не найден" }, { status: 404 });
+    const proposalId = body.proposalId ? Number(body.proposalId) : null;
+    if (proposalId) {
+      const proposal = await prisma.commercialProposal.findFirst({ where: { id: proposalId, clientId: calculation.clientId }, select: { id: true } });
+      if (!proposal) return NextResponse.json({ error: "Предложение не найдено" }, { status: 404 });
+    }
     if (requested >= Number(calculation.clientPrice)) return NextResponse.json({ error: "Согласование требуется только для снижения цены" }, { status: 400 });
-    const created = await prisma.priceApprovalRequest.create({ data: { clientId: calculation.clientId, calculationId, proposalId: body.proposalId ? Number(body.proposalId) : null, managerUserId: Number(auth.session!.user.id), managerName: auth.session!.user.name ?? "Менеджер", requestedByUserId: Number(auth.session!.user.id), requestedByName: auth.session!.user.name ?? "Менеджер", standardSalePrice: calculation.baseClientPrice, currentSalePrice: calculation.clientPrice, requestedSalePrice: requested, snapshotHash: hash(calculation.snapshot), reason: String(body.reason ?? "Клиент сказал: дорого").slice(0, 300), comment: String(body.comment ?? "").slice(0, 1000) || null } });
+    const created = await prisma.priceApprovalRequest.create({ data: { clientId: calculation.clientId, calculationId, proposalId, managerUserId: Number(auth.session!.user.id), managerName: auth.session!.user.name ?? "Менеджер", requestedByUserId: Number(auth.session!.user.id), requestedByName: auth.session!.user.name ?? "Менеджер", standardSalePrice: calculation.baseClientPrice, currentSalePrice: calculation.clientPrice, requestedSalePrice: requested, snapshotHash: hash(calculation.snapshot), reason: String(body.reason ?? "Клиент сказал: дорого").slice(0, 300), comment: String(body.comment ?? "").slice(0, 1000) || null } });
     return NextResponse.json(created, { status: 201 });
   } catch { return NextResponse.json({ error: "Не удалось создать запрос согласования" }, { status: 409 }); }
 }

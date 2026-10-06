@@ -1,9 +1,11 @@
 import bcrypt from "bcrypt";
+import { Prisma } from "@prisma/client";
 import NextAuth, { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 
 import { ACCOUNT_FAILURE_LIMIT, ACCOUNT_IP_FAILURE_LIMIT, AUTH_WINDOW_MS, IP_ABUSE_FAILURE_LIMIT, accountFailureWindowStart, accountIdentifierHash, normalizeAccountIdentifier, pruneAuthAudit, requestId, requestIpHash, userAgentClass, writeAuthAudit, type SafeAuthReason } from "@/lib/auth-security";
 import { productionLog } from "@/lib/observability";
+import { decryptTotpSecret, recoveryCodeHash, verifyTotp } from "@/lib/mfa";
 import { prisma } from "@/lib/prisma";
 import { enterTenantContext, runWithSystemAccess } from "@/lib/tenant-context";
 
@@ -13,7 +15,7 @@ class SafeAuthError extends Error { constructor(public reason: SafeAuthReason) {
 export const authOptions: NextAuthOptions = {
   providers: [CredentialsProvider({
     name: "Credentials",
-    credentials: { email: { label: "Email", type: "email" }, password: { label: "Пароль", type: "password" } },
+    credentials: { email: { label: "Email", type: "email" }, password: { label: "Пароль", type: "password" }, mfaCode: { label: "MFA", type: "text" }, recoveryCode: { label: "Recovery", type: "text" } },
     async authorize(credentials, request) {
       if (!credentials?.email?.trim() || !credentials.password) throw new SafeAuthError("CSRF_OR_AUTH_FLOW_ERROR");
       const email = normalizeAccountIdentifier(credentials.email), identifierHash = accountIdentifierHash(email), ipHash = requestIpHash(request), correlationId = requestId(request), agentClass = userAgentClass(request);
@@ -24,37 +26,68 @@ export const authOptions: NextAuthOptions = {
         where: { email: { equals: email, mode: "insensitive" } },
         include: { company: true },
       }));
+      const appAudit = (action: string) => user ? runWithSystemAccess(() => prisma.auditLog.create({ data: { companyId: user.companyId, actorUserId: user.id, actorRole: user.role, action, entityType: "User", entityId: String(user.id), requestId: correlationId, ipHash, userAgent: agentClass } })).catch(() => undefined) : Promise.resolve();
       const accountWindowStart = accountFailureWindowStart(user?.passwordChangedAt);
-      const [accountIpFailures, ipFailures] = await Promise.all([
+      const [accountFailures, accountIpFailures, ipFailures] = await Promise.all([
+        identifierHash ? prisma.authAuditEvent.count({ where: { accountIdentifierHash: identifierHash, reason: invalidReason, createdAt: { gte: accountWindowStart } } }) : 0,
         identifierHash ? prisma.authAuditEvent.count({ where: { accountIdentifierHash: identifierHash, ipHash, reason: invalidReason, createdAt: { gte: accountWindowStart } } }) : 0,
         ipHash ? prisma.authAuditEvent.count({ where: { ipHash, reason: invalidReason, createdAt: { gte: windowStart } } }) : 0,
       ]);
-      if (ipFailures >= IP_ABUSE_FAILURE_LIMIT || accountIpFailures >= ACCOUNT_IP_FAILURE_LIMIT) {
+      if (accountFailures >= ACCOUNT_FAILURE_LIMIT || ipFailures >= IP_ABUSE_FAILURE_LIMIT || accountIpFailures >= ACCOUNT_IP_FAILURE_LIMIT) {
         productionLog("warn", "authentication.rate_limited", { requestId: correlationId ?? undefined, route: "/api/auth/callback/credentials", method: "POST", reason: "RATE_LIMITED" });
         await audit(undefined, false, "RATE_LIMITED");
-        throw new SafeAuthError("RATE_LIMITED");
+        await appAudit("LOGIN_FAILURE");
+        throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       if (user?.lockedUntil && user.lockedUntil > new Date()) {
         await bcrypt.compare(credentials.password, user.password);
         await audit(user.id, false, "TEMPORARILY_LOCKED");
-        throw new SafeAuthError("TEMPORARILY_LOCKED");
+        await appAudit("LOGIN_FAILURE");
+        throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       const passwordMatches = await bcrypt.compare(credentials.password, user?.password ?? DUMMY_PASSWORD_HASH);
       if (!user || !user.active || !passwordMatches) {
         if (user?.active) {
-          const nextFailures = user.failedLoginAttempts + 1;
-          await runWithSystemAccess(() => prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: nextFailures, ...(nextFailures === ACCOUNT_FAILURE_LIMIT ? { lockedUntil: new Date(Date.now() + AUTH_WINDOW_MS) } : {}) } }));
+          await runWithSystemAccess(() => prisma.$executeRaw(Prisma.sql`
+            UPDATE "User"
+            SET "failedLoginAttempts" = "failedLoginAttempts" + 1,
+                "lockedUntil" = CASE
+                  WHEN "failedLoginAttempts" + 1 >= ${ACCOUNT_FAILURE_LIMIT}
+                    THEN NOW() + (${AUTH_WINDOW_MS} * INTERVAL '1 millisecond')
+                  ELSE "lockedUntil"
+                END
+            WHERE id = ${user.id}
+          `));
         }
         await audit(user?.id, false, invalidReason);
+        await appAudit("LOGIN_FAILURE");
         throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       if (!user.company.active) {
         await audit(user.id, false, invalidReason);
+        await appAudit("LOGIN_FAILURE");
         throw new SafeAuthError("INVALID_CREDENTIALS");
+      }
+      if (user.mfaEnabled) {
+        const mfaCode = credentials.mfaCode?.trim() ?? "";
+        const recoveryCode = credentials.recoveryCode?.trim() ?? "";
+        const totpValid = Boolean(user.mfaSecretEncrypted && mfaCode && verifyTotp(decryptTotpSecret(user.mfaSecretEncrypted), mfaCode));
+        const recoveryHashes = Array.isArray(user.mfaRecoveryHashes) ? user.mfaRecoveryHashes.filter((item): item is string => typeof item === "string") : [];
+        const suppliedRecoveryHash = recoveryCode ? recoveryCodeHash(recoveryCode) : "";
+        const recoveryValid = Boolean(suppliedRecoveryHash && recoveryHashes.includes(suppliedRecoveryHash));
+        if (!totpValid && !recoveryValid) {
+          await audit(user.id, false, invalidReason);
+          await appAudit("LOGIN_FAILURE");
+          throw new SafeAuthError("INVALID_CREDENTIALS");
+        }
+        if (recoveryValid) {
+          await runWithSystemAccess(() => prisma.user.update({ where: { id: user.id }, data: { mfaRecoveryHashes: recoveryHashes.filter((value) => value !== suppliedRecoveryHash) } }));
+        }
       }
       await runWithSystemAccess(() => prisma.$transaction([
         prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null } }),
         prisma.authAuditEvent.create({ data: { userId: user.id, email: null, accountIdentifierHash: identifierHash, success: true, reason: "LOGIN_SUCCESS", requestId: correlationId, ipHash, userAgentClass: agentClass } }),
+        prisma.auditLog.create({ data: { companyId: user.companyId, actorUserId: user.id, actorRole: user.role, action: "LOGIN_SUCCESS", entityType: "User", entityId: String(user.id), requestId: correlationId, ipHash, userAgent: agentClass } }),
       ]));
       return {
         id: String(user.id), name: user.name, email: user.email, role: user.role,
@@ -62,6 +95,7 @@ export const authOptions: NextAuthOptions = {
         sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
+        mfaEnabled: user.mfaEnabled, mfaVerified: user.mfaEnabled,
       };
     },
   })],
@@ -70,6 +104,12 @@ export const authOptions: NextAuthOptions = {
   pages: { signIn: "/login" },
   debug: false,
   useSecureCookies: process.env.VERCEL === "1" || process.env.NEXTAUTH_URL?.startsWith("https://"),
+  events: {
+    async signOut({ token }) {
+      if (!token?.id || !token.companyId) return;
+      await runWithSystemAccess(() => prisma.auditLog.create({ data: { companyId: Number(token.companyId), actorUserId: Number(token.id), actorRole: String(token.accountRole ?? token.role ?? ""), action: "LOGOUT", entityType: "User", entityId: String(token.id) } })).catch(() => undefined);
+    },
+  },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
@@ -77,13 +117,14 @@ export const authOptions: NextAuthOptions = {
         token.mustChangePassword = user.mustChangePassword; token.companyId = user.companyId;
         token.companySlug = user.companySlug; token.companyName = user.companyName;
         token.isDemo = user.isDemo; token.invalid = false;
+        token.mfaEnabled = user.mfaEnabled; token.mfaVerified = user.mfaVerified;
       }
       else if (token.id) {
         const current = await runWithSystemAccess(() => prisma.user.findUnique({
           where: { id: Number(token.id) },
           select: {
             active: true, role: true, sessionVersion: true, mustChangePassword: true,
-            companyId: true, company: { select: { active: true, slug: true, name: true, isDemo: true } },
+            companyId: true, mfaEnabled: true, company: { select: { active: true, slug: true, name: true, isDemo: true } },
           },
         }));
         token.invalid = !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
@@ -91,6 +132,8 @@ export const authOptions: NextAuthOptions = {
           token.role = current.role; token.accountRole = current.role; token.mustChangePassword = current.mustChangePassword;
           token.companyId = current.companyId; token.companySlug = current.company.slug;
           token.companyName = current.company.name; token.isDemo = current.company.isDemo;
+          token.mfaEnabled = current.mfaEnabled;
+          if (!current.mfaEnabled) token.mfaVerified = false;
         }
       }
       return token;
@@ -99,16 +142,14 @@ export const authOptions: NextAuthOptions = {
       session.user.id = String(token.id ?? "");
       const accountRole = String(token.accountRole ?? token.role ?? "");
       session.user.accountRole = token.invalid ? "" : accountRole;
-      session.user.role = token.invalid
-        ? ""
-        : accountRole === "OPERATIONS_DIRECTOR"
-          ? "DIRECTOR"
-          : accountRole;
+      session.user.role = token.invalid ? "" : accountRole;
       session.user.mustChangePassword = token.invalid ? false : token.mustChangePassword === true;
       session.user.companyId = Number(token.companyId ?? 0);
       session.user.companySlug = String(token.companySlug ?? "");
       session.user.companyName = String(token.companyName ?? "ORDA ERP");
       session.user.isDemo = token.isDemo === true;
+      session.user.mfaEnabled = token.mfaEnabled === true;
+      session.user.mfaVerified = token.mfaVerified === true;
       session.invalid = token.invalid === true || !session.user.companyId;
       if (!session.invalid) {
         enterTenantContext({

@@ -67,21 +67,13 @@ const requiredReason = (value: string | undefined, code = "REASON_REQUIRED") => 
   return reason;
 };
 const director = (actor: PayrollActor) => {
-  if (actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.DIRECTOR)
-    throw new PayrollError("FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
 };
 const salaryManager = (actor: PayrollActor) => {
-  if (
-    actor.role !== Role.DIRECTOR &&
-    actor.role !== Role.OPERATIONS_DIRECTOR
-  )
-    throw new PayrollError("FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
 };
 const payrollOperator = (actor: PayrollActor) => {
-  if (
-    actor.role !== Role.OPERATIONS_DIRECTOR &&
-    actor.role !== Role.DIRECTOR
-  )
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.ACCOUNTANT)
     throw new PayrollError("FORBIDDEN");
 };
 const transactionOptions = { maxWait: 10_000, timeout: 30_000 } as const;
@@ -1763,8 +1755,6 @@ async function createPaymentTx(
   const finalSalaryPayment =
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
     input.type === PayrollPaymentType.FINAL_SETTLEMENT;
-  if (finalSalaryPayment && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.DIRECTOR)
-    throw new PayrollError("DIRECTOR_CONFIRMATION_REQUIRED");
   if (finalSalaryPayment && input.method !== "kaspi")
     throw new PayrollError("KASPI_METHOD_REQUIRED");
   if (
@@ -1906,19 +1896,12 @@ async function assertPartialSalaryPaymentAvailable(
 
 export async function createPayment(input: PaymentInput, actor: PayrollActor) {
   const founderPartialSalaryPayment =
-    (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR) &&
+    actor.role === Role.DIRECTOR &&
     input.type === PayrollPaymentType.ADVANCE &&
     (input.partialSalary === true || input.relatedAccrualId != null);
   if (!founderPartialSalaryPayment) payrollOperator(actor);
   if (input.type === PayrollPaymentType.EMPLOYEE_REFUND)
     throw new PayrollError("FORBIDDEN");
-  if (
-    (input.type === PayrollPaymentType.SALARY_PAYMENT ||
-      input.type === PayrollPaymentType.FINAL_SETTLEMENT) &&
-    actor.role !== Role.OPERATIONS_DIRECTOR &&
-    actor.role !== Role.DIRECTOR
-  )
-    throw new PayrollError("DIRECTOR_CONFIRMATION_REQUIRED");
   const finalSalaryPayment =
     input.type === PayrollPaymentType.SALARY_PAYMENT ||
     input.type === PayrollPaymentType.FINAL_SETTLEMENT;
@@ -2671,7 +2654,6 @@ export async function payrollSummary(
   const companyId = requireTenantIdentity().companyId;
   const selfOnly = forceSelf || !(
     actor.role === Role.DIRECTOR ||
-    actor.role === Role.OPERATIONS_DIRECTOR ||
     actor.role === Role.ACCOUNTANT
   );
   if (actor.role === Role.PARTNER) throw new PayrollError("FORBIDDEN");
@@ -3376,7 +3358,6 @@ export async function payrollSummary(
         effectiveBonus,
         editable:
           actor.role === Role.DIRECTOR ||
-          actor.role === Role.OPERATIONS_DIRECTOR ||
           actor.userId === employee.userId,
         history:
           bonusDecisionHistory.get(`${order.id}:${employee.id}`) ?? [],
@@ -3912,8 +3893,7 @@ export async function payrollSummary(
 function orderBonusCorrectionActor(actor: PayrollActor) {
   if (
     actor.role !== Role.MANAGER &&
-    actor.role !== Role.DIRECTOR &&
-    actor.role !== Role.OPERATIONS_DIRECTOR
+    actor.role !== Role.DIRECTOR
   )
     throw new PayrollError("FORBIDDEN");
 }

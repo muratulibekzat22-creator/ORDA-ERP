@@ -120,13 +120,7 @@ export default function RouteShell({
         : hasDefaultPermission(accountRole ?? role, permissionByHref[href]!)),
     );
   };
-  const canManageSettings = founder || (
-    accountRole === "OPERATIONS_DIRECTOR" && (
-      grantedPermissions
-        ? grantedPermissions.includes("settings")
-        : hasDefaultPermission(accountRole, "settings")
-    )
-  );
+  const canManageSettings = founder;
   const [open, setOpen] = useState(false);
   const [secondaryOpen, setSecondaryOpen] = useState(() =>
     founderSecondary.some(([href]) => pathname.startsWith(href)),
@@ -153,7 +147,7 @@ export default function RouteShell({
       marketing: "marketing",
     };
     const permission = required[first];
-    const selfPayroll = first === "payroll" && accountRole !== "PARTNER";
+    const selfPayroll = first === "payroll" && accountRole !== "PARTNER" && accountRole !== "OPERATIONS_DIRECTOR";
     if (permission && !selfPayroll && !(first === "sales-plan" && role === "MANAGER") && !(workScheduleRoute && canManageWorkSchedule) && !grantedPermissions.includes(permission)) router.replace("/");
   }, [accountRole, canManageWorkSchedule, founder, grantedPermissions, pathname, role, router, workScheduleRoute]);
   useEffect(() => {

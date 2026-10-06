@@ -10,6 +10,8 @@ declare module "next-auth" {
     companySlug: string;
     companyName: string;
     isDemo: boolean;
+    mfaEnabled: boolean;
+    mfaVerified: boolean;
   }
   interface Session {
     invalid?: boolean;
@@ -24,6 +26,8 @@ declare module "next-auth" {
       companySlug: string;
       companyName: string;
       isDemo: boolean;
+      mfaEnabled: boolean;
+      mfaVerified: boolean;
     };
   }
 }
@@ -40,5 +44,7 @@ declare module "next-auth/jwt" {
     companyName?: string;
     isDemo?: boolean;
     invalid?: boolean;
+    mfaEnabled?: boolean;
+    mfaVerified?: boolean;
   }
 }

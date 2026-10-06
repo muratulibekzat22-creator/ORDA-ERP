@@ -2,8 +2,8 @@ import { createHash } from "crypto";
 import type { PrismaClient } from "@prisma/client";
 
 export const ACCOUNT_FAILURE_LIMIT = 5;
-export const ACCOUNT_IP_FAILURE_LIMIT = Number(process.env.AUTH_ACCOUNT_IP_FAILURE_LIMIT ?? 8);
-export const IP_ABUSE_FAILURE_LIMIT = Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 100);
+export const ACCOUNT_IP_FAILURE_LIMIT = Number(process.env.AUTH_ACCOUNT_IP_FAILURE_LIMIT ?? 20);
+export const IP_ABUSE_FAILURE_LIMIT = Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 20);
 export const AUTH_WINDOW_MS = 15 * 60_000;
 export const AUTH_AUDIT_RETENTION_DAYS = 90;
 

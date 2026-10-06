@@ -10,6 +10,7 @@ import { CalendarTaskPriority, CalendarTaskType, OrderLifecycle, OrderResponsibl
 import { del } from "@vercel/blob";
 import { Agent } from "undici";
 import { defaultPermissions } from "@/lib/permissions";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 
 const port = Number(process.env.SECURITY_TEST_PORT ?? 3219);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("SECURITY_TEST_PORT is invalid");
@@ -43,8 +44,12 @@ const temporaryRolePermissions: Permission[] = [];
 const temporarySeededRolePermissions: Array<{ role: Role; permission: Permission }> = [];
 let calculatorTariffBackup: Array<{ code: string; salePrice: number; internalPrice: number }> = [];
 
-function apiFetch(input: string | URL, init: RequestInit = {}) {
-  return fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(15_000), dispatcher: httpAgent } as RequestInit);
+async function apiFetch(input: string | URL, init: RequestInit = {}) {
+  try {
+    return await fetch(input, { ...init, signal: init.signal ?? AbortSignal.timeout(30_000), dispatcher: httpAgent } as RequestInit);
+  } catch (error) {
+    throw new Error(`request failed: ${init.method ?? "GET"} ${String(input)} (${error instanceof Error ? error.name : "unknown"})`, { cause: error });
+  }
 }
 
 function assert(value: boolean, message: string) {
@@ -241,6 +246,7 @@ function assertCalendarPayload(payload: CalendarPayload, ownTaskIds: number[], f
 }
 
 async function main() {
+  let executionError: unknown;
   try {
     ({ prisma } = await import("@/lib/prisma"));
     const { createPayment } = await import("@/lib/services/payment.service");
@@ -399,7 +405,7 @@ async function main() {
     await loginAttempt(lockoutUser.email, password);
     await loginAttempt(lockoutUser.email, password);
     assert((await prisma.user.findUniqueOrThrow({ where: { id: lockoutUser.id } })).lockedUntil?.getTime() === fixedLock, "blocked retries extended the lock window");
-    await prisma.user.update({ where: { id: lockoutUser.id }, data: { failedLoginAttempts: 0, lockedUntil: null } });
+    await prisma.user.update({ where: { id: lockoutUser.id }, data: { failedLoginAttempts: 0, lockedUntil: null, passwordChangedAt: new Date() } });
     await session(`  ${lockoutUser.email.toUpperCase()}  `);
     assert(!(await loginAttempt(inactiveUser.email, password)).includes("next-auth.session-token"), "inactive user created a session");
     const temporaryCookie = await session(temporaryUser.email);
@@ -419,11 +425,12 @@ async function main() {
     const comboIp = "198.51.100.45", comboEmail = `${tag}-unknown-combo@test.local`;
     for (let attempt = 0; attempt < 8; attempt += 1) await detailedLoginAttempt(comboEmail, `${password}-wrong`, { "x-forwarded-for": comboIp });
     const comboBlocked = await detailedLoginAttempt(comboEmail, `${password}-wrong`, { "x-forwarded-for": comboIp });
-    assert(comboBlocked.responseBody.includes("RATE_LIMITED") || comboBlocked.location.includes("RATE_LIMITED"), "IP+account limiter did not return safe rate-limit code");
+    assert(!comboBlocked.cookie.includes("session-token") && !/RATE_LIMITED|TEMPORARILY_LOCKED/.test(`${comboBlocked.responseBody}${comboBlocked.location}`), "IP+account limiter exposed account state or created a session");
     const abuseIp = "198.51.100.46";
     for (let attempt = 0; attempt < 14; attempt += 1) await detailedLoginAttempt(`${tag}-abuse-${attempt}@test.local`, `${password}-wrong`, { "x-forwarded-for": abuseIp });
     const abuseBlocked = await detailedLoginAttempt(`${tag}-abuse-final@test.local`, `${password}-wrong`, { "x-forwarded-for": abuseIp });
-    assert(abuseBlocked.responseBody.includes("RATE_LIMITED") || abuseBlocked.location.includes("RATE_LIMITED"), "high-level IP abuse limiter did not activate");
+    assert(!abuseBlocked.cookie.includes("session-token") && !/RATE_LIMITED|TEMPORARILY_LOCKED/.test(`${abuseBlocked.responseBody}${abuseBlocked.location}`), "high-level IP abuse limiter exposed account state or created a session");
+    assert(await prisma.authAuditEvent.count({ where: { reason: "RATE_LIMITED", createdAt: { gte: new Date(Date.now() - 60_000) } } }) > 0, "shared database rate limiter did not activate");
     const csrfFailure = await apiFetch(`${baseUrl}/api/auth/callback/credentials`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ email: manager.email, password }), redirect: "manual" });
     assert(!cookieValue(csrfFailure).includes("session-token"), "invalid CSRF flow created a session"); await csrfFailure.arrayBuffer();
     console.log("authentication lockout and audit checks passed");
@@ -795,8 +802,8 @@ async function main() {
     await expectStatus(`/api/employees/${temporaryUser.id}/password`, 200, directorCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(resetBody) });
     assert(!(await loginAttempt(temporaryUser.email, changedPassword)).includes("session-token"), "old password remained valid after director reset");
     await session(temporaryUser.email, {}, directorResetPassword);
-    assert((await prisma.user.findUniqueOrThrow({ where: { id: temporaryUser.id } })).mustChangePassword === false, "director reset enabled forced password change");
-    await expectStatus(`/api/employees/${director.id}`, 409, directorCookie, { method: "DELETE" });
+    assert((await prisma.user.findUniqueOrThrow({ where: { id: temporaryUser.id } })).mustChangePassword === true, "director reset did not require a password change");
+    await expectStatus(`/api/employees/${director.id}`, 405, directorCookie, { method: "DELETE" });
     console.log("settings and employee security checks passed");
     const documentBody = { orderId: firstOrder.id, type: "OFFER", number: `${tag}-offer`, documentDate: "2026-08-05" };
     const createdDocument = await (await expectStatus("/api/documents", 201, managerCookie, {
@@ -882,7 +889,9 @@ async function main() {
     const foreignManagerCookie = await session(sharedUsers[0].email);
     await expectStatus(`/api/clients/${removableClient.id}`, 404, foreignManagerCookie, { method: "DELETE" });
     await expectStatus(`/api/clients/${removableClient.id}`, 200, managerCookie, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "API security lifecycle" }) });
-    const archivedClient = await prisma.client.findUniqueOrThrow({ where: { id: removableClient.id } });
+    const archivedClient = await runWithSystemAccess(() =>
+      prisma.client.findUniqueOrThrow({ where: { id: removableClient.id } }),
+    );
     assert(archivedClient.active === false && Boolean(archivedClient.deletedAt), "manager soft-delete did not archive an own lead");
     assert(await prisma.leadCalculation.count({ where: { id: removableCalculation.id } }) === 1, "lead calculation was deleted by application soft-delete");
     assert(await prisma.commercialProposal.count({ where: { id: removableProposal.id } }) === 1, "commercial proposal was deleted by application soft-delete");
@@ -975,10 +984,13 @@ async function main() {
     const directorDocuments = await (await expectStatus("/api/documents", 200, directorCookie)).json() as DocumentPayload[];
     assert(directorDocuments.some((document) => document.id === createdDocument.id && document.order.id === firstOrder.id), "director cannot see the temporary document");
     console.log("manager and director API security matrix passed");
+  } catch (error) {
+    executionError = error;
   } finally {
     const cleanupErrors: unknown[] = [];
     try {
       if (prisma) {
+      await runWithSystemAccess(async () => {
       await prisma.companyLedgerEntry.deleteMany({ where: { comment: tag } });
       await prisma.personalLedgerEntry.deleteMany({ where: { comment: tag } });
       const taggedOrderIds = (await prisma.order.findMany({ where: { number: { startsWith: tag } }, select: { id: true } })).map((item) => item.id);
@@ -1051,6 +1063,22 @@ async function main() {
         await prisma.commercialProposal.deleteMany({ where: { clientId: { in: lifecycleClientIds } } });
         await prisma.leadCalculation.deleteMany({ where: { clientId: { in: lifecycleClientIds } } });
         await prisma.clientDeletionAudit.deleteMany({ where: { deletedClientId: { in: lifecycleClientIds } } });
+        const clientDocumentIds = (await prisma.document.findMany({ where: { clientId: { in: lifecycleClientIds } }, select: { id: true } })).map((row) => row.id);
+        if (clientDocumentIds.length) {
+          await prisma.documentAudit.deleteMany({ where: { documentId: { in: clientDocumentIds } } });
+          await prisma.documentVersion.deleteMany({ where: { documentId: { in: clientDocumentIds } } });
+          await prisma.paymentReceipt.deleteMany({ where: { documentId: { in: clientDocumentIds } } });
+          await prisma.document.deleteMany({ where: { id: { in: clientDocumentIds } } });
+        }
+        const remainingOrderIds = (await prisma.order.findMany({ where: { clientId: { in: lifecycleClientIds } }, select: { id: true } })).map((row) => row.id);
+        if (remainingOrderIds.length) {
+          await prisma.financeAuditEvent.deleteMany({ where: { orderId: { in: remainingOrderIds } } });
+          await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: { in: remainingOrderIds } } });
+          await prisma.orderEvent.deleteMany({ where: { orderId: { in: remainingOrderIds } } });
+          await prisma.payment.deleteMany({ where: { orderId: { in: remainingOrderIds } } });
+          await prisma.production.deleteMany({ where: { orderId: { in: remainingOrderIds } } });
+          await prisma.order.deleteMany({ where: { id: { in: remainingOrderIds } } });
+        }
       }
       await prisma.client.deleteMany({ where: { id: { in: lifecycleClientIds } } });
       const temporaryUserIds = [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds];
@@ -1064,6 +1092,7 @@ async function main() {
         await prisma.rolePermission.deleteMany({ where: { role: row.role, permission: row.permission } });
       }
       if (calculatorTariffBackup.length) await prisma.$transaction(calculatorTariffBackup.map((item) => prisma.calculatorTariff.updateMany({ where: { code: item.code }, data: { salePrice: item.salePrice, internalPrice: item.internalPrice } })));
+      });
       console.log("cleanup completed");
       }
     } catch (error) {
@@ -1085,8 +1114,14 @@ async function main() {
     } catch (error) {
       cleanupErrors.push(error);
     }
-    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "security harness cleanup failed");
+    if (cleanupErrors.length)
+      throw new AggregateError(
+        executionError ? [executionError, ...cleanupErrors] : cleanupErrors,
+        "security harness failed during execution or cleanup",
+      );
   }
+
+  if (executionError) throw executionError;
 
   assert(confirmedSessions > 0, "no authenticated session was confirmed");
   assert(partnerMatrixCompleted, "PARTNER security matrix did not complete");

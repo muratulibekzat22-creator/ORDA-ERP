@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/server-auth";
 import { getReportsReadModel } from "@/lib/services/report.service";
 import { Role } from "@prisma/client";
+import { csvDocument } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";
 
-const csvCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
 function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
   const rows: unknown[][] = [
     ["ORDA Management Report"],
@@ -39,7 +39,7 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
     [], ["№ заказа", "Клиент", "Менеджер", "Сумма", "Цена производства", "Маржа", "Зарплата по заказу", "Получено", "Остаток", "Статус"],
     ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.productionPrice ?? "Не заполнена", item.grossMargin ?? "—", item.payrollAccrued ?? "Не распределено", item.received, item.remaining, item.status]),
   ];
-  return `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
+  return csvDocument(rows);
 }
 
 export async function GET(request: Request) {

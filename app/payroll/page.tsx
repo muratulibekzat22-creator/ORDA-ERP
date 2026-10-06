@@ -511,16 +511,14 @@ export default function PayrollPage() {
   const role = session?.user.accountRole || session?.user.role || "",
     roleAccess = payrollRoleAccess(role),
     founder = roleAccess.founder,
-    operationsDirector = roleAccess.administrator,
     accountant = roleAccess.accountant,
-    adminView = founder || operationsDirector || accountant,
-    payrollAdministrator = founder || operationsDirector,
+    adminView = founder || accountant,
+    payrollAdministrator = founder,
     salaryManager = payrollAdministrator,
     director = payrollAdministrator,
     managerSelfService = role === "MANAGER" && !adminView,
     canCorrectOrderBonuses =
       founder ||
-      operationsDirector ||
       (role === "MANAGER" &&
         !(data.period && data.period.status !== "OPEN")),
     advanceSelfService = managerSelfService,

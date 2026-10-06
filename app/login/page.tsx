@@ -21,6 +21,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);
@@ -55,6 +56,8 @@ export default function LoginPage() {
       const result = await signIn("credentials", {
         email: normalizedEmail,
         password,
+        mfaCode: mfaCode.replace(/\s/g, ""),
+        recoveryCode: mfaCode,
         redirect: false,
         callbackUrl,
       });
@@ -118,6 +121,21 @@ export default function LoginPage() {
               className="min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 py-3 pl-11 pr-3 text-base text-white placeholder:text-slate-600 disabled:opacity-60"
             />
           </span>
+        </label>
+
+        <label className="block text-sm font-medium text-slate-300">
+          Код MFA или recovery-код
+          <input
+            name="mfaCode"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            disabled={loading}
+            value={mfaCode}
+            onChange={(event) => setMfaCode(event.target.value)}
+            placeholder="Только для защищённых аккаунтов"
+            className="mt-2 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-base text-white placeholder:text-slate-600 disabled:opacity-60"
+          />
         </label>
 
         <label className="block text-sm font-medium text-slate-300">

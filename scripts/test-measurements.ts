@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { MeasurementClientOutcome, MeasurementPhotoType, MeasurementStatus, PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
 import { parseBusinessDateTime } from "@/lib/calendar-time";
 import { prisma } from "@/lib/prisma";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 import { createPayment, payrollSummary } from "@/lib/services/payroll.service";
 import {
   completeMeasurement,
@@ -86,6 +87,7 @@ async function prepareDesignWorkflow(
 }
 
 async function cleanupStaleRuns() {
+  return runWithSystemAccess(async () => {
   const users = await prisma.user.findMany({ where: { email: { startsWith: "measurements-", endsWith: "@test.local" } }, select: { id: true } });
   const userIds = users.map((row) => row.id);
   if (!userIds.length) return;
@@ -115,9 +117,11 @@ async function cleanupStaleRuns() {
   if (profileIds.length) await prisma.employeePayrollProfile.deleteMany({ where: { id: { in: profileIds } } });
   if (clientIds.length) await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+  });
 }
 
 async function cleanup() {
+  return runWithSystemAccess(async () => {
   const measurementIds = ids.measurements;
   const accruals = await prisma.payrollAccrual.findMany({ where: { measurementId: { in: measurementIds } }, select: { id: true } }).catch(() => []);
   const accrualIds = accruals.map((row) => row.id);
@@ -151,6 +155,7 @@ async function cleanup() {
   if (ids.profiles.length) await prisma.employeePayrollProfile.deleteMany({ where: { id: { in: ids.profiles } } });
   if (ids.clients.length) await prisma.client.deleteMany({ where: { id: { in: ids.clients } } });
   if (ids.users.length) await prisma.user.deleteMany({ where: { id: { in: ids.users } } });
+  });
 }
 
 async function main() {

@@ -31,18 +31,15 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "marketing",
   ],
   [Role.OPERATIONS_DIRECTOR]: [
-    "employees",
     "clients",
     "orders",
     "measurements",
     "calendar",
     "documents",
-    "finance",
+    "partners",
     "reports",
     "production",
     "warehouse",
-    "payroll",
-    "marketing",
   ],
   [Role.MARKETER]: ["marketing", "calendar", "payroll"],
   [Role.MANAGER]: [
@@ -95,7 +92,7 @@ includesAll(
 );
 
 const authRoute = read("app/api/auth/[...nextauth]/route.ts");
-assert.match(authRoute, /accountRole === "OPERATIONS_DIRECTOR"[\s\S]*\? "DIRECTOR"/);
+assert.doesNotMatch(authRoute, /accountRole === "OPERATIONS_DIRECTOR"[\s\S]*\? "DIRECTOR"/);
 const header = read("components/Header.tsx");
 assert.match(header, /session\?\.user\?\.accountRole \|\| role/);
 assert.doesNotMatch(header, /\/api\/session\/permissions/);
@@ -106,8 +103,7 @@ includesAll(
   proxy,
   [
     'role === "PARTNER" &&',
-    'firstSegment !== "partner"',
-    'firstSegment !== "change-password"',
+    '["partner", "orders", "proposal", "change-password"].includes(firstSegment)',
     'new URL("/partner", request.url)',
     'firstSegment === "calculator"',
     '? "orders"',
@@ -203,7 +199,7 @@ assert.match(
 
 const finance = read("app/api/finance/route.ts");
 const partnerFinanceGuard = finance.indexOf(
-  "role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT",
+  "role !== Role.DIRECTOR && role !== Role.ACCOUNTANT",
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(

@@ -1496,7 +1496,7 @@ export async function startMeasurement(actor: MeasurementActor, id: number) {
       },
     });
     return result;
-  });
+  }, { maxWait: 10_000, timeout: 20_000 });
 }
 
 export async function saveMeasurementDraft(
@@ -2097,7 +2097,7 @@ export async function completeMeasurement(
       });
     }
     return result;
-  });
+  }, { maxWait: 10_000, timeout: 20_000 });
 }
 
 export async function handMeasurementToManager(

@@ -21,15 +21,13 @@ export async function POST(request: Request) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
   const actorRole = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
-  if (actorRole !== Role.DIRECTOR && actorRole !== Role.OPERATIONS_DIRECTOR)
+  if (actorRole !== Role.DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const hasOrdaAccess = body.hasOrdaAccess === undefined ? true : body.hasOrdaAccess === true;
     const role = Object.values(Role).includes(body.role as Role) ? body.role as Role : undefined;
-    if (actorRole === Role.OPERATIONS_DIRECTOR && role && !(new Set<Role>([Role.MARKETER, Role.MANAGER, Role.MEASURER, Role.DESIGNER, Role.PRODUCTION, Role.INSTALLER])).has(role))
-      return NextResponse.json({ error: "Эту должность может создать только основатель" }, { status: 403 });
     const employee = await createEmployee({
       name,
       position: typeof body.position === "string" && body.position.trim()

@@ -79,8 +79,9 @@ assert(workspace.includes("Тест по выбранному видео") && wo
 assert(service.includes("lessonQuestionPositions") && service.includes("passedLessonKeys"), "per-video quiz enforcement missing");
 assert(service.includes("hasRequiredLessonCoverage"), "each lesson must reach required coverage");
 assert(
-  nextConfig.includes("script-src 'self' 'unsafe-inline' https://www.youtube.com") &&
-    nextConfig.includes("frame-src https://www.youtube.com https://www.youtube-nocookie.com"),
+  !nextConfig.includes("script-src 'self' 'unsafe-inline'") &&
+    proxy.includes("'strict-dynamic'") &&
+    proxy.includes("frame-src https://www.youtube.com https://www.youtube-nocookie.com"),
   "Content Security Policy blocks the embedded YouTube player",
 );
 assert(workspace.includes("overflow-x-hidden") && workspace.includes("aspect-video"));
@@ -92,8 +93,8 @@ assert(home.includes("measurerNeedsMandatoryTraining") && home.includes('redirec
 assert(directorReport.includes("row.passedLessonsCount") && directorReport.includes("row.lessonsCount") && !directorReport.includes("row.bestScore}/15"), "director training report does not show per-video quiz progress");
 assert(reportApi.includes("syncMeasurerTrainingProgram") && reportApi.includes("requireTrainingRole(Role.DIRECTOR)"), "training program synchronization is not director-protected");
 assert(chatGptAccessApi.includes("Role.MEASURER") && chatGptAccessApi.includes('"Cache-Control": "private, no-store, max-age=0"'));
-assert(chatGptAccessApi.includes("ownerNotified") && service.includes("CHATGPT_ACCESS_REVEALED"));
-assert(chatGptAccessCard.includes("Получить рабочий логин и пароль") && chatGptAccessCard.includes("Не фотографируйте пароль"));
+assert(chatGptAccessApi.includes("Общий пароль отключён") && !chatGptAccessApi.includes("getChatGptOfficeAccess"));
+assert(chatGptAccessCard.includes("Используйте только персональный доступ") && !chatGptAccessCard.includes("access.password"));
 assert(designPrompt.includes("Не упоминай имя, телефон или точный адрес клиента"));
 
 console.log("training security, progress and mobile contracts passed");

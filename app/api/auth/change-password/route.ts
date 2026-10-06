@@ -18,7 +18,10 @@ export async function POST(request: Request) {
     const user = await prisma.user.findUnique({ where: { id: Number(session.user.id) }, select: { id: true, password: true, active: true } });
     if (!user?.active || !await bcrypt.compare(currentPassword, user.password))
       return NextResponse.json({ error: "Текущий пароль указан неверно" }, { status: 400 });
-    await prisma.user.update({ where: { id: user.id }, data: { password: await bcrypt.hash(newPassword, 12), passwordChangedAt: new Date(), mustChangePassword: false, sessionVersion: { increment: 1 }, failedLoginAttempts: 0, lockedUntil: null } });
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: user.id }, data: { password: await bcrypt.hash(newPassword, 12), passwordChangedAt: new Date(), mustChangePassword: false, sessionVersion: { increment: 1 }, failedLoginAttempts: 0, lockedUntil: null } }),
+      prisma.auditLog.create({ data: { actorUserId: user.id, actorRole: session.user.accountRole, action: "PASSWORD_CHANGED", entityType: "User", entityId: String(user.id), requestId: request.headers.get("x-request-id") } }),
+    ]);
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });

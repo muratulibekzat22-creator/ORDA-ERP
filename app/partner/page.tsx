@@ -4,6 +4,7 @@ import { signOut } from "next-auth/react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ORDER_STATUSES } from "@/lib/orders/lifecycle";
+import { prepareOfflineLogout } from "@/lib/offline-outbox";
 
 type Language = "uz" | "ru";
 type Measurement = {
@@ -434,7 +435,7 @@ export default function PartnerPage() {
   return <main lang={language} className="min-h-screen bg-slate-950 p-4 text-white md:p-8">
     <header className="flex flex-wrap items-center justify-between gap-4">
       <div><p className="text-sm font-semibold uppercase tracking-wider text-blue-300">{t.appTag}</p><h1 className="mt-1 text-3xl font-bold">{t.title}</h1><p className="mt-1 text-slate-400">{t.subtitle}</p></div>
-      <div className="flex flex-wrap gap-2"><div className="flex rounded-xl bg-slate-900 p-1"><button type="button" onClick={() => chooseLanguage("uz")} className={`rounded-lg px-3 py-2 text-sm ${language === "uz" ? "bg-blue-600" : "text-slate-300"}`}>{t.uzbek}</button><button type="button" onClick={() => chooseLanguage("ru")} className={`rounded-lg px-3 py-2 text-sm ${language === "ru" ? "bg-blue-600" : "text-slate-300"}`}>{t.russian}</button></div><button onClick={() => void signOut({ callbackUrl: "/login" })} className="rounded-xl bg-slate-800 px-4 py-3">{t.logout}</button></div>
+      <div className="flex flex-wrap gap-2"><div className="flex rounded-xl bg-slate-900 p-1"><button type="button" onClick={() => chooseLanguage("uz")} className={`rounded-lg px-3 py-2 text-sm ${language === "uz" ? "bg-blue-600" : "text-slate-300"}`}>{t.uzbek}</button><button type="button" onClick={() => chooseLanguage("ru")} className={`rounded-lg px-3 py-2 text-sm ${language === "ru" ? "bg-blue-600" : "text-slate-300"}`}>{t.russian}</button></div><button onClick={() => void prepareOfflineLogout().then((ready) => ready && signOut({ callbackUrl: "/login" }))} className="rounded-xl bg-slate-800 px-4 py-3">{t.logout}</button></div>
     </header>
     {error && <p role="alert" className="mt-4 rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-200">{error}</p>}
     {notice && <p role="status" className="mt-4 rounded-xl border border-emerald-800 bg-emerald-950/40 p-3 text-emerald-200">{notice}</p>}

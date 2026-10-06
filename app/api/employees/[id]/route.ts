@@ -18,6 +18,8 @@ async function ensureDirectorRemains(activeDirector: boolean, tx: Prisma.Transac
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
+  if (auth.session!.user.accountRole !== Role.DIRECTOR)
+    return NextResponse.json({ error: "Изменять пользователей может только директор" }, { status: 403 });
   const id = idFrom((await params).id);
   if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
@@ -48,6 +50,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       } else if (role && user.role === Role.PARTNER) await tx.partner.updateMany({ where: { userId: id }, data: { userId: null } });
       const accessChanged = (typeof body.active === "boolean" && body.active !== user.active) || (role !== undefined && role !== user.role);
       const result = await tx.user.update({ where: { id }, data: { ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}), ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}), ...(typeof body.active === "boolean" ? { active: body.active } : {}), ...(role ? { role } : {}), ...(accessChanged ? { sessionVersion: { increment: 1 } } : {}) }, select });
+      await tx.auditLog.create({ data: { actorUserId: Number(auth.session!.user.id), actorRole, action: accessChanged ? "USER_ACCESS_CHANGED" : "USER_UPDATED", entityType: "User", entityId: String(id), before: { role: user.role, active: user.active }, after: { role: result.role, active: result.active }, requestId: request.headers.get("x-request-id") } });
       await tx.employeePayrollProfile.updateMany({
         where: { userId: id },
         data: {
@@ -71,40 +74,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("employees");
   if (auth.response) return auth.response;
+  if (auth.session!.user.accountRole !== Role.DIRECTOR)
+    return NextResponse.json({ error: "Удаление пользователей запрещено для этой роли" }, { status: 403 });
   const id = idFrom((await params).id);
   if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  if (Number(auth.session!.user.id) === id) return NextResponse.json({ error: "Нельзя удалить текущего пользователя" }, { status: 409 });
-  try {
-    await prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({ where: { id } });
-      if (!user) throw new Error("NOT_FOUND");
-      if (user.role === Role.DIRECTOR) throw new Error("FOUNDER_PROTECTED");
-      const profile = await tx.employeePayrollProfile.findUnique({
-        where: { userId: id },
-        select: {
-          id: true,
-          _count: {
-            select: {
-              salaryRates: true,
-              accruals: true,
-              payments: true,
-              paymentConfirmations: true,
-              advanceRequests: true,
-            },
-          },
-        },
-      });
-      if (profile && Object.values(profile._count).some((count) => count > 0))
-        throw new Error("PAYROLL_HISTORY");
-      if (profile) {
-        await tx.payrollAuditEvent.deleteMany({ where: { employeeId: profile.id } });
-        await tx.employeePayrollProfile.delete({ where: { id: profile.id } });
-      }
-      await tx.user.delete({ where: { id } });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    const code = error instanceof Error ? error.message : "";
-    return NextResponse.json({ error: code === "FOUNDER_PROTECTED" ? "Аккаунт основателя нельзя удалить" : code === "LAST_DIRECTOR" ? "Нельзя удалить последнего активного директора" : code === "PAYROLL_HISTORY" ? "Сотрудника с историей зарплаты можно только отключить" : "Сотрудник не найден" }, { status: code === "FOUNDER_PROTECTED" || code === "LAST_DIRECTOR" || code === "PAYROLL_HISTORY" ? 409 : 404 });
-  }
+  return NextResponse.json({ error: "Физическое удаление пользователей отключено. Деактивируйте аккаунт через PATCH.", code: "PHYSICAL_DELETE_FORBIDDEN" }, { status: 405, headers: { Allow: "GET, PATCH" } });
 }

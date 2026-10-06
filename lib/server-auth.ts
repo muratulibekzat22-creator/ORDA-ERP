@@ -17,6 +17,15 @@ export async function requirePermission(permission: Permission) {
     };
   }
 
+  if (session.user.mustChangePassword) {
+    return {
+      response: NextResponse.json(
+        { error: "Сначала измените временный пароль", code: "PASSWORD_CHANGE_REQUIRED" },
+        { status: 403 },
+      ),
+    };
+  }
+
   const role = (session.user.accountRole || session.user.role) as Role;
   if (
     !Object.values(Role).includes(role) ||

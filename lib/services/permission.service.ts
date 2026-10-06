@@ -6,6 +6,7 @@ import { Role } from "@/lib/roles";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
 const criticalDirectorPermissions: Permission[] = ["settings", "employees"];
+const operationsDirectorDenied = new Set<Permission>(["settings", "employees", "finance", "payroll"]);
 
 function isRole(value: string): value is Role {
   return Object.values(Role).includes(value as Role);
@@ -19,6 +20,7 @@ export async function ensureRolePermissions() {
 }
 
 export async function hasPermission(role: Role, permission: Permission) {
+  if (role === Role.OPERATIONS_DIRECTOR && operationsDirectorDenied.has(permission)) return false;
   await ensureRolePermissions();
   return Boolean(await prisma.rolePermission.findUnique({ where: { companyId_role_permission: { companyId: requireTenantIdentity().companyId, role: role as PrismaRole, permission: permission as PrismaPermission } }, select: { id: true } }));
 }
@@ -30,6 +32,7 @@ export async function getPermissionMatrix() {
     matrix[role] = rows
       .filter((row) => row.role === role && permissionKeys.includes(row.permission as Permission))
       .map((row) => row.permission as Permission)
+      .filter((permission) => role !== Role.OPERATIONS_DIRECTOR || !operationsDirectorDenied.has(permission))
       .sort((a, b) => permissionKeys.indexOf(a) - permissionKeys.indexOf(b));
     return matrix;
   }, {} as Record<Role, Permission[]>);
@@ -44,12 +47,13 @@ export async function getRolePermissions(role: Role) {
   return rows
     .map((row) => row.permission as Permission)
     .filter((permission) => permissionKeys.includes(permission))
+    .filter((permission) => role !== Role.OPERATIONS_DIRECTOR || !operationsDirectorDenied.has(permission))
     .sort((left, right) => permissionKeys.indexOf(left) - permissionKeys.indexOf(right));
 }
 
 export async function replaceRolePermissions(role: Role, permissions: Permission[]) {
   const companyId = requireTenantIdentity().companyId;
-  const next = [...new Set(permissions)].filter((permission) => permissionKeys.includes(permission));
+  const next = [...new Set(permissions)].filter((permission) => permissionKeys.includes(permission) && !(role === Role.OPERATIONS_DIRECTOR && operationsDirectorDenied.has(permission)));
   if (role === Role.DIRECTOR && criticalDirectorPermissions.some((permission) => !next.includes(permission)))
     throw new Error("DIRECTOR_CRITICAL_PERMISSION");
   await prisma.$transaction(async (tx) => {
@@ -68,7 +72,8 @@ export async function replacePermissionMatrix(value: unknown) {
   if (!entries.every(([role, permissions]) => isRole(role) && Array.isArray(permissions) && permissions.every((permission) => typeof permission === "string" && permissionKeys.includes(permission as Permission)))) throw new Error("INVALID_PERMISSIONS");
   const next = Object.values(Role).reduce<Record<Role, Permission[]>>((matrix, role) => {
     const permissions = (value as Record<string, unknown>)[role];
-    matrix[role] = Array.isArray(permissions) ? [...new Set(permissions as Permission[])] : defaultPermissions[role];
+    matrix[role] = (Array.isArray(permissions) ? [...new Set(permissions as Permission[])] : defaultPermissions[role])
+      .filter((permission) => !(role === Role.OPERATIONS_DIRECTOR && operationsDirectorDenied.has(permission)));
     return matrix;
   }, {} as Record<Role, Permission[]>);
   if (criticalDirectorPermissions.some((permission) => !next.DIRECTOR.includes(permission))) throw new Error("DIRECTOR_CRITICAL_PERMISSION");

@@ -6,7 +6,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 const auth = read("app/api/auth/[...nextauth]/route.ts"), login = read("app/login/page.tsx"), schema = read("prisma/schema.prisma"), proxy = read("proxy.ts"), serverAuth = read("lib/server-auth.ts"), layout = read("app/layout.tsx"), css = read("app/globals.css"), shell = read("components/layout/RouteShell.tsx"), manager = read("components/dashboard/ManagerToday.tsx"), cockpit = read("components/dashboard/DirectorCockpit.tsx"), passwordReset = read("app/api/employees/[id]/password/route.ts"), employees = read("components/pages/EmployeesPage.tsx"), payroll = read("app/payroll/page.tsx"), selfPayrollApi = read("app/api/payroll/self/route.ts");
 
 assert.equal(ACCOUNT_FAILURE_LIMIT, 5);
-assert.equal(IP_ABUSE_FAILURE_LIMIT, Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 100));
+assert.equal(IP_ABUSE_FAILURE_LIMIT, Number(process.env.AUTH_IP_ABUSE_FAILURE_LIMIT ?? 20));
 assert.equal(AUTH_AUDIT_RETENTION_DAYS, 90);
 for (const value of ["accountIdentifierHash", "requestId", "userAgentClass"]) assert(schema.includes(value), `audit field missing: ${value}`);
 assert(!auth.includes("email, success") && auth.includes("email: null"), "new auth audit must not store raw email");
@@ -15,7 +15,7 @@ assert(auth.includes('reason: invalidReason') && auth.includes('reason: "RATE_LI
 assert(auth.includes("accountFailureWindowStart(user?.passwordChangedAt)"), "director password reset does not clear the account/IP failure window");
 assert(proxy.includes('reason", "SESSION_INVALID"') && auth.includes("sessionVersion") && auth.includes("mustChangePassword"), "session invalidation flow is incomplete");
 assert(serverAuth.includes('code: "SESSION_INVALID"') && serverAuth.includes("status: 401"), "stale API sessions can still masquerade as RBAC failures");
-assert(proxy.includes('const selfPayroll = firstSegment === "payroll" && role !== "PARTNER"') && proxy.includes("!selfPayroll"), "self payroll route is blocked by page RBAC");
+assert(proxy.includes('role !== "PARTNER" && role !== "OPERATIONS_DIRECTOR"') && proxy.includes("!selfPayroll"), "protected payroll route is not enforced by page RBAC");
 assert(
   proxy.includes('PARTNER: ["partner"]') &&
     proxy.includes('role === "PARTNER"') &&
@@ -32,12 +32,12 @@ assert(payroll.includes("Заявка на аванс") && payroll.includes("З�
 assert(payroll.includes('year: String(period.year)') && payroll.includes('month: String(period.month)') && payroll.includes("Сначала оформите заказ"), "payroll order bonus is not scoped to the selected month");
 assert(selfPayrollApi.includes('body.action === "request-advance"') && selfPayrollApi.includes("PayrollPaymentType.ADVANCE"), "advance self-request is not constrained to advances");
 assert(selfPayrollApi.includes("undefined, true"), "self payroll API does not force personal data scope for privileged employee roles");
-assert(payroll.includes("adminView = founder || operationsDirector || accountant") && payroll.includes("advanceSelfService = managerSelfService"), "operations director payroll administration scope is missing");
+assert(payroll.includes("adminView = founder || accountant") && payroll.includes("payrollAdministrator = founder") && payroll.includes("advanceSelfService = managerSelfService"), "operations director must not receive payroll administration scope");
 assert(payroll.includes("loadRequest.current += 1") && payroll.includes("detailLoadRequest.current += 1"), "payroll month changes do not invalidate in-flight table and drawer requests");
 assert(/setOperation\(null\);\s*closeDetails\(\);/.test(payroll), "payroll operations can leave a stale drawer employee id behind");
 assert(payroll.includes('canManageSalary || approvalStatus === "PRELIMINARY"'), "manager bonus controls stay active after a calculation snapshot is confirmed");
 assert(!payroll.includes("История бонуса ("), "bonus audit history is duplicated outside the collapsed operation history");
-assert(passwordReset.includes("actorRole !== Role.DIRECTOR") && passwordReset.includes("existing.role === Role.DIRECTOR") && passwordReset.includes("mustChangePassword: false") && passwordReset.includes("sessionVersion: { increment: 1 }"), "protected founder password reset contract is incomplete");
+assert(passwordReset.includes("actorRole !== Role.DIRECTOR") && passwordReset.includes("mustChangePassword: true") && passwordReset.includes("sessionVersion: { increment: 1 }"), "protected password reset contract is incomplete");
 assert(employees.includes("Изменить пароль") && employees.includes("Повторить пароль") && !shell.includes('href="/change-password"'), "employee password UI is not director-managed");
 assert(proxy.includes('!token.mustChangePassword && request.nextUrl.pathname === "/change-password"'), "ordinary users can still open self-service password change");
 assert(auth.includes('useSecureCookies: process.env.VERCEL === "1"') && auth.includes('NEXTAUTH_URL?.startsWith("https://")'), "production Secure cookie configuration is missing");

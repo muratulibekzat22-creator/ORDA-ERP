@@ -6,12 +6,12 @@ type Context = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: Request, { params }: Context) {
   const auth = await requirePermission("clients"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR) return NextResponse.json({ error: "Только директор принимает решение" }, { status: 403 });
+  if (auth.session!.user.accountRole !== Role.DIRECTOR) return NextResponse.json({ error: "Только директор принимает решение" }, { status: 403 });
   const id = Number((await params).id);
   try {
     const body = await request.json() as Record<string, unknown>, status = String(body.status ?? "");
     if (!["APPROVED", "REJECTED", "COUNTER_OFFER"].includes(status)) return NextResponse.json({ error: "Некорректное решение" }, { status: 400 });
-    const row = await prisma.priceApprovalRequest.findUnique({ where: { id } });
+    const row = await prisma.priceApprovalRequest.findFirst({ where: { id, client: { companyId: auth.session!.user.companyId } } });
     if (!row || row.status !== "PENDING") return NextResponse.json({ error: "Запрос уже обработан или не найден" }, { status: 409 });
     const approved = status === "APPROVED" ? Number(row.requestedSalePrice) : status === "COUNTER_OFFER" ? Number(body.approvedSalePrice) : null;
     if (status === "COUNTER_OFFER" && (!Number.isFinite(approved) || approved! <= 0 || approved! > Number(row.currentSalePrice))) return NextResponse.json({ error: "Некорректная встречная цена" }, { status: 400 });

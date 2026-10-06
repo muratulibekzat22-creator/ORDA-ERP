@@ -10,6 +10,7 @@ import {
   saveEmployeeKpiTarget,
 } from "@/lib/services/employee-kpi.service";
 import { enterTenantFromSession, runWithTenant } from "@/lib/tenant-context";
+import { csvDocument } from "@/lib/csv";
 
 async function context() {
   const session = await getServerSession(authOptions);
@@ -44,12 +45,11 @@ export async function GET(request: Request) {
     const month = params.get("month") ?? undefined;
     const data = await runWithTenant(auth.tenant, () => getEmployeeKpi(month, auth.actor));
     if (params.get("export") === "csv") {
-      const cell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
       const rows = [
         ["Период", "Сотрудник", "Должность", "Показатель", "Единица", "План", "Факт", "Выполнение, %", "Источник"],
         ...data.rows.flatMap((row) => row.metrics.map((metric) => [data.month, row.name, row.position, metric.title, metric.unit, metric.target, metric.actual, metric.completionPercent, metric.source])),
       ];
-      return new NextResponse(`\uFEFF${rows.map((row) => row.map(cell).join(";")).join("\r\n")}`, {
+      return new NextResponse(csvDocument(rows), {
         headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="employee-kpi-${data.month}.csv"` },
       });
     }
