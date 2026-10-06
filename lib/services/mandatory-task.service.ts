@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { CalendarTaskStatus, CalendarTaskWorkflow, Role } from "@prisma/client";
+import { CalendarTaskStatus, CalendarTaskWorkflow, Prisma, Role } from "@prisma/client";
 
 import { get, put, del } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
 import type { CalendarActor } from "@/lib/services/calendar.service";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 
 export const MAX_TASK_RESULT_SIZE = 25 * 1024 * 1024;
 const allowedTypes = new Set([
@@ -30,8 +31,11 @@ function safeName(value: string) {
 
 export async function getMandatoryTask(actor: CalendarActor) {
   const now = new Date();
+  const companyId = requireTenantIdentity().companyId;
   const task = await prisma.calendarTask.findFirst({
     where: {
+      companyId,
+      deletedAt: null,
       assigneeId: actor.userId,
       acknowledgementRequired: true,
       status: { notIn: [CalendarTaskStatus.CANCELLED, CalendarTaskStatus.COMPLETED] },
@@ -52,7 +56,7 @@ export async function getMandatoryTask(actor: CalendarActor) {
         {
           OR: [
             { acknowledgedAt: null },
-            { controlKey: null, acknowledgedAt: { not: null }, plannedCompletionAt: { lte: now }, resultSubmittedAt: null },
+            { acknowledgedAt: { not: null }, plannedCompletionAt: { lte: now }, resultSubmittedAt: null },
           ],
         },
       ],
@@ -67,7 +71,8 @@ export async function acknowledgeMandatoryTask(actor: CalendarActor, taskId: num
   if (Number.isNaN(plannedCompletionAt.getTime()) || plannedCompletionAt.getTime() < Date.now() - 5 * 60_000 || plannedCompletionAt.getTime() > Date.now() + 366 * 86400_000)
     throw new Error("INVALID_COMPLETION_DATE");
   return prisma.$transaction(async (tx) => {
-    const task = await tx.calendarTask.findFirst({ where: { id: taskId, assigneeId: actor.userId, acknowledgementRequired: true, acknowledgedAt: null, status: { notIn: [CalendarTaskStatus.COMPLETED, CalendarTaskStatus.CANCELLED] } }, select: { id: true, status: true, workflow: true } });
+    const companyId = requireTenantIdentity().companyId;
+    const task = await tx.calendarTask.findFirst({ where: { id: taskId, companyId, deletedAt: null, assigneeId: actor.userId, acknowledgementRequired: true, acknowledgedAt: null, status: { notIn: [CalendarTaskStatus.COMPLETED, CalendarTaskStatus.CANCELLED] } }, select: { id: true, status: true, workflow: true } });
     if (!task) throw new Error("TASK_NOT_FOUND");
     const now = new Date();
     if (task.workflow === CalendarTaskWorkflow.PAYMENT_COLLECTION && plannedCompletionAt.getTime() > now.getTime() + 24 * 60 * 60_000)
@@ -84,6 +89,30 @@ export async function acknowledgeMandatoryTask(actor: CalendarActor, taskId: num
   });
 }
 
+export async function completeMandatoryTaskResultInTransaction(
+  tx: Prisma.TransactionClient,
+  actor: CalendarActor,
+  taskId: number,
+  resultText: string,
+  attachmentFileName: string | null = null,
+) {
+  const normalizedText = resultText.trim().slice(0, 8000);
+  const companyId = requireTenantIdentity().companyId;
+  const task = await tx.calendarTask.findFirst({
+    where: { id: taskId, companyId, deletedAt: null, assigneeId: actor.userId, acknowledgementRequired: true, acknowledgedAt: { not: null }, status: { not: CalendarTaskStatus.CANCELLED } },
+    select: { id: true, status: true, resultText: true, resultSubmittedAt: true },
+  });
+  if (!task) throw new Error("TASK_NOT_FOUND");
+  if (task.resultSubmittedAt) {
+    if (task.resultText === (normalizedText || null)) return tx.calendarTask.findUniqueOrThrow({ where: { id: taskId }, select });
+    throw new Error("TASK_ALREADY_COMPLETED");
+  }
+  const now = new Date();
+  const updated = await tx.calendarTask.update({ where: { id: taskId }, data: { resultText: normalizedText || null, resultSubmittedAt: now, completedAt: now, completedById: actor.userId, status: CalendarTaskStatus.COMPLETED }, select });
+  await tx.calendarTaskAudit.create({ data: { taskId, action: "RESULT_SUBMITTED", actorId: actor.userId, before: { status: task.status }, after: { status: CalendarTaskStatus.COMPLETED, resultText: normalizedText || null, attachment: attachmentFileName } } });
+  return updated;
+}
+
 export async function submitMandatoryTaskResult(actor: CalendarActor, taskId: number, resultText: string, file?: File | null) {
   const normalizedText = resultText.trim().slice(0, 8000);
   if (!normalizedText && (!file || file.size === 0)) throw new Error("RESULT_REQUIRED");
@@ -97,13 +126,8 @@ export async function submitMandatoryTaskResult(actor: CalendarActor, taskId: nu
   }
   try {
     return await prisma.$transaction(async (tx) => {
-      const task = await tx.calendarTask.findFirst({ where: { id: taskId, assigneeId: actor.userId, acknowledgementRequired: true, acknowledgedAt: { not: null }, resultSubmittedAt: null, status: { not: CalendarTaskStatus.CANCELLED } }, select: { id: true, status: true } });
-      if (!task) throw new Error("TASK_NOT_FOUND");
-      const now = new Date();
       if (uploaded) await tx.calendarTaskResultAttachment.create({ data: { taskId, uploadedById: actor.userId, ...uploaded } });
-      const updated = await tx.calendarTask.update({ where: { id: taskId }, data: { resultText: normalizedText || null, resultSubmittedAt: now, completedAt: now, completedById: actor.userId, status: CalendarTaskStatus.COMPLETED }, select });
-      await tx.calendarTaskAudit.create({ data: { taskId, action: "RESULT_SUBMITTED", actorId: actor.userId, before: { status: task.status }, after: { status: CalendarTaskStatus.COMPLETED, resultText: normalizedText || null, attachment: uploaded?.fileName ?? null } } });
-      return updated;
+      return completeMandatoryTaskResultInTransaction(tx, actor, taskId, normalizedText, uploaded?.fileName ?? null);
     });
   } catch (error) {
     if (uploaded) await del(uploaded.pathname).catch(() => undefined);

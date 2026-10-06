@@ -50,9 +50,13 @@ for (let index = 1; index < chunks.length; index += 1) {
   assert.equal(chunks[index - 1].to.getTime(), chunks[index].from.getTime(), "API chunks must be contiguous");
 }
 
-const service = read("lib/services/calendar.service.ts"), employeeService = read("lib/services/employee.service.ts"), api = read("app/api/calendar/route.ts"), schema = read("prisma/schema.prisma"), sidebar = read("components/layout/RouteShell.tsx"), page = read("components/pages/CalendarPage.tsx");
-for (const marker of ["taskScope(actor)", "INVALID_ASSIGNEE", "FORBIDDEN_RELATION", "RELATION_MISMATCH", "completedAt", "CANCELLED", "calendarTaskAudit.create", "conflict", "listActiveCalendarAssignees", "actor.role === Role.DIRECTOR ? filters.assigneeId : actor.userId", "canManageAssignees: actor.role === Role.DIRECTOR"])
+const service = read("lib/services/calendar.service.ts"), mandatoryService = read("lib/services/mandatory-task.service.ts"), employeeService = read("lib/services/employee.service.ts"), api = read("app/api/calendar/route.ts"), schema = read("prisma/schema.prisma"), sidebar = read("components/layout/RouteShell.tsx"), page = read("components/pages/CalendarPage.tsx");
+for (const marker of ["taskScope(actor)", "INVALID_ASSIGNEE", "FORBIDDEN_RELATION", "RELATION_MISMATCH", "MANDATORY_RESULT_REQUIRED", "completedAt", "CANCELLED", "calendarTaskAudit.create", "conflict", "listActiveCalendarAssignees", "canManageTeamTasks(actor.role) ? filters.assigneeId : actor.userId", "canManageAssignees: canManageTeamTasks(actor.role)", "acknowledgementReset"])
   assert.ok(service.includes(marker), `missing calendar guard: ${marker}`);
+for (const marker of ["companyId", "deletedAt: null", "plannedCompletionAt: { lte: now }, resultSubmittedAt: null"])
+  assert.ok(mandatoryService.includes(marker), `missing mandatory-task contract: ${marker}`);
+assert.doesNotMatch(mandatoryService, /controlKey: null, acknowledgedAt/, "generated mandatory tasks must require a result too");
+assert.match(service, /role === Role\.DIRECTOR \|\| role === Role\.OPERATIONS_DIRECTOR/, "operations director must manage team tasks");
 for (const marker of ["employeePayrollProfile.findMany", "active: true", "user: { is: { active: true", "role: { not: Role.PARTNER }"])
   assert.ok(employeeService.includes(marker), `missing employee source contract: ${marker}`);
 for (const marker of ["requirePermission(\"calendar\")", 'searchParams.get("start")', 'searchParams.get("end")', "62 * 86400000", 'searchParams.get("cursor")', '"Cache-Control": "private, no-store, max-age=0"']) assert.ok(api.includes(marker), `missing range/auth guard: ${marker}`);

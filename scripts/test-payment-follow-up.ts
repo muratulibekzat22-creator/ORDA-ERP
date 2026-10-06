@@ -5,6 +5,7 @@ import { OrderResponsibleType, Role } from "@prisma/client";
 
 import { createRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 import { getDashboardSummary } from "@/lib/services/dashboard.service";
 import { getFounderControl } from "@/lib/services/founder-control.service";
 import { acknowledgeMandatoryTask, getMandatoryTask, submitMandatoryTaskResult } from "@/lib/services/mandatory-task.service";
@@ -17,7 +18,7 @@ async function main() {
   const operationsDirector = await prisma.user.create({ data: { companyId: 1, name: `${tag}-operations`, email: `${tag}-operations@test.local`, password: "test", role: Role.OPERATIONS_DIRECTOR } });
   const manager = await prisma.user.create({ data: { companyId: 1, name: tag, email: `${tag}@test.local`, password: "test", role: Role.MANAGER } });
   const otherManager = await prisma.user.create({ data: { companyId: 1, name: `${tag}-other`, email: `${tag}-other@test.local`, password: "test", role: Role.MANAGER } });
-  const client = await prisma.client.create({ data: { companyId: 1, name: "Клиент доплаты", phone: "+77000000001", city: "Алматы", manager: manager.name, managerUserId: manager.id, amount: "2000000", status: "WON", stage: "WON" } });
+  const client = await prisma.client.create({ data: { companyId: 1, name: "Клиент доплаты", phone: `82${Date.now().toString().slice(-10)}`, city: "Алматы", manager: manager.name, managerUserId: manager.id, amount: "2000000", status: "WON", stage: "WON" } });
   const order = await prisma.order.create({ data: { companyId: 1, number: `ORD-${tag}`, clientId: client.id, address: "Алматы", staircase: "Лестница", material: "Дуб", amount: "2000000", prepayment: "1000000", balance: "1000000", manager: manager.name, managerUserId: manager.id, responsibleType: OrderResponsibleType.EMPLOYEE } });
   const actor = { userId: manager.id, name: manager.name, role: Role.MANAGER };
   let replayOrderId: number | null = null;
@@ -115,22 +116,24 @@ async function main() {
     assert(orderService.indexOf("if (existingEvent)") < orderService.indexOf("assertPaymentFollowUpInput(data.paymentPromiseAmount"), "order idempotency replay must be resolved before future-date validation");
     console.log("payment promise scheduling, future-date validation, authorization, founder control and mandatory result passed");
   } finally {
-    if (replayOrderId) {
-      const replayTasks = await prisma.calendarTask.findMany({ where: { orderId: replayOrderId }, select: { id: true } });
-      await prisma.calendarTaskAudit.deleteMany({ where: { taskId: { in: replayTasks.map((task) => task.id) } } });
-      await prisma.calendarTask.deleteMany({ where: { orderId: replayOrderId } });
-      await prisma.orderEvent.deleteMany({ where: { orderId: replayOrderId } });
-      await prisma.orderStatusHistory.deleteMany({ where: { orderId: replayOrderId } });
-      await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: replayOrderId } });
-      await prisma.order.delete({ where: { id: replayOrderId } });
-    }
-    const tasks = await prisma.calendarTask.findMany({ where: { orderId: order.id }, select: { id: true } });
-    await prisma.calendarTaskAudit.deleteMany({ where: { taskId: { in: tasks.map((task) => task.id) } } });
-    await prisma.calendarTask.deleteMany({ where: { orderId: order.id } });
-    await prisma.orderEvent.deleteMany({ where: { orderId: order.id } });
-    await prisma.order.delete({ where: { id: order.id } });
-    await prisma.client.delete({ where: { id: client.id } });
-    await prisma.user.deleteMany({ where: { id: { in: [director.id, operationsDirector.id, manager.id, otherManager.id] } } });
+    await runWithSystemAccess(async () => {
+      if (replayOrderId) {
+        const replayTasks = await prisma.calendarTask.findMany({ where: { orderId: replayOrderId }, select: { id: true } });
+        await prisma.calendarTaskAudit.deleteMany({ where: { taskId: { in: replayTasks.map((task) => task.id) } } });
+        await prisma.calendarTask.deleteMany({ where: { orderId: replayOrderId } });
+        await prisma.orderEvent.deleteMany({ where: { orderId: replayOrderId } });
+        await prisma.orderStatusHistory.deleteMany({ where: { orderId: replayOrderId } });
+        await prisma.orderLifecycleEvent.deleteMany({ where: { orderId: replayOrderId } });
+        await prisma.order.delete({ where: { id: replayOrderId } });
+      }
+      const tasks = await prisma.calendarTask.findMany({ where: { orderId: order.id }, select: { id: true } });
+      await prisma.calendarTaskAudit.deleteMany({ where: { taskId: { in: tasks.map((task) => task.id) } } });
+      await prisma.calendarTask.deleteMany({ where: { orderId: order.id } });
+      await prisma.orderEvent.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+      await prisma.client.delete({ where: { id: client.id } });
+      await prisma.user.deleteMany({ where: { id: { in: [director.id, operationsDirector.id, manager.id, otherManager.id] } } });
+    });
     await prisma.$disconnect();
   }
 }

@@ -40,8 +40,18 @@ assert.doesNotMatch(orderRoute, /paymentPromiseAt\.getTime\(\)\s*</, "the route 
 
 const paymentService = read("lib/services/payment.service.ts");
 assert.doesNotMatch(paymentService, /completeCoveredPaymentFollowUps|AUTO_COMPLETED_BY_PAYMENT/);
+assert.match(paymentService, /await input\.transactionAction\?\./, "the task result must participate in the finance transaction");
 const mandatory = read("lib/services/mandatory-task.service.ts");
 assert.match(mandatory, /PAYMENT_FOLLOW_UP_COMPLETION_TOO_LATE/);
 assert.match(mandatory, /24 \* 60 \* 60_000/);
+assert.doesNotMatch(mandatory, /controlKey: null, acknowledgedAt/, "generated payment and daily tasks must still request a result");
+const resultRoute = read("app/api/calendar/[id]/result/route.ts");
+assert.match(resultRoute, /calendar-payment-result:/, "task-confirmed payments need a stable idempotency key");
+assert.match(resultRoute, /createPayment\(/, "a confirmed payment must be posted to order finance");
+assert.match(resultRoute, /transactionAction:[\s\S]*completeMandatoryTaskResultInTransaction/, "payment and mandatory task completion must commit atomically");
+assert.match(resultRoute, /Укажите точную сумму и способ полученной оплаты/);
+const mandatoryGate = read("components/tasks/MandatoryTaskGate.tsx");
+assert.match(mandatoryGate, /Подтвердить оплату и закрыть задачу/);
+assert.match(mandatoryGate, /автоматически попадёт в заказ и финансы/);
 
 console.log("payment follow-up contract checks passed");

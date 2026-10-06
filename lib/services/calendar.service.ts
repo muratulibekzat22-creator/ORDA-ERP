@@ -7,6 +7,9 @@ import { listActiveCalendarAssignees } from "@/lib/services/employee.service";
 export type CalendarActor = { userId: number; role: Role; name: string };
 export type CalendarTaskInput = { title: string; description?: string | null; type: CalendarTaskType; dueAt: Date; priority: CalendarTaskPriority; assigneeId: number; clientId?: number | null; orderId?: number | null; acknowledgementRequired?: boolean };
 
+const canManageTeamTasks = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
+
 const taskSelect = {
   id: true, title: true, description: true, type: true, dueAt: true, status: true, priority: true,
   assigneeId: true, creatorId: true, completedAt: true, cancelledAt: true, createdAt: true, updatedAt: true,
@@ -18,7 +21,7 @@ const taskSelect = {
 } satisfies Prisma.CalendarTaskSelect;
 
 export function taskScope(actor: CalendarActor): Prisma.CalendarTaskWhereInput {
-  if (actor.role === Role.DIRECTOR) return {};
+  if (canManageTeamTasks(actor.role)) return {};
   if (actor.role === Role.MANAGER) return { OR: [{ assigneeId: actor.userId }, { creatorId: actor.userId }, { client: { managerUserId: actor.userId } }, { order: { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId } }] };
   return { assigneeId: actor.userId };
 }
@@ -34,19 +37,20 @@ function activeTaskScope(): Prisma.CalendarTaskWhereInput {
 }
 
 export function canAssign(actor: CalendarActor, assigneeId: number) {
-  return actor.role === Role.DIRECTOR || actor.role === Role.MANAGER || actor.userId === assigneeId;
+  return canManageTeamTasks(actor.role) || actor.role === Role.MANAGER || actor.userId === assigneeId;
 }
 
 async function validateRelations(tx: Prisma.TransactionClient, actor: CalendarActor, input: CalendarTaskInput) {
-  const assignee = await tx.user.findUnique({ where: { id: input.assigneeId }, select: { id: true, active: true } });
+  const companyId = requireTenantIdentity().companyId;
+  const assignee = await tx.user.findFirst({ where: { id: input.assigneeId, companyId }, select: { id: true, active: true } });
   if (!assignee?.active || !canAssign(actor, input.assigneeId)) throw new Error("INVALID_ASSIGNEE");
   if (input.clientId) {
-    const client = await tx.client.findFirst({ where: { id: input.clientId, active: true, deletedAt: null }, select: { managerUserId: true } });
+    const client = await tx.client.findFirst({ where: { id: input.clientId, companyId, active: true, deletedAt: null }, select: { managerUserId: true } });
     if (!client) throw new Error("CLIENT_NOT_FOUND");
     if (actor.role === Role.MANAGER && client.managerUserId !== actor.userId) throw new Error("FORBIDDEN_RELATION");
   }
   if (input.orderId) {
-    const order = await tx.order.findFirst({ where: { id: input.orderId, deletedAt: null }, select: { clientId: true, responsibleType: true, managerUserId: true } });
+    const order = await tx.order.findFirst({ where: { id: input.orderId, companyId, deletedAt: null }, select: { clientId: true, responsibleType: true, managerUserId: true } });
     if (!order) throw new Error("ORDER_NOT_FOUND");
     if (input.clientId && order.clientId !== input.clientId) throw new Error("RELATION_MISMATCH");
     if (actor.role === Role.MANAGER && (order.responsibleType !== OrderResponsibleType.EMPLOYEE || order.managerUserId !== actor.userId)) throw new Error("FORBIDDEN_RELATION");
@@ -70,7 +74,7 @@ export async function listCalendarTasks(actor: CalendarActor, filters: CalendarL
   const cursor = decodeDateIdCursor(filters.cursor);
   if (filters.cursor && !cursor) throw new Error("INVALID_CURSOR");
   const where: Prisma.CalendarTaskWhereInput = { AND: [taskScope(actor), activeTaskScope()], dueAt: { gte: filters.from, lt: filters.to } };
-  if (filters.assigneeId) where.assigneeId = actor.role === Role.DIRECTOR ? filters.assigneeId : actor.userId;
+  if (filters.assigneeId) where.assigneeId = canManageTeamTasks(actor.role) ? filters.assigneeId : actor.userId;
   if (filters.status) where.status = filters.status;
   else if (filters.state === "completed") where.status = CalendarTaskStatus.COMPLETED;
   else if (filters.state === "active") where.status = { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] };
@@ -107,15 +111,15 @@ export async function getCalendarTask(actor: CalendarActor, id: number) {
 export async function getCalendarMeta(actor: CalendarActor) {
   const orderWhere: Prisma.OrderWhereInput = {
     deletedAt: null,
-    ...(actor.role === Role.DIRECTOR
+    ...(canManageTeamTasks(actor.role)
       ? {}
       : actor.role === Role.MANAGER
         ? { responsibleType: OrderResponsibleType.EMPLOYEE, managerUserId: actor.userId }
         : { id: -1 }),
   };
-  const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(actor.role === Role.DIRECTOR ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };
+  const clientWhere: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(canManageTeamTasks(actor.role) ? {} : actor.role === Role.MANAGER ? { managerUserId: actor.userId } : { id: -1 }) };
   const [assignees, clients, orders] = await Promise.all([
-    actor.role === Role.DIRECTOR
+    canManageTeamTasks(actor.role)
       ? listActiveCalendarAssignees()
       : prisma.user.findMany({ where: { id: actor.userId, active: true }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } }),
     prisma.client.findMany({ where: clientWhere, select: { id: true, name: true, phone: true }, orderBy: { name: "asc" }, take: 300 }),
@@ -126,15 +130,16 @@ export async function getCalendarMeta(actor: CalendarActor) {
     clients,
     orders,
     currentUserId: actor.userId,
-    canManageAssignees: actor.role === Role.DIRECTOR,
+    canManageAssignees: canManageTeamTasks(actor.role),
   };
 }
 
 export async function createCalendarTask(actor: CalendarActor, input: CalendarTaskInput) {
   return prisma.$transaction(async (tx) => {
+    const companyId = requireTenantIdentity().companyId;
     await validateRelations(tx, actor, input);
     const conflict = await tx.calendarTask.findFirst({ where: { assigneeId: input.assigneeId, dueAt: input.dueAt, status: { in: [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] } }, select: { id: true, title: true } });
-    const task = await tx.calendarTask.create({ data: { ...input, acknowledgementRequired: actor.role === Role.DIRECTOR && input.acknowledgementRequired === true, creatorId: actor.userId }, select: taskSelect });
+    const task = await tx.calendarTask.create({ data: { ...input, companyId, acknowledgementRequired: canManageTeamTasks(actor.role) && input.acknowledgementRequired === true, creatorId: actor.userId }, select: taskSelect });
     await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "CREATED", actorId: actor.userId, after: { dueAt: input.dueAt, assigneeId: input.assigneeId, status: CalendarTaskStatus.PLANNED } } });
     return { task, conflict };
   });
@@ -142,21 +147,48 @@ export async function createCalendarTask(actor: CalendarActor, input: CalendarTa
 
 export async function updateCalendarTask(actor: CalendarActor, id: number, input: CalendarTaskInput) {
   return prisma.$transaction(async (tx) => {
-    const current = await tx.calendarTask.findFirst({ where: { id, AND: [taskScope(actor), activeTaskScope()] }, select: { id: true, dueAt: true, assigneeId: true, status: true } });
+    const companyId = requireTenantIdentity().companyId;
+    const current = await tx.calendarTask.findFirst({ where: { id, companyId, AND: [taskScope(actor), activeTaskScope()] }, select: { id: true, dueAt: true, assigneeId: true, status: true, acknowledgementRequired: true } });
     if (!current) throw new Error("NOT_FOUND");
     if (current.status === CalendarTaskStatus.COMPLETED || current.status === CalendarTaskStatus.CANCELLED) throw new Error("TERMINAL_TASK");
     await validateRelations(tx, actor, input);
-    const task = await tx.calendarTask.update({ where: { id }, data: { ...input, acknowledgementRequired: actor.role === Role.DIRECTOR ? input.acknowledgementRequired === true : undefined }, select: taskSelect });
-    const action = current.assigneeId !== input.assigneeId ? "REASSIGNED" : current.dueAt.getTime() !== input.dueAt.getTime() ? "RESCHEDULED" : "UPDATED";
-    await tx.calendarTaskAudit.create({ data: { taskId: id, action, actorId: actor.userId, before: { dueAt: current.dueAt, assigneeId: current.assigneeId }, after: { dueAt: input.dueAt, assigneeId: input.assigneeId } } });
+    const assigneeChanged = current.assigneeId !== input.assigneeId;
+    const dueAtChanged = current.dueAt.getTime() !== input.dueAt.getTime();
+    const nextAcknowledgementRequired = canManageTeamTasks(actor.role)
+      ? input.acknowledgementRequired === true
+      : current.acknowledgementRequired;
+    const resetMandatoryWorkflow = nextAcknowledgementRequired && (assigneeChanged || dueAtChanged || !current.acknowledgementRequired);
+    const clearMandatoryWorkflow = current.acknowledgementRequired && !nextAcknowledgementRequired;
+    const task = await tx.calendarTask.update({
+      where: { id },
+      data: {
+        ...input,
+        acknowledgementRequired: nextAcknowledgementRequired,
+        ...((resetMandatoryWorkflow || clearMandatoryWorkflow) ? {
+          acknowledgedAt: null,
+          acknowledgementComment: null,
+          plannedCompletionAt: null,
+          resultText: null,
+          resultSubmittedAt: null,
+          completedAt: null,
+          completedById: null,
+          status: CalendarTaskStatus.PLANNED,
+        } : {}),
+      },
+      select: taskSelect,
+    });
+    const action = assigneeChanged ? "REASSIGNED" : dueAtChanged ? "RESCHEDULED" : "UPDATED";
+    await tx.calendarTaskAudit.create({ data: { taskId: id, action, actorId: actor.userId, before: { dueAt: current.dueAt, assigneeId: current.assigneeId, acknowledgementRequired: current.acknowledgementRequired }, after: { dueAt: input.dueAt, assigneeId: input.assigneeId, acknowledgementRequired: nextAcknowledgementRequired, acknowledgementReset: resetMandatoryWorkflow } } });
     return task;
   });
 }
 
 export async function setCalendarTaskState(actor: CalendarActor, id: number, action: "complete" | "cancel") {
   return prisma.$transaction(async (tx) => {
-    const current = await tx.calendarTask.findFirst({ where: { id, AND: [taskScope(actor), activeTaskScope()] }, select: { id: true, status: true } });
+    const companyId = requireTenantIdentity().companyId;
+    const current = await tx.calendarTask.findFirst({ where: { id, companyId, AND: [taskScope(actor), activeTaskScope()] }, select: { id: true, status: true, acknowledgementRequired: true, resultSubmittedAt: true } });
     if (!current) throw new Error("NOT_FOUND");
+    if (action === "complete" && current.acknowledgementRequired && !current.resultSubmittedAt) throw new Error("MANDATORY_RESULT_REQUIRED");
     if (action === "cancel" && actor.role !== Role.DIRECTOR && actor.role !== Role.MANAGER && current.status !== CalendarTaskStatus.PLANNED) throw new Error("FORBIDDEN");
     const now = new Date();
     const task = await tx.calendarTask.update({ where: { id }, data: action === "complete" ? { status: CalendarTaskStatus.COMPLETED, completedAt: now, completedById: actor.userId, cancelledAt: null } : { status: CalendarTaskStatus.CANCELLED, cancelledAt: now, completedAt: null, completedById: null }, select: taskSelect });

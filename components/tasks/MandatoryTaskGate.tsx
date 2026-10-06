@@ -60,6 +60,9 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
   const [comment, setComment] = useState("");
   const [resultText, setResultText] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [paymentOutcome, setPaymentOutcome] = useState("PAID");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("Kaspi перевод");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
@@ -67,7 +70,11 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
     if (response.ok) {
       const body = await response.json() as { pending: Pending | null };
       setPending(body.pending);
-      if (body.pending) setPlanWindow(makePlanWindow());
+      if (body.pending) {
+        setPlanWindow(makePlanWindow());
+        if (body.pending.task.workflow === "PAYMENT_COLLECTION" && body.pending.task.expectedAmount != null)
+          setPaymentAmount((current) => current || String(body.pending!.task.expectedAmount));
+      }
     }
     setLoaded(true);
   }, []);
@@ -94,11 +101,20 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
     event.preventDefault();
     if (!pending) return;
     setSaving(true); setError("");
-    const form = new FormData(); form.set("resultText", resultText); if (file) form.set("file", file);
+    const form = new FormData();
+    form.set("resultText", resultText);
+    if (pending.task.workflow === "PAYMENT_COLLECTION") {
+      form.set("paymentOutcome", paymentOutcome);
+      if (paymentOutcome === "PAID") {
+        form.set("paymentAmount", paymentAmount);
+        form.set("paymentMethod", paymentMethod);
+      }
+    }
+    if (file) form.set("file", file);
     const response = await fetch(`/api/calendar/${pending.task.id}/result`, { method: "POST", body: form });
     const body = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) setError(body.error ?? "Не удалось отправить результат");
-    else { setResultText(""); setFile(null); await load(); }
+    else { setResultText(""); setFile(null); setPaymentOutcome("PAID"); setPaymentAmount(""); setPaymentMethod("Kaspi перевод"); await load(); }
     setSaving(false);
   };
   if (!loaded || !pending) return children;
@@ -121,10 +137,15 @@ export default function MandatoryTaskGate({ children }: { children: React.ReactN
         <label className="block text-sm text-slate-300">Что понял / комментарий<textarea value={comment} onChange={(event) => setComment(event.target.value)} rows={3} className="control mt-1 resize-none" placeholder="Коротко подтвердите, что именно нужно сделать"/></label>
         <button disabled={!understood || saving} className="min-h-12 w-full rounded-xl bg-blue-600 font-semibold disabled:opacity-50">{saving ? "Сохраняем…" : "Подтвердить и перейти к работе"}</button>
       </form> : <form onSubmit={submitResult} className="mt-6 space-y-4">
-        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4"><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={19}/>Наступил указанный вами срок</p><p className="mt-1 text-sm text-blue-100/80">{paymentCollection ? "Зафиксируйте: клиент оплатил, перенёс срок или не ответил. Поступившие деньги отдельно внесите в заказ." : "Напишите результат или прикрепите подтверждающий файл."}</p></div>
-        <label className="block text-sm text-slate-300">Результат<textarea value={resultText} onChange={(event) => setResultText(event.target.value)} rows={5} className="control mt-1 resize-none" placeholder="Что сделано, какой итог, что осталось"/></label>
-        <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-slate-700 bg-slate-950 px-4 text-sm"><Paperclip size={18}/><span className="min-w-0 flex-1 truncate">{file?.name ?? "Прикрепить фото, PDF, Word, Excel или видео до 25 МБ"}</span><input type="file" accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4,video/webm,.docx,.xlsx" onChange={(event: ChangeEvent<HTMLInputElement>) => setFile(event.target.files?.[0] ?? null)} className="sr-only"/></label>
-        <button disabled={saving || (!resultText.trim() && !file)} className="min-h-12 w-full rounded-xl bg-emerald-700 font-semibold disabled:opacity-50">{saving ? "Отправляем…" : "Отправить результат"}</button>
+        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4"><p className="flex items-center gap-2 font-semibold"><CheckCircle2 size={19}/>Наступил указанный вами срок</p><p className="mt-1 text-sm text-blue-100/80">{paymentCollection ? "Зафиксируйте: клиент оплатил, перенёс срок или не ответил. Подтверждённая оплата автоматически попадёт в заказ и финансы." : "Напишите результат или прикрепите подтверждающий файл."}</p></div>
+        {paymentCollection ? <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm text-slate-300 sm:col-span-2">Результат связи<select value={paymentOutcome} onChange={(event) => setPaymentOutcome(event.target.value)} className="control mt-1"><option value="PAID">Оплата получена</option><option value="PROMISED_LATER">Клиент перенёс срок</option><option value="NO_RESPONSE">Клиент не ответил</option><option value="REFUSED">Клиент отказался</option></select></label>
+          {paymentOutcome === "PAID" ? <><label className="block text-sm text-slate-300">Точная полученная сумма<input required min="0.01" step="0.01" type="number" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="control mt-1"/></label><label className="block text-sm text-slate-300">Способ оплаты<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="control mt-1"><option>Kaspi перевод</option><option>Kaspi</option><option>Kaspi рассрочка</option><option>Наличные</option><option>Банковский перевод</option><option>Банковская карта</option><option>Карта</option><option>Другое</option></select></label></> : null}
+          <p className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-sm text-emerald-100 sm:col-span-2">При выборе «Оплата получена» ORDA сразу зарегистрирует поступление в заказе, обновит остаток и создаст квитанцию. Повторно вносить платёж не нужно.</p>
+        </div> : null}
+        <label className="block text-sm text-slate-300">{paymentCollection ? "Комментарий / новый обещанный срок" : "Результат"}<textarea value={resultText} onChange={(event) => setResultText(event.target.value)} rows={5} className="control mt-1 resize-none" placeholder={paymentCollection ? "Что сообщил клиент; если срок перенесён — укажите новую дату" : "Что сделано, какой итог, что осталось"}/></label>
+        {!paymentCollection || paymentOutcome !== "PAID" ? <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-xl border border-slate-700 bg-slate-950 px-4 text-sm"><Paperclip size={18}/><span className="min-w-0 flex-1 truncate">{file?.name ?? "Прикрепить фото, PDF, Word, Excel или видео до 25 МБ"}</span><input type="file" accept="image/jpeg,image/png,image/webp,application/pdf,video/mp4,video/webm,.docx,.xlsx" onChange={(event: ChangeEvent<HTMLInputElement>) => setFile(event.target.files?.[0] ?? null)} className="sr-only"/></label> : null}
+        <button disabled={saving || (paymentCollection ? paymentOutcome === "PAID" ? !(Number(paymentAmount) > 0) : !resultText.trim() : !resultText.trim() && !file)} className="min-h-12 w-full rounded-xl bg-emerald-700 font-semibold disabled:opacity-50">{saving ? "Отправляем…" : paymentCollection && paymentOutcome === "PAID" ? "Подтвердить оплату и закрыть задачу" : "Отправить результат"}</button>
       </form>}
       {error && <p role="alert" className="mt-4 rounded-xl bg-red-500/10 p-3 text-sm text-red-200">{error}</p>}
     </section>
