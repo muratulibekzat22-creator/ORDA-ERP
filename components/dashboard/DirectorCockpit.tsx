@@ -162,6 +162,9 @@ type ManagementPayload = {
 type DailyCrmPayload = {
   dateKey: string;
   dateLabel: string;
+  weeklyDayOff: number;
+  weeklyDayOffLabel: string;
+  reportRequired: boolean;
   totals: {
     leadsReceived: number;
     contacted: number;
@@ -181,7 +184,7 @@ type DailyCrmPayload = {
     measurementsCompleted: number;
     ordersCreated: number;
     revenue: number;
-    reportStatus: "NOT_SENT" | "ACKNOWLEDGED" | "SENT";
+    reportStatus: "NOT_SENT" | "ACKNOWLEDGED" | "SENT" | "DAY_OFF";
     reportTaskId: number | null;
     reportSubmittedAt: string | null;
   }>;
@@ -923,16 +926,16 @@ function ManagerDashboard({ data }: { data: ManagerPayload }) {
 }
 
 function DailyCrmPanel({ data, managerView = false }: { data: DailyCrmPayload; managerView?: boolean }) {
-  const statusLabel = (status: DailyCrmPayload["managers"][number]["reportStatus"]) => status === "SENT" ? "Отправлен" : status === "ACKNOWLEDGED" ? "Ознакомлен" : "Ждёт отчёта";
-  const statusTone = (status: DailyCrmPayload["managers"][number]["reportStatus"]) => status === "SENT" ? "text-emerald-300" : status === "ACKNOWLEDGED" ? "text-blue-300" : "text-amber-300";
+  const statusLabel = (status: DailyCrmPayload["managers"][number]["reportStatus"]) => status === "DAY_OFF" ? "Выходной — отчёт не нужен" : status === "SENT" ? "Отправлен" : status === "ACKNOWLEDGED" ? "Ознакомлен" : "Ждёт отчёта";
+  const statusTone = (status: DailyCrmPayload["managers"][number]["reportStatus"]) => status === "DAY_OFF" ? "text-slate-300" : status === "SENT" ? "text-emerald-300" : status === "ACKNOWLEDGED" ? "text-blue-300" : "text-amber-300";
   return <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Ежедневный CRM-контроль</p><h2 className="mt-1 text-xl font-bold text-white">Результат за {data.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Цифры собраны из заявок, контактов, замеров и заказов ORDA. Менеджер подтверждает результат отдельной задачей.</p></div><Link href="/clients" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-blue-200">Открыть заявки</Link></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Ежедневный CRM-контроль</p><h2 className="mt-1 text-xl font-bold text-white">Результат за {data.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">{data.reportRequired ? "Цифры собраны из заявок, контактов, замеров и заказов ORDA. Менеджер подтверждает результат отдельной задачей." : `Это выходной день (${data.weeklyDayOffLabel}). Показатели сохранены, обязательный отчёт не требуется.`}</p></div><Link href="/clients" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-blue-200">Открыть заявки</Link></div>
     <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
       <DailyMetric label="Новые заявки" value={data.totals.leadsReceived}/><DailyMetric label="Есть контакт" value={data.totals.contacted}/><DailyMetric label="Заинтересованы" value={data.totals.interested}/><DailyMetric label="Замеры назначены" value={data.totals.measurementsScheduled}/><DailyMetric label="Замеры завершены" value={data.totals.measurementsCompleted}/><DailyMetric label="Заказы" value={data.totals.ordersCreated}/><DailyMetric label="Продажи" value={money(data.totals.revenue)}/>
     </div>
     <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер", "Заявки", "Контакт", "Интерес", "Замеры", "Заказы", "Продажи", "Отчёт"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{data.managers.map((row) => <tr key={row.managerId}><td className="px-3 py-3 font-semibold text-white">{row.manager}</td><td className="px-3 py-3">{row.leadsReceived}</td><td className="px-3 py-3">{row.contacted}</td><td className="px-3 py-3">{row.interested}</td><td className="px-3 py-3">{row.measurementsScheduled} / {row.measurementsCompleted}</td><td className="px-3 py-3">{row.ordersCreated}</td><td className="px-3 py-3">{money(row.revenue)}</td><td className={`px-3 py-3 font-semibold ${statusTone(row.reportStatus)}`}>{statusLabel(row.reportStatus)}</td></tr>)}</tbody></table></div>
     {!data.managers.length ? <p className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">Активных менеджеров нет.</p> : null}
-    {managerView && data.managers.some((row) => row.reportStatus !== "SENT") ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В 10:00 откроется обязательная задача: проверьте карточки за вчера, подтвердите ознакомление и отправьте короткий результат.</p> : null}
+    {managerView && data.managers.some((row) => row.reportStatus !== "SENT" && row.reportStatus !== "DAY_OFF") ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В 10:00 откроется обязательная задача: проверьте карточки за вчера, подтвердите ознакомление и отправьте короткий результат.</p> : null}
   </section>;
 }
 

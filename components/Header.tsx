@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Bell, Building2, ChevronDown, Clock3, KeyRound, LogOut, Menu, Settings, SlidersHorizontal, UserCircle } from "lucide-react";
+import { ArrowLeft, Bell, Building2, CalendarDays, ChevronDown, Clock3, KeyRound, LogOut, Menu, Settings, SlidersHorizontal, UserCircle } from "lucide-react";
 import Link from "next/link";
 import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter } from "next/navigation";
@@ -11,9 +11,11 @@ import { roleNames, type Role } from "@/lib/roles";
 export default function Header({
   onOpenMenu,
   canManageSettings = false,
+  canManageWorkSchedule = false,
 }: {
   onOpenMenu?: () => void;
   canManageSettings?: boolean;
+  canManageWorkSchedule?: boolean;
 }) {
   const { data: session } = useSession();
   const pathname = usePathname();
@@ -62,6 +64,7 @@ export default function Header({
             <Link href="/change-password" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><KeyRound size={17}/>Настройки аккаунта</Link>
             {canManageSettings && <Link href="/settings" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><Settings size={17}/>Настройки компании</Link>}
             {canManageSettings && <Link href="/calculator-config" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><SlidersHorizontal size={17}/>Настройки калькулятора</Link>}
+            {canManageWorkSchedule && <Link href="/settings/work-schedule" onClick={() => setProfileOpen(false)} className="flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm text-slate-200 hover:bg-slate-800"><CalendarDays size={17}/>Выходные и отчёты</Link>}
           </div>}
         </div>
         {session && <button type="button" aria-label="Выйти из системы" title="Выйти" onClick={() => signOut({ callbackUrl: "/login" })} className="grid size-11 shrink-0 place-items-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"><LogOut size={20}/></button>}

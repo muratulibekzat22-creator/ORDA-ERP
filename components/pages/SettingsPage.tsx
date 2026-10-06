@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 import EmployeesPage from "@/components/pages/EmployeesPage";
+import WorkScheduleSettings from "@/components/settings/WorkScheduleSettings";
 import { formatCompanyPhone } from "@/lib/company-contacts";
 import { permissionKeys, type Permission } from "@/lib/permissions";
 import { Role, roleNames } from "@/lib/roles";
@@ -325,6 +326,7 @@ export default function SettingsPage() {
       )}
       {tab === "system" && (
         <div className="space-y-6">
+          <WorkScheduleSettings />
           <div className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
             <h2 className="mb-4 text-xl font-bold text-white">
               Системные параметры

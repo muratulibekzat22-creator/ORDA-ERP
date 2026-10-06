@@ -2373,6 +2373,7 @@ model SystemSettings {
   productionLeadDays   Int     @default(40)
   installationLeadDays Int     @default(7)
   paydayDayOfMonth     Int     @default(1)
+  weeklyDayOff         Int     @default(1)
   nextDocumentNumber   Int     @default(1)
   nextContractNumber   Int     @default(1)
   offerPrefix          String  @default("КП")

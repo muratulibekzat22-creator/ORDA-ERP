@@ -94,6 +94,7 @@
     "test:payment-follow-up": "tsx scripts/test-payment-follow-up.ts",
     "test:payment-follow-up:contract": "tsx scripts/test-payment-follow-up-contract.ts",
     "test:daily-operations:contract": "tsx scripts/test-daily-operations-contract.ts",
+    "test:work-schedule": "tsx scripts/test-work-schedule.ts",
     "test:founder-control:rules": "tsx scripts/test-founder-control-rules.ts",
     "test:founder-dashboard:contract": "tsx scripts/test-founder-dashboard-contract.ts",
     "test:dashboard-director": "tsx scripts/test-dashboard-director.ts",

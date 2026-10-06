@@ -3,6 +3,7 @@ import { CalendarTaskStatus, CalendarTaskWorkflow, OrderResponsibleType, Prisma,
 import { orderDataGaps } from "@/lib/orders/completeness";
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
+import { DEFAULT_WEEKLY_DAY_OFF, isWeeklyDayOff, weekdayLabel } from "@/lib/work-schedule";
 
 const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
 const ACTIVE_TASK_STATUSES = [CalendarTaskStatus.PLANNED, CalendarTaskStatus.IN_PROGRESS] as const;
@@ -40,7 +41,7 @@ export type DailyCrmRow = {
   measurementsCompleted: number;
   ordersCreated: number;
   revenue: number;
-  reportStatus: "NOT_SENT" | "ACKNOWLEDGED" | "SENT";
+  reportStatus: "NOT_SENT" | "ACKNOWLEDGED" | "SENT" | "DAY_OFF";
   reportTaskId: number | null;
   reportSubmittedAt: Date | null;
 };
@@ -50,6 +51,9 @@ export async function getDailyCrmSnapshot(input: { dateKey?: string; managerId?:
   const todayKey = dateKeyAtAlmaty(input.now ?? new Date());
   const dateKey = input.dateKey ?? addDays(todayKey, -1);
   const { start, end } = dayRange(dateKey);
+  const settings = await prisma.systemSettings.findUnique({ where: { companyId }, select: { weeklyDayOff: true } });
+  const weeklyDayOff = settings?.weeklyDayOff ?? DEFAULT_WEEKLY_DAY_OFF;
+  const reportRequired = !isWeeklyDayOff(dateKey, weeklyDayOff);
   const managerWhere: Prisma.UserWhereInput = {
     companyId,
     active: true,
@@ -59,7 +63,7 @@ export async function getDailyCrmSnapshot(input: { dateKey?: string; managerId?:
   };
   const managers = await prisma.user.findMany({ where: managerWhere, select: { id: true, name: true }, orderBy: { name: "asc" } });
   const ids = managers.map((manager) => manager.id);
-  if (!ids.length) return { dateKey, dateLabel: formatDate(dateKey), totals: emptyTotals(), managers: [] as DailyCrmRow[] };
+  if (!ids.length) return { dateKey, dateLabel: formatDate(dateKey), weeklyDayOff, weeklyDayOffLabel: weekdayLabel(weeklyDayOff), reportRequired, totals: emptyTotals(), managers: [] as DailyCrmRow[] };
   const [leads, interactions, qualifiedEvents, measurements, orders, reportTasks] = await Promise.all([
     prisma.client.findMany({
       where: { companyId, deletedAt: null, managerUserId: { in: ids }, createdAt: { gte: start, lt: end } },
@@ -109,7 +113,7 @@ export async function getDailyCrmSnapshot(input: { dateKey?: string; managerId?:
       measurementsCompleted: measurements.filter((measurement) => measurement.client.managerUserId === manager.id && measurement.completedAt && measurement.completedAt >= start && measurement.completedAt < end).length,
       ordersCreated: managerOrders.length,
       revenue: managerOrders.reduce((sum, order) => sum + Number(order.amount), 0),
-      reportStatus: task?.resultSubmittedAt ? "SENT" : task?.acknowledgedAt ? "ACKNOWLEDGED" : "NOT_SENT",
+      reportStatus: !reportRequired ? "DAY_OFF" : task?.resultSubmittedAt ? "SENT" : task?.acknowledgedAt ? "ACKNOWLEDGED" : "NOT_SENT",
       reportTaskId: task?.id ?? null,
       reportSubmittedAt: task?.resultSubmittedAt ?? null,
     };
@@ -117,6 +121,9 @@ export async function getDailyCrmSnapshot(input: { dateKey?: string; managerId?:
   return {
     dateKey,
     dateLabel: formatDate(dateKey),
+    weeklyDayOff,
+    weeklyDayOffLabel: weekdayLabel(weeklyDayOff),
+    reportRequired,
     totals: rows.reduce((total, row) => ({
       leadsReceived: total.leadsReceived + row.leadsReceived,
       contacted: total.contacted + row.contacted,
@@ -264,7 +271,34 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
         data: legacyControlTasks.map((task) => ({ taskId: task.id, action: "CONTROL_CONSOLIDATED", actorId: controllerId })),
       });
     }
-    const result = { dailyReportsCreated: 0, readinessTasksCreated: 0, readinessTasksUpdated: 0, orientationsCreated: 0, directorBriefingsCreated: 0, legacyTasksConsolidated: legacyControlTasks.length };
+    const result = { dailyReportsCreated: 0, dailyReportsCancelled: 0, readinessTasksCreated: 0, readinessTasksUpdated: 0, orientationsCreated: 0, directorBriefingsCreated: 0, legacyTasksConsolidated: legacyControlTasks.length };
+    if (!snapshot.reportRequired) {
+      const reportsForDayOff = await tx.calendarTask.findMany({
+        where: {
+          companyId,
+          workflow: CalendarTaskWorkflow.DAILY_CRM_REPORT,
+          workflowKey: { startsWith: `daily-crm:${reportDateKey}:` },
+          status: { in: [...ACTIVE_TASK_STATUSES] },
+        },
+        select: { id: true, status: true },
+      });
+      if (reportsForDayOff.length) {
+        await tx.calendarTask.updateMany({
+          where: { id: { in: reportsForDayOff.map((task) => task.id) } },
+          data: { status: CalendarTaskStatus.CANCELLED, cancelledAt: now },
+        });
+        await tx.calendarTaskAudit.createMany({
+          data: reportsForDayOff.map((task) => ({
+            taskId: task.id,
+            action: "WEEKLY_DAY_OFF_APPLIED",
+            actorId: controllerId,
+            before: { status: task.status },
+            after: { status: CalendarTaskStatus.CANCELLED, weeklyDayOff: snapshot.weeklyDayOff, reportRequired: false },
+          })),
+        });
+        result.dailyReportsCancelled = reportsForDayOff.length;
+      }
+    }
     const directorBriefingKey = `director-operating-regulation:v2:${controllerId}`;
     const existingDirectorBriefing = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: directorBriefingKey } }, select: { id: true } });
     if (!existingDirectorBriefing) {
@@ -305,17 +339,19 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
       result.orientationsCreated++;
     }
     for (const row of snapshot.managers) {
-      const reportKey = `daily-crm:${reportDateKey}:${row.managerId}`;
-      const existingReport = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: reportKey } }, select: { id: true } });
-      if (!existingReport) {
-        const task = await tx.calendarTask.create({ data: {
-          companyId, workflowKey: reportKey, workflow: CalendarTaskWorkflow.DAILY_CRM_REPORT,
-          title: `CRM-отчёт за ${formatDate(reportDateKey)}`, description: dailyReportDescription(row, reportDateKey),
-          type: "TASK", priority: "IMPORTANT", dueAt, assigneeId: row.managerId, creatorId: controllerId,
-          acknowledgementRequired: true,
-        } });
-        await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "DAILY_CRM_ASSIGNED", actorId: controllerId, after: { dateKey: reportDateKey } } });
-        result.dailyReportsCreated++;
+      if (snapshot.reportRequired) {
+        const reportKey = `daily-crm:${reportDateKey}:${row.managerId}`;
+        const existingReport = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: reportKey } }, select: { id: true } });
+        if (!existingReport) {
+          const task = await tx.calendarTask.create({ data: {
+            companyId, workflowKey: reportKey, workflow: CalendarTaskWorkflow.DAILY_CRM_REPORT,
+            title: `CRM-отчёт за ${formatDate(reportDateKey)}`, description: dailyReportDescription(row, reportDateKey),
+            type: "TASK", priority: "IMPORTANT", dueAt, assigneeId: row.managerId, creatorId: controllerId,
+            acknowledgementRequired: true,
+          } });
+          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "DAILY_CRM_ASSIGNED", actorId: controllerId, after: { dateKey: reportDateKey } } });
+          result.dailyReportsCreated++;
+        }
       }
       const orientationKey = `platform-orientation:v1:${row.managerId}`;
       const existingOrientation = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: orientationKey } }, select: { id: true } });

@@ -69,6 +69,8 @@ export default function RouteShell({
   const role = session?.user.role as Role | undefined;
   const accountRole = (session?.user.accountRole || role) as Role | undefined;
   const founder = accountRole === "DIRECTOR";
+  const workScheduleRoute = pathname.startsWith("/settings/work-schedule");
+  const canManageWorkSchedule = founder || accountRole === "OPERATIONS_DIRECTOR";
   const [grantedPermissions, setGrantedPermissions] = useState<Permission[] | null>(null);
   const permissionByHref: Partial<Record<string, Permission>> = {
     "/clients": "clients",
@@ -152,8 +154,8 @@ export default function RouteShell({
     };
     const permission = required[first];
     const selfPayroll = first === "payroll" && accountRole !== "PARTNER";
-    if (permission && !selfPayroll && !(first === "sales-plan" && role === "MANAGER") && !grantedPermissions.includes(permission)) router.replace("/");
-  }, [accountRole, founder, grantedPermissions, pathname, role, router]);
+    if (permission && !selfPayroll && !(first === "sales-plan" && role === "MANAGER") && !(workScheduleRoute && canManageWorkSchedule) && !grantedPermissions.includes(permission)) router.replace("/");
+  }, [accountRole, canManageWorkSchedule, founder, grantedPermissions, pathname, role, router, workScheduleRoute]);
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) =>
@@ -175,6 +177,7 @@ export default function RouteShell({
       <Header
         onOpenMenu={() => setOpen(true)}
         canManageSettings={canManageSettings}
+        canManageWorkSchedule={canManageWorkSchedule}
       />
       <div className="flex min-h-0 flex-1">
         {open && (
