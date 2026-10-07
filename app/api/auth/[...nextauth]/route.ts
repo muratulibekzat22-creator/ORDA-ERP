@@ -4,7 +4,6 @@ import CredentialsProvider from "next-auth/providers/credentials";
 
 import { ACCOUNT_FAILURE_LIMIT, ACCOUNT_IP_FAILURE_LIMIT, AUTH_WINDOW_MS, IP_ABUSE_FAILURE_LIMIT, accountFailureWindowStart, accountIdentifierHash, normalizeAccountIdentifier, pruneAuthAudit, requestId, requestIpHash, userAgentClass, writeAuthAudit, type SafeAuthReason } from "@/lib/auth-security";
 import { productionLog } from "@/lib/observability";
-import { operationalAccessFailure } from "@/lib/operations/access";
 import { prisma } from "@/lib/prisma";
 import { enterTenantContext, runWithSystemAccess } from "@/lib/tenant-context";
 
@@ -35,11 +34,6 @@ export const authOptions: NextAuthOptions = {
         await audit(undefined, false, "RATE_LIMITED");
         throw new SafeAuthError("RATE_LIMITED");
       }
-      if (user?.lockedUntil && user.lockedUntil > new Date()) {
-        await bcrypt.compare(credentials.password, user.password);
-        await audit(user.id, false, "TEMPORARILY_LOCKED");
-        throw new SafeAuthError("TEMPORARILY_LOCKED");
-      }
       const passwordMatches = await bcrypt.compare(credentials.password, user?.password ?? DUMMY_PASSWORD_HASH);
       if (!user || !passwordMatches) {
         if (user?.active) {
@@ -48,17 +42,6 @@ export const authOptions: NextAuthOptions = {
         }
         await audit(user?.id, false, invalidReason);
         throw new SafeAuthError("INVALID_CREDENTIALS");
-      }
-      const operationalFailure = operationalAccessFailure(user);
-      if (operationalFailure) {
-        if (operationalFailure === "TEMPORARY_ACCESS_EXPIRED" && user.active) {
-          await runWithSystemAccess(() => prisma.user.update({
-            where: { id: user.id },
-            data: { active: false, sessionVersion: { increment: 1 } },
-          }));
-        }
-        await audit(user.id, false, operationalFailure);
-        throw new SafeAuthError(operationalFailure);
       }
       if (!user.active) {
         await audit(user.id, false, invalidReason);
@@ -69,12 +52,12 @@ export const authOptions: NextAuthOptions = {
         throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       await runWithSystemAccess(() => prisma.$transaction([
-        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null } }),
+        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null, mustChangePassword: false } }),
         prisma.authAuditEvent.create({ data: { userId: user.id, email: null, accountIdentifierHash: identifierHash, success: true, reason: "LOGIN_SUCCESS", requestId: correlationId, ipHash, userAgentClass: agentClass } }),
       ]));
       return {
         id: String(user.id), name: user.name, email: user.email, role: user.role,
-        sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
+        sessionVersion: user.sessionVersion, mustChangePassword: false,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
         temporaryAccess: user.temporaryAccess,
@@ -113,15 +96,8 @@ export const authOptions: NextAuthOptions = {
             companyId: true, company: { select: { active: true, slug: true, name: true, isDemo: true } },
           },
         }));
-        const operationalFailure = current ? operationalAccessFailure(current) : null;
-        if (current && operationalFailure === "TEMPORARY_ACCESS_EXPIRED" && current.active) {
-          await runWithSystemAccess(() => prisma.user.update({
-            where: { id: Number(token.id) },
-            data: { active: false, sessionVersion: { increment: 1 } },
-          }));
-        }
-        token.invalidReason = operationalFailure ?? undefined;
-        token.invalid = Boolean(operationalFailure) || !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
+        token.invalidReason = undefined;
+        token.invalid = !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
         if (current) {
           token.role = current.role; token.mustChangePassword = current.mustChangePassword;
           token.companyId = current.companyId; token.companySlug = current.company.slug;
@@ -137,7 +113,9 @@ export const authOptions: NextAuthOptions = {
     },
     session({ session, token }) {
       session.user.id = String(token.id ?? "");
-      session.user.role = token.invalid ? "" : String(token.role ?? "");
+      const accountRole = token.invalid ? "" : String(token.role ?? "");
+      session.user.accountRole = accountRole;
+      session.user.role = accountRole === "OPERATIONS_DIRECTOR" ? "DIRECTOR" : accountRole;
       session.user.mustChangePassword = token.invalid ? false : token.mustChangePassword === true;
       session.user.companyId = Number(token.companyId ?? 0);
       session.user.companySlug = String(token.companySlug ?? "");
