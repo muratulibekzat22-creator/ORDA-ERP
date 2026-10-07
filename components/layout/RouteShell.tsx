@@ -41,13 +41,12 @@ const sections = [
 
 const founderSections = [
   { title: "Главное", items: [["/", "Картина бизнеса", LayoutDashboard]] },
-  { title: "Контроль", items: [["/sales-plan", "План продаж", TrendingUp], ["/orders", "Заказы", ClipboardList], ["/clients", "Заявки", Users]] },
-  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/reports", "Отчёты", BarChart3], ["/employees", "Сотрудники", UserCog], ["/marketing", "Маркетинг", Megaphone]] },
+  { title: "Контроль", items: [["/sales-plan", "План продаж", TrendingUp], ["/orders", "Заказы", ClipboardList], ["/clients", "Заявки", Users], ["/measurements", "Замеры", Ruler], ["/reports", "Отчёты", BarChart3]] },
+  { title: "Компания", items: [["/finance", "Финансы", Wallet], ["/employees", "Сотрудники", UserCog], ["/marketing", "Маркетинг", Megaphone]] },
   { title: "Система", items: [["/settings", "Настройки", Settings]] },
 ] as const;
 
 const founderSecondary = [
-  ["/measurements", "Замеры", Ruler],
   ["/catalog", "Каталог изделий", Images],
   ["/calendar", "Календарь", CalendarDays],
   ["/production", "Производство", Factory],
