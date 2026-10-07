@@ -61,11 +61,8 @@ export async function POST(request: Request, { params }: Context) {
   if ("response" in key) return key.response;
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    if (body.action === "receive")
-      return NextResponse.json(
-        await receivePurchaseBatch(
-          id,
-          Array.isArray(body.lines)
+    if (body.action === "receive") {
+      const lines = Array.isArray(body.lines)
             ? body.lines.map((line) => ({
                 lineId: Number((line as Record<string, unknown>).lineId),
                 receivedQuantity: Number(
@@ -75,10 +72,31 @@ export async function POST(request: Request, { params }: Context) {
                   (line as Record<string, unknown>).rejectedQuantity ?? 0,
                 ),
               }))
-            : [],
-          actor(auth.session!),
-        ),
-      );
+            : [];
+      const locationId = Number(body.locationId);
+      const supplierDocumentDate = body.supplierDocumentDate ? new Date(String(body.supplierDocumentDate)) : undefined;
+      const receivedAt = body.receivedAt ? new Date(String(body.receivedAt)) : undefined;
+      if (!Number.isInteger(locationId) || locationId <= 0 || (supplierDocumentDate && Number.isNaN(supplierDocumentDate.getTime())) || (receivedAt && Number.isNaN(receivedAt.getTime())))
+        return NextResponse.json({ error: "Укажите место хранения и корректные даты" }, { status: 400 });
+      const payload = {
+        batchId: id,
+        locationId,
+        lines,
+        supplierDocumentNumber: typeof body.supplierDocumentNumber === "string" ? body.supplierDocumentNumber.trim().slice(0, 120) : undefined,
+        supplierDocumentDate: supplierDocumentDate?.toISOString(),
+        receivedAt: receivedAt?.toISOString(),
+        note: typeof body.note === "string" ? body.note.trim().slice(0, 1000) : undefined,
+      };
+      return NextResponse.json(await receivePurchaseBatch(id, lines, actor(auth.session!), {
+        locationId,
+        supplierDocumentNumber: payload.supplierDocumentNumber,
+        supplierDocumentDate,
+        receivedAt,
+        note: payload.note,
+        key: key.key,
+        requestHash: createRequestHash(payload),
+      }));
+    }
     if (body.action === "finalize")
       return NextResponse.json(
         await finalizePurchaseBatch(

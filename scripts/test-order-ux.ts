@@ -126,7 +126,7 @@ assert.match(routeShell, /"\/marketing", "Маркетинг"/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));
-for (const label of ["Исполнение", "Добавить оплату", "Редактировать", "Подробнее"])
+for (const label of ["Исполнение", "Принять оплату", "Редактировать", "Подробнее"])
   assert.match(workspace, new RegExp(label));
 for (const removed of ["ORDER_STAGE_LABELS", "projectOrderStage", "Внутренние технические этапы"])
   assert.doesNotMatch(workspace, new RegExp(removed));

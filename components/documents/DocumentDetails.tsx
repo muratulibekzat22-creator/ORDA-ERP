@@ -6,7 +6,9 @@ import {
   Download,
   ExternalLink,
   History,
+  Printer,
   RefreshCw,
+  Share2,
   Upload,
 } from "lucide-react";
 import Link from "next/link";
@@ -64,6 +66,13 @@ type DocumentDetail = {
   client: { id: number; name: string; phone: string } | null;
   order: { id: number; number: string } | null;
   payment: PaymentData | null;
+  receiptDocument: {
+    id: number;
+    displayNumber: string;
+    verificationToken: string;
+    publicAccessEnabled: boolean;
+    status: string;
+  } | null;
   author: { id: number; name: string } | null;
   versions: Version[];
   auditEvents: Audit[];
@@ -91,6 +100,7 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
   const canSignPackage = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(
     session?.user.role ?? "",
   );
+  const canManageReceiptLink = ["DIRECTOR", "OPERATIONS_DIRECTOR"].includes(session?.user.role ?? "");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,6 +197,65 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
     setSaving(false);
   }
 
+  async function generateBusinessPdf() {
+    if (!document) return;
+    setSaving(true);
+    setError("");
+    const response = await fetch(`/api/documents/${document.id}/generate-pdf`, {
+      method: "POST",
+    });
+    const payload = (await response.json()) as { error?: string };
+    if (!response.ok)
+      setError(payload.error ?? "Не удалось сформировать PDF");
+    else await load();
+    setSaving(false);
+  }
+
+  function printPdf(versionId: number) {
+    const target = window.open(
+      `/api/document-versions/${versionId}`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    if (!target) setError("Разрешите всплывающие окна для печати документа.");
+  }
+
+  async function shareReceipt() {
+    if (!document?.receiptDocument?.publicAccessEnabled) {
+      setError("Клиентская ссылка этой квитанции отключена.");
+      return;
+    }
+    const url = `${window.location.origin}/verify/payment-receipt/${document.receiptDocument.verificationToken}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Квитанция ${document.receiptDocument.displayNumber}`,
+          url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+      }
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setError("Не удалось поделиться ссылкой на квитанцию.");
+    }
+  }
+
+  async function toggleReceiptAccess() {
+    if (!document?.receiptDocument) return;
+    setSaving(true);
+    setError("");
+    const response = await fetch(`/api/payment-receipts/${document.receiptDocument.id}/access`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !document.receiptDocument.publicAccessEnabled }),
+    });
+    const payload = await response.json() as { error?: string };
+    if (!response.ok) setError(payload.error ?? "Не удалось изменить клиентскую ссылку");
+    else await load();
+    setSaving(false);
+  }
+
   if (loading)
     return <main className="p-4 text-slate-400 md:p-8">Загрузка документа…</main>;
   if (!document)
@@ -204,6 +273,13 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
   const payment = document.payment ?? document.snapshot;
   const contractPdfReady =
     document.type === DocumentType.CONTRACT && current?.pdfStatus === "READY";
+  const generatedPdf =
+    current?.contentType === "application/pdf" &&
+    ([
+      DocumentType.PAYMENT_RECEIPT,
+      DocumentType.OUTGOING_INVOICE,
+      DocumentType.REFUND_CONFIRMATION,
+    ] as DocumentType[]).includes(document.type);
 
   return (
     <main className="min-w-0 p-4 md:p-8">
@@ -312,6 +388,45 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
                         Скачать DOCX
                       </a>
                     </>
+                  ) : generatedPdf ? (
+                    <>
+                      <a
+                        target="_blank"
+                        href={`/api/document-versions/${current.id}`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white"
+                      >
+                        <ExternalLink size={17} />
+                        {document.type === DocumentType.PAYMENT_RECEIPT
+                          ? "Квитанция"
+                          : "Открыть PDF"}
+                      </a>
+                      <a
+                        href={`/api/document-versions/${current.id}?download=1`}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                      >
+                        <Download size={17} />
+                        Скачать PDF
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => printPdf(current.id)}
+                        className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                      >
+                        <Printer size={17} />
+                        Распечатать
+                      </button>
+                      {document.type === DocumentType.PAYMENT_RECEIPT &&
+                      document.receiptDocument ? (
+                        <><button
+                            type="button"
+                            onClick={() => void shareReceipt()}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-700 px-4 font-medium text-white"
+                          >
+                            <Share2 size={17} />
+                            Поделиться
+                          </button>{canManageReceiptLink ? <button type="button" disabled={saving} onClick={() => void toggleReceiptAccess()} className="min-h-11 rounded-xl border border-slate-600 px-4 font-medium text-white disabled:opacity-50">{document.receiptDocument.publicAccessEnabled ? "Отключить клиентскую ссылку" : "Включить клиентскую ссылку"}</button> : null}</>
+                      ) : null}
+                    </>
                   ) : (
                     <>
                       <a
@@ -333,6 +448,27 @@ export default function DocumentDetails({ documentId }: { documentId: number }) 
                   )}
                 </div>
               )}
+              {!current &&
+              ([
+                DocumentType.PAYMENT_RECEIPT,
+                DocumentType.OUTGOING_INVOICE,
+                DocumentType.REFUND_CONFIRMATION,
+              ] as DocumentType[]).includes(document.type) ? (
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => void generateBusinessPdf()}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 font-medium text-white disabled:opacity-50"
+                  >
+                    <RefreshCw size={17} />
+                    {saving ? "Формирование..." : "Сформировать PDF"}
+                  </button>
+                  <p className="mt-3 text-sm text-slate-400">
+                    Повтор формирует только файл; платёж или складская операция не создаются заново.
+                  </p>
+                </div>
+              ) : null}
               {document.type === DocumentType.CONTRACT &&
                 current?.pdfStatus !== "READY" && (
                   <p className="mt-4 rounded-xl border border-amber-800 bg-amber-950/20 p-3 text-sm text-amber-200">
@@ -610,6 +746,7 @@ function sourceLabel(value: DocumentSource) {
     UPLOADED: "Загружен",
     GENERATED_ORDER: "Сформирован из заказа",
     GENERATED_PROPOSAL: "КП",
+    GENERATED_WAREHOUSE: "Складская операция",
     MEASUREMENT_ATTACHMENT: "Замер",
     ORDER_ATTACHMENT: "Вложение заказа",
   }[value];

@@ -241,8 +241,106 @@ export async function getOrder(id: number) {
         },
       },
       payments: {
-        include: { partner: { select: { id: true, name: true } } },
+        include: {
+          partner: { select: { id: true, name: true } },
+          registeredBy: { select: { id: true, name: true } },
+          parts: {
+            select: { id: true, method: true, amount: true, reference: true },
+            orderBy: { id: "asc" },
+          },
+          receipt: {
+            select: {
+              id: true,
+              displayNumber: true,
+              status: true,
+              verificationToken: true,
+              publicAccessEnabled: true,
+              documentId: true,
+              createdAt: true,
+              document: {
+                select: {
+                  currentVersion: true,
+                  versions: {
+                    select: { id: true, version: true, fileName: true },
+                    orderBy: { version: "desc" },
+                    take: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
         orderBy: [{ operationDate: "desc" }, { id: "desc" }],
+      },
+      items: {
+        select: {
+          id: true,
+          materialId: true,
+          skuSnapshot: true,
+          nameSnapshot: true,
+          variantSnapshot: true,
+          unitSnapshot: true,
+          quantity: true,
+          unitPrice: true,
+          discount: true,
+          lineTotal: true,
+          stockTracked: true,
+          reservedQuantity: true,
+          issuedQuantity: true,
+          returnedQuantity: true,
+          position: true,
+          reservations: {
+            select: {
+              id: true,
+              quantity: true,
+              consumed: true,
+              status: true,
+              location: { select: { id: true, name: true } },
+            },
+            orderBy: { id: "asc" },
+          },
+        },
+        orderBy: [{ position: "asc" }, { id: "asc" }],
+      },
+      warehouseShipments: {
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          shippedAt: true,
+          recipientName: true,
+          documentId: true,
+          location: { select: { id: true, name: true } },
+          issuedBy: { select: { id: true, name: true } },
+          document: { select: { id: true, number: true, currentVersion: true } },
+          lines: {
+            select: {
+              id: true,
+              orderItemId: true,
+              quantity: true,
+              lineTotal: true,
+              returnLines: {
+                select: { id: true, quantity: true, condition: true },
+                orderBy: { id: "asc" },
+              },
+            },
+          },
+        },
+        orderBy: [{ shippedAt: "desc" }, { id: "desc" }],
+      },
+      warehouseReturns: {
+        select: {
+          id: true,
+          number: true,
+          acceptedAt: true,
+          reason: true,
+          documentId: true,
+          document: { select: { id: true, number: true } },
+          lines: {
+            select: { id: true, orderItemId: true, quantity: true, condition: true },
+          },
+        },
+        orderBy: [{ acceptedAt: "desc" }, { id: "desc" }],
       },
       partnerAssignmentHistory: {
         include: { author: { select: { name: true } } },

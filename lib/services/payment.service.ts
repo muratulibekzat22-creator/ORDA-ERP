@@ -1,5 +1,6 @@
 import { PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireTenantIdentity } from "@/lib/tenant-context";
 import { hasProductionPrice } from "@/lib/orders/production-price";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf, voidPaymentReceipt } from "@/lib/services/payment-receipt.service";
@@ -30,6 +31,7 @@ type CreateOperationInput = {
   partnerPayoutPurpose?: PartnerPayoutPurpose;
   idempotencyKey?: string;
   requestHash?: string;
+  parts?: Array<{ method: string; amount: number; reference?: string }>;
 };
 
 const SERIALIZABLE_RETRIES = 5;
@@ -76,15 +78,62 @@ function operationKind(type: string) {
 }
 
 function orderInclude() {
-  return { order: { include: { client: true, partner: true } }, partner: true } as const;
+  return {
+    order: { include: { client: true, partner: true } },
+    partner: true,
+    registeredBy: { select: { id: true, name: true } },
+    parts: { select: { id: true, method: true, amount: true, reference: true }, orderBy: { id: "asc" as const } },
+    refunds: {
+      where: { type: "REFUND" },
+      select: { id: true, amount: true, operationDate: true },
+      orderBy: { operationDate: "asc" as const },
+    },
+    documents: {
+      select: {
+        id: true,
+        type: true,
+        number: true,
+        status: true,
+        currentVersion: true,
+        versions: {
+          select: { id: true, version: true, fileName: true },
+          orderBy: { version: "desc" as const },
+          take: 1,
+        },
+      },
+      orderBy: { id: "desc" as const },
+    },
+    receipt: {
+      select: {
+        id: true,
+        displayNumber: true,
+        status: true,
+        verificationToken: true,
+        publicAccessEnabled: true,
+        documentId: true,
+        createdAt: true,
+        document: {
+          select: {
+            currentVersion: true,
+            versions: {
+              select: { id: true, version: true, fileName: true },
+              orderBy: { version: "desc" as const },
+              take: 1,
+            },
+          },
+        },
+      },
+    },
+  } as const;
 }
 
-export async function getPayments(filters: { type?: string; orderId?: number; partnerId?: number; from?: Date; to?: Date } = {}) {
+export async function getPayments(filters: { type?: string; orderId?: number; partnerId?: number; managerUserId?: number; from?: Date; to?: Date } = {}) {
   return prisma.payment.findMany({
     where: {
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.orderId ? { orderId: filters.orderId } : {}),
       ...(filters.partnerId ? { OR: [{ partnerId: filters.partnerId }, { order: { partnerId: filters.partnerId } }] } : {}),
+      ...(filters.managerUserId ? { order: { managerUserId: filters.managerUserId, deletedAt: null } } : {}),
       ...((filters.from || filters.to) ? { operationDate: { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lte: filters.to } : {}) } } : {}),
     },
     include: orderInclude(),
@@ -99,6 +148,21 @@ export async function getPayment(id: number) {
 /** Creates the ledger record and updates an order balance atomically when the operation affects it. */
 export async function createFinanceOperation(input: CreateOperationInput) {
   if (input.type === "EXPENSE") throw new Error("EXPENSE_USE_COMPANY_LEDGER");
+  const amount = new Prisma.Decimal(input.amount);
+  if (!amount.isPositive() || amount.decimalPlaces() > 2) throw new Error("INVALID_AMOUNT");
+  const parts = input.parts?.length
+    ? input.parts.map((part) => ({
+        method: part.method.trim(),
+        amount: new Prisma.Decimal(part.amount),
+        reference: part.reference?.trim() || undefined,
+      }))
+    : [{ method: input.method.trim(), amount, reference: undefined }];
+  if (!parts.length || parts.some((part) => !part.method || !part.amount.isPositive() || part.amount.decimalPlaces() > 2))
+    throw new Error("INVALID_PAYMENT_PARTS");
+  if (!parts.reduce((sum, part) => sum.add(part.amount), new Prisma.Decimal(0)).equals(amount))
+    throw new Error("PAYMENT_PARTS_MISMATCH");
+  const paymentMethod = parts.length > 1 ? "MIXED" : parts[0].method;
+  const { companyId } = requireTenantIdentity();
   for (let attempt = 0; attempt < SERIALIZABLE_RETRIES; attempt += 1) try {
     const result = await prisma.$transaction(async (tx) => {
       if (input.idempotencyKey && input.requestHash) {
@@ -136,9 +200,9 @@ export async function createFinanceOperation(input: CreateOperationInput) {
         data: {
           orderId: input.orderId,
           partnerId,
-          amount: input.amount,
+          amount,
           type,
-          method: input.method,
+          method: paymentMethod,
           partnerPayoutPurpose: affectsPartner
             ? input.partnerPayoutPurpose ?? PartnerPayoutPurpose.OTHER
             : null,
@@ -147,6 +211,15 @@ export async function createFinanceOperation(input: CreateOperationInput) {
           author: input.author,
           idempotencyKey: input.idempotencyKey,
           requestHash: input.requestHash,
+          registeredByUserId: input.authorId,
+          parts: {
+            create: parts.map((part) => ({
+              companyId,
+              method: part.method,
+              amount: part.amount,
+              reference: part.reference,
+            })),
+          },
         },
       });
       if (type === "CLIENT_PAYMENT") await createPaymentReceiptRecord(tx, payment.id, input.authorId);
@@ -165,10 +238,10 @@ export async function createFinanceOperation(input: CreateOperationInput) {
       const mirrors = order && (affectsClient || affectsPartner) ? await calculatedMirrors(tx, order.id) : null;
       const updatedOrder = mirrors ? await tx.order.update({ where: { id: order!.id }, data: { prepayment: mirrors.paid, balance: mirrors.balance, partnerPaid: mirrors.partnerPaid, partnerBalance: mirrors.partnerBalance, companyProfit: mirrors.companyProfit } }) : order;
       if (mirrors && order) {
-        await tx.orderEvent.create({ data: { orderId: order.id, title: type, description: `${input.amount} • ${input.method}${input.comment ? ` • ${input.comment}` : ""}`, user: input.author ?? "System", idempotencyKey: input.idempotencyKey ? `finance-event:${input.idempotencyKey}` : undefined, requestHash: input.requestHash } });
+        await tx.orderEvent.create({ data: { orderId: order.id, title: type, description: `${amount.toFixed(2)} • ${parts.map((part) => part.method).join(" + ")}${input.comment ? ` • ${input.comment}` : ""}`, user: input.author ?? "System", idempotencyKey: input.idempotencyKey ? `finance-event:${input.idempotencyKey}` : undefined, requestHash: input.requestHash } });
       }
       return { payment, order: updatedOrder, created: true };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 10_000, timeout: 20_000 });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
     if (!result) return null;
     if (operationKind(result.payment.type) === "CLIENT_PAYMENT") {
       try {
@@ -237,7 +310,7 @@ export async function adjustOrderAmount(input: { orderId: number; newAmount: num
 }
 
 // Kept for existing API consumers and business tests.
-export async function createPayment(data: { orderId: number; amount: number; method: string; type: string; comment?: string; author?: string; authorId?: number; idempotencyKey?: string; requestHash?: string }) {
+export async function createPayment(data: { orderId: number; amount: number; method: string; type: string; comment?: string; author?: string; authorId?: number; idempotencyKey?: string; requestHash?: string; parts?: Array<{ method: string; amount: number; reference?: string }> }) {
   const result = await createFinanceOperation({ ...data, type: "CLIENT_PAYMENT" });
   return result && { ...result, order: result.order! };
 }

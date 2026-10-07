@@ -29,7 +29,12 @@ export const DOCUMENT_CONTENT_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
 
-const financialTypes: DocumentType[] = [DocumentType.INVOICE, DocumentType.PAYMENT_RECEIPT];
+const financialTypes: DocumentType[] = [
+  DocumentType.INVOICE,
+  DocumentType.PAYMENT_RECEIPT,
+  DocumentType.OUTGOING_INVOICE,
+  DocumentType.REFUND_CONFIRMATION,
+];
 const technicalTypes: DocumentType[] = [DocumentType.PROJECT, DocumentType.MEASUREMENT_SHEET, DocumentType.PHOTO, DocumentType.OTHER];
 const installerTypes: DocumentType[] = [...technicalTypes, DocumentType.ACT];
 const measurableTypes: DocumentType[] = [DocumentType.MEASUREMENT_SHEET, DocumentType.PHOTO, DocumentType.PROJECT, DocumentType.OTHER];
@@ -44,6 +49,15 @@ const documentInclude = {
   client: { select: { id: true, name: true, phone: true, managerUserId: true, manager: true } },
   order: { select: { id: true, number: true, clientId: true } },
   payment: { select: { id: true, amount: true, method: true, operationDate: true, type: true } },
+  receiptDocument: {
+    select: {
+      id: true,
+      displayNumber: true,
+      verificationToken: true,
+      publicAccessEnabled: true,
+      status: true,
+    },
+  },
   author: { select: { id: true, name: true } },
   versions: { select: { id: true, version: true, fileName: true, contentType: true, size: true, checksum: true, comment: true, createdAt: true, pdfFileName: true, pdfContentType: true, pdfSize: true, pdfChecksum: true, pdfStatus: true, pdfGeneratedAt: true, pdfErrorCode: true, uploadedBy: { select: { id: true, name: true } } }, orderBy: { version: "desc" as const } },
   auditEvents: { select: { id: true, action: true, before: true, after: true, comment: true, createdAt: true, actor: { select: { id: true, name: true } } }, orderBy: { createdAt: "desc" as const }, take: 100 },
@@ -68,7 +82,17 @@ async function entityScope(actor: DocumentActor): Promise<{ client: Prisma.Clien
     return { client: {}, order: {} };
   if (actor.role === Role.MANAGER) {
     const client = { active: true, deletedAt: null, OR: [{ managerUserId: actor.userId }, { managerUserId: null, manager: actor.name }] };
-    return { client, order: { deletedAt: null, client } };
+    return {
+      client,
+      order: {
+        deletedAt: null,
+        OR: [
+          { managerUserId: actor.userId },
+          { managerUserId: null, manager: actor.name },
+          { client },
+        ],
+      },
+    };
   }
   if (actor.role === Role.PRODUCTION) return { client: { id: -1 }, order: { deletedAt: null, productions: { some: { masterUserId: actor.userId, archivedAt: null } } } };
   if (actor.role === Role.INSTALLER) return { client: { id: -1 }, order: { deletedAt: null, installation: { installerUserId: actor.userId } } };
@@ -214,7 +238,7 @@ async function readFile(file: File) {
   return { fileName, bytes, checksum: createHash("sha256").update(bytes).digest("hex") };
 }
 
-const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "DOG", CUSTOMER_MEMO: "MEMO", PREPAYMENT_CONFIRMATION: "LEGACY-PREPAY", CLOSING_ACT: "LEGACY-CLOSE", WARRANTY: "LEGACY-WARRANTY", FINAL_PAYMENT_CONFIRMATION: "LEGACY-FINAL", ESTIMATE: "SM", PROJECT: "PRJ", MEASUREMENT_SHEET: "ZM", ACT: "ACT", INVOICE: "SCH", PAYMENT_RECEIPT: "PAY", PHOTO: "PHOTO", OTHER: "DOC" };
+const numberPrefixes: Record<DocumentType, string> = { OFFER: "KP", CONTRACT: "DOG", CUSTOMER_MEMO: "MEMO", PREPAYMENT_CONFIRMATION: "LEGACY-PREPAY", CLOSING_ACT: "LEGACY-CLOSE", WARRANTY: "LEGACY-WARRANTY", FINAL_PAYMENT_CONFIRMATION: "LEGACY-FINAL", ESTIMATE: "SM", PROJECT: "PRJ", MEASUREMENT_SHEET: "ZM", ACT: "ACT", INVOICE: "SCH", PAYMENT_RECEIPT: "PAY", GOODS_RECEIPT: "IN", OUTGOING_INVOICE: "OUT", GOODS_RETURN: "RET", STOCK_TRANSFER: "MOV", REFUND_CONFIRMATION: "REF", PHOTO: "PHOTO", OTHER: "DOC" };
 
 function canCreate(actor: DocumentActor, type: DocumentType) {
   if (legacyReadOnlyTypes.has(type)) return false;

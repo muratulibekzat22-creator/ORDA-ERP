@@ -10,7 +10,7 @@ function safeName(name: string) {
   return name.normalize("NFKC").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "photo";
 }
 
-export async function uploadWarehousePhoto(materialId: number, file: File, idempotencyKey: string) {
+export async function uploadWarehousePhoto(materialId: number, file: File, idempotencyKey: string, actorId: number) {
   const material = await prisma.material.findUnique({ where: { id: materialId }, select: { id: true, mainImagePath: true } });
   if (!material) return null;
   const bytes = Buffer.from(await file.arrayBuffer());
@@ -19,7 +19,10 @@ export async function uploadWarehousePhoto(materialId: number, file: File, idemp
   if (material.mainImagePath === pathname) return { id: materialId, photoUrl: `/api/warehouse/${materialId}/photo`, replayed: true };
   const blob = await put(pathname, bytes, { access: "private", contentType: file.type, addRandomSuffix: false, allowOverwrite: false, maximumSizeInBytes: MAX_WAREHOUSE_PHOTO_SIZE });
   try {
-    await prisma.material.update({ where: { id: materialId }, data: { mainImagePath: blob.pathname, mainImageName: file.name, mainImageType: file.type, mainImageSize: bytes.length } });
+    await prisma.$transaction(async (tx) => {
+      await tx.material.update({ where: { id: materialId }, data: { mainImagePath: blob.pathname, mainImageName: file.name, mainImageType: file.type, mainImageSize: bytes.length } });
+      await tx.materialChangeAudit.create({ data: { materialId, field: "photo", oldValue: material.mainImagePath, newValue: blob.pathname, reason: "Замена фотографии варианта", actorId } });
+    });
   } catch (error) {
     await del(blob.pathname).catch(() => undefined);
     throw error;

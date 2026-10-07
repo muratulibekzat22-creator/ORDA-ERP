@@ -26,6 +26,8 @@ export type OrderTabData = {
   designStyle: string;
   designNotes: string;
   paymentMethod: string;
+  orderKind?: string;
+  fulfillmentStatus?: string;
   manager: string;
   amount: NumericValue;
   prepayment: NumericValue;
@@ -153,6 +155,66 @@ export type OrderTabData = {
       totalSale: NumericValue;
       comment: string | null;
       enabled: boolean;
+    }>;
+  }>;
+  items?: Array<{
+    id: number;
+    materialId: number | null;
+    skuSnapshot: string;
+    nameSnapshot: string;
+    variantSnapshot: string | null;
+    unitSnapshot: string;
+    quantity: NumericValue;
+    unitPrice: NumericValue;
+    discount: NumericValue;
+    lineTotal: NumericValue;
+    stockTracked: boolean;
+    reservedQuantity: NumericValue;
+    issuedQuantity: NumericValue;
+    returnedQuantity: NumericValue;
+    position: number;
+    reservations: Array<{
+      id: number;
+      quantity: number;
+      consumed: number;
+      status: string;
+      location: { id: number; name: string } | null;
+    }>;
+  }>;
+  warehouseShipments?: Array<{
+    id: number;
+    number: string;
+    status: string;
+    shippedAt: Date | string;
+    recipientName: string | null;
+    documentId: number;
+    location: { id: number; name: string };
+    issuedBy: { id: number; name: string };
+    document: { id: number; number: string; currentVersion: number };
+    lines: Array<{
+      id: number;
+      orderItemId: number;
+      quantity: NumericValue;
+      lineTotal: NumericValue;
+      returnLines: Array<{
+        id: number;
+        quantity: NumericValue;
+        condition: string;
+      }>;
+    }>;
+  }>;
+  warehouseReturns?: Array<{
+    id: number;
+    number: string;
+    acceptedAt: Date | string;
+    reason: string;
+    documentId: number;
+    document: { id: number; number: string };
+    lines: Array<{
+      id: number;
+      orderItemId: number;
+      quantity: NumericValue;
+      condition: string;
     }>;
   }>;
 };

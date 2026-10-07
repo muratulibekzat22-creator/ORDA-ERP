@@ -20,6 +20,7 @@ import { type ReactNode, useState } from "react";
 
 import ProjectPayments from "@/components/project/ProjectPayments";
 import PaymentFollowUpPanel from "@/components/orders/PaymentFollowUpPanel";
+import OrderWarehousePanel from "@/components/orders/OrderWarehousePanel";
 import { orderBoardLabel } from "@/lib/orders/board";
 import { orderDeadline } from "@/lib/orders/presentation";
 import { PAYMENT_METHODS, paymentMethodLabel } from "@/lib/orders/registration";
@@ -152,6 +153,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
   const canAddPayment =
     !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canSeeFinance = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
+  const canManageWarehouse = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
   const deadline = orderDeadline({
     promisedAt: order.promisedAt,
     productionDeadline: order.productionDeadline,
@@ -251,7 +253,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
               ) : null}
               {canAddPayment ? (
                 <button type="button" onClick={() => setPaymentOpen((value) => !value)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-600">
-                  <CircleDollarSign size={17} /> Добавить оплату
+                  <CircleDollarSign size={17} /> Принять оплату
                 </button>
               ) : null}
               {canEdit ? (
@@ -302,6 +304,17 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
             {director ? <Field title="Маржа" value={order.economy?.profit.netMarginPercent == null ? "Недостаточно данных" : `${Number(order.economy.profit.netMarginPercent).toLocaleString("ru-RU")} %`} /> : null}
           </div>
         </section>
+      ) : null}
+
+      {canManageWarehouse && order.items?.length ? (
+        <OrderWarehousePanel
+          orderId={order.id}
+          clientName={order.client.name}
+          items={order.items}
+          shipments={order.warehouseShipments ?? []}
+          readOnly={archived}
+          canReturn={operationalManagement}
+        />
       ) : null}
 
       {["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role) ? <PaymentFollowUpPanel orderId={order.id} balance={Number(order.balance)} clientName={order.client.name} clientPhone={order.client.phone} readOnly={archived} canCancelOverdue={operationalManagement} /> : null}

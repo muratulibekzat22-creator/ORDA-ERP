@@ -134,6 +134,9 @@ export async function getAuthorizedOrder(id: number) {
       }),
       settlement: partnerOnlySettlement(order.settlement, order.partnerId),
       calculations: [],
+      items: [],
+      warehouseShipments: [],
+      warehouseReturns: [],
     } as unknown as typeof order;
 
   // Server Components serialize their props into the RSC response. Remove
@@ -174,6 +177,9 @@ export async function getAuthorizedOrder(id: number) {
     balance: [Role.PRODUCTION, Role.INSTALLER, Role.MEASURER].includes(role)
       ? undefined
       : order.balance,
+    items: role === Role.MANAGER ? order.items : [],
+    warehouseShipments: role === Role.MANAGER ? order.warehouseShipments : [],
+    warehouseReturns: role === Role.MANAGER ? order.warehouseReturns : [],
     calculations: order.calculations.map((calculation) => ({
       id: calculation.id,
       orderId: calculation.orderId,

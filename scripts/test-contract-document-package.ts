@@ -40,6 +40,7 @@ import {
 
 const tag = `contract-package-${Date.now()}`;
 const operationDate = new Date("2026-08-10T08:30:00.000Z");
+const paymentOperationDate = new Date();
 
 function actor(user: { id: number; name: string; role: Role }): DocumentActor {
   return { userId: user.id, name: user.name, role: user.role };
@@ -275,7 +276,7 @@ async function main() {
       method: "Kaspi перевод",
       author: director.name,
       authorId: director.id,
-      operationDate,
+      operationDate: paymentOperationDate,
       idempotencyKey: `${tag}-${suffix}`,
       requestHash: `${tag}-${suffix}-hash`,
     });
@@ -329,7 +330,7 @@ async function main() {
   assert.equal(firstSnapshot.totals.remaining, 99_000_000);
   assert.equal(firstSnapshot.payment.methodLabel, "Kaspi перевод");
   assert.equal(paymentMethodLabel("Банковская карта"), "Банковская карта");
-  assert(firstSnapshot.items.every((item) => !/себестоимость|цех|марж/u.test(item)));
+  assert(firstSnapshot.items.every((item) => !/себестоимость|цех|марж/u.test(typeof item === "string" ? item : item.name)));
 
   const publicReceipt = await paymentReceiptPublicProjection(secondReceipt.verificationToken);
   assert(publicReceipt);
