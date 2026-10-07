@@ -63,8 +63,12 @@ export async function deleteClientFromWork(
 ) {
   return prisma.$transaction(
     async (tx) => {
-      const client = await tx.client.findUnique({
+      let client = await tx.client.findUnique({
         where: { id: clientId },
+        select: clientLifecycleSelect,
+      });
+      if (!client) client = await tx.client.findUnique({
+        where: { id: clientId, deletedAt: { not: null } },
         select: clientLifecycleSelect,
       });
       if (!client) throw new ClientLifecycleError("NOT_FOUND");

@@ -15,6 +15,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+import { runWithSystemAccess } from "@/lib/tenant-context";
 import {
   ClientLifecycleError,
   deleteClientFromWork,
@@ -64,8 +65,8 @@ async function client(manager: { id: number; name: string }, suffix: string) {
   const created = await prisma.client.create({
     data: {
       name: `${tag}-${suffix}`,
-      phone: `+7701${String(clientIds.length + 1).padStart(7, "0")}`,
-      whatsapp: `+7701${String(clientIds.length + 1).padStart(7, "0")}`,
+      phone: `+75${tag.slice(-8)}${clientIds.length + 1}`,
+      whatsapp: `+75${tag.slice(-8)}${clientIds.length + 1}`,
       city: "Алматы",
       address: "ул. Тестовая, 1",
       manager: manager.name,
@@ -128,6 +129,7 @@ async function prepareForCompletion(
 }
 
 async function cleanup() {
+  return runWithSystemAccess(async () => {
   const measurements = await prisma.measurement.findMany({ where: { clientId: { in: clientIds } }, select: { id: true } });
   const measurementIds = measurements.map((row) => row.id);
   const tasks = await prisma.calendarTask.findMany({ where: { OR: [{ clientId: { in: clientIds } }, { creatorId: { in: userIds } }, { assigneeId: { in: userIds } }] }, select: { id: true } });
@@ -172,6 +174,7 @@ async function cleanup() {
     await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
   }
   if (userIds.length) await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+  });
 }
 
 async function main() {
@@ -199,12 +202,12 @@ async function main() {
     await assert.rejects(() => deleteClientFromWork({ ...otherManagerActor }, application.id), (error) => error instanceof ClientLifecycleError && error.message === "NOT_FOUND");
     const deleted = await deleteClientFromWork(managerActor, application.id, "Дубликат заявки");
     assert.equal(deleted.alreadyDeleted, false);
-    const [deletedClient, cancelledMeasurement, cancelledTask, keptCompleted] = await Promise.all([
+    const [deletedClient, cancelledMeasurement, cancelledTask, keptCompleted] = await runWithSystemAccess(() => Promise.all([
       prisma.client.findUniqueOrThrow({ where: { id: application.id } }),
       prisma.measurement.findUniqueOrThrow({ where: { id: scheduled.measurement.id } }),
       prisma.calendarTask.findUniqueOrThrow({ where: { id: scheduled.measurement.calendarTaskId! } }),
       prisma.measurement.findUniqueOrThrow({ where: { id: completed.id } }),
-    ]);
+    ]));
     assert.equal(deletedClient.active, false);
     assert.ok(deletedClient.deletedAt);
     assert.equal(cancelledMeasurement.status, MeasurementStatus.CANCELLED);
