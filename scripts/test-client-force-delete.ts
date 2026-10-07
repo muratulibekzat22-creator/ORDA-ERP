@@ -45,6 +45,8 @@ async function main() {
     role: Role.MANAGER,
     name: manager.name,
   };
+  let safeClientId = 0;
+  let safeOrderId = 0;
   let blockedClientId = 0;
   let blockedOrderId = 0;
   try {
@@ -59,6 +61,7 @@ async function main() {
         status: "QUALIFIED",
       },
     });
+    safeClientId = client.id;
     const calculation = await prisma.leadCalculation.create({
       data: {
         clientId: client.id,
@@ -99,6 +102,7 @@ async function main() {
         managerUserId: manager.id,
       },
     });
+    safeOrderId = order.id;
     const task = await prisma.calendarTask.create({
       data: {
         title: `${tag}-measurement`,
@@ -141,24 +145,21 @@ async function main() {
         ),
       (error) =>
         error instanceof ClientDeletionError &&
-        error.message === "CONFIRMATION_REQUIRED",
+        error.message === "PHYSICAL_DELETE_FORBIDDEN",
     );
-    await forceDeleteClient(
-      {
-        clientId: client.id,
-        confirmation: "УДАЛИТЬ",
-        reason: "Ошибочно созданная заявка",
-      },
-      directorActor,
+    await assert.rejects(
+      () => forceDeleteClient(
+        {
+          clientId: client.id,
+          confirmation: "УДАЛИТЬ",
+          reason: "Ошибочно созданная заявка",
+        },
+        directorActor,
+      ),
+      (error) => error instanceof ClientDeletionError && error.message === "PHYSICAL_DELETE_FORBIDDEN",
     );
-    assert.equal(await prisma.client.count({ where: { id: client.id } }), 0);
-    assert.equal(await prisma.order.count({ where: { id: order.id } }), 0);
-    assert.equal(
-      await prisma.clientDeletionAudit.count({
-        where: { deletedClientId: client.id, actorId: director.id },
-      }),
-      1,
-    );
+    assert.equal(await prisma.client.count({ where: { id: client.id } }), 1);
+    assert.equal(await prisma.order.count({ where: { id: order.id } }), 1);
 
     const blockedClient = await prisma.client.create({
       data: {
@@ -212,14 +213,14 @@ async function main() {
         ),
       (error) =>
         error instanceof ClientDeletionError &&
-        error.message === "FINANCIAL_OR_OPERATIONAL_RECORDS_EXIST",
+        error.message === "PHYSICAL_DELETE_FORBIDDEN",
     );
     assert.equal(
       await prisma.client.count({ where: { id: blockedClient.id } }),
       1,
     );
     console.log(
-      "client force-delete preview, Director RBAC, immutable audit and financial blocker checks passed",
+      "client deletion preview, Director RBAC, financial blockers and physical-delete prohibition passed",
     );
   } finally {
     if (blockedOrderId) {
@@ -228,6 +229,14 @@ async function main() {
     }
     if (blockedClientId)
       await prisma.client.deleteMany({ where: { id: blockedClientId } });
+    if (safeClientId) {
+      await prisma.measurement.deleteMany({ where: { clientId: safeClientId } });
+      await prisma.calendarTask.deleteMany({ where: { clientId: safeClientId } });
+      await prisma.commercialProposal.deleteMany({ where: { clientId: safeClientId } });
+      await prisma.leadCalculation.deleteMany({ where: { clientId: safeClientId } });
+      if (safeOrderId) await prisma.order.deleteMany({ where: { id: safeOrderId } });
+      await prisma.client.deleteMany({ where: { id: safeClientId } });
+    }
     await prisma.clientDeletionAudit.deleteMany({
       where: { actorId: director.id },
     });

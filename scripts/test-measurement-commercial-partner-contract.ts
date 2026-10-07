@@ -34,7 +34,12 @@ async function main() {
   assert(service.includes("createPartnerControlMeasurement") && service.includes("PARTNER_CONTROL_MEASUREMENT_CREATED") && service.includes("controlMeasurementCompletedAt"), "partner control measurement persistence/audit missing");
   assert(service.includes("partnerId: partner.id") && service.includes('lifecycle: { not: "CANCELLED" }'), "partner control measurement is not scoped to assigned active orders");
   assert(sheetRoute.includes('url.searchParams.get("lang") === "uz"') && sheetPdf.includes("O‘LCHOV VARAQASI"), "Uzbek measurement sheet missing");
-  assert(proxy.includes('PARTNER: ["partner"]') && proxy.includes('firstSegment !== "partner"'), "partner can navigate to general ERP pages");
+  assert(proxy.includes('PARTNER: ["partner", "orders"]'), "partner allowlist is missing");
+  assert.match(
+    proxy,
+    /role === "PARTNER"[\s\S]*?!\["partner", "orders", "proposal", "change-password"\]\.includes\(firstSegment\)[\s\S]*?redirect\(new URL\("\/partner", request\.url\)\)/u,
+    "partner can navigate to general ERP pages",
+  );
   const partnerOrderProjection = partnerRoute.slice(partnerRoute.indexOf("orders: orders.map"), partnerRoute.indexOf("activeOrders:"));
   for (const secret of ["amount: order.amount", "prepayment: order.prepayment", "balance: order.balance", "companyProfit", "calculations:"])
     assert(!partnerOrderProjection.includes(secret), `partner projection exposes ${secret}`);

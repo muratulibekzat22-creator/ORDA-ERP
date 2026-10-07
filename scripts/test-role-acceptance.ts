@@ -223,7 +223,8 @@ const calendar = read("lib/services/calendar.service.ts");
 includesAll(
   calendar,
   [
-    "if (actor.role === Role.DIRECTOR) return {}",
+    "if (canManageTeamTasks(actor.role)) return {}",
+    "role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR",
     "if (actor.role === Role.MANAGER)",
     "return { assigneeId: actor.userId }",
     "actor.userId === assigneeId",

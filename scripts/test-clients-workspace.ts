@@ -129,9 +129,10 @@ if (!measurementsApi.includes("MEASUREMENT_PERFORMER_ROLES") || !measurementsApi
 if (!card.includes("#measurement-scheduling")) throw new Error("Client card must expose measurement scheduling action");
 for (const marker of ["Удалить заявку из рабочего списка?", "Связанные замеры и история будут сохранены", "Удалить только заявку из рабочего списка", "Причина (необязательно)"])
   if (!card.includes(marker)) throw new Error(`Application soft-delete UI misses ${marker}`);
-for (const marker of ["previewClientForceDelete", "forceDeleteClient"])
-  if (!forceDeleteApi.includes(marker)) throw new Error(`Force-delete API misses ${marker}`);
-if (!forceDeleteService.includes("Role.DIRECTOR")) throw new Error("Force-delete service is not Director-only");
+if (!forceDeleteApi.includes("previewClientForceDelete")) throw new Error("Deletion impact preview is missing");
+if (!forceDeleteApi.includes("PHYSICAL_DELETE_FORBIDDEN") || !forceDeleteService.includes('throw new ClientDeletionError("PHYSICAL_DELETE_FORBIDDEN")'))
+  throw new Error("Physical client deletion must stay disabled in both API and service");
+if (/\.(?:delete|deleteMany)\(/u.test(forceDeleteService)) throw new Error("Client deletion service still contains destructive database calls");
 for (const blocker of ["PAYMENTS", "PARTNER_PAYOUTS", "PAYROLL_PAYMENTS", "FINANCE_LEDGER"])
   if (!forceDeleteService.includes(blocker)) throw new Error(`Force-delete financial blocker misses ${blocker}`);
 console.log("clients workspace checks passed");

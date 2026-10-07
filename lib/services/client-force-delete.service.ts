@@ -1,4 +1,3 @@
-import { del } from "@/lib/private-blob";
 import { Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -59,61 +58,11 @@ export async function previewClientForceDelete(clientId: number, actor: ClientDe
   return { client: preview.client, impact: preview.impact, blocked: preview.blockers.length > 0, blockers: preview.blockers };
 }
 
-export async function forceDeleteClient(input: { clientId: number; confirmation: string; reason: string }, actor: ClientDeletionActor) {
-  if (actor.role !== Role.DIRECTOR) throw new ClientDeletionError("FORBIDDEN");
-  if (input.confirmation !== "УДАЛИТЬ") throw new ClientDeletionError("CONFIRMATION_REQUIRED");
-  const reason = input.reason.trim();
-  if (reason.length < 5) throw new ClientDeletionError("REASON_REQUIRED");
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${80_000_000 + input.clientId})`;
-    const preview = await buildImpact(tx, input.clientId);
-    if (preview.blockers.length) throw new ClientDeletionError("FINANCIAL_OR_OPERATIONAL_RECORDS_EXIST");
-    const { orderIds, measurementIds, documentIds, accrualIds } = preview.ids;
-    if (documentIds.length) {
-      await tx.documentAudit.deleteMany({ where: { documentId: { in: documentIds } } });
-      await tx.documentVersion.deleteMany({ where: { documentId: { in: documentIds } } });
-      await tx.attachment.deleteMany({ where: { documentId: { in: documentIds } } });
-      await tx.document.deleteMany({ where: { id: { in: documentIds } } });
-    }
-    if (measurementIds.length) {
-      await tx.measurementAudit.deleteMany({ where: { measurementId: { in: measurementIds } } });
-      await tx.measurementAttachment.deleteMany({ where: { measurementId: { in: measurementIds } } });
-    }
-    if (accrualIds.length) {
-      await tx.companyLedgerEntry.deleteMany({ where: { payrollAccrualId: { in: accrualIds } } });
-      await tx.payrollAccrual.deleteMany({ where: { id: { in: accrualIds }, reversalOfId: { not: null } } });
-      await tx.payrollAccrual.deleteMany({ where: { id: { in: accrualIds } } });
-    }
-    const taskWhere: Prisma.CalendarTaskWhereInput = { OR: [{ clientId: input.clientId }, ...(orderIds.length ? [{ orderId: { in: orderIds } }] : [])] };
-    const taskIds = (await tx.calendarTask.findMany({ where: taskWhere, select: { id: true } })).map((row) => row.id);
-    if (measurementIds.length) await tx.measurement.deleteMany({ where: { id: { in: measurementIds } } });
-    if (taskIds.length) { await tx.calendarTaskAudit.deleteMany({ where: { taskId: { in: taskIds } } }); await tx.calendarTask.deleteMany({ where: { id: { in: taskIds } } }); }
-    if (orderIds.length) {
-      await tx.financeAuditEvent.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.partnerAssignmentHistory.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.commercialAdjustment.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.orderBlocker.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.orderGateOverride.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.orderLifecycleEvent.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.orderInstallation.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.production.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.attachment.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.companyLedgerEntry.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.leadConversion.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.order.deleteMany({ where: { id: { in: orderIds } } });
-    }
-    await tx.priceApprovalRequest.deleteMany({ where: { clientId: input.clientId } });
-    await tx.leadFollowUp.deleteMany({ where: { clientId: input.clientId } });
-    await tx.leadConversion.deleteMany({ where: { clientId: input.clientId } });
-    await tx.commercialProposal.deleteMany({ where: { clientId: input.clientId } });
-    await tx.leadCalculation.deleteMany({ where: { clientId: input.clientId } });
-    await tx.client.delete({ where: { id: input.clientId } });
-    await tx.clientDeletionAudit.create({ data: { deletedClientId: input.clientId, clientSnapshot: preview.client, impact: preview.impact, reason, actorId: actor.userId } });
-    return preview;
-  }, { maxWait: 10_000, timeout: 30_000, isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  let blobCleanupFailed = 0;
-  if (result.blobPaths.length && process.env.BLOB_READ_WRITE_TOKEN) {
-    try { await del(result.blobPaths); } catch { blobCleanupFailed = result.blobPaths.length; }
-  }
-  return { deleted: true, impact: result.impact, blobCleanupFailed };
+export async function forceDeleteClient(
+  input: { clientId: number; confirmation: string; reason: string },
+  actor: ClientDeletionActor,
+): Promise<never> {
+  void input;
+  void actor;
+  throw new ClientDeletionError("PHYSICAL_DELETE_FORBIDDEN");
 }
