@@ -39,6 +39,10 @@ assert.match(service, /role: Role\.OPERATIONS_DIRECTOR/, "daily operations must 
 assert.match(service, /role: Role\.DIRECTOR[\s\S]*taskCreatorId = founders\[0\]\?\.id \?\? controllerId/, "generated employee tasks must come from the active founder account with a safe controller fallback");
 assert.match(service, /creatorId: taskCreatorId/, "generated tasks must preserve founder provenance");
 assert.match(service, /source: "FOUNDER_AUTOMATION"/, "founder-created automation must be explicit in task audit events");
+assert.match(service, /company-order-readiness:/, "company-owned incomplete orders need a dedicated operations-director task");
+assert.match(service, /COMPANY_ORDER_READINESS_ASSIGNED/, "company-owned order task needs an audit event");
+assert.match(service, /assigneeId: controllerId, creatorId: taskCreatorId/, "company-owned order task must be assigned to operations and created by the founder");
+assert.match(service, /workflowKey: \{ startsWith: "order-readiness:" \}/, "daily consolidation must not overwrite per-order advisory tasks");
 assert.match(service, /не блокирует выплату/, "data-quality tasks must remain advisory instead of blocking payroll");
 assert.doesNotMatch(service, /выплата зарплаты не формируются/, "legacy payroll-blocking instruction must be removed");
 assert.match(service, /readinessDueAt/, "readiness tasks must receive a clear next-day deadline");

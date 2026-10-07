@@ -225,15 +225,13 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
       where: {
         companyId,
         deletedAt: null,
-        responsibleType: OrderResponsibleType.EMPLOYEE,
-        managerUserId: { not: null },
         OR: [
           { lifecycle: { notIn: ["COMPLETED", "CANCELLED"] } },
           { orderDateNeedsReview: true, lifecycle: { not: "CANCELLED" } },
         ],
       },
       select: {
-        id: true, number: true, managerUserId: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true,
+        id: true, number: true, responsibleType: true, managerUserId: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true,
         promisedAt: true, productionDeadline: true, orderDateNeedsReview: true, clientId: true,
         client: { select: { name: true, phone: true, city: true } },
         installation: { select: { scheduledAt: true } },
@@ -373,11 +371,11 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
         if (deadline && deadline < now)
           issues.push(`Просрочен срок ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty" }).format(deadline)}`);
         return { order, issues, deadline };
-      }).filter((item) => item.order.managerUserId === row.managerId && item.issues.length > 0);
+      }).filter((item) => item.order.responsibleType === OrderResponsibleType.EMPLOYEE && item.order.managerUserId === row.managerId && item.issues.length > 0);
       const measurementsToClose = overdueMeasurements.filter((measurement) => measurement.client.managerUserId === row.managerId);
       if (attention.length || measurementsToClose.length) {
         const readinessKey = `order-readiness:${todayKey}:${row.managerId}`;
-        const activeOlderTask = await tx.calendarTask.findFirst({ where: { companyId, assigneeId: row.managerId, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION, status: { in: [...ACTIVE_TASK_STATUSES] } }, select: { id: true, title: true, description: true, dueAt: true } });
+        const activeOlderTask = await tx.calendarTask.findFirst({ where: { companyId, assigneeId: row.managerId, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION, workflowKey: { startsWith: "order-readiness:" }, status: { in: [...ACTIVE_TASK_STATUSES] } }, select: { id: true, title: true, description: true, dueAt: true } });
         const existingToday = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: readinessKey } }, select: { id: true, title: true, description: true, dueAt: true } });
         const title = `Проверить данные: заказы ${attention.length} · замеры ${measurementsToClose.length}`;
         const description = [
@@ -408,6 +406,42 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
           await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "ORDER_READINESS_REFRESHED", actorId: taskCreatorId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id), source: "FOUNDER_AUTOMATION" } } });
           result.readinessTasksUpdated++;
         }
+      }
+    }
+    const companyAttention = orders.map((order) => {
+      const issues = orderDataGaps(order);
+      const deadline = order.promisedAt ?? order.productionDeadline ?? order.installation?.scheduledAt ?? null;
+      if (deadline && deadline < now)
+        issues.push(`Просрочен срок ${new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty" }).format(deadline)}`);
+      return { order, issues, deadline };
+    }).filter((item) => (item.order.responsibleType === OrderResponsibleType.COMPANY || item.order.managerUserId === null) && item.issues.length > 0);
+    if (companyAttention.length) {
+      const readinessKey = `company-order-readiness:${todayKey}:${controllerId}`;
+      const existingToday = await tx.calendarTask.findUnique({ where: { companyId_workflowKey: { companyId, workflowKey: readinessKey } }, select: { id: true, title: true, description: true, dueAt: true } });
+      const activeOlderTask = await tx.calendarTask.findFirst({ where: { companyId, assigneeId: controllerId, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION, workflowKey: { startsWith: "company-order-readiness:" }, status: { in: [...ACTIVE_TASK_STATUSES] } }, select: { id: true, title: true, description: true, dueAt: true } });
+      const title = `Проверить заказы компании без ответственного: ${companyAttention.length}`;
+      const description = [
+        "Задача создана от кабинета основателя. Проверьте заказы, которые пока закреплены за компанией или не имеют персонального менеджера.",
+        "Работа по заказам продолжается: ORDA ничего не удаляет и не блокирует. Назначьте подходящего ответственного и дополните только подтверждённые данные; если данных нет, укажите в результате один конкретный вопрос основателю.",
+        "",
+        ...companyAttention.map(({ order, issues, deadline }) => `• ${order.number} · ${order.client.name} · срок: ${deadline ? new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty" }).format(deadline) : "не указан"} · исправить: ${issues.join(", ")} · /orders/${order.id}`),
+        "",
+        "После назначения ответственного и заполнения подтверждённых данных отправьте результат задачи: кто назначен, что дополнено и какой вопрос остался.",
+      ].join("\n");
+      const target = existingToday ?? activeOlderTask;
+      if (!target) {
+        const task = await tx.calendarTask.create({ data: {
+          companyId, workflowKey: readinessKey, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
+          title, description,
+          type: "TASK", priority: "URGENT", dueAt: readinessDueAt, assigneeId: controllerId, creatorId: taskCreatorId,
+          acknowledgementRequired: true,
+        } });
+        await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "COMPANY_ORDER_READINESS_ASSIGNED", actorId: taskCreatorId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: companyAttention.map((item) => item.order.id), source: "FOUNDER_AUTOMATION" } } });
+        result.readinessTasksCreated++;
+      } else if (target.title !== title || target.description !== description || target.dueAt.getTime() !== readinessDueAt.getTime()) {
+        await tx.calendarTask.update({ where: { id: target.id }, data: { title, description, dueAt: readinessDueAt } });
+        await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "COMPANY_ORDER_READINESS_REFRESHED", actorId: taskCreatorId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: companyAttention.map((item) => item.order.id), source: "FOUNDER_AUTOMATION" } } });
+        result.readinessTasksUpdated++;
       }
     }
     return { ...result, reportDateKey, dueAt, readinessDueAt, taskCreatorId };
