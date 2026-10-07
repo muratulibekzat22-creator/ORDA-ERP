@@ -8,23 +8,40 @@ ALTER TYPE "DocumentType" ADD VALUE IF NOT EXISTS 'STOCK_TRANSFER';
 ALTER TYPE "DocumentType" ADD VALUE IF NOT EXISTS 'REFUND_CONFIRMATION';
 ALTER TYPE "DocumentSource" ADD VALUE IF NOT EXISTS 'GENERATED_WAREHOUSE';
 
-CREATE TYPE "ProductKind" AS ENUM ('STOCK', 'CUSTOM', 'SERVICE');
-CREATE TYPE "WarehouseShipmentStatus" AS ENUM ('POSTED', 'RETURNED_PARTIALLY', 'RETURNED', 'CANCELLED');
-CREATE TYPE "StockCondition" AS ENUM ('SELLABLE', 'DAMAGED');
+DO $$
+BEGIN
+  CREATE TYPE "ProductKind" AS ENUM ('STOCK', 'CUSTOM', 'SERVICE');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  CREATE TYPE "WarehouseShipmentStatus" AS ENUM ('POSTED', 'RETURNED_PARTIALLY', 'RETURNED', 'CANCELLED');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  CREATE TYPE "StockCondition" AS ENUM ('SELLABLE', 'DAMAGED');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 ALTER TABLE "Client"
-  ADD COLUMN "isWalkIn" BOOLEAN NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS "isWalkIn" BOOLEAN NOT NULL DEFAULT false;
 
 ALTER TABLE "Order"
-  ADD COLUMN "orderKind" TEXT NOT NULL DEFAULT 'CUSTOM',
-  ADD COLUMN "fulfillmentStatus" TEXT NOT NULL DEFAULT 'NOT_APPLICABLE';
+  ADD COLUMN IF NOT EXISTS "orderKind" TEXT NOT NULL DEFAULT 'CUSTOM',
+  ADD COLUMN IF NOT EXISTS "fulfillmentStatus" TEXT NOT NULL DEFAULT 'NOT_APPLICABLE';
 
-DROP INDEX "Document_type_number_key";
-CREATE UNIQUE INDEX "Document_companyId_type_number_key"
+DROP INDEX IF EXISTS "Document_type_number_key";
+CREATE UNIQUE INDEX IF NOT EXISTS "Document_companyId_type_number_key"
   ON "Document"("companyId", "type", "number");
 
-DROP INDEX "Material_lookupKey_key";
-DROP INDEX "Material_code_key";
+DROP INDEX IF EXISTS "Material_lookupKey_key";
+DROP INDEX IF EXISTS "Material_code_key";
 DROP INDEX IF EXISTS "Material_code_idx";
 
 ALTER TABLE "Material"
@@ -32,21 +49,21 @@ ALTER TABLE "Material"
   ALTER COLUMN "purchasePrice" DROP NOT NULL,
   ALTER COLUMN "sellingPrice" DROP DEFAULT,
   ALTER COLUMN "sellingPrice" DROP NOT NULL,
-  ADD COLUMN "productKind" "ProductKind" NOT NULL DEFAULT 'STOCK',
-  ADD COLUMN "variantGroup" TEXT,
-  ADD COLUMN "color" TEXT,
-  ADD COLUMN "finish" TEXT,
-  ADD COLUMN "materialSpec" TEXT,
-  ADD COLUMN "dimensions" TEXT,
-  ADD COLUMN "applicability" TEXT,
-  ADD COLUMN "searchAliases" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-  ADD COLUMN "quantityPrecision" INTEGER NOT NULL DEFAULT 0,
-  ADD COLUMN "availabilityConfirmed" BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN "quantityKnown" BOOLEAN NOT NULL DEFAULT true;
+  ADD COLUMN IF NOT EXISTS "productKind" "ProductKind" NOT NULL DEFAULT 'STOCK',
+  ADD COLUMN IF NOT EXISTS "variantGroup" TEXT,
+  ADD COLUMN IF NOT EXISTS "color" TEXT,
+  ADD COLUMN IF NOT EXISTS "finish" TEXT,
+  ADD COLUMN IF NOT EXISTS "materialSpec" TEXT,
+  ADD COLUMN IF NOT EXISTS "dimensions" TEXT,
+  ADD COLUMN IF NOT EXISTS "applicability" TEXT,
+  ADD COLUMN IF NOT EXISTS "searchAliases" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  ADD COLUMN IF NOT EXISTS "quantityPrecision" INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS "availabilityConfirmed" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS "quantityKnown" BOOLEAN NOT NULL DEFAULT true;
 
-CREATE UNIQUE INDEX "Material_companyId_lookupKey_key"
+CREATE UNIQUE INDEX IF NOT EXISTS "Material_companyId_lookupKey_key"
   ON "Material"("companyId", "lookupKey");
-CREATE UNIQUE INDEX "Material_companyId_code_key"
+CREATE UNIQUE INDEX IF NOT EXISTS "Material_companyId_code_key"
   ON "Material"("companyId", "code");
 
 ALTER TABLE "Payment"
@@ -63,7 +80,7 @@ ALTER TABLE "MaterialMovement"
   ADD COLUMN "fromLocationId" INTEGER,
   ADD COLUMN "toLocationId" INTEGER;
 
-DROP INDEX "MaterialReservation_orderId_materialId_key";
+DROP INDEX IF EXISTS "MaterialReservation_orderId_materialId_key";
 ALTER TABLE "MaterialReservation"
   ADD COLUMN "locationId" INTEGER,
   ADD COLUMN "orderItemId" INTEGER;
