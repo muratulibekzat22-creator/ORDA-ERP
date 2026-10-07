@@ -15,6 +15,14 @@ function run(script) {
 
 run("prisma:generate");
 
+if (
+  process.env.DATABASE_URL?.trim() &&
+  process.env.RUN_DATABASE_MIGRATIONS === "true"
+) {
+  console.log("Applying additive database migrations for this release.");
+  run("prisma:migrate:deploy");
+}
+
 if (process.env.DATABASE_URL?.trim() && process.env.RUN_RELEASE_PREPARATION === "true") {
   run("seed:training");
   run("prepare:director:release");
