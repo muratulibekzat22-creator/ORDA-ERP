@@ -17,15 +17,15 @@ export function marketingMonthRange(value?: string | Date) {
 }
 
 export function effectiveMarketingMetrics<T extends { channel: string; note?: string | null }>(metrics: T[]) {
-  const automatic = metrics.find(
+  const hasAutomatic = metrics.some(
     (metric) =>
       metric.channel === "Instagram / Meta" &&
       metric.note?.startsWith("Автосинхронизация Meta"),
   );
-  if (!automatic) return metrics;
+  if (!hasAutomatic) return metrics;
   return metrics.filter(
     (metric) =>
-      metric === automatic ||
+      (metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta")) ||
       !/instagram|facebook|meta|таргет/iu.test(metric.channel),
   );
 }

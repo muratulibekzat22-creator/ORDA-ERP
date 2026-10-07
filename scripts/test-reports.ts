@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { changePercent, paymentEffect, resolveReportRange, safePercent } from "../lib/reports";
+import { changePercent, paymentEffect, resolveReportRange, safePercent, supportsMarketingReport } from "../lib/reports";
 
 const now = new Date("2026-08-08T18:30:00.000Z"); // 23:30 in Almaty
 const today = resolveReportRange(new URLSearchParams("period=today"), now);
@@ -30,6 +30,10 @@ assert.equal(changePercent(10, 0), null);
 assert.equal(paymentEffect("CLIENT_PAYMENT", 1_000), 1_000);
 assert.equal(paymentEffect("REFUND", 250), -250);
 assert.equal(paymentEffect("PARTNER_PAYOUT", 500), 0);
+assert.equal(supportsMarketingReport(month), true);
+assert.equal(supportsMarketingReport(week), false);
+assert.equal(supportsMarketingReport(resolveReportRange(new URLSearchParams("period=custom&dateFrom=2026-09-01&dateTo=2026-09-30"), now)), true);
+assert.equal(supportsMarketingReport(custom), false);
 
 const service = readFileSync(new URL("../lib/services/report.service.ts", import.meta.url), "utf8");
 const companyFinance = readFileSync(new URL("../lib/services/management-finance.service.ts", import.meta.url), "utf8");
@@ -56,6 +60,8 @@ assert.match(service, /item\.order \? historicalOwner\(item\.order, item\.visitD
 assert.match(service, /currentOrderScope: Prisma\.OrderWhereInput = \{ companyId, deletedAt: null/, "order aggregates must always enforce tenant scope");
 assert.match(service, /clientScope: Prisma\.ClientWhereInput = \{ companyId, active: true, deletedAt: null/, "client analytics must always enforce tenant scope");
 assert.match(service, /prisma\.payment\.findMany\(\{ where: \{ companyId, deletedAt: null, operationDate:/, "cash totals must be tenant-scoped and exclude soft-deleted payment rows");
+assert.match(service, /getMarketingAnalytics/, "leadership reports must include the Meta → WhatsApp funnel");
+assert.match(service, /supportsMarketingReport\(period\)/, "partial weekly Meta totals must not be presented as exact period totals");
 assert.doesNotMatch(service, /operationDate: range\(period\.start, period\.end\), order: activeOrder/, "cash history must not disappear when an order is later cancelled");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
 assert.match(service, /prisma\.payrollCalculationSnapshot\.findMany/, "confirmed payroll must come from calculation snapshots");
@@ -66,6 +72,9 @@ const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", i
 assert.match(reportPage, /Заказы \/ заявки периода/);
 assert.match(reportPage, /Замеры назначены/);
 assert.match(reportPage, /Замеры завершены/);
+assert.match(reportPage, /Meta → WhatsApp → ORDA/);
+assert.match(reportPage, /Сырые WhatsApp-переписки в базу не загружаются/);
+assert.match(reportPage, /Получено по Meta-клиентам/);
 assert.doesNotMatch(reportPage, /function EmployeeKpiReport/, "management reports must not duplicate the full employee KPI workspace");
 assert.match(reportPage, /Зарплата к выплате по проведённым начислениям/);
 assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: MIN_PRODUCTION_PRICE \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");

@@ -7,6 +7,7 @@ import {
   metaFunnelKpis,
 } from "@/lib/marketing-funnel";
 import { prisma } from "@/lib/prisma";
+import { paymentEffect } from "@/lib/reports";
 
 type MarketingMetric = {
   channel: string;
@@ -30,6 +31,7 @@ export type MarketingAnalytics = {
   metaMeasurements: number;
   metaOrders: number;
   metaRevenue: number;
+  metaReceived: number;
   costPerConversation: number | null;
   cpl: number | null;
   cac: number | null;
@@ -81,7 +83,7 @@ export async function getMarketingAnalytics(input: {
     { spend: 0, leads: 0, orders: 0, revenue: 0 },
   );
 
-  const [crmClients, metaSourceClients, crmOrders, proposalRows, measurementRows] = await Promise.all([
+  const [crmClients, metaSourceClients, crmOrders, proposalRows, measurementRows, paymentRows] = await Promise.all([
     prisma.client.findMany({
       where: {
         companyId: input.companyId,
@@ -135,6 +137,19 @@ export async function getMarketingAnalytics(input: {
       },
       select: { clientId: true },
     }),
+    prisma.payment.findMany({
+      where: {
+        companyId: input.companyId,
+        deletedAt: null,
+        operationDate: { gte: input.start, lt: input.end },
+        orderId: { not: null },
+      },
+      select: {
+        amount: true,
+        type: true,
+        order: { select: { clientId: true } },
+      },
+    }),
   ]);
 
   const crmTracked = crmClients.length > 0 || crmOrders.length > 0;
@@ -167,6 +182,9 @@ export async function getMarketingAnalytics(input: {
     (sum, order) => sum + Number(order.amount),
     0,
   );
+  const metaReceived = paymentRows
+    .filter((payment) => payment.order && metaClientIds.has(payment.order.clientId))
+    .reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0);
   const metaSpend = automaticMetaMetrics.reduce(
     (sum, metric) => sum + Number(metric.spend),
     0,
@@ -204,6 +222,7 @@ export async function getMarketingAnalytics(input: {
     metaMeasurements,
     metaOrders: metaOrders.length,
     metaRevenue,
+    metaReceived,
     costPerConversation:
       automaticMetaTracked ? metaKpis.costPerConversation : null,
     cpl:

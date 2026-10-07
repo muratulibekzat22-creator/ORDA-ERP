@@ -1,12 +1,13 @@
 import { OrderResponsibleType, Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
+import { changePercent, money, paymentEffect, resolveReportRange, safePercent, supportsMarketingReport, type ReportsReadModel } from "@/lib/reports";
 import { orderDataGaps } from "@/lib/orders/completeness";
 import { hasProductionPrice, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 import { projectOrderStatus, USER_ORDER_STATUS_LABELS } from "@/lib/orders/presentation";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import { isOperatingProfitExpense, isAdditionalProfitIncome } from "@/lib/finance/profit-entry";
 import { loadOwnershipChanges, ownerAt } from "@/lib/services/handover-attribution";
+import { getMarketingAnalytics } from "@/lib/services/marketing-analytics.service";
 import {
   approvedPayrollAccountingTotals,
   latestApprovedPayrollSnapshots,
@@ -24,6 +25,13 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   if (!leadership(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
   const period = resolveReportRange(params);
   const requestedManager = params.get("managerId");
+  const marketingPromise = leadership(actor.role) && !requestedManager && supportsMarketingReport(period)
+    ? getMarketingAnalytics({
+        companyId,
+        start: period.start,
+        end: new Date(period.end.getTime() + 1),
+      })
+    : Promise.resolve(null);
   let scope: Scope = {};
   if (actor.role === Role.MANAGER) {
     const user = await prisma.user.findFirst({ where: { id: actor.id, companyId, role: Role.MANAGER }, select: { name: true, payrollProfile: { select: { position: true } } } });
@@ -222,6 +230,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     .filter((item) => hasProductionPrice(item.partnerPrice, item.partnerAgreedAt))
     .reduce((sum, item) => sum + money(item.partnerPrice), 0);
   const partnerPaid = payments.reduce((sum, item) => sum + (item.type === "PARTNER_PAYOUT" ? money(item.amount) : item.type === "PARTNER_PAYOUT_REVERSAL" ? -money(item.amount) : 0), 0);
+  const marketing = await marketingPromise;
   return {
     generatedAt: new Date().toISOString(), role: actor.role as ReportsReadModel["role"],
     period: { preset: period.preset, dateFrom: period.dateFrom, dateTo: period.dateTo, timezone: period.timezone, start: period.start.toISOString(), end: period.end.toISOString(), previousStart: period.previousStart.toISOString(), previousEnd: period.previousEnd.toISOString() },
@@ -245,6 +254,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     ], managers,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     production: production.map((item) => ({ stage: item.stage, count: item._count._all })),
+    ...(marketing ? { marketing } : {}),
     orders: visibleOrders.map((item) => {
       const paid = item.payments.reduce((sum, payment) => sum + paymentEffect(payment.type, payment.amount), 0);
       const productionPrice = hasProductionPrice(item.partnerPrice, item.partnerAgreedAt)

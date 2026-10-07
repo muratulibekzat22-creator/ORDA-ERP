@@ -12,6 +12,7 @@ import {
 import { prisma } from "../lib/prisma";
 import { marketingMonthRange } from "../lib/marketing";
 import { getMarketingAnalytics } from "../lib/services/marketing-analytics.service";
+import { getReportsReadModel } from "../lib/services/report.service";
 import { runWithSystemAccess, runWithTenant } from "../lib/tenant-context";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
@@ -45,18 +46,19 @@ async function main() {
       },
     });
     try {
-      const [task, metric, report, vacancy] = await Promise.all([
+      const [task, metric, marketingReport, vacancy] = await Promise.all([
         prisma.managementMarketingTask.create({
           data: { title: `${tag}-task`, priority: 3, createdById: director.id },
         }),
         prisma.managementMarketingMetric.create({
           data: {
             metricMonth: testDate(1),
-            channel: tag,
+            channel: "Instagram / Meta",
             spend: 100_000,
             leads: 20,
             orders: 4,
             revenue: 800_000,
+            note: "Автосинхронизация Meta · test · 10 начатых переписок · 20 событий lead в Meta",
             createdById: director.id,
           },
         }),
@@ -91,7 +93,7 @@ async function main() {
       assert.equal(updatedTask.status, ManagementMarketingTaskStatus.DONE);
       assert.equal(updatedVacancy.candidates, 3);
       const reviewedReport = await prisma.managementMarketingReport.update({
-        where: { id: report.id },
+        where: { id: marketingReport.id },
         data: { status: ManagementMarketingReportStatus.APPROVED, directorComment: "Принято", reviewedById: director.id, reviewedAt: new Date() },
       });
       assert.equal(reviewedReport.status, ManagementMarketingReportStatus.APPROVED);
@@ -158,8 +160,22 @@ async function main() {
           clientId: crmClient.id,
           measurer: director.name,
           visitDate: testDate(11, 10),
+          completedAt: testDate(11, 12),
+          status: "COMPLETED",
           city: "Test",
           address: "Test",
+        },
+      });
+      const payment = await prisma.payment.create({
+        data: {
+          orderId: crmOrder.id,
+          amount: 175_000,
+          type: "CLIENT_PAYMENT",
+          method: "TEST",
+          operationDate: testDate(13),
+          author: director.name,
+          registeredByUserId: director.id,
+          idempotencyKey: `${tag}-payment`,
         },
       });
       const january = marketingMonthRange(testMonth);
@@ -196,13 +212,32 @@ async function main() {
       assert.equal(metaAnalytics.metaMeasurements, 1, "Meta measurements are missing from the funnel");
       assert.equal(metaAnalytics.metaOrders, 1);
       assert.equal(metaAnalytics.metaRevenue, 350_000);
+      assert.equal(metaAnalytics.metaReceived, 175_000, "cash received from Meta-attributed clients is missing");
       assert.equal(metaAnalytics.costPerConversation, 10_000);
       assert.equal(metaAnalytics.cpl, 100_000, "Meta spend / attributed CRM leads is incorrect");
       assert.equal(metaAnalytics.cac, 100_000, "Meta spend / attributed CRM orders is incorrect");
       assert.equal(metaAnalytics.roas, 3.5, "Meta attributed revenue / spend is incorrect");
       assert.equal(metaAnalytics.metaConversion, 100);
       assert.equal(metaAnalytics.metaAttributionMissing, false);
+      const lastDay = new Date(Date.UTC(testYear, testMonthIndex + 1, 0)).getUTCDate();
+      const report = await getReportsReadModel(new URLSearchParams({
+        period: "custom",
+        dateFrom: `${testMonth}-01`,
+        dateTo: `${testMonth}-${String(lastDay).padStart(2, "0")}`,
+      }), { id: director.id, role: Role.OPERATIONS_DIRECTOR });
+      assert.equal(report.summary.leads.current, 1);
+      assert.equal(report.summary.measurements.current, 1);
+      assert.equal(report.summary.completedMeasurements.current, 1);
+      assert.equal(report.summary.orders.current, 1);
+      assert.equal(report.summary.received.current, 175_000);
+      assert.equal(report.marketing?.metaConversations, 10);
+      assert.equal(report.marketing?.metaCrmLeads, 1);
+      assert.equal(report.marketing?.metaProposals, 1);
+      assert.equal(report.marketing?.metaMeasurements, 1);
+      assert.equal(report.marketing?.metaOrders, 1);
+      assert.equal(report.marketing?.metaReceived, 175_000);
       await runWithSystemAccess(async () => {
+        await prisma.payment.delete({ where: { id: payment.id } });
         await prisma.measurement.delete({ where: { id: measurement.id } });
         await prisma.commercialProposal.delete({ where: { id: proposal.id } });
         await prisma.leadCalculation.delete({ where: { id: calculation.id } });
@@ -210,16 +245,29 @@ async function main() {
         await prisma.client.delete({ where: { id: crmClient.id } });
         await prisma.managementMarketingTask.delete({ where: { id: task.id } });
         await prisma.managementMarketingMetric.delete({ where: { id: metric.id } });
-        await prisma.managementMarketingReport.delete({ where: { id: report.id } });
+        await prisma.managementMarketingReport.delete({ where: { id: marketingReport.id } });
         await prisma.recruitmentVacancy.delete({ where: { id: vacancy.id } });
       });
       assert.equal(await prisma.managementMarketingTask.count({ where: { title: `${tag}-task` } }), 0);
     } finally {
       await runWithSystemAccess(async () => {
+        const clients = await prisma.client.findMany({ where: { managerUserId: director.id }, select: { id: true } });
+        const clientIds = clients.map((client) => client.id);
+        const orders = clientIds.length ? await prisma.order.findMany({ where: { clientId: { in: clientIds } }, select: { id: true } }) : [];
+        const orderIds = orders.map((order) => order.id);
+        if (orderIds.length) await prisma.payment.deleteMany({ where: { orderId: { in: orderIds } } });
+        if (clientIds.length) {
+          await prisma.measurement.deleteMany({ where: { clientId: { in: clientIds } } });
+          await prisma.commercialProposal.deleteMany({ where: { clientId: { in: clientIds } } });
+          await prisma.leadCalculation.deleteMany({ where: { clientId: { in: clientIds } } });
+          await prisma.order.deleteMany({ where: { clientId: { in: clientIds } } });
+          await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
+        }
         await prisma.managementMarketingTask.deleteMany({ where: { createdById: director.id } });
         await prisma.managementMarketingMetric.deleteMany({ where: { createdById: director.id } });
         await prisma.managementMarketingReport.deleteMany({ where: { authorId: director.id } });
         await prisma.recruitmentVacancy.deleteMany({ where: { createdById: director.id } });
+        await prisma.payment.deleteMany({ where: { registeredByUserId: director.id, method: "TEST" } });
         await prisma.employeePayrollProfile.deleteMany({ where: { userId: director.id } });
         await prisma.user.deleteMany({ where: { id: director.id } });
       });

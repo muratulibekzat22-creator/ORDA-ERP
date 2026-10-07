@@ -124,8 +124,11 @@ type ManagementPayload = {
     metaConversations: number;
     metaLeadActions: number;
     metaCrmLeads: number;
+    metaProposals: number;
+    metaMeasurements: number;
     metaOrders: number;
     metaRevenue: number;
+    metaReceived: number;
     costPerConversation: number | null;
     qualifiedShare: number | null;
     cpl: number | null;
@@ -520,8 +523,11 @@ function FounderDashboard({ data }: { data: ManagementPayload }) {
           <FounderEfficiency label="Расход Meta" value={data.marketing.metaSpendTracked ? money(data.marketing.metaSpend) : "—"} hint={data.marketing.metaSpendTracked ? "Автоматически из рекламного кабинета" : "Доступ Meta не подключён"}/>
           <FounderEfficiency label="Переписки Meta" value={String(data.marketing.metaConversations)} hint={`Lead-события Meta: ${data.marketing.metaLeadActions}`}/>
           <FounderEfficiency label="Заявки из WhatsApp/Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`}/>
+          <FounderEfficiency label="Клиенты с КП" value={String(data.marketing.metaProposals)} hint="Уникальные Meta-клиенты с КП"/>
+          <FounderEfficiency label="Замеры Meta-клиентов" value={String(data.marketing.metaMeasurements)} hint="Уникальные клиенты с замером"/>
           <FounderEfficiency label="Заказы из Meta" value={String(data.marketing.metaOrders)} hint={`Все заказы месяца: ${data.marketing.orders}`}/>
           <FounderEfficiency label="Сумма заказов из Meta" value={money(data.marketing.metaRevenue)} hint={`Все каналы: ${money(data.marketing.revenue)}`}/>
+          <FounderEfficiency label="Получено по Meta-клиентам" value={money(data.marketing.metaReceived)} hint="Фактические платежи выбранного периода"/>
           <FounderEfficiency label="Цена обращения" value={data.marketing.costPerConversation === null ? "—" : money(data.marketing.costPerConversation)} hint="Расход Meta / начатые переписки"/>
           <FounderEfficiency label="Цена лида CRM" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход Meta / CRM-лиды с источником Meta"/>
           <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход Meta / заказы из Meta"/>
@@ -672,8 +678,11 @@ function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload |
         <FounderEfficiency label="Расход Meta" value={data.marketing.metaSpendTracked ? money(data.marketing.metaSpend) : "—"} hint="Автоматически из рекламного кабинета" />
         <FounderEfficiency label="Переписки Meta" value={String(data.marketing.metaConversations)} hint={`Lead-события Meta: ${data.marketing.metaLeadActions}`} />
         <FounderEfficiency label="Заявки из WhatsApp/Meta" value={String(data.marketing.metaCrmLeads)} hint={`Все каналы CRM: ${data.marketing.leads}`} />
+        <FounderEfficiency label="Клиенты с КП" value={String(data.marketing.metaProposals)} hint="Уникальные Meta-клиенты с КП" />
+        <FounderEfficiency label="Замеры Meta-клиентов" value={String(data.marketing.metaMeasurements)} hint="Уникальные клиенты с замером" />
         <FounderEfficiency label="Заказы из Meta" value={String(data.marketing.metaOrders)} hint={`Все заказы месяца: ${data.marketing.orders}`} />
         <FounderEfficiency label="Сумма заказов из Meta" value={money(data.marketing.metaRevenue)} hint={`Все каналы: ${money(data.marketing.revenue)}`} />
+        <FounderEfficiency label="Получено по Meta-клиентам" value={money(data.marketing.metaReceived)} hint="Фактические платежи выбранного периода" />
         <FounderEfficiency label="Цена обращения" value={data.marketing.costPerConversation === null ? "—" : money(data.marketing.costPerConversation)} hint="Расход Meta / переписки" />
         <FounderEfficiency label="Цена лида CRM" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход Meta / лиды CRM из Meta" />
         <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход Meta / заказы из Meta" />

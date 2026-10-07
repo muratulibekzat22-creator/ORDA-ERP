@@ -40,6 +40,25 @@ export type ManagerReportRow = {
   conversion: number | null;
 };
 
+export type MarketingReportSummary = {
+  metaSpend: number;
+  metaConversations: number;
+  metaLeadActions: number;
+  metaCrmLeads: number;
+  metaProposals: number;
+  metaMeasurements: number;
+  metaOrders: number;
+  metaRevenue: number;
+  metaReceived: number;
+  costPerConversation: number | null;
+  cpl: number | null;
+  cac: number | null;
+  roas: number | null;
+  metaConversion: number | null;
+  metaSpendTracked: boolean;
+  metaAttributionMissing: boolean;
+};
+
 export type ReportsReadModel = {
   generatedAt: string;
   role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "MANAGER" | "ACCOUNTANT";
@@ -85,6 +104,7 @@ export type ReportsReadModel = {
   managers: ManagerReportRow[];
   trend: Array<{ date: string; salesAmount: number; received: number }>;
   production: Array<{ stage: string; count: number }>;
+  marketing?: MarketingReportSummary;
   orders: Array<{ id: number; number: string; client: string; manager: string; amount: number; productionPrice: number | null; grossMargin: number | null; payrollAccrued: number | null; received: number; remaining: number; status: string }>;
 };
 
@@ -137,3 +157,10 @@ export const money = (value: unknown) => Number(value ?? 0);
 export const isClientPayment = (type: string) => ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT"].includes(type);
 export const paymentEffect = (type: string, amount: unknown) => isClientPayment(type) ? money(amount) : type === "REFUND" ? -money(amount) : 0;
 export const isCancelled = (lifecycle: string) => lifecycle === "CANCELLED";
+
+export function supportsMarketingReport(range: Pick<ReportRange, "preset" | "dateFrom" | "dateTo">) {
+  if (["month", "quarter", "year"].includes(range.preset)) return true;
+  if (range.preset !== "custom" || !range.dateFrom.endsWith("-01")) return false;
+  const [year, month, day] = range.dateTo.split("-").map(Number);
+  return day === new Date(Date.UTC(year, month, 0)).getUTCDate();
+}

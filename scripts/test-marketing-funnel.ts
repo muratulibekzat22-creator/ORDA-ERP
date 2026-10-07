@@ -6,6 +6,7 @@ import {
   metaFunnelKpis,
   salesConversionPercent,
 } from "../lib/marketing-funnel";
+import { effectiveMarketingMetrics } from "../lib/marketing";
 
 const metric = {
   channel: "Instagram / Meta",
@@ -52,5 +53,15 @@ assert.deepEqual(
     conversion: null,
   },
 );
+
+const multipleMonths = effectiveMarketingMetrics([
+  { channel: "Instagram / Meta", note: "Автосинхронизация Meta · сентябрь", spend: 100, leads: 1 },
+  { channel: "Instagram / Meta", note: "Автосинхронизация Meta · октябрь", spend: 200, leads: 2 },
+  { channel: "Meta ручной ввод", note: "legacy", spend: 999, leads: 99 },
+  { channel: "Рекомендации", note: null, spend: 0, leads: 3 },
+]);
+assert.equal(multipleMonths.length, 3, "all automatic monthly Meta rows and non-Meta channels must remain");
+assert.equal(multipleMonths.reduce((sum, row) => sum + row.spend, 0), 300);
+assert.equal(multipleMonths.some((row) => row.channel === "Meta ручной ввод"), false);
 
 console.log("Meta conversations, CRM leads, order cost, ROAS and conversion passed");
