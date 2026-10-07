@@ -16,6 +16,17 @@ function run(script) {
 run("prisma:generate");
 
 if (
+  process.env.VERCEL_ENV === "preview" &&
+  process.env.RUN_PREVIEW_MARKETING_SMOKE === "true"
+) {
+  if (!process.env.DATABASE_URL?.trim()) {
+    throw new Error("Preview marketing smoke test requires DATABASE_URL");
+  }
+  process.env.TEST_DATABASE_URL = process.env.DATABASE_URL;
+  run("test:marketing");
+}
+
+if (
   process.env.VERCEL_ENV === "production" &&
   process.env.RUN_RELEASE_MIGRATIONS === "true"
 ) {
