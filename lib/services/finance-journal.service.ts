@@ -194,7 +194,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
       LEFT JOIN "Order" orders ON orders.id = payment."orderId"
       LEFT JOIN "Client" clients ON clients.id = orders."clientId"
       LEFT JOIN "Partner" partners ON partners.id = payment."partnerId"
-      WHERE payment."companyId" = ${companyId} ${fromSql} ${toSql}
+      WHERE payment."companyId" = ${companyId} AND payment."deletedAt" IS NULL ${fromSql} ${toSql}
       UNION ALL
       SELECT
         'LEDGER'::text AS source,

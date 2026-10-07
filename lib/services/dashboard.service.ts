@@ -158,6 +158,8 @@ async function managementProjection(scope: DashboardScope) {
     }) as Promise<DashboardOrder[]>,
     prisma.payment.findMany({
       where: {
+        companyId,
+        deletedAt: null,
         operationDate: { gte: period.start, lt: period.end },
         type: {
           in: [
@@ -167,11 +169,6 @@ async function managementProjection(scope: DashboardScope) {
             "ADDITIONAL_PAYMENT",
             "REFUND",
           ],
-        },
-        order: {
-          companyId,
-          deletedAt: null,
-          lifecycle: { not: OrderLifecycle.CANCELLED },
         },
       },
       select: {
@@ -284,9 +281,10 @@ async function managementProjection(scope: DashboardScope) {
     }),
     prisma.payment.findMany({
       where: {
+        companyId,
+        deletedAt: null,
         operationDate: { gte: week.start, lt: week.end },
         type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] },
-        order: { companyId, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
       },
       select: { orderId: true, type: true, amount: true },
     }),

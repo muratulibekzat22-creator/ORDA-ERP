@@ -933,7 +933,7 @@ async function main() {
       lt: new Date(Date.UTC(dashboardYear, dashboardMonth, 1) - 5 * 60 * 60 * 1000),
     };
     const expectedDashboardOrders = await prisma.order.findMany({ where: { companyId: 1, deletedAt: null, orderReceivedAt: dashboardPeriod, orderDateNeedsReview: false, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { amount: true } });
-    const expectedClientPayments = await prisma.payment.findMany({ where: { operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] }, order: { companyId: 1, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } }, select: { amount: true, type: true } });
+    const expectedClientPayments = await prisma.payment.findMany({ where: { companyId: 1, deletedAt: null, operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] } }, select: { amount: true, type: true } });
     const expectedClientBalances = await prisma.order.findMany({ where: { companyId: 1, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { balance: true } });
     assert(
       Number(directorDashboard.finance.revenue) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&

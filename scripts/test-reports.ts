@@ -49,7 +49,14 @@ assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| p
 assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows a confirmed business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
 assert.match(service, /prisma\.measurement\.findMany\(\{ where: \{ companyId, deletedAt: null, visitDate:/, "measurements must be counted by their own tenant and visit date");
+assert.match(service, /prisma\.measurement\.findMany\(\{ where: \{ companyId, deletedAt: null, completedAt:/, "completed measurements must be counted separately by completion date");
+assert.match(service, /completedMeasurements: \{ current: completedMeasurements\.length/, "scheduled and completed measurement metrics must not be conflated");
+assert.match(service, /label: "Замеры назначены"[\s\S]*label: "Замеры завершены"/, "the report funnel must explain both measurement events");
 assert.match(service, /item\.order \? historicalOwner\(item\.order, item\.visitDate\)[\s\S]*ownerAt\(item\.client\.managerUserId/, "lead measurements without an order must remain in reports");
+assert.match(service, /currentOrderScope: Prisma\.OrderWhereInput = \{ companyId, deletedAt: null/, "order aggregates must always enforce tenant scope");
+assert.match(service, /clientScope: Prisma\.ClientWhereInput = \{ companyId, active: true, deletedAt: null/, "client analytics must always enforce tenant scope");
+assert.match(service, /prisma\.payment\.findMany\(\{ where: \{ companyId, deletedAt: null, operationDate:/, "cash totals must be tenant-scoped and exclude soft-deleted payment rows");
+assert.doesNotMatch(service, /operationDate: range\(period\.start, period\.end\), order: activeOrder/, "cash history must not disappear when an order is later cancelled");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
 assert.match(service, /prisma\.payrollCalculationSnapshot\.findMany/, "confirmed payroll must come from calculation snapshots");
 assert.match(service, /snapshot\.period\.year \* 100 \+ snapshot\.period\.month/, "report payroll period must match the selected business months");
@@ -57,6 +64,9 @@ assert.doesNotMatch(service, /prisma\.payrollAccrual/, "legacy payroll accruals 
 assert.match(service, /approvedPayrollAccountingTotals/, "report payable must be calculated per employee-period from approved snapshots and payments");
 const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", import.meta.url), "utf8");
 assert.match(reportPage, /Заказы \/ заявки периода/);
+assert.match(reportPage, /Замеры назначены/);
+assert.match(reportPage, /Замеры завершены/);
+assert.doesNotMatch(reportPage, /function EmployeeKpiReport/, "management reports must not duplicate the full employee KPI workspace");
 assert.match(reportPage, /Зарплата к выплате по проведённым начислениям/);
 assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: MIN_PRODUCTION_PRICE \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");
 assert.match(route, /requirePermission\("reports"\)/, "reports API must require permission");

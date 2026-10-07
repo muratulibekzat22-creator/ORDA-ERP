@@ -84,18 +84,18 @@ export default function FounderControlPanel() {
       {error && <p role="alert" className="text-red-300">{error}</p>}
       {data && !open && (
         <p className="text-sm text-slate-300">
-          Открыто: <b>{data.summary.total}</b> · срочно: <b className="text-red-300">{data.summary.urgent}</b> · выполнено за 7 дней: <b className="text-emerald-300">{data.summary.completedLast7Days}</b>
+          Направлений контроля: <b>{data.summary.groups}</b> · записей ждут действий: <b className="text-amber-200">{data.summary.total}</b> · выполнено за 7 дней: <b className="text-emerald-300">{data.summary.completedLast7Days}</b>
         </p>
       )}
       {data && open && (
         <>
           <div className="grid gap-2 text-sm sm:grid-cols-3">
-            <div className="rounded-xl bg-amber-500/10 p-3 text-amber-100">Открытые замечания <b className="block text-2xl">{data.summary.total}</b></div>
-            <div className="rounded-xl bg-red-500/10 p-3 text-red-200">Срочные <b className="block text-2xl">{data.summary.urgent}</b></div>
+            <div className="rounded-xl bg-blue-500/10 p-3 text-blue-100">Направления контроля <b className="block text-2xl">{data.summary.groups}</b></div>
+            <div className="rounded-xl bg-amber-500/10 p-3 text-amber-100">Записи ждут действий <b className="block text-2xl">{data.summary.total}</b></div>
             <div className="rounded-xl bg-emerald-500/10 p-3 text-emerald-200">Выполненные задания за 7 дней <b className="block text-2xl">{data.summary.completedLast7Days}</b></div>
           </div>
           <p className="text-xs text-slate-400">
-            Ждут ознакомления: {data.summary.unacknowledged} · просрочено заданий: {data.summary.overdue} · без ответственного: {data.summary.needsOwner}. Проверено заявок: {data.coverage.leads}; заказов: {data.coverage.orders}.
+            Срочных записей: {data.summary.urgent} · ждут ознакомления: {data.summary.unacknowledged} · просрочено заданий: {data.summary.overdue} · без ответственного: {data.summary.needsOwner}. Проверено заявок: {data.coverage.leads}; заказов: {data.coverage.orders}.
           </p>
           <p className="text-xs text-slate-500">Проверка: {new Date(data.checkedAt).toLocaleString("ru-RU")}. Замечание исчезает из открытых после исправления исходной карточки.</p>
           <button type="button" disabled={busy} onClick={() => void load()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs disabled:opacity-50">Обновить проверку</button>

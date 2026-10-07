@@ -14,7 +14,10 @@ export type ReportRange = {
 export type ComparableMetric = { current: number; previous: number; changePercent: number | null };
 export type ReportSummary = {
   leads: ComparableMetric;
+  /** Visits planned for the selected period, grouped by visitDate. */
   measurements: ComparableMetric;
+  /** Measurements actually closed in the selected period, grouped by completedAt. */
+  completedMeasurements: ComparableMetric;
   orders: ComparableMetric;
   salesAmount: ComparableMetric;
   received: ComparableMetric;
@@ -28,6 +31,7 @@ export type ManagerReportRow = {
   active: boolean;
   leads: number;
   measurements: number;
+  completedMeasurements: number;
   orders: number;
   salesAmount: number;
   received: number;

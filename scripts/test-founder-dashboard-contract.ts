@@ -29,6 +29,8 @@ async function main() {
   assert.equal(refunded.receivedFromOtherOrders, 6_500_000);
   const dashboardService = readFileSync("lib/services/dashboard.service.ts", "utf8");
   const dashboardPage = readFileSync("components/dashboard/DirectorCockpit.tsx", "utf8");
+  assert.match(dashboardService, /prisma\.payment\.findMany\(\{[\s\S]*?where: \{[\s\S]*?companyId,[\s\S]*?deletedAt: null,[\s\S]*?operationDate:/, "dashboard cash must be tenant-scoped and ignore soft-deleted payment rows");
+  assert.doesNotMatch(dashboardService, /operationDate: \{ gte: period\.start, lt: period\.end \}[\s\S]{0,350}order: \{[\s\S]{0,120}lifecycle: \{ not: OrderLifecycle\.CANCELLED \}/, "later order cancellation must not erase a historical receipt");
   assert.match(dashboardService, /receivedForWeekOrders: weeklyReceipts\.receivedForPeriodOrders/);
   assert.match(dashboardService, /receivedFromPriorOrders: weeklyReceipts\.receivedFromOtherOrders/);
   assert.match(dashboardPage, /Заказы за неделю/);
