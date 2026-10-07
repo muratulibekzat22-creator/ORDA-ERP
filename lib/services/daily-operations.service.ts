@@ -181,7 +181,7 @@ function directorRegulationDescription() {
     "",
     "КАЖДЫЙ ДЕНЬ",
     "1. Откройте кабинет директора: проверьте продажи, обращения, просроченные сроки и реакцию сотрудников на обязательные задачи.",
-    "2. Менеджеры должны закрыть сводное задание по заказам и замерам: фактическая дата заказа, срок, цех и подтверждённая цена производства. Без этих данных заказ нельзя передать в цех, а расчётный лист и окончательная выплата зарплаты остаются заблокированы.",
+    "2. Менеджеры получают сводное задание по заказам и замерам: фактическая дата заказа, срок, цех и подтверждённая цена производства. ORDA не удаляет заказ и не блокирует текущую работу из-за старых пробелов — ответственному ставится адресная задача до уточнения данных.",
     "3. Не исправляйте цифры за сотрудника без подтверждения. Верните карточку ответственному и потребуйте конкретный результат либо один конкретный вопрос.",
     "4. ORDA автоматически отражает первоначальную оплату заказа в финансах. Контролируйте только реальные операции и исключения.",
     "5. ORDA ежедневно сверяет оклады и бонусы менеджеров. Проверьте исключения и зарегистрируйте фактическую выплату с референсом Kaspi.",
@@ -217,8 +217,9 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
   const reportDateKey = addDays(todayKey, -1);
   const dueAt = dueAtForBusinessDate(todayKey, 18);
   const readinessDueAt = dueAtForBusinessDate(addDays(todayKey, 1));
-  const [controller, snapshot, orders, overdueMeasurements, measurers] = await Promise.all([
+  const [controller, founders, snapshot, orders, overdueMeasurements, measurers] = await Promise.all([
     prisma.user.findFirst({ where: { id: controllerId, companyId, active: true, role: Role.OPERATIONS_DIRECTOR }, select: { id: true } }),
+    prisma.user.findMany({ where: { companyId, active: true, role: Role.DIRECTOR }, select: { id: true }, orderBy: { id: "asc" }, take: 1 }),
     getDailyCrmSnapshot({ dateKey: reportDateKey, now }),
     prisma.order.findMany({
       where: {
@@ -256,6 +257,7 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
     prisma.user.findMany({ where: { companyId, active: true, role: Role.MEASURER }, select: { id: true } }),
   ]);
   if (!controller) throw new Error("OPERATIONS_DIRECTOR_REQUIRED");
+  const taskCreatorId = founders[0]?.id ?? controllerId;
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(${companyId}, 87243)::text`;
     const legacyControlTasks = await tx.calendarTask.findMany({
@@ -312,10 +314,10 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
         priority: "URGENT",
         dueAt: readinessDueAt,
         assigneeId: controllerId,
-        creatorId: controllerId,
+        creatorId: taskCreatorId,
         acknowledgementRequired: true,
       } });
-      await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "DIRECTOR_REGULATION_ASSIGNED", actorId: controllerId, after: { version: 2 } } });
+      await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "DIRECTOR_REGULATION_ASSIGNED", actorId: taskCreatorId, after: { version: 2, source: "FOUNDER_AUTOMATION" } } });
       result.directorBriefingsCreated++;
     }
     for (const measurer of measurers) {
@@ -332,10 +334,10 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
         priority: "IMPORTANT",
         dueAt: readinessDueAt,
         assigneeId: measurer.id,
-        creatorId: controllerId,
+        creatorId: taskCreatorId,
         acknowledgementRequired: true,
       } });
-      await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "MEASURER_ORIENTATION_ASSIGNED", actorId: controllerId, after: { version: 1 } } });
+      await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "MEASURER_ORIENTATION_ASSIGNED", actorId: taskCreatorId, after: { version: 1, source: "FOUNDER_AUTOMATION" } } });
       result.orientationsCreated++;
     }
     for (const row of snapshot.managers) {
@@ -346,10 +348,10 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
           const task = await tx.calendarTask.create({ data: {
             companyId, workflowKey: reportKey, workflow: CalendarTaskWorkflow.DAILY_CRM_REPORT,
             title: `CRM-отчёт за ${formatDate(reportDateKey)}`, description: dailyReportDescription(row, reportDateKey),
-            type: "TASK", priority: "IMPORTANT", dueAt, assigneeId: row.managerId, creatorId: controllerId,
+            type: "TASK", priority: "IMPORTANT", dueAt, assigneeId: row.managerId, creatorId: taskCreatorId,
             acknowledgementRequired: true,
           } });
-          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "DAILY_CRM_ASSIGNED", actorId: controllerId, after: { dateKey: reportDateKey } } });
+          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "DAILY_CRM_ASSIGNED", actorId: taskCreatorId, after: { dateKey: reportDateKey, source: "FOUNDER_AUTOMATION" } } });
           result.dailyReportsCreated++;
         }
       }
@@ -359,10 +361,10 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
         const task = await tx.calendarTask.create({ data: {
           companyId, workflowKey: orientationKey, workflow: CalendarTaskWorkflow.PLATFORM_ORIENTATION,
           title: "Ознакомление с рабочим порядком ORDA", description: orientationDescription(),
-          type: "TASK", priority: "IMPORTANT", dueAt, assigneeId: row.managerId, creatorId: controllerId,
+          type: "TASK", priority: "IMPORTANT", dueAt, assigneeId: row.managerId, creatorId: taskCreatorId,
           acknowledgementRequired: true,
         } });
-        await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "PLATFORM_ORIENTATION_ASSIGNED", actorId: controllerId, after: { version: 1 } } });
+        await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "PLATFORM_ORIENTATION_ASSIGNED", actorId: taskCreatorId, after: { version: 1, source: "FOUNDER_AUTOMATION" } } });
         result.orientationsCreated++;
       }
       const attention = orders.map((order) => {
@@ -381,7 +383,7 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
         const description = [
           "Откройте ORDA → Календарь, подтвердите ознакомление с этой задачей и проверьте перечисленные заказы и незакрытые замеры. Дополняйте только подтверждёнными данными.",
           "Для старого заказа укажите фактическую дату оформления по договору. Дата, когда карточку внесли в ORDA, датой продажи не считается. Не угадывайте дату, цену производства, срок, цех или результат замера — если данных нет, уточните у директора и напишите один конкретный вопрос.",
-          "Пока замечания по заказам, просроченные замеры и это контрольное задание не закрыты, расчётный лист и окончательная выплата зарплаты не формируются.",
+          "Эта задача не удаляет заказ, не останавливает работу и не блокирует выплату. Она сохраняет конкретные пробелы за ответственным сотрудником до получения подтверждённых данных.",
           "",
           attention.length ? "ЗАКАЗЫ" : "ЗАКАЗЫ: замечаний нет",
           ...attention.map(({ order, issues, deadline }) => `• ${order.number} · ${order.client.name} · срок: ${deadline ? new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty" }).format(deadline) : "не указан"} · исправить: ${issues.join(", ")} · /orders/${order.id}`),
@@ -396,18 +398,18 @@ export async function ensureDailyManagerOperations(controllerId: number, now = n
           const task = await tx.calendarTask.create({ data: {
             companyId, workflowKey: readinessKey, workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
             title, description,
-            type: "TASK", priority: "URGENT", dueAt: readinessDueAt, assigneeId: row.managerId, creatorId: controllerId,
+            type: "TASK", priority: "URGENT", dueAt: readinessDueAt, assigneeId: row.managerId, creatorId: taskCreatorId,
             acknowledgementRequired: true,
           } });
-          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "ORDER_READINESS_ASSIGNED", actorId: controllerId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id) } } });
+          await tx.calendarTaskAudit.create({ data: { taskId: task.id, action: "ORDER_READINESS_ASSIGNED", actorId: taskCreatorId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id), source: "FOUNDER_AUTOMATION" } } });
           result.readinessTasksCreated++;
         } else if (target.title !== title || target.description !== description || target.dueAt.getTime() !== readinessDueAt.getTime()) {
           await tx.calendarTask.update({ where: { id: target.id }, data: { title, description, dueAt: readinessDueAt } });
-          await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "ORDER_READINESS_REFRESHED", actorId: controllerId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id) } } });
+          await tx.calendarTaskAudit.create({ data: { taskId: target.id, action: "ORDER_READINESS_REFRESHED", actorId: taskCreatorId, after: { dateKey: todayKey, dueAt: readinessDueAt.toISOString(), orderIds: attention.map((item) => item.order.id), measurementIds: measurementsToClose.map((item) => item.id), source: "FOUNDER_AUTOMATION" } } });
           result.readinessTasksUpdated++;
         }
       }
     }
-    return { ...result, reportDateKey, dueAt, readinessDueAt };
+    return { ...result, reportDateKey, dueAt, readinessDueAt, taskCreatorId };
   }, { timeout: 60_000 });
 }

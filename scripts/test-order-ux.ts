@@ -193,6 +193,10 @@ for (const removed of ["Основание / комментарий", "Дата 
 const order360 = readFileSync("lib/services/order360.service.ts", "utf8");
 assert.match(order360, /code: "SALE_AMOUNT"[\s\S]*code: "PRODUCTION_PRICE"/);
 assert.match(order360, /code: "PRODUCTION_PRICE"[\s\S]*Не указана сумма производства/);
+assert.match(order360, /ADVISORY_DATA_CHECKS/);
+assert.match(order360, /ORDER_DATA_FOLLOW_UP_ASSIGNED/);
+assert.match(orderProcess, /можно уточнить позже/);
+assert.match(orderProcess, /ORDA создаст адресную задачу от основателя/);
 assert.match(order360, /target === OrderLifecycle\.PREPARATION[\s\S]*PARTNER_REQUIRED[\s\S]*PARTNER_COST_REQUIRED/);
 assert.match(order360, /WORKSHOP_ASSIGNMENT_CLEARED/);
 assert.match(order360, /ROLLBACK_BLOCKED/);

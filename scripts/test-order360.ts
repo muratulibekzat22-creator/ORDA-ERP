@@ -20,7 +20,7 @@ import {
   resolveBlocker,
   transitionLifecycle,
 } from "../lib/services/order360.service";
-import { assignPartnerToOrder, setProductionPrice } from "../lib/services/partner.service";
+import { assignPartnerToOrder } from "../lib/services/partner.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
   throw new Error("Order 360 integration requires TEST_DATABASE_URL");
@@ -81,7 +81,7 @@ async function main() {
     const measuredReplay = await completeControlMeasurement({ orderId: measurementOrder.id, expectedVersion: 1, completedAt: new Date("2026-08-19T12:00:00Z"), comment: "Размеры подтверждены", key: key("control-measurement"), requestHash: hash("control-measurement") }, actors.measurer);
     assert.equal(measuredReplay.created, false, "control measurement idempotency replay");
     assert.equal(await prisma.orderEvent.count({ where: { orderId: measurementOrder.id, title: "Замер снят" } }), 1, "duplicate timeline event created");
-    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, false, "empty production gate passed");
+    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "advisory data gaps blocked an assigned workshop");
     await code(() => orderOverview(order.id, actors.other), "NOT_FOUND");
     const managerOverview = await orderOverview(order.id, actors.manager);
     assert("commerce" in managerOverview && !("finance" in managerOverview));
@@ -100,9 +100,7 @@ async function main() {
       const result = await confirmMilestone({ orderId: order.id, action, value, expectedVersion: version, key: key(action), requestHash: hash(action) }, actors.manager);
       version = Number(result.version);
     }
-    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, false, "missing production price did not block transfer to workshop");
-    await setProductionPrice({ orderId: order.id, amount: 10_000, actor: { id: manager.id, name: manager.name, role: manager.role }, idempotencyKey: key("production-price"), requestHash: hash("production-price") });
-    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "valid workshop and production price did not unlock transfer");
+    assert.equal((await evaluateGate(order.id, OrderLifecycle.READY_FOR_PRODUCTION)).passed, true, "missing production price must create follow-up instead of blocking transfer");
     const preparation = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.PREPARATION, expectedVersion: version, key: key("preparation"), requestHash: hash("preparation") }, actors.manager);
     version = Number(preparation.version);
     const blockerResult = await openBlocker({ orderId: order.id, type: "MATERIAL", severity: OrderBlockerSeverity.CRITICAL, title: "Critical test", key: key("blocker"), requestHash: hash("blocker") }, actors.manager);
@@ -110,6 +108,10 @@ async function main() {
     await resolveBlocker({ blockerId: blockerResult.blocker.id, resolution: "Resolved", key: key("resolve"), requestHash: hash("resolve") }, actors.manager);
     const readyProduction = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.READY_FOR_PRODUCTION, expectedVersion: version, key: key("ready-production"), requestHash: hash("ready-production") }, actors.manager);
     version = Number(readyProduction.version);
+    assert(readyProduction.followUpTaskId, "advisory production data did not create a follow-up task");
+    const dataFollowUp = await prisma.calendarTask.findUniqueOrThrow({ where: { id: readyProduction.followUpTaskId! }, include: { creator: { select: { role: true } } } });
+    assert.equal(dataFollowUp.assigneeId, manager.id, "order data follow-up was not assigned to the responsible manager");
+    assert.equal(dataFollowUp.creator.role, Role.DIRECTOR, "order data follow-up did not originate from a founder account");
     const started = await transitionLifecycle({ orderId: order.id, to: OrderLifecycle.IN_PRODUCTION, expectedVersion: version, key: key("production-start"), requestHash: hash("production-start") }, actors.production);
     version = Number(started.version);
     const technicalStage = (await prisma.production.findFirstOrThrow({ where: { orderId: order.id } })).stage;

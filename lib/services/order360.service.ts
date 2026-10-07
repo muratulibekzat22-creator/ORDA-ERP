@@ -2,6 +2,7 @@ import {
   CalendarTaskPriority,
   CalendarTaskStatus,
   CalendarTaskType,
+  CalendarTaskWorkflow,
   MeasurementStatus,
   OrderBlockerSeverity,
   OrderBlockerStatus,
@@ -93,6 +94,7 @@ async function assertAccess(orderId: number, actor: Order360Actor) {
 }
 
 type GateItem = { code: string; passed: boolean; message: string };
+const ADVISORY_DATA_CHECKS = new Set(["ORDER_DATE", "CONTRACT", "PRODUCTION_PRICE", "DEADLINE"]);
 export async function evaluateGate(orderId: number, target: OrderLifecycle) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
@@ -228,7 +230,61 @@ export async function evaluateGate(orderId: number, target: OrderLifecycle) {
         message: "Не указана сумма производства",
       },
     ];
-  return { target, passed: checks.every((item) => item.passed), checks };
+  return {
+    target,
+    passed: checks.filter((item) => !ADVISORY_DATA_CHECKS.has(item.code)).every((item) => item.passed),
+    checks,
+  };
+}
+
+async function createOrderDataFollowUp(
+  tx: Prisma.TransactionClient,
+  order: { id: number; number: string; companyId: number; clientId: number; managerUserId: number | null },
+  checks: GateItem[],
+  version: number,
+  actor: Order360Actor,
+) {
+  const missing = checks.filter((check) => !check.passed && ADVISORY_DATA_CHECKS.has(check.code));
+  if (!missing.length) return null;
+  const [founder, operationsDirector] = await Promise.all([
+    tx.user.findFirst({ where: { companyId: order.companyId, active: true, role: Role.DIRECTOR }, select: { id: true }, orderBy: { id: "asc" } }),
+    order.managerUserId ? Promise.resolve(null) : tx.user.findFirst({ where: { companyId: order.companyId, active: true, role: Role.OPERATIONS_DIRECTOR }, select: { id: true }, orderBy: { id: "asc" } }),
+  ]);
+  const creatorId = founder?.id ?? actor.userId;
+  const assigneeId = order.managerUserId ?? operationsDirector?.id ?? actor.userId;
+  const dueAt = new Date(Date.now() + 24 * 60 * 60_000);
+  const task = await tx.calendarTask.upsert({
+    where: { companyId_workflowKey: { companyId: order.companyId, workflowKey: `order-data-advisory:${order.id}:v${version}` } },
+    create: {
+      companyId: order.companyId,
+      workflowKey: `order-data-advisory:${order.id}:v${version}`,
+      workflow: CalendarTaskWorkflow.ORDER_DATA_COMPLETION,
+      title: `Дополнить данные заказа ${order.number}`,
+      description: [
+        `Заказ ${order.number} продолжил работу без удаления и блокировки.`,
+        `Уточните подтверждённые данные: ${missing.map((item) => item.message).join(" · ")}.`,
+        "Не угадывайте значения. Если данных нет, оставьте в результате один конкретный вопрос директору.",
+      ].join("\n"),
+      type: CalendarTaskType.TASK,
+      priority: CalendarTaskPriority.IMPORTANT,
+      dueAt,
+      assigneeId,
+      creatorId,
+      clientId: order.clientId,
+      orderId: order.id,
+      acknowledgementRequired: true,
+    },
+    update: {},
+  });
+  await tx.calendarTaskAudit.create({
+    data: {
+      taskId: task.id,
+      action: "ORDER_DATA_FOLLOW_UP_ASSIGNED",
+      actorId: creatorId,
+      after: { orderId: order.id, missing: missing.map((item) => item.code), source: "FOUNDER_AUTOMATION" },
+    },
+  });
+  return task.id;
 }
 
 function roleCanTransition(
@@ -399,7 +455,7 @@ export async function transitionLifecycle(
           gate.checks.some(
             (check) =>
               !check.passed &&
-              ["ORDER_DATE", "WORKSHOP", "PRODUCTION_PRICE", "DEADLINE"].includes(check.code),
+              check.code === "WORKSHOP",
           );
         if (!(
           input.override &&
@@ -458,6 +514,9 @@ export async function transitionLifecycle(
         },
       });
       if (updated.count !== 1) throw new Order360Error("STALE_VERSION");
+      const followUpTaskId = backwardTransition
+        ? null
+        : await createOrderDataFollowUp(tx, order, gate.checks, input.expectedVersion + 1, actor);
       if (returningToContract) {
         const reason = input.reason!.trim();
         if (rollbackProductions.length)
@@ -519,6 +578,7 @@ export async function transitionLifecycle(
           metadata: {
             gatePassed: gate.passed,
             override: Boolean(input.override),
+            followUpTaskId,
           },
           idempotencyKey: input.key,
           requestHash: input.requestHash,
@@ -526,7 +586,7 @@ export async function transitionLifecycle(
       });
       if (input.to === OrderLifecycle.CANCELLED)
         await reverseMeasurerBonusForCancelledOrder(tx, input.orderId, actor);
-      return { event, created: true, version: input.expectedVersion + 1 };
+      return { event, created: true, version: input.expectedVersion + 1, followUpTaskId };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );

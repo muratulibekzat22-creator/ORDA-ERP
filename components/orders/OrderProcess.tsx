@@ -77,8 +77,9 @@ export default function OrderProcess({
       ? data.transitions.find((item) => item.to === "PREPARATION")
       : undefined;
   const transferPrerequisitesPassed = transition?.gate.checks
-    .filter((item) => !["WORKSHOP", "PRODUCTION_PRICE"].includes(item.code))
+    .filter((item) => item.code === "NO_CRITICAL_BLOCKERS")
     .every((item) => item.passed) ?? false;
+  const advisoryChecks = transition?.gate.checks.filter((item) => !item.passed && ["ORDER_DATE", "CONTRACT", "PRODUCTION_PRICE", "DEADLINE"].includes(item.code)) ?? [];
 
   const loadWorkshops = useCallback(async () => {
     const response = await fetch("/api/partners", { cache: "no-store" });
@@ -141,9 +142,9 @@ export default function OrderProcess({
     event.preventDefault();
     if (!transition) return;
     const nextWorkshopId = Number(selectedWorkshopId);
-    const nextPrice = Number(selectedProductionPrice);
-    if (!Number.isInteger(nextWorkshopId) || nextWorkshopId <= 0 || nextPrice < 2) {
-      setError("Выберите цех и укажите цену производства");
+    const nextPrice = selectedProductionPrice.trim() ? Number(selectedProductionPrice) : undefined;
+    if (!Number.isInteger(nextWorkshopId) || nextWorkshopId <= 0 || (nextPrice !== undefined && (!Number.isFinite(nextPrice) || nextPrice < 2))) {
+      setError("Выберите цех; если указываете цену производства, проверьте сумму");
       return;
     }
     setBusy(true);
@@ -155,7 +156,7 @@ export default function OrderProcess({
         body: JSON.stringify({
           action: "assignPartner",
           partnerId: nextWorkshopId,
-          partnerPrice: nextPrice,
+          ...(nextPrice === undefined ? {} : { partnerPrice: nextPrice }),
           directorConfirmed: partnerId !== null && partnerId !== nextWorkshopId,
         }),
       });
@@ -228,9 +229,10 @@ export default function OrderProcess({
           <p className="mt-1 text-xs text-slate-400">Выберите один из добавленных цехов и подтвердите цену производства.</p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <label className="text-sm text-slate-300">Цех<select required value={selectedWorkshopId} onChange={(event) => setSelectedWorkshopId(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-white"><option value="">Выберите цех</option>{workshops.map((workshop) => <option key={workshop.id} value={workshop.id}>{workshop.name}</option>)}</select></label>
-            <label className="text-sm text-slate-300">Цена производства, ₸<input required type="number" min="2" step="1" value={selectedProductionPrice} onChange={(event) => setSelectedProductionPrice(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-white" /></label>
+            <label className="text-sm text-slate-300">Цена производства, ₸ · можно уточнить позже<input type="number" min="2" step="1" value={selectedProductionPrice} onChange={(event) => setSelectedProductionPrice(event.target.value)} className="mt-1 min-h-11 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 text-white" /></label>
           </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={() => setTransferOpen(false)} className="min-h-11 rounded-lg border border-slate-700 px-4 text-sm font-semibold text-white">Отмена</button><button disabled={busy || !selectedWorkshopId || Number(selectedProductionPrice) < 2} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Передаём…" : "Подтвердить и передать"}</button></div>
+          {advisoryChecks.length ? <p className="mt-3 text-xs leading-5 text-amber-200">Не блокирует передачу: {advisoryChecks.map((item) => item.message).join(" · ")}. ORDA создаст адресную задачу от основателя.</p> : null}
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={() => setTransferOpen(false)} className="min-h-11 rounded-lg border border-slate-700 px-4 text-sm font-semibold text-white">Отмена</button><button disabled={busy || !selectedWorkshopId || (selectedProductionPrice.trim() !== "" && Number(selectedProductionPrice) < 2)} className="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Передаём…" : "Подтвердить и передать"}</button></div>
         </form>
       ) : null}
       {transition && !transition.gate.passed && !(target === "READY_FOR_PRODUCTION" && transferPrerequisitesPassed) ? (
@@ -241,6 +243,7 @@ export default function OrderProcess({
             .join(" · ")}
         </p>
       ) : null}
+      {target !== "READY_FOR_PRODUCTION" && advisoryChecks.length ? <p className="max-w-xl text-sm text-amber-200">Можно продолжить: {advisoryChecks.map((item) => item.message).join(" · ")}. ORDA поставит ответственному задачу от основателя.</p> : null}
       {error ? (
         <p role="alert" className="text-sm text-red-300">
           {error}

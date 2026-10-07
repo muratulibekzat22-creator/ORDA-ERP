@@ -92,10 +92,14 @@ assert.doesNotMatch(
 );
 
 assert.match(dailyOperations, /Дата, когда карточку внесли в ORDA, датой продажи не считается/);
-assert.match(dailyOperations, /расчётный лист и окончательная выплата зарплаты не формируются/);
+assert.match(dailyOperations, /не блокирует выплату/);
+assert.doesNotMatch(dailyOperations, /расчётный лист и окончательная выплата зарплаты не формируются/);
 assert.match(dailyOperations, /срок: \$\{deadline/);
 assert.match(order360, /code: "ORDER_DATE"[\s\S]*Фактическая дата заказа не подтверждена/);
-assert.match(order360, /\["ORDER_DATE", "WORKSHOP", "PRODUCTION_PRICE", "DEADLINE"\]/);
+assert.match(order360, /ADVISORY_DATA_CHECKS = new Set\(\["ORDER_DATE", "CONTRACT", "PRODUCTION_PRICE", "DEADLINE"\]\)/);
+assert.match(order360, /ORDER_DATA_FOLLOW_UP_ASSIGNED/);
+assert.match(order360, /source: "FOUNDER_AUTOMATION"/);
+assert.match(order360, /check\.code === "WORKSHOP"/);
 
 for (const forbidden of ["Дата внесения", "Создано в ORDA", "Техническая дата"])
   assert.doesNotMatch(`${workspace}\n${orderTable}`, new RegExp(forbidden, "i"));

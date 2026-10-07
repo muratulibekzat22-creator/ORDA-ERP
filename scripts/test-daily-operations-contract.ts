@@ -35,7 +35,12 @@ assert.match(service, /ORDER_READINESS_REFRESHED/, "existing readiness tasks mus
 assert.match(service, /status: \{ in: \["ASSIGNED", "IN_PROGRESS"\] \}/, "overdue active measurements must be included in manager readiness");
 assert.match(service, /Замерщик не выбран/, "unassigned measurers must be explicit in the task");
 assert.match(service, /role: Role\.MANAGER/, "daily rows must be limited to active managers");
-assert.match(service, /role: Role\.OPERATIONS_DIRECTOR/, "daily tasks must be owned by the operations director, not the founder");
+assert.match(service, /role: Role\.OPERATIONS_DIRECTOR/, "daily operations must retain the operations director as controller");
+assert.match(service, /role: Role\.DIRECTOR[\s\S]*taskCreatorId = founders\[0\]\?\.id \?\? controllerId/, "generated employee tasks must come from the active founder account with a safe controller fallback");
+assert.match(service, /creatorId: taskCreatorId/, "generated tasks must preserve founder provenance");
+assert.match(service, /source: "FOUNDER_AUTOMATION"/, "founder-created automation must be explicit in task audit events");
+assert.match(service, /не блокирует выплату/, "data-quality tasks must remain advisory instead of blocking payroll");
+assert.doesNotMatch(service, /выплата зарплаты не формируются/, "legacy payroll-blocking instruction must be removed");
 assert.match(service, /readinessDueAt/, "readiness tasks must receive a clear next-day deadline");
 assert.match(service, /dueAtForBusinessDate\(todayKey, 18\)/, "daily CRM reports must stay actionable until 18:00 Almaty");
 assert.doesNotMatch(cron, /role: "DIRECTOR"/, "daily operations cron must not depend on the founder");
