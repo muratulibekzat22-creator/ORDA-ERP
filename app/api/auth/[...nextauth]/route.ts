@@ -34,11 +34,6 @@ export const authOptions: NextAuthOptions = {
         await audit(undefined, false, "RATE_LIMITED");
         throw new SafeAuthError("RATE_LIMITED");
       }
-      if (user?.lockedUntil && user.lockedUntil > new Date()) {
-        await bcrypt.compare(credentials.password, user.password);
-        await audit(user.id, false, "TEMPORARILY_LOCKED");
-        throw new SafeAuthError("TEMPORARILY_LOCKED");
-      }
       const passwordMatches = await bcrypt.compare(credentials.password, user?.password ?? DUMMY_PASSWORD_HASH);
       if (!user || !user.active || !passwordMatches) {
         if (user?.active) {
@@ -53,13 +48,13 @@ export const authOptions: NextAuthOptions = {
         throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       await runWithSystemAccess(() => prisma.$transaction([
-        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null } }),
+        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null, mustChangePassword: false } }),
         prisma.authAuditEvent.create({ data: { userId: user.id, email: null, accountIdentifierHash: identifierHash, success: true, reason: "LOGIN_SUCCESS", requestId: correlationId, ipHash, userAgentClass: agentClass } }),
       ]));
       return {
         id: String(user.id), name: user.name, email: user.email, role: user.role,
         accountRole: user.role,
-        sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
+        sessionVersion: user.sessionVersion, mustChangePassword: false,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
       };

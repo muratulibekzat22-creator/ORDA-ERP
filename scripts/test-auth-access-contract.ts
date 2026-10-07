@@ -10,6 +10,11 @@ const migration = read(
 );
 
 assert.match(auth, /credentials:\s*\{\s*email:[\s\S]*password:/u);
+assert.match(
+  auth,
+  /passwordMatches[\s\S]*failedLoginAttempts: 0, lockedUntil: null, mustChangePassword: false/u,
+  "a correct password must clear stale account barriers",
+);
 assert.doesNotMatch(
   `${auth}\n${login}\n${proxy}`,
   /totp|authenticator|two.?factor|one.?time password|mfa challenge/iu,
