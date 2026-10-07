@@ -49,6 +49,12 @@ assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| p
 assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows a confirmed business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
+assert.match(service, /toStage: LeadStage\.MEASUREMENT_SCHEDULED/, "legacy measurement stage events must remain visible in reports");
+assert.match(service, /status: \{ not: MeasurementStatus\.CANCELLED \}/, "cancelled measurements must not be reported");
+assert.match(service, /client: clientScope/, "measurements must be scoped through the client even before an order exists");
+assert.match(service, /recordedClientIds\.has\(item\.clientId\)/, "modern and legacy measurement events must not be double-counted");
+assert.match(service, /item\.client\.managerUserId/, "pre-order measurements must be attributed through their client manager");
+assert.doesNotMatch(service, /item\.order\?\.managerUserId.*measurements/, "measurement attribution must not depend on an order");
 assert.match(service, /JOIN "PayrollPeriod" payroll_period ON payroll_period\.id = accrual\."periodId"/, "payroll accruals must follow their accounting period");
 assert.match(service, /payroll_period\.year \* 100 \+ payroll_period\.month/, "report payroll period must match the selected business months");
 assert.doesNotMatch(service, /accrual\."createdAt" >=/, "late-entered payroll must not move into the wrong reporting month");

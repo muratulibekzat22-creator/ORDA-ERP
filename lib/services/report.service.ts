@@ -1,4 +1,4 @@
-import { Role, type Prisma } from "@prisma/client";
+import { LeadStage, MeasurementStatus, Role, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { changePercent, money, paymentEffect, resolveReportRange, safePercent, type ReportsReadModel } from "@/lib/reports";
 import { orderDataGaps } from "@/lib/orders/completeness";
@@ -13,6 +13,52 @@ const range = (start: Date, end: Date) => ({ gte: start, lte: end });
 const leadership = (role: Role) =>
   role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 
+type ReportMeasurement = {
+  clientId: number;
+  client: { managerUserId: number | null };
+};
+
+async function reportMeasurements(
+  clientScope: Prisma.ClientWhereInput,
+  start: Date,
+  end: Date,
+): Promise<ReportMeasurement[]> {
+  const eventRange = range(start, end);
+  const [recordedMeasurements, legacyStageEvents] = await Promise.all([
+    prisma.measurement.findMany({
+      where: {
+        visitDate: eventRange,
+        status: { not: MeasurementStatus.CANCELLED },
+        client: clientScope,
+      },
+      select: {
+        clientId: true,
+        client: { select: { managerUserId: true } },
+      },
+    }),
+    prisma.leadStatusHistory.findMany({
+      where: {
+        createdAt: eventRange,
+        toStage: LeadStage.MEASUREMENT_SCHEDULED,
+        client: clientScope,
+      },
+      distinct: ["clientId"],
+      select: {
+        clientId: true,
+        client: { select: { managerUserId: true } },
+      },
+    }),
+  ]);
+
+  // До запуска модуля «Замеры» событие сохранялось только в истории этапов.
+  // Современная запись имеет приоритет, а clientId не даёт посчитать то же событие дважды.
+  const recordedClientIds = new Set(recordedMeasurements.map((item) => item.clientId));
+  return [
+    ...recordedMeasurements,
+    ...legacyStageEvents.filter((item) => !recordedClientIds.has(item.clientId)),
+  ];
+}
+
 export async function getReportsReadModel(params: URLSearchParams, actor: Actor): Promise<ReportsReadModel> {
   const companyId = requireTenantIdentity().companyId;
   if (!leadership(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
@@ -26,15 +72,15 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     scope = { managerUserId: managerId };
   }
   const orderScope: Prisma.OrderWhereInput = { deletedAt: null, ...(scope.managerUserId ? { managerUserId: scope.managerUserId } : {}) };
-  const clientScope: Prisma.ClientWhereInput = { active: true, deletedAt: null, ...(scope.managerUserId ? { managerUserId: scope.managerUserId } : {}) };
+  const clientScope: Prisma.ClientWhereInput = { companyId, active: true, deletedAt: null, ...(scope.managerUserId ? { managerUserId: scope.managerUserId } : {}) };
   const activeOrder: Prisma.OrderWhereInput = { ...orderScope, lifecycle: { not: "CANCELLED" } };
   const [clients, previousClients, orders, previousOrders, measurements, previousMeasurements, payments, previousPayments, production, managerUsers, completed] = await Promise.all([
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.start, period.end) }, select: { id: true, managerUserId: true, stage: true } }),
     prisma.client.findMany({ where: { ...clientScope, createdAt: range(period.previousStart, period.previousEnd) }, select: { id: true } }),
     prisma.order.findMany({ where: { ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) }, select: { id: true, number: true, amount: true, partnerId: true, partnerPrice: true, partnerAgreedAt: true, companyProfit: true, manager: true, managerUserId: true, lifecycle: true, status: true, orderReceivedAt: true, orderDateNeedsReview: true, promisedAt: true, productionDeadline: true, installation: { select: { scheduledAt: true } }, client: { select: { name: true, phone: true, city: true } }, payments: { select: { amount: true, type: true } }, payrollAccruals: { select: { amount: true, direction: true } } }, orderBy: { orderReceivedAt: "desc" } }),
     prisma.order.findMany({ where: { ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range(period.previousStart, period.previousEnd) }, select: { amount: true } }),
-    prisma.measurement.findMany({ where: { visitDate: range(period.start, period.end), order: activeOrder }, select: { order: { select: { managerUserId: true } } } }),
-    prisma.measurement.count({ where: { visitDate: range(period.previousStart, period.previousEnd), order: activeOrder } }),
+    reportMeasurements(clientScope, period.start, period.end),
+    reportMeasurements(clientScope, period.previousStart, period.previousEnd),
     prisma.payment.findMany({ where: { operationDate: range(period.start, period.end), order: activeOrder }, select: { amount: true, type: true, operationDate: true, order: { select: { managerUserId: true } } } }),
     prisma.payment.findMany({ where: { operationDate: range(period.previousStart, period.previousEnd), order: activeOrder }, select: { amount: true, type: true } }),
     prisma.production.groupBy({ by: ["stage"], where: { order: { ...orderScope, lifecycle: { not: "CANCELLED" }, orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) } }, _count: { _all: true }, orderBy: { stage: "asc" } }),
@@ -87,7 +133,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
   const cancelled = await prisma.order.count({ where: { ...orderScope, lifecycle: "CANCELLED", orderDateNeedsReview: false, orderReceivedAt: range(period.start, period.end) } });
   const managerMap = new Map(managerUsers.map((user) => [user.id, { id: user.id, name: user.name, leads: 0, measurements: 0, orders: 0, salesAmount: 0, received: 0, completed: 0, overdue: 0, conversion: null as number | null }]));
   clients.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) managerMap.get(item.managerUserId)!.leads += 1; });
-  measurements.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.measurements += 1; });
+  measurements.forEach((item) => { const id = item.client.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.measurements += 1; });
   orders.forEach((item) => { if (item.managerUserId && managerMap.has(item.managerUserId)) { const row = managerMap.get(item.managerUserId)!; row.orders += 1; row.salesAmount += money(item.amount); if (item.lifecycle === "COMPLETED") row.completed += 1; const due = item.promisedAt ?? item.productionDeadline ?? item.installation?.scheduledAt; if (item.lifecycle !== "COMPLETED" && due && due < new Date()) row.overdue += 1; } });
   payments.forEach((item) => { const id = item.order?.managerUserId; if (id && managerMap.has(id)) managerMap.get(id)!.received += paymentEffect(item.type, item.amount); });
   const managers = [...managerMap.values()].map((item) => ({ ...item, conversion: safePercent(item.orders, item.leads) })).sort((a, b) => b.salesAmount - a.salesAmount);
@@ -162,7 +208,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     period: { preset: period.preset, dateFrom: period.dateFrom, dateTo: period.dateTo, timezone: period.timezone, start: period.start.toISOString(), end: period.end.toISOString(), previousStart: period.previousStart.toISOString(), previousEnd: period.previousEnd.toISOString() },
     summary: {
       leads: { current: clients.length, previous: previousClients.length, changePercent: changePercent(clients.length, previousClients.length) },
-      measurements: { current: measurements.length, previous: previousMeasurements, changePercent: changePercent(measurements.length, previousMeasurements) },
+      measurements: { current: measurements.length, previous: previousMeasurements.length, changePercent: changePercent(measurements.length, previousMeasurements.length) },
       orders: { current: orders.length, previous: previousOrders.length, changePercent: changePercent(orders.length, previousOrders.length) },
       salesAmount: { current: salesAmount, previous: previousSales, changePercent: changePercent(salesAmount, previousSales) },
       received: { current: received, previous: previousReceived, changePercent: changePercent(received, previousReceived) }, remaining: currentCustomerRemaining, conversion: safePercent(orders.length, clients.length),
