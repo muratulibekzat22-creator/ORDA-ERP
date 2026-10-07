@@ -10,6 +10,7 @@
     "lint": "eslint",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:repair:warehouse": "node scripts/repair-warehouse-migration.mjs",
     "seed:director": "tsx scripts/seed-director.ts",
     "prepare:director:release": "tsx scripts/prepare-production-director.ts",
     "prepare:sales-plan:release": "tsx scripts/prepare-sales-plan-release.ts",

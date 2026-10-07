@@ -20,6 +20,9 @@ if (
   process.env.RUN_DATABASE_MIGRATIONS === "true"
 ) {
   console.log("Applying additive database migrations for this release.");
+  if (process.env.REPAIR_FAILED_WAREHOUSE_MIGRATION === "true") {
+    run("prisma:migrate:repair:warehouse");
+  }
   run("prisma:migrate:deploy");
 }
 
