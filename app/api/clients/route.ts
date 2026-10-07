@@ -1,7 +1,7 @@
 import { LeadSource, LeadStage, Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { normalizeLeadSource, normalizePhone } from "@/lib/leads/domain";
+import { LEAD_SOURCE_LABELS, normalizePhone, qualifiedLeadSource } from "@/lib/leads/domain";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 
@@ -78,10 +78,9 @@ export async function POST(request: Request) {
     const managerUserId = role === Role.MANAGER ? Number(auth.session!.user.id) : Number(body.managerUserId ?? auth.session!.user.id);
     const managerUser = await prisma.user.findFirst({ where: { id: managerUserId, active: true, role: { in: [Role.MANAGER, Role.DIRECTOR, Role.OPERATIONS_DIRECTOR] }, NOT: { payrollProfile: { is: { position: { contains: "замер", mode: "insensitive" } } } } }, select: { id: true, name: true } });
     if (!managerUser) return NextResponse.json({ error: "Некорректный ответственный менеджер" }, { status: 400 });
-    const sourceCode = normalizeLeadSource(body.sourceCode ?? body.source);
-    if (!sourceCode) return NextResponse.json({ error: "Выберите источник заявки" }, { status: 400 });
+    const sourceCode = qualifiedLeadSource(body.sourceCode ?? body.source);
     const client = await prisma.$transaction(async (tx) => {
-      const created = await tx.client.create({ data: { name, phone: normalized, whatsapp: normalized, city, address: text(body.address) ?? "", iin: text(body.iin) ?? "", manager: managerUser.name, managerUserId: managerUser.id, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? requestText, source: text(body.source) ?? sourceCode, sourceCode, comment: requestText, stage: LeadStage.NEW, status: LeadStage.NEW } });
+      const created = await tx.client.create({ data: { name, phone: normalized, whatsapp: normalized, city, address: text(body.address) ?? "", iin: text(body.iin) ?? "", manager: managerUser.name, managerUserId: managerUser.id, amount: String(estimatedAmount), estimatedAmount: String(estimatedAmount), estimateNotes: text(body.estimateNotes) ?? requestText, source: text(body.source) ?? LEAD_SOURCE_LABELS[sourceCode], sourceCode, comment: requestText, stage: LeadStage.NEW, status: LeadStage.NEW } });
       await tx.leadStatusHistory.create({ data: { clientId: created.id, toStatus: LeadStage.NEW, toStage: LeadStage.NEW, authorId: Number(auth.session!.user.id), authorName: auth.session!.user.name ?? managerUser.name, comment: "Обращение создано" } });
       const nextActionAt = body.nextActionAt ? new Date(String(body.nextActionAt)) : null;
       if (nextActionAt && !Number.isNaN(nextActionAt.getTime())) await tx.leadNextAction.create({ data: { clientId: created.id, nextActionType: "FOLLOW_UP", nextActionAt, createdByUserId: Number(auth.session!.user.id) } });

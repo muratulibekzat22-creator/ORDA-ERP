@@ -91,8 +91,10 @@ for (const forbidden of ["Предварительная сумма", "Стат�
     throw new Error(
       `Technical field leaked into minimal application form: ${forbidden}`,
     );
-if (!modal.includes("sourceCode") || !clientApi.includes("Выберите источник заявки"))
-  throw new Error("Every manually created application must record its source");
+if (!modal.includes('useState<LeadSourceCode>("INSTAGRAM")') || !modal.includes("Meta-реклама → WhatsApp (основной)"))
+  throw new Error("Qualified applications must default to the Meta → WhatsApp source");
+if (!clientApi.includes("qualifiedLeadSource(body.sourceCode ?? body.source)") || !clientApi.includes("LEAD_SOURCE_LABELS[sourceCode]"))
+  throw new Error("The API must persist the default Meta source even when the client omits it");
 if (
   !managersApi.includes("active: true") ||
   !managersApi.includes("Role.MANAGER")

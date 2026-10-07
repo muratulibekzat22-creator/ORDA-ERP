@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { LeadStage } from "@prisma/client";
+import { LeadSource, LeadStage } from "@prisma/client";
 
 import {
   calculationProgress,
@@ -12,8 +12,12 @@ import {
   isPrismaTransactionWriteConflict,
   withPrismaTransactionRetry,
 } from "@/lib/prisma-transaction-retry";
+import { qualifiedLeadSource } from "@/lib/leads/domain";
 
 async function main() {
+  assert.equal(qualifiedLeadSource(undefined), LeadSource.INSTAGRAM);
+  assert.equal(qualifiedLeadSource(""), LeadSource.INSTAGRAM);
+  assert.equal(qualifiedLeadSource("REFERRAL"), LeadSource.REFERRAL);
   assert.equal(hasRequiredProposalMaterials(["Сосна", "Карагач"]), false);
   assert.equal(hasRequiredProposalMaterials(REQUIRED_PROPOSAL_MATERIALS), true);
 

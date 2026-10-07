@@ -14,6 +14,19 @@ export const OPEN_LEAD_STAGES = [
 export const ACTION_REQUIRED_STAGES = OPEN_LEAD_STAGES.filter((stage) => stage !== LeadStage.NEW);
 export const TERMINAL_LEAD_STAGES = [LeadStage.WON, LeadStage.LOST] as const;
 
+export const DEFAULT_QUALIFIED_LEAD_SOURCE = LeadSource.INSTAGRAM;
+
+export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
+  WHATSAPP: "WhatsApp",
+  INSTAGRAM: "Meta-реклама → WhatsApp",
+  CALL: "Звонок",
+  WEBSITE: "Сайт",
+  REFERRAL: "Рекомендация",
+  OFFICE: "Офис",
+  REPEAT: "Повторный клиент",
+  OTHER: "Другое",
+};
+
 export const LEAD_STAGE_LABELS: Record<LeadStage, string> = {
   NEW: "Новое обращение",
   QUALIFIED: "Квалифицирован",
@@ -61,6 +74,10 @@ export function normalizeLeadSource(value: unknown): LeadSource | null {
   if (legacy.includes("офис")) return LeadSource.OFFICE;
   if (legacy.includes("повтор")) return LeadSource.REPEAT;
   return legacy ? LeadSource.OTHER : null;
+}
+
+export function qualifiedLeadSource(value: unknown) {
+  return normalizeLeadSource(value) ?? DEFAULT_QUALIFIED_LEAD_SOURCE;
 }
 
 export function canAccessLead(role: Role, userId: number, lead: { managerUserId: number | null }) {
