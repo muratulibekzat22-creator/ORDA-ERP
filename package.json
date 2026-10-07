@@ -40,6 +40,7 @@
     "test:sales-funnel": "tsx scripts/test-sales-funnel.ts",
     "test:commercial-boundary": "tsx scripts/test-commercial-boundary.ts",
     "test:role-acceptance": "tsx scripts/test-role-acceptance.ts",
+    "test:auth-access": "tsx scripts/test-auth-access-contract.ts",
     "test:auth-mobile": "tsx scripts/test-auth-mobile.ts",
     "test:training": "tsx scripts/test-training.ts",
     "test:training:contract": "tsx scripts/test-training-contract.ts",

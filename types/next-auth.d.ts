@@ -3,6 +3,7 @@ import "next-auth";
 declare module "next-auth" {
   interface User {
     role: string;
+    accountRole?: string;
     sessionVersion: number;
     mustChangePassword: boolean;
     companyId: number;
@@ -23,6 +24,7 @@ declare module "next-auth" {
       name?: string | null;
       email?: string | null;
       role: string;
+      accountRole: string;
       mustChangePassword?: boolean;
       companyId: number;
       companySlug: string;

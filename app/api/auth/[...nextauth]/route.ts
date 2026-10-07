@@ -4,7 +4,6 @@ import CredentialsProvider from "next-auth/providers/credentials";
 
 import { ACCOUNT_FAILURE_LIMIT, ACCOUNT_IP_FAILURE_LIMIT, AUTH_WINDOW_MS, IP_ABUSE_FAILURE_LIMIT, accountFailureWindowStart, accountIdentifierHash, normalizeAccountIdentifier, pruneAuthAudit, requestId, requestIpHash, userAgentClass, writeAuthAudit, type SafeAuthReason } from "@/lib/auth-security";
 import { productionLog } from "@/lib/observability";
-import { operationalAccessFailure } from "@/lib/operations/access";
 import { prisma } from "@/lib/prisma";
 import { enterTenantContext, runWithSystemAccess } from "@/lib/tenant-context";
 
@@ -48,17 +47,6 @@ export const authOptions: NextAuthOptions = {
         }
         await audit(user?.id, false, invalidReason);
         throw new SafeAuthError("INVALID_CREDENTIALS");
-      }
-      const operationalFailure = operationalAccessFailure(user);
-      if (operationalFailure) {
-        if (operationalFailure === "TEMPORARY_ACCESS_EXPIRED" && user.active) {
-          await runWithSystemAccess(() => prisma.user.update({
-            where: { id: user.id },
-            data: { active: false, sessionVersion: { increment: 1 } },
-          }));
-        }
-        await audit(user.id, false, operationalFailure);
-        throw new SafeAuthError(operationalFailure);
       }
       if (!user.active) {
         await audit(user.id, false, invalidReason);
@@ -113,15 +101,8 @@ export const authOptions: NextAuthOptions = {
             companyId: true, company: { select: { active: true, slug: true, name: true, isDemo: true } },
           },
         }));
-        const operationalFailure = current ? operationalAccessFailure(current) : null;
-        if (current && operationalFailure === "TEMPORARY_ACCESS_EXPIRED" && current.active) {
-          await runWithSystemAccess(() => prisma.user.update({
-            where: { id: Number(token.id) },
-            data: { active: false, sessionVersion: { increment: 1 } },
-          }));
-        }
-        token.invalidReason = operationalFailure ?? undefined;
-        token.invalid = Boolean(operationalFailure) || !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
+        token.invalidReason = undefined;
+        token.invalid = !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
         if (current) {
           token.role = current.role; token.mustChangePassword = current.mustChangePassword;
           token.companyId = current.companyId; token.companySlug = current.company.slug;
@@ -137,7 +118,9 @@ export const authOptions: NextAuthOptions = {
     },
     session({ session, token }) {
       session.user.id = String(token.id ?? "");
-      session.user.role = token.invalid ? "" : String(token.role ?? "");
+      const accountRole = token.invalid ? "" : String(token.role ?? "");
+      session.user.accountRole = accountRole;
+      session.user.role = accountRole === "OPERATIONS_DIRECTOR" ? "DIRECTOR" : accountRole;
       session.user.mustChangePassword = token.invalid ? false : token.mustChangePassword === true;
       session.user.companyId = Number(token.companyId ?? 0);
       session.user.companySlug = String(token.companySlug ?? "");
