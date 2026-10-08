@@ -15,7 +15,7 @@ export type ManagerMonthlySalesRow = {
 export async function getManagerMonthlySales(input: { companyId: number; start: Date; end: Date }) {
   const [users, leads, orders] = await Promise.all([
     prisma.user.findMany({
-      where: { companyId: input.companyId, role: Role.MANAGER },
+      where: { companyId: input.companyId, role: Role.MANAGER, active: true },
       select: { id: true, name: true, active: true, payrollProfile: { select: { position: true } } },
       orderBy: { name: "asc" },
     }),
