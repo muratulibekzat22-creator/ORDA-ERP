@@ -22,6 +22,10 @@ export type OrderEconomyInput = {
     deliveryCost: DecimalValue;
     otherDirectCosts: DecimalValue;
   } | null;
+  brassProcurement?: {
+    status: string;
+    landedCostKzt: DecimalValue;
+  } | null;
   payrollAccruals?: Array<{
     type: PayrollAccrualType | string;
     direction: PayrollDirection | string;
@@ -145,12 +149,16 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
     return value && value.gt(0) ? value : ledger;
   };
   const materials = categoryCost(calculation?.materialCost, ledgerMaterials);
+  const brass = input.brassProcurement?.status === "COST_FINALIZED"
+    ? money(input.brassProcurement.landedCostKzt)
+    : money(0);
   const delivery = categoryCost(calculation?.deliveryCost, ledgerDelivery);
   const contractors = categoryCost(calculation?.installationCost, ledgerContractors);
   const otherDirectExpenses = categoryCost(calculation?.otherDirectCosts, ledgerOther);
   const directExpenses = money(
     productionCost
       .add(materials)
+      .add(brass)
       .add(delivery)
       .add(contractors)
       .add(bankFees)
@@ -187,7 +195,7 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
     },
     profit: {
       dataComplete: costDataComplete,
-      totalSale, partnerCost: productionCost, directExpenses, materials, delivery, contractors, bankFees, otherDirectExpenses, marginBeforePayroll,
+      totalSale, partnerCost: productionCost, directExpenses, materials, brass, delivery, contractors, bankFees, otherDirectExpenses, marginBeforePayroll,
       managerBonus, measurer, installers, driver, expediter, otherPayroll,
       payrollAccrued, netProfit, netMarginPercent,
     },

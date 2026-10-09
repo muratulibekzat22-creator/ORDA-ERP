@@ -20,6 +20,7 @@ import { type ReactNode, useState } from "react";
 
 import ProjectPayments from "@/components/project/ProjectPayments";
 import PaymentFollowUpPanel from "@/components/orders/PaymentFollowUpPanel";
+import OrderBrassProcurementPanel from "@/components/orders/OrderBrassProcurementPanel";
 import OrderWarehousePanel from "@/components/orders/OrderWarehousePanel";
 import { orderBoardLabel } from "@/lib/orders/board";
 import { orderDeadline } from "@/lib/orders/presentation";
@@ -291,6 +292,14 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
       </header>
 
       {paymentOpen && !archived ? <ProjectPayments orderId={order.id} /> : null}
+
+      {canManageWarehouse ? (
+        <OrderBrassProcurementPanel
+          orderId={order.id}
+          readOnly={archived}
+          canSeeCost={operationalManagement}
+        />
+      ) : null}
 
       {canSeeFinance ? (
         <section className={panel}>

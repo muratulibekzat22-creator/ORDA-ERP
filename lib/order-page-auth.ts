@@ -81,6 +81,7 @@ export async function getAuthorizedOrder(id: number) {
       clientDueAt: source.promisedAt,
       payrollAccruals: source.payrollAccruals,
       ledgerEntries: source.companyLedgerEntries,
+      brassProcurement: source.brassProcurement,
       calculation: source.calculations[0] ?? null,
     }),
   };
@@ -157,6 +158,7 @@ export async function getAuthorizedOrder(id: number) {
     payrollAccruals: [],
     commercialAdjustments: [],
     companyLedgerEntries: [],
+    brassProcurement: undefined,
     economy: undefined,
     measurements: order.measurements.map((measurement) => {
       const safe = { ...measurement } as Partial<typeof measurement>;

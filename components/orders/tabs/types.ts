@@ -87,6 +87,7 @@ export type OrderTabData = {
     profit: {
       totalSale: NumericValue; partnerCost: NumericValue; directExpenses: NumericValue;
       materials: NumericValue; delivery: NumericValue; contractors: NumericValue;
+      brass: NumericValue;
       bankFees: NumericValue; otherDirectExpenses: NumericValue;
       dataComplete: boolean;
       marginBeforePayroll: NumericValue | null; managerBonus: NumericValue; measurer: NumericValue;

@@ -53,6 +53,7 @@ export default function NewOrderForm() {
   const [form, setForm] = useState<NewOrderFormValues>(EMPTY_NEW_ORDER_FORM);
   const [draftReady, setDraftReady] = useState(false);
   const [submission, setSubmission] = useState<OrderDraftSubmission | null>(null);
+  const [brassPhoto, setBrassPhoto] = useState<File | null>(null);
   const submitting = useRef(false);
   const draftCleared = useRef(false);
 
@@ -125,6 +126,14 @@ export default function NewOrderForm() {
     setDuplicateOrderId(null);
     if (Number(form.initialPayment) > Number(form.amount))
       return setError("Полученная сумма не может превышать цену заказа");
+    if (
+      form.brassRequired &&
+      (!Number.isFinite(Number(form.brassQuantityPairs)) ||
+        Number(form.brassQuantityPairs) <= 0)
+    )
+      return setError("Для латуни укажите количество пар");
+    if (form.brassRequired && !brassPhoto)
+      return setError("Для заявки на латунь обязательно приложите фото");
     const hasPaymentPromise = Boolean(form.paymentPromiseAmount || form.paymentPromiseAt);
     if (hasPaymentPromise && (!form.paymentPromiseAmount || !form.paymentPromiseAt))
       return setError("Для доплаты укажите и сумму, и дату обещания клиента");
@@ -145,6 +154,14 @@ export default function NewOrderForm() {
         paymentPromiseAmount: form.paymentPromiseAmount ? Number(form.paymentPromiseAmount) : undefined,
         paymentPromiseAt: form.paymentPromiseAt ? new Date(form.paymentPromiseAt).toISOString() : undefined,
         paymentDate: Number(form.initialPayment) > 0 ? form.orderReceivedAt : undefined,
+        brassPhotoMeta: brassPhoto
+          ? {
+              name: brassPhoto.name,
+              type: brassPhoto.type,
+              size: brassPhoto.size,
+              lastModified: brassPhoto.lastModified,
+            }
+          : null,
       };
       const payloadText = JSON.stringify(payload);
       const nextSubmission = resolveOrderSubmission(submission, payloadText, () => crypto.randomUUID());
@@ -166,6 +183,23 @@ export default function NewOrderForm() {
       const body = (await response.json()) as { id?: number; error?: string; existingOrderId?: number };
       if (!response.ok && body.existingOrderId) setDuplicateOrderId(body.existingOrderId);
       if (!response.ok || !body.id) throw new Error(body.error ?? "Не удалось создать заказ");
+      if (form.brassRequired && brassPhoto) {
+        const brass = new FormData();
+        brass.set("quantityPairs", form.brassQuantityPairs);
+        brass.set("notes", form.brassNotes);
+        brass.set("photo", brassPhoto);
+        const brassResponse = await fetch(`/api/orders/${body.id}/brass-procurement`, {
+          method: "POST",
+          headers: { "Idempotency-Key": `${nextSubmission.key}:brass` },
+          body: brass,
+        });
+        const brassBody = (await brassResponse.json()) as { error?: string };
+        if (!brassResponse.ok)
+          throw new Error(
+            brassBody.error ??
+              "Заказ создан, но заявку на латунь сохранить не удалось. Повторите сохранение.",
+          );
+      }
       if (options) {
         draftCleared.current = true;
         clearNewOrderDraft(window.localStorage, options.currentUserId);
@@ -226,6 +260,22 @@ export default function NewOrderForm() {
           <Field label="Цвет"><input value={form.color} onChange={(event) => set("color", event.target.value)} className={control} /></Field>
           <label className="rounded-xl border border-slate-800 p-3 text-sm text-slate-300"><span className="flex items-center gap-2"><input type="checkbox" checked={form.lighting} onChange={(event) => set("lighting", event.target.checked)} /> Подсветка</span>{form.lighting && <input value={form.lightingDetails} onChange={(event) => set("lightingDetails", event.target.value)} placeholder="Комментарий" className={control} />}</label>
           <label className="rounded-xl border border-slate-800 p-3 text-sm text-slate-300"><span className="flex items-center gap-2"><input type="checkbox" checked={form.cladding} onChange={(event) => set("cladding", event.target.checked)} /> Обшивка</span>{form.cladding && <input value={form.claddingDetails} onChange={(event) => set("claddingDetails", event.target.value)} placeholder="Комментарий" className={control} />}</label>
+        </div>
+        <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <label className="flex items-start gap-3 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              checked={form.brassRequired}
+              onChange={(event) => set("brassRequired", event.target.checked)}
+              className="mt-1"
+            />
+            <span><strong className="block text-amber-100">Латунные балясины нужно заказать</strong><span className="text-slate-400">После создания заказа заявка сразу появится у склада.</span></span>
+          </label>
+          {form.brassRequired ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Field label="Количество пар" required><input required type="number" min="1" step="1" inputMode="numeric" value={form.brassQuantityPairs} onChange={(event) => set("brassQuantityPairs", event.target.value)} className={control} /></Field>
+            <Field label="Фото модели / образца" required><input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setBrassPhoto(event.target.files?.[0] ?? null)} className={`${control} py-2`} /><span className="mt-1 block text-xs text-slate-500">Фото хранится приватно и доступно только сотрудникам по заказу.</span></Field>
+            <Field label="Комментарий для склада"><textarea rows={2} value={form.brassNotes} onChange={(event) => set("brassNotes", event.target.value)} placeholder="Модель, цвет, особенности комплекта" className={`${control} py-3`} /></Field>
+          </div> : null}
         </div>
       </details>
 

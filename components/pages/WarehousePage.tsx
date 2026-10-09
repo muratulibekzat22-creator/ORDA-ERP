@@ -14,6 +14,7 @@ import { useSession } from "next-auth/react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import PurchaseBatchesPanel from "@/components/warehouse/PurchaseBatchesPanel";
+import BrassProcurementsPanel from "@/components/warehouse/BrassProcurementsPanel";
 import WarehouseRetailPanel from "@/components/warehouse/WarehouseRetailPanel";
 
 type Material = {
@@ -403,6 +404,7 @@ export default function WarehousePage() {
       <div className="mb-5 flex gap-2 overflow-x-auto pb-2">
         {[
           ["materials", "Материалы"],
+          ...(canSeeCost ? [["brass", "Латунь под заказы"]] : []),
           ...(canSeeCost ? [["purchases", "Закупки"]] : []),
           ["operations", "Операции"],
           ["reservations", "Резервы"],
@@ -744,6 +746,11 @@ export default function WarehousePage() {
                 name: item.name,
                 unit: item.unit,
               }))}
+            />
+          )}
+          {tab === "brass" && (
+            <BrassProcurementsPanel
+              canPay={role === Role.DIRECTOR || role === Role.ACCOUNTANT}
             />
           )}
           {tab === "operations" && (

@@ -19,6 +19,9 @@ export type NewOrderFormValues = {
   lightingDetails: string;
   cladding: boolean;
   claddingDetails: string;
+  brassRequired: boolean;
+  brassQuantityPairs: string;
+  brassNotes: string;
 };
 
 export type DraftClient = {
@@ -67,6 +70,9 @@ export const EMPTY_NEW_ORDER_FORM: NewOrderFormValues = {
   lightingDetails: "",
   cladding: false,
   claddingDetails: "",
+  brassRequired: false,
+  brassQuantityPairs: "",
+  brassNotes: "",
 };
 
 export function newOrderDraftKey(userId: number) {
@@ -101,6 +107,9 @@ function parseForm(value: unknown): NewOrderFormValues | null {
     lightingDetails: stringValue(candidate.lightingDetails),
     cladding: candidate.cladding === true,
     claddingDetails: stringValue(candidate.claddingDetails),
+    brassRequired: candidate.brassRequired === true,
+    brassQuantityPairs: stringValue(candidate.brassQuantityPairs),
+    brassNotes: stringValue(candidate.brassNotes),
   };
 }
 

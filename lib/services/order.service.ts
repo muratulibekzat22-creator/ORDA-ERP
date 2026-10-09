@@ -70,6 +70,9 @@ export async function getOrders(
           voidedAt: true,
         },
       },
+      brassProcurement: {
+        select: { status: true, landedCostKzt: true },
+      },
       calculations: {
         orderBy: { createdAt: "desc" },
         take: 1,
@@ -98,6 +101,7 @@ export async function getOrders(
       clientDueAt: order.promisedAt,
       payrollAccruals: order.payrollAccruals,
       ledgerEntries: order.companyLedgerEntries,
+      brassProcurement: order.brassProcurement,
       calculation: order.calculations[0] ?? null,
     });
     return {
@@ -370,6 +374,9 @@ export async function getOrder(id: number) {
       installation: true,
       commercialAdjustments: { orderBy: { createdAt: "asc" } },
       companyLedgerEntries: { orderBy: { operationDate: "asc" } },
+      brassProcurement: {
+        select: { status: true, landedCostKzt: true },
+      },
       documents: true,
       calculations: {
         orderBy: { createdAt: "desc" },

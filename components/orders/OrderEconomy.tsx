@@ -55,6 +55,7 @@ export default function OrderEconomy({ order }: { order: OrderTabData }) {
             <Row label="Сумма продажи" value={money(economy.profit.totalSale)} />
             <Row label="Подрядчик / производство" value={money(economy.profit.partnerCost)} />
             <Row label="Материалы" value={money(economy.profit.materials)} />
+            <Row label="Латунные балясины (товар + карго)" value={money(economy.profit.brass)} />
             <Row label="Доставка" value={money(economy.profit.delivery)} />
             <Row label="Монтаж и подрядчики" value={money(economy.profit.contractors)} />
             <Row label="Банковские комиссии" value={money(economy.profit.bankFees)} />
