@@ -589,7 +589,7 @@ async function managementProjection(scope: DashboardScope) {
     },
     marketing: {
       ...marketing,
-      qualifiedShare: marketing.leads > 0 ? Math.round((marketing.orders / marketing.leads) * 10_000) / 100 : null,
+      qualifiedShare: marketing.salesConversion,
     },
     team,
     salesTools: {

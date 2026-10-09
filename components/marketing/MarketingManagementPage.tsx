@@ -1,7 +1,7 @@
 "use client";
 
 import { BarChart3, BriefcaseBusiness, KanbanSquare, Plus, RefreshCw } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 type Status = "TODO" | "IN_PROGRESS" | "REVIEW" | "DONE";
 type Task = { id: number; title: string; description: string | null; status: Status; priority: number; dueAt: string | null; assignee: { id: number; name: string } | null };
@@ -31,12 +31,16 @@ type Data = {
   summary: {
     spend: number;
     leads: number;
+    qualifiedLeads: number;
     orders: number;
     revenue: number;
     cpl: number | null;
     cac: number | null;
     roas: number | null;
+    advertisingConversion: number | null;
+    salesConversion: number | null;
     conversion: number | null;
+    metaLinkClicks: number;
     spendTracked: boolean;
     crmTracked: boolean;
     metaAttributionMissing: boolean;
@@ -64,11 +68,14 @@ export default function MarketingManagementPage() {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncingMeta, setSyncingMeta] = useState(false);
   const [metaReport, setMetaReport] = useState<MetaCampaignReport | null>(null);
   const [metaReportError, setMetaReportError] = useState("");
   const [task, setTask] = useState({ title: "", description: "", dueAt: "", assigneeId: "", priority: "2" });
   const [metricMonth, setMetricMonth] = useState(currentAlmatyMonth);
   const [vacancy, setVacancy] = useState({ title: "", note: "" });
+  const metaSyncInFlight = useRef(false);
+  const autoSyncAttempt = useRef("");
   const selectedMonth = metricMonth;
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -81,6 +88,41 @@ export default function MarketingManagementPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  const syncMeta = useCallback(async (silent = false) => {
+    if (metaSyncInFlight.current) return false;
+    metaSyncInFlight.current = true;
+    setSyncingMeta(true);
+    if (!silent) setError("");
+    try {
+      const response = await fetch("/api/marketing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync-meta", month: selectedMonth }),
+      });
+      const result = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        setError(result.error ?? "Не удалось обновить показатели Meta");
+        return false;
+      }
+      await load();
+      return true;
+    } catch {
+      setError("Не удалось обновить показатели Meta. Повторите попытку.");
+      return false;
+    } finally {
+      metaSyncInFlight.current = false;
+      setSyncingMeta(false);
+    }
+  }, [load, selectedMonth]);
+  useEffect(() => {
+    if (!data?.integration.configured || data.month !== selectedMonth) return;
+    const syncedAt = data.integration.lastSyncedAt ? new Date(data.integration.lastSyncedAt).getTime() : 0;
+    const fresh = Number.isFinite(syncedAt) && Date.now() - syncedAt < 15 * 60 * 1000;
+    if (fresh || autoSyncAttempt.current === selectedMonth) return;
+    autoSyncAttempt.current = selectedMonth;
+    const timer = window.setTimeout(() => void syncMeta(true), 0);
+    return () => window.clearTimeout(timer);
+  }, [data, selectedMonth, syncMeta]);
   useEffect(() => {
     if (!data?.integration.configured || data.month !== selectedMonth) {
       return;
@@ -114,10 +156,10 @@ export default function MarketingManagementPage() {
     {error && <p role="alert" className="rounded-xl border border-red-800 bg-red-950/40 p-3 text-red-200">{error}</p>}
     {loading && !data ? <div className="grid place-items-center rounded-2xl border border-slate-800 p-16 text-slate-400"><RefreshCw className="animate-spin"/></div> : null}
     {data ? <>
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-8">
-        <Stat label="Расход рекламы" value={data.summary.spendTracked ? money(data.summary.spend) : "—"}/><Stat label="Обращения" value={data.summary.leads}/><Stat label="Заказы" value={data.summary.orders}/><Stat label="Выручка" value={money(data.summary.revenue)}/><Stat label="Цена обращения" value={data.summary.cpl === null ? "—" : money(data.summary.cpl)}/><Stat label="Цена заказа" value={data.summary.cac === null ? "—" : money(data.summary.cac)}/><Stat label="ROAS" value={data.summary.roas === null ? "—" : `${data.summary.roas.toFixed(2)}×`}/><Stat label="Конверсия" value={data.summary.conversion === null ? "—" : `${data.summary.conversion.toFixed(1)}%`}/>
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5 xl:grid-cols-10">
+        <Stat label="Расход рекламы" value={data.summary.spendTracked ? money(data.summary.spend) : "—"}/><Stat label="Обращения Meta" value={data.summary.leads}/><Stat label="Заявки CRM" value={data.summary.qualifiedLeads}/><Stat label="Заказы" value={data.summary.orders}/><Stat label="Выручка" value={money(data.summary.revenue)}/><Stat label="Цена обращения" value={data.summary.cpl === null ? "—" : money(data.summary.cpl)}/><Stat label="Цена заказа" value={data.summary.cac === null ? "—" : money(data.summary.cac)}/><Stat label="ROAS" value={data.summary.roas === null ? "—" : `${data.summary.roas.toFixed(2)}×`}/><Stat label="Конверсия рекламы" value={data.summary.advertisingConversion === null ? "—" : `${data.summary.advertisingConversion.toFixed(1)}%`}/><Stat label="Конверсия продаж" value={data.summary.salesConversion === null ? "—" : `${data.summary.salesConversion.toFixed(1)}%`}/>
       </section>
-      <p className="text-xs leading-5 text-slate-400">Обращения относятся к месяцу создания заявки. Заказы и продажи относятся к месяцу подтверждённой даты заказа, как на главной и в отчётах. Поступления по старым заказам учитываются отдельно в финансах.</p>
+      <p className="text-xs leading-5 text-slate-400">Обращения Meta — начатые переписки WhatsApp из рекламы. Заявки CRM — квалифицированные обращения, которые менеджер оформил в ORDA. Конверсия рекламы = обращения / клики; конверсия продаж = заказы / заявки CRM. Заказы и выручка относятся к подтверждённой дате заказа.</p>
       <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
         <div><h2 className="text-xl font-bold text-white">Продажи менеджеров · {selectedMonth}</h2><p className="mt-1 text-sm text-slate-400">Заказы по подтверждённой дате выбранного месяца. Смените месяц выше, чтобы посмотреть продажи Акботы и Гулсим за сентябрь или октябрь.</p></div>
         <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[520px] text-sm"><thead className="border-b border-slate-700 text-left text-slate-400"><tr><th className="px-3 py-2">Менеджер</th><th className="px-3 py-2 text-right">Обращения</th><th className="px-3 py-2 text-right">Заказы</th><th className="px-3 py-2 text-right">Продажи</th></tr></thead><tbody className="divide-y divide-slate-800">{data.managerSales.rows.map(row => <tr key={row.userId}><td className="px-3 py-3 font-semibold text-white">{row.name}{!row.active && <span className="ml-2 text-xs font-normal text-slate-500">бывший сотрудник</span>}</td><td className="px-3 py-3 text-right tabular-nums">{row.leads}</td><td className="px-3 py-3 text-right tabular-nums">{row.orders}</td><td className="px-3 py-3 text-right font-semibold tabular-nums text-emerald-200">{money(row.sales)}</td></tr>)}{data.managerSales.otherOrders > 0 && <tr><td className="px-3 py-3 text-slate-300">Директор или без менеджера</td><td className="px-3 py-3 text-right">—</td><td className="px-3 py-3 text-right tabular-nums">{data.managerSales.otherOrders}</td><td className="px-3 py-3 text-right tabular-nums">{money(data.managerSales.otherSales)}</td></tr>}</tbody></table></div>
@@ -129,11 +171,11 @@ export default function MarketingManagementPage() {
         <p className="mt-1 text-sm text-slate-400">Аккаунт act_{metaReport.accountId} · {metaReport.accountTimezone ?? "часовой пояс аккаунта не указан"} · выбрано кампаний: {metaReport.selectedCampaignCount}</p>
         <p className="mt-3 text-sm text-slate-300">Расход: {sourceMoney(metaReport.spend, metaReport.currency)} · начатые переписки: {metaReport.conversations} · события lead Meta: {metaReport.leadActions} · клики по ссылке: {metaReport.linkClicks.toLocaleString("ru-RU")} · показы: {metaReport.impressions.toLocaleString("ru-RU")}</p>
         <p className="mt-2 text-xs text-amber-200">Начатая переписка Meta не означает подтверждённую заявку. Фактические обращения учитываются отдельно в CRM.</p>
-        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Кампания", "Расход", "Переписки", "Lead Meta", "Клики", "Показы", "Охват"].map(label => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{metaReport.campaigns.map(row => <tr key={row.id}><td className="px-3 py-3"><span className="font-semibold text-white">{row.name}</span><span className="block text-xs text-slate-500">{row.id}</span></td><td className="px-3 py-3">{sourceMoney(row.spend, metaReport.currency)}</td><td className="px-3 py-3">{row.conversations}</td><td className="px-3 py-3">{row.leadActions}</td><td className="px-3 py-3">{row.linkClicks.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.impressions.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.reach.toLocaleString("ru-RU")}</td></tr>)}</tbody></table></div>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[1050px] text-sm"><thead className="text-left text-slate-400"><tr>{["Кампания", "Расход", "Переписки", "Цена обращения", "Конверсия рекламы", "Lead Meta", "Клики", "Показы", "Охват"].map(label => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{metaReport.campaigns.map(row => <tr key={row.id}><td className="px-3 py-3"><span className="font-semibold text-white">{row.name}</span><span className="block text-xs text-slate-500">{row.id}</span></td><td className="px-3 py-3">{sourceMoney(row.spend, metaReport.currency)}</td><td className="px-3 py-3">{row.conversations}</td><td className="px-3 py-3">{row.conversations > 0 ? sourceMoney(row.spend / row.conversations, metaReport.currency) : "—"}</td><td className="px-3 py-3">{row.linkClicks > 0 ? `${((row.conversations / row.linkClicks) * 100).toFixed(1)}%` : "—"}</td><td className="px-3 py-3">{row.leadActions}</td><td className="px-3 py-3">{row.linkClicks.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.impressions.toLocaleString("ru-RU")}</td><td className="px-3 py-3">{row.reach.toLocaleString("ru-RU")}</td></tr>)}</tbody></table></div>
       </section>}
 
       {!data.summary.spendTracked ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка уже считаются из CRM. Расход появится после подключения служебного доступа Meta.</p> : null}
-      {data.summary.metaAttributionMissing ? <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения и заказы CRM пока не связаны с конкретными кампаниями Meta. Поэтому цена обращения, цена заказа и ROAS не рассчитываются по общим данным всех источников.</p> : null}
+      {data.summary.metaAttributionMissing && data.summary.spendTracked ? <p className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-blue-100">Цена заказа, ROAS и конверсия продаж показаны как управленческие показатели выбранного месяца: общий расход Meta сопоставляется с заказами и выручкой CRM. Детализация до конкретной кампании появится после передачи campaign ID из WhatsApp в CRM.</p> : null}
 
       <section className="rounded-2xl border border-cyan-500/20 bg-[#101827] p-4">
         <div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">CRM за предыдущий день</p><h2 className="mt-1 text-xl font-bold">{data.dailyCrm.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Показывает фактическую обработку обращений менеджерами; расход Meta синхронизируется системой отдельно.</p></div>
@@ -148,7 +190,7 @@ export default function MarketingManagementPage() {
             <p className="mt-1 text-xs opacity-80">Аккаунт: {data.integration.account ?? "не задан"} · кампаний: {data.integration.campaignCount} · API {data.integration.graphVersion}{data.integration.lastSyncedAt ? ` · обновлено ${new Date(data.integration.lastSyncedAt).toLocaleString("ru-RU")}` : ""}</p>
           </div>
           <p className="mt-3 text-sm leading-6 text-slate-400">Обращения, заказы и выручка считаются прямо из CRM. После подключения Meta ORDA будет каждое утро получать рекламный расход, а детализацию выбранных кампаний загружать при открытии страницы; курс валюты берётся у Национального Банка Казахстана. {data.integration.booksToLedger ? "Расход также записывается в финансовый журнал." : "В финансовый журнал расход не добавляется."}</p>
-          <button type="button" disabled={!data.integration.configured || loading} onClick={() => void send("POST", { action: "sync-meta", month: selectedMonth })} className="mt-3 min-h-11 w-full rounded-xl bg-fuchsia-700 px-4 font-semibold disabled:cursor-not-allowed disabled:opacity-40">{loading ? "Обновляем…" : "Обновить сейчас"}</button>
+          <button type="button" disabled={!data.integration.configured || loading || syncingMeta} onClick={() => void syncMeta(false)} className="mt-3 min-h-11 w-full rounded-xl bg-fuchsia-700 px-4 font-semibold disabled:cursor-not-allowed disabled:opacity-40">{loading || syncingMeta ? "Обновляем…" : "Обновить сейчас"}</button>
         </FormPanel>
         <FormPanel title="Новая задача" subtitle="Попадёт в маркетинговый Kanban">
           <form onSubmit={addTask} className="grid gap-3"><Input label="Что сделать" value={task.title} onChange={(value)=>setTask({...task,title:value})}/><div className="grid gap-3 sm:grid-cols-2"><Input label="Срок" type="date" value={task.dueAt} onChange={(value)=>setTask({...task,dueAt:value})}/><label className="text-sm text-slate-300">Ответственный<select className={`${field} mt-1`} value={task.assigneeId} onChange={(e)=>setTask({...task,assigneeId:e.target.value})}><option value="">Не назначен</option>{data.assignees.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label></div><button className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold"><Plus size={16} className="mr-2 inline"/>Добавить задачу</button></form>

@@ -1,6 +1,6 @@
 import { OrderLifecycle } from "@prisma/client";
 
-import { effectiveMarketingMetrics } from "@/lib/marketing";
+import { effectiveMarketingMetrics, marketingRatios, metaMetricSignals } from "@/lib/marketing";
 import { prisma } from "@/lib/prisma";
 
 type MarketingMetric = {
@@ -15,12 +15,16 @@ type MarketingMetric = {
 export type MarketingAnalytics = {
   spend: number;
   leads: number;
+  qualifiedLeads: number;
   orders: number;
   revenue: number;
   cpl: number | null;
   cac: number | null;
   roas: number | null;
+  advertisingConversion: number | null;
+  salesConversion: number | null;
   conversion: number | null;
+  metaLinkClicks: number;
   spendTracked: boolean;
   crmTracked: boolean;
   metaAttributionMissing: boolean;
@@ -29,9 +33,10 @@ export type MarketingAnalytics = {
 /**
  * Marketing spend is taken from recorded channel metrics. Inquiries, orders and
  * revenue are taken from CRM by their own event dates in the selected month,
- * matching the business dashboard. CRM activity is not attributed to ad
- * campaigns, so ad efficiency ratios stay empty whenever
- * these totals are mixed with automatic Meta spend.
+ * matching the business dashboard. Automatic Meta metrics provide the top of
+ * the funnel (WhatsApp conversations and link clicks); CRM provides qualified
+ * applications, orders and revenue. The resulting period ratios are management
+ * metrics, not per-campaign attribution.
  */
 export async function getMarketingAnalytics(input: {
   companyId: number;
@@ -89,23 +94,48 @@ export async function getMarketingAnalytics(input: {
   const automaticMetaTracked = effectiveMetrics.some(
     (metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"),
   );
-  const comparableChannelResults = !automaticMetaTracked;
+  const metaSignals = effectiveMetrics
+    .filter((metric) => metric.channel === "Instagram / Meta" && metric.note?.startsWith("Автосинхронизация Meta"))
+    .reduce((summary, metric) => {
+      const signals = metaMetricSignals(metric.note);
+      return {
+        conversations: summary.conversations + (signals.conversations ?? metric.leads),
+        linkClicks: summary.linkClicks + (signals.linkClicks ?? 0),
+      };
+    }, { conversations: 0, linkClicks: 0 });
   const spend = recorded.spend;
-  const leads = crmTracked ? crmClients.length : recorded.leads;
+  const qualifiedLeads = crmClients.length;
+  const leads = automaticMetaTracked && metaSignals.conversations > 0
+    ? metaSignals.conversations
+    : crmTracked
+      ? qualifiedLeads
+      : recorded.leads;
   const orders = crmTracked ? crmOrders.length : recorded.orders;
   const revenue = crmTracked
     ? crmOrders.reduce((sum, order) => sum + Number(order.amount), 0)
     : recorded.revenue;
+  const ratios = marketingRatios({
+    spend,
+    inquiries: leads,
+    qualifiedLeads,
+    orders,
+    revenue,
+    linkClicks: automaticMetaTracked ? metaSignals.linkClicks : 0,
+  });
 
   return {
     spend,
     leads,
+    qualifiedLeads,
     orders,
     revenue,
-    cpl: comparableChannelResults && spendTracked && leads > 0 ? spend / leads : null,
-    cac: comparableChannelResults && spendTracked && orders > 0 ? spend / orders : null,
-    roas: comparableChannelResults && spendTracked && spend > 0 ? revenue / spend : null,
-    conversion: leads > 0 ? (orders / leads) * 100 : null,
+    cpl: spendTracked ? ratios.cpl : null,
+    cac: spendTracked ? ratios.cac : null,
+    roas: spendTracked ? ratios.roas : null,
+    advertisingConversion: ratios.advertisingConversion,
+    salesConversion: ratios.salesConversion,
+    conversion: ratios.salesConversion,
+    metaLinkClicks: metaSignals.linkClicks,
     spendTracked,
     crmTracked,
     metaAttributionMissing: automaticMetaTracked,

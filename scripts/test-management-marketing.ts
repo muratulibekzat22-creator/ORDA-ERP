@@ -122,11 +122,14 @@ async function main() {
         }],
       });
       assert.equal(metaAnalytics.spend, 100_000);
-      assert.equal(metaAnalytics.leads, 1, "CRM totals must remain visible alongside Meta spend");
+      assert.equal(metaAnalytics.leads, 20, "Meta conversations must be the advertising inquiry count");
+      assert.equal(metaAnalytics.qualifiedLeads, 1, "CRM applications must remain visible alongside Meta inquiries");
       assert.equal(metaAnalytics.metaAttributionMissing, true);
-      assert.equal(metaAnalytics.cpl, null, "Meta spend must not be divided by all-source CRM leads");
-      assert.equal(metaAnalytics.cac, null, "Meta spend must not be divided by all-source CRM orders");
-      assert.equal(metaAnalytics.roas, null, "Meta spend must not be compared with all-source CRM revenue");
+      assert.equal(metaAnalytics.cpl, 5_000, "cost per Meta inquiry is incorrect");
+      assert.equal(metaAnalytics.cac, 100_000, "management cost per order is incorrect");
+      assert.equal(metaAnalytics.roas, 3.5, "management ROAS is incorrect");
+      assert.equal(metaAnalytics.advertisingConversion, null, "advertising conversion requires link clicks");
+      assert.equal(metaAnalytics.salesConversion, 100, "sales conversion is incorrect");
       await prisma.order.delete({ where: { id: crmOrder.id } });
       await prisma.client.delete({ where: { id: crmClient.id } });
       await prisma.managementMarketingTask.delete({ where: { id: task.id } });

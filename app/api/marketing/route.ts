@@ -191,7 +191,7 @@ export async function POST(request: Request) {
     if (error instanceof MetaAdsSyncError) {
       const messages: Record<string, string> = {
         META_NOT_CONFIGURED: "Нужно подключить служебный доступ Meta и указать ID кампаний",
-        META_EXCHANGE_RATE_UNAVAILABLE: "Не удалось получить курс валюты НБК",
+        META_EXCHANGE_RATE_UNAVAILABLE: "НБК временно не отвечает, а сохранённого курса для первой синхронизации ещё нет",
         META_SYNC_FORBIDDEN: "Недостаточно прав для синхронизации Meta",
       };
       return NextResponse.json({ error: messages[error.message] ?? "Meta временно не отдала показатели" }, { status: error.message === "META_NOT_CONFIGURED" ? 503 : 502 });

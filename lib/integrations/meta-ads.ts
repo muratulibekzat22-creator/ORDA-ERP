@@ -1,6 +1,6 @@
 import { LeadSource, OrderLifecycle, Prisma, Role } from "@prisma/client";
 
-import { marketingMonthRange } from "@/lib/marketing";
+import { exchangeRateFromMetaMetricNote, marketingMonthRange } from "@/lib/marketing";
 import { campaignIdsFromEnv, metaActionCounts, onlySelectedCampaigns, type MetaAction } from "@/lib/integrations/meta-ads-metrics";
 import { officialCurrencyRateToKzt } from "@/lib/integrations/nbk-rates";
 import { prisma } from "@/lib/prisma";
@@ -123,10 +123,15 @@ export async function loadMetaAdsCampaignReport(month: string) {
   };
 }
 
-async function currencyToKzt(currency: string, at: Date) {
-  const fallback = Number(process.env.META_CURRENCY_TO_KZT_RATE ?? 0);
+async function currencyToKzt(currency: string, at: Date, previousRate: number | null, now: Date) {
+  const configuredRate = Number(process.env.META_CURRENCY_TO_KZT_RATE ?? 0);
+  const fallback = previousRate
+    ? { rate: previousRate, publishedFor: null, source: "LAST_SUCCESSFUL" as const }
+    : Number.isFinite(configuredRate) && configuredRate > 0
+      ? { rate: configuredRate, publishedFor: null, source: "CONFIGURED_FALLBACK" as const }
+      : 0;
   try {
-    return await officialCurrencyRateToKzt(currency, at, fallback);
+    return await officialCurrencyRateToKzt(currency, at, fallback, now);
   } catch {
     throw new MetaAdsSyncError("META_EXCHANGE_RATE_UNAVAILABLE");
   }
@@ -144,7 +149,18 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
   });
   if (!actor) throw new MetaAdsSyncError("META_SYNC_FORBIDDEN");
   const insights = await loadMetaAdsCampaignReport(month);
-  const exchange = await currencyToKzt(insights.currency, new Date(insights.end.getTime() - 1));
+  const previousMetric = await prisma.managementMarketingMetric.findFirst({
+    where: {
+      companyId,
+      channel: META_CHANNEL,
+      note: { startsWith: "Автосинхронизация Meta" },
+    },
+    select: { note: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const previousRate = exchangeRateFromMetaMetricNote(previousMetric?.note, insights.currency);
+  const requestedRateDate = new Date(Math.min(now.getTime(), insights.end.getTime() - 1));
+  const exchange = await currencyToKzt(insights.currency, requestedRateDate, previousRate, now);
   const spendKzt = Math.round(insights.spend * exchange.rate * 100) / 100;
   const sourceClients = await prisma.client.findMany({
     where: {
@@ -182,6 +198,10 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
     `${insights.campaigns.length} кампаний`,
     `${insights.conversations} начатых переписок`,
     `${insights.leadActions} событий lead в Meta`,
+    `fx:${insights.currency}/KZT=${exchange.rate.toFixed(6)}`,
+    `meta:conversations=${insights.conversations}`,
+    `meta:linkClicks=${insights.linkClicks}`,
+    `meta:impressions=${insights.impressions}`,
     `обновлено ${now.toISOString()}`,
   ].join(" · ");
   return prisma.$transaction(async (tx) => {
@@ -192,7 +212,7 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
         metricMonth: insights.start,
         channel: META_CHANNEL,
         spend: new Prisma.Decimal(spendKzt.toFixed(2)),
-        leads: insights.leadActions,
+        leads: insights.conversations,
         orders: crmOrders.length,
         revenue: new Prisma.Decimal(revenue.toFixed(2)),
         note,
@@ -200,7 +220,7 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
       },
       update: {
         spend: new Prisma.Decimal(spendKzt.toFixed(2)),
-        leads: insights.leadActions,
+        leads: insights.conversations,
         orders: crmOrders.length,
         revenue: new Prisma.Decimal(revenue.toFixed(2)),
         note,
@@ -261,6 +281,8 @@ export async function syncMetaAdsMonth(input: { actorId: number; month?: string;
       exchangeRateSource: exchange.source,
       leadActions: insights.leadActions,
       conversations: insights.conversations,
+      linkClicks: insights.linkClicks,
+      impressions: insights.impressions,
       orders: crmOrders.length,
       revenue,
       campaigns: insights.campaigns.length,
