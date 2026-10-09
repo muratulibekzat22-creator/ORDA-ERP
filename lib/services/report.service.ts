@@ -61,6 +61,7 @@ async function reportMeasurements(
 
 export async function getReportsReadModel(params: URLSearchParams, actor: Actor): Promise<ReportsReadModel> {
   const companyId = requireTenantIdentity().companyId;
+  if (actor.role === Role.OPERATIONS_DIRECTOR) throw new Error("REPORT_ROLE_FORBIDDEN");
   if (!leadership(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT) throw new Error("REPORT_ROLE_FORBIDDEN");
   const period = resolveReportRange(params);
   const requestedManager = params.get("managerId");
@@ -216,7 +217,7 @@ export async function getReportsReadModel(params: URLSearchParams, actor: Actor)
     sales: { count: orders.length, amount: salesAmount, averageOrder: orders.length ? salesAmount / orders.length : 0, completed, cancelled, ...(leadership(actor.role) ? { grossMargin, ordersWithMargin: pricedOrders.length } : {}) },
     payments: { received, remaining: currentCustomerRemaining },
     dataQuality: { missingProductionPrice, incompleteOrders: completionTasks.length, tasks: visibleCompletionTasks },
-    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, productionCost, grossMargin, grossMarginRate: safePercent(grossMargin, pricedSales), ordersWithMargin: pricedOrders.length, ordersWithoutMargin: orders.length - pricedOrders.length, additionalIncome, operatingExpenses, expensesByCategory, recordedExpenses, netProfit: actor.role === Role.OPERATIONS_DIRECTOR || pricedOrders.length !== orders.length ? null : netProfit, payrollAccrued: actor.role === Role.OPERATIONS_DIRECTOR ? null : payrollAccrued, payrollPaid: actor.role === Role.OPERATIONS_DIRECTOR ? null : payrollPaid, payrollPayable: actor.role === Role.OPERATIONS_DIRECTOR ? null : Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
+    ...(internalFinance ? { finance: { sales: salesAmount, customerReceived: received, customerRemaining: currentCustomerRemaining, partnerAgreed, partnerPaid, partnerRemaining: currentPartnerRemaining, productionCost, grossMargin, grossMarginRate: safePercent(grossMargin, pricedSales), ordersWithMargin: pricedOrders.length, ordersWithoutMargin: orders.length - pricedOrders.length, additionalIncome, operatingExpenses, expensesByCategory, recordedExpenses, netProfit: pricedOrders.length !== orders.length ? null : netProfit, payrollAccrued, payrollPaid, payrollPayable: Math.max(payrollAccruedAll - payrollPaidAll, 0) } } : {}),
     funnel: [
       { key: "leads", label: "Заявки", value: clients.length, conversionFromPrevious: null },
       { key: "measurements", label: "Замеры", value: measurements.length, conversionFromPrevious: safePercent(measurements.length, clients.length) },

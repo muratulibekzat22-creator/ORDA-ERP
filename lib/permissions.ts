@@ -3,10 +3,24 @@ import { Role } from "./roles";
 export const permissionKeys = ["employees", "clients", "orders", "measurements", "calendar", "documents", "finance", "partners", "reports", "settings", "design", "production", "installation", "warehouse", "payroll", "marketing"] as const;
 export type Permission = (typeof permissionKeys)[number];
 
+const fixedDeniedPermissions: Partial<Record<Role, readonly Permission[]>> = {
+  // The operations director runs daily operations, but company margin and
+  // workshop settlements remain founder-only management information.
+  OPERATIONS_DIRECTOR: ["partners", "reports"],
+};
+
+export const isRolePermissionAllowed = (role: Role, permission: Permission) =>
+  !fixedDeniedPermissions[role]?.includes(permission);
+
+export const filterRolePermissions = (role: Role, permissions: Permission[]) =>
+  [...new Set(permissions)].filter((permission) =>
+    permissionKeys.includes(permission) && isRolePermissionAllowed(role, permission),
+  );
+
 const all: Permission[] = [...permissionKeys];
 export const defaultPermissions: Record<Role, Permission[]> = {
   DIRECTOR: all,
-  OPERATIONS_DIRECTOR: ["employees", "clients", "orders", "measurements", "calendar", "documents", "finance", "reports", "production", "warehouse", "payroll", "marketing"],
+  OPERATIONS_DIRECTOR: ["employees", "clients", "orders", "measurements", "calendar", "documents", "finance", "production", "warehouse", "payroll", "marketing"],
   MARKETER: ["marketing", "calendar", "payroll"],
   MANAGER: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse", "partners", "payroll"],
   ACCOUNTANT: ["documents", "finance", "partners", "reports", "warehouse", "payroll"],

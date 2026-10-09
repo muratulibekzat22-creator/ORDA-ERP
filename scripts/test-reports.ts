@@ -35,6 +35,7 @@ const service = readFileSync(new URL("../lib/services/report.service.ts", import
 const companyFinance = readFileSync(new URL("../lib/services/management-finance.service.ts", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/reports/route.ts", import.meta.url), "utf8");
 assert.match(service, /actor\.role === Role\.MANAGER\) scope = \{ managerUserId: actor\.id \}/, "manager scope must ignore spoofed managerId");
+assert.match(service, /actor\.role === Role\.OPERATIONS_DIRECTOR\) throw new Error\("REPORT_ROLE_FORBIDDEN"\)/, "operations director must not access company margin reports");
 assert.match(service, /lifecycle: \{ not: "CANCELLED" \}/, "cancelled orders must be excluded");
 assert.match(service, /leadership\(actor\.role\) \? \{ grossMargin, ordersWithMargin: pricedOrders\.length \} : \{\}/, "gross margin must be leadership-only");
 assert.match(service, /includeFullDetails = params\.get\("export"\) === "csv"/, "CSV export must keep complete report details");
@@ -45,7 +46,7 @@ assert.match(service, /completionTasks/, "report must include exact completion t
 assert.match(service, /recordedExpenses/, "report must include recorded expenses");
 assert.match(service, /const pricedOrders = orders\.filter/, "margin must use only orders with complete sale and production prices");
 assert.match(service, /const grossMargin = pricedSales - productionCost/, "gross margin must remain available for complete orders");
-assert.match(service, /netProfit: actor.role === Role.OPERATIONS_DIRECTOR \|\| pricedOrders.length !== orders.length \? null : netProfit/, "incomplete totals must not be exposed as company net profit");
+assert.match(service, /netProfit: pricedOrders.length !== orders.length \? null : netProfit/, "incomplete totals must not be exposed as company net profit");
 assert.match(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, orderDateNeedsReview: false, orderReceivedAt: range\(period.start, period.end\)/, "sales month follows a confirmed business order date, not data-entry date");
 assert.match(service, /const key = day\(item.orderReceivedAt\)/, "sales trend follows the same business date");
 assert.doesNotMatch(service, /prisma.order.findMany\(\{ where: \{ ...activeOrder, createdAt:/);
@@ -59,6 +60,8 @@ assert.match(service, /JOIN "PayrollPeriod" payroll_period ON payroll_period\.id
 assert.match(service, /payroll_period\.year \* 100 \+ payroll_period\.month/, "report payroll period must match the selected business months");
 assert.doesNotMatch(service, /accrual\."createdAt" >=/, "late-entered payroll must not move into the wrong reporting month");
 const reportPage = readFileSync(new URL("../components/pages/ReportsPage.tsx", import.meta.url), "utf8");
+const reportRoutePage = readFileSync(new URL("../app/reports/page.tsx", import.meta.url), "utf8");
+assert.match(reportRoutePage, /Role\.OPERATIONS_DIRECTOR[\s\S]*notFound\(\)/, "reports page must reject the operations director on the server");
 assert.match(reportPage, /Заказы \/ заявки периода/);
 assert.match(reportPage, /Зарплата к выплате по проведённым начислениям/);
 assert.match(companyFinance, /lifecycle: "COMPLETED"[\s\S]*partnerPrice: \{ gte: MIN_PRODUCTION_PRICE \}[\s\S]*partnerAgreedAt: \{ not: null \}/, "company profit must reject placeholder production prices");

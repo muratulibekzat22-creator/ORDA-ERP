@@ -38,7 +38,6 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "calendar",
     "documents",
     "finance",
-    "reports",
     "production",
     "warehouse",
     "payroll",
