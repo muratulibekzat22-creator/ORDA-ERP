@@ -3,6 +3,7 @@ export const ATTACHMENT_PURPOSES = [
   { value: "FRAME", label: "Фото каркаса / замера" },
   { value: "PAST_WORK", label: "Референс из наших работ" },
   { value: "DESIGN_RESULT", label: "Готовый 3D-проект" },
+  { value: "BRASS_REFERENCE", label: "Фото латунных балясин" },
   { value: "GENERAL", label: "Другой файл" },
 ] as const;
 

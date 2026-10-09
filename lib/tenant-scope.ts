@@ -44,6 +44,7 @@ export const TENANT_MODELS = new Set([
   "WarehouseBalance",
   "MaterialChangeAudit",
   "OrderItem",
+  "OrderBrassProcurement",
   "WarehouseShipment",
   "WarehouseReturn",
   "PurchaseReceipt",

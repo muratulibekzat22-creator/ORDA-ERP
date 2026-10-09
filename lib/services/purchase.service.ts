@@ -8,6 +8,7 @@ import {
   PurchaseBatchStatus,
   Role,
 } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
@@ -83,7 +84,18 @@ function assertManage(actor: PurchaseActor, manual = false) {
 
 export async function listSuppliers(actor: PurchaseActor) {
   assertManage(actor);
-  return prisma.supplier.findMany({ orderBy: { name: "asc" } });
+  return prisma.supplier.findMany({
+    select: {
+      id: true,
+      name: true,
+      country: true,
+      defaultCurrency: true,
+      contact: true,
+      comment: true,
+      active: true,
+    },
+    orderBy: { name: "asc" },
+  });
 }
 export async function createSupplier(
   data: {
@@ -96,7 +108,23 @@ export async function createSupplier(
   actor: PurchaseActor,
 ) {
   assertManage(actor);
-  return prisma.supplier.create({ data });
+  return prisma.supplier.create({
+    data: {
+      ...data,
+      demoKey: `purchase-${randomUUID()}`,
+      phoneMask: data.contact ?? "",
+      city: data.country ?? "",
+    },
+    select: {
+      id: true,
+      name: true,
+      country: true,
+      defaultCurrency: true,
+      contact: true,
+      comment: true,
+      active: true,
+    },
+  });
 }
 
 export async function listPurchaseBatches(
