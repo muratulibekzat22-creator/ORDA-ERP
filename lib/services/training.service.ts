@@ -7,13 +7,19 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { MEASURER_KNOWLEDGE } from "@/lib/training-course";
+import {
+  MEASURER_KNOWLEDGE,
+  MEASURER_QUESTIONS,
+} from "@/lib/training-course";
 import {
   acceptedHeartbeatRange,
   mergeWatchedRanges,
   parseWatchedRanges,
   watchedPercent,
 } from "@/lib/training-progress";
+import { trainingLessonCompletionState } from "@/lib/training-navigation";
+import { normalizeYouTubeVideoId } from "@/lib/training-video";
+import { productionLog } from "@/lib/observability";
 
 type Db = Prisma.TransactionClient;
 type Heartbeat = {
@@ -39,27 +45,64 @@ type StoredLessonProgress = {
 };
 type LessonProgressMap = Record<string, StoredLessonProgress>;
 
+const lessonKeyByQuestionPosition = new Map(
+  MEASURER_QUESTIONS.map((question) => [question.position, question.lessonKey]),
+);
+const loggedInvalidVideoCourses = new Set<number>();
+
+function attemptLessonKey(value: Prisma.JsonValue | null) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const lessonKey = (value as Record<string, unknown>).lessonKey;
+  return typeof lessonKey === "string" ? lessonKey : null;
+}
+
+function passedLessonKeys(
+  attempts: Array<{ status: TrainingAttemptStatus; answers: Prisma.JsonValue | null }>,
+  lessons: CourseLesson[],
+  legacyCoursePassed = false,
+) {
+  if (legacyCoursePassed && !attempts.some((attempt) => attemptLessonKey(attempt.answers)))
+    return new Set(lessons.map((lesson) => lesson.key));
+  return new Set(
+    attempts.flatMap((attempt) => {
+      const lessonKey = attempt.status === TrainingAttemptStatus.PASSED
+        ? attemptLessonKey(attempt.answers)
+        : null;
+      return lessonKey ? [lessonKey] : [];
+    }),
+  );
+}
+
+function lessonQuestionPositions(lessonKey: string) {
+  return MEASURER_QUESTIONS
+    .filter((question) => question.lessonKey === lessonKey)
+    .map((question) => question.position);
+}
+
 function courseLessons(course: {
   videoLessons: Prisma.JsonValue | null;
   youtubeVideoId: string;
 }): CourseLesson[] {
   if (Array.isArray(course.videoLessons)) {
+    const seenKeys = new Set<string>();
     const lessons = course.videoLessons.flatMap((value) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) return [];
       const lesson = value as Record<string, unknown>;
       if (
         typeof lesson.key !== "string" ||
         typeof lesson.title !== "string" ||
-        typeof lesson.description !== "string" ||
-        typeof lesson.youtubeVideoId !== "string"
+        typeof lesson.description !== "string"
       )
         return [];
+      const key = lesson.key.trim();
+      if (!key || seenKeys.has(key)) return [];
+      seenKeys.add(key);
       return [
         {
-          key: lesson.key,
-          title: lesson.title,
-          description: lesson.description,
-          youtubeVideoId: lesson.youtubeVideoId,
+          key,
+          title: lesson.title.trim(),
+          description: lesson.description.trim(),
+          youtubeVideoId: normalizeYouTubeVideoId(lesson.youtubeVideoId),
         },
       ];
     });
@@ -70,7 +113,7 @@ function courseLessons(course: {
       key: "main",
       title: "Обучающее видео",
       description: "Обязательный видеоурок курса.",
-      youtubeVideoId: course.youtubeVideoId,
+      youtubeVideoId: normalizeYouTubeVideoId(course.youtubeVideoId),
     },
   ];
 }
@@ -194,14 +237,19 @@ export async function getMyTraining(userId: number) {
   const assignment = await prisma.trainingAssignment.findUniqueOrThrow({
     where: { id: assignmentId },
     include: {
-      course: { include: { _count: { select: { questions: true } } } },
+      course: {
+        include: {
+          _count: { select: { questions: true } },
+          questions: { select: { position: true } },
+        },
+      },
       attempts: {
-        where: { completedAt: { not: null } },
         select: {
           id: true,
           score: true,
           percent: true,
           status: true,
+          answers: true,
           startedAt: true,
           completedAt: true,
         },
@@ -215,6 +263,77 @@ export async function getMyTraining(userId: number) {
     progress.stored,
     assignment.course.requiredCoverage,
   );
+  const completedAttempts = assignment.attempts.filter(
+    (attempt) => attempt.completedAt !== null,
+  );
+  const passedKeys = passedLessonKeys(
+    completedAttempts,
+    progress.lessons,
+    assignment.status === TrainingStatus.PASSED,
+  );
+  const lessonAttempts = new Map<string, typeof assignment.attempts>();
+  for (const attempt of assignment.attempts) {
+    const lessonKey = attemptLessonKey(attempt.answers);
+    if (!lessonKey) continue;
+    lessonAttempts.set(lessonKey, [...(lessonAttempts.get(lessonKey) ?? []), attempt]);
+  }
+  const lessons = progress.presented.map((lesson) => {
+    const attempts = lessonAttempts.get(lesson.key) ?? [];
+    const completed = attempts.filter((attempt) => attempt.completedAt !== null);
+    const questionsCount = assignment.course.questions.filter(
+      (question) => lessonKeyByQuestionPosition.get(question.position) === lesson.key,
+    ).length;
+    const quizPassed = passedKeys.has(lesson.key);
+    const quizInProgress = attempts.some(
+      (attempt) =>
+        attempt.status === TrainingAttemptStatus.IN_PROGRESS &&
+        attempt.startedAt.getTime() > Date.now() - 2 * 60 * 60 * 1000,
+    );
+    const completion = trainingLessonCompletionState({
+      progressPercent: assignment.status === TrainingStatus.PASSED
+        ? 100
+        : (progress.stored[lesson.key]?.progressPercent ?? 0),
+      requiredCoverage: assignment.course.requiredCoverage,
+      questionsCount,
+      quizPassed,
+    });
+    return {
+      ...lesson,
+      questionsCount,
+      videoCompleted: completion.videoCompleted,
+      testRequired: completion.testRequired,
+      quizPassed,
+      quizInProgress,
+      quizStatus: !completion.testRequired
+        ? "NOT_REQUIRED"
+        : quizPassed
+        ? "PASSED"
+        : quizInProgress
+          ? "IN_PROGRESS"
+          : completed.some((attempt) => attempt.status === TrainingAttemptStatus.FAILED)
+            ? "FAILED"
+            : "NOT_STARTED",
+      lessonCompleted: completion.lessonCompleted,
+      quizAttempts: completed.length,
+      quizBestPercent: Math.round(Math.max(0, ...completed.map((attempt) => attempt.percent ?? 0))),
+      canStartQuiz: completion.testAvailable,
+    };
+  });
+  if (
+    lessons.some((lesson) => !lesson.youtubeVideoId) &&
+    !loggedInvalidVideoCourses.has(assignment.course.id)
+  ) {
+    loggedInvalidVideoCourses.add(assignment.course.id);
+    productionLog("error", "training.lesson_video_invalid", {
+      route: "/api/training",
+      method: "GET",
+      reason: "COURSE_VIDEO_ID_INVALID",
+    });
+  }
+  const allLessonQuizzesPassed =
+    lessons.length > 0 && lessons.every(
+      (lesson) => !lesson.testRequired || lesson.quizPassed,
+    );
   return {
     id: assignment.id,
     status: assignment.status,
@@ -235,15 +354,25 @@ export async function getMyTraining(userId: number) {
       videoLanguage: assignment.course.videoLanguage,
       quizLanguage: assignment.course.quizLanguage,
       youtubeVideoId: assignment.course.youtubeVideoId,
-      lessons: progress.presented,
+      lessons,
       passScorePercent: assignment.course.passScorePercent,
       requiredCoverage: assignment.course.requiredCoverage,
       questionsCount: assignment.course._count.questions,
     },
     knowledge: MEASURER_KNOWLEDGE,
-    attempts: assignment.attempts,
-    canAcknowledge: hasCoverage && !assignment.acknowledgedAt,
-    canStartQuiz: hasCoverage && Boolean(assignment.acknowledgedAt),
+    passedLessonsCount: lessons.filter((lesson) => lesson.lessonCompleted).length,
+    lessonsCount: lessons.length,
+    attempts: completedAttempts.map(({ answers, ...attempt }) => {
+      const lessonKey = attemptLessonKey(answers);
+      return {
+        ...attempt,
+        lessonKey,
+        lessonTitle: lessons.find((lesson) => lesson.key === lessonKey)?.title ?? "Общий тест",
+      };
+    }),
+    canAcknowledge:
+      hasCoverage && allLessonQuizzesPassed && !assignment.acknowledgedAt,
+    canStartQuiz: lessons.some((lesson) => lesson.canStartQuiz),
   };
 }
 
@@ -321,21 +450,13 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
         (total, item) => total + (progress.stored[item.key]?.progressPercent ?? 0),
         0,
       ) / progress.lessons.length;
-    const hasCoverage = hasRequiredLessonCoverage(
-      progress.lessons,
-      progress.stored,
-      course.requiredCoverage,
-    );
     const status =
       assignment.status === TrainingStatus.PASSED ||
-      assignment.status === TrainingStatus.FAILED
+      assignment.status === TrainingStatus.READY_FOR_TEST
         ? assignment.status
-        : assignment.acknowledgedAt &&
-            hasCoverage
-          ? TrainingStatus.READY_FOR_TEST
-          : progressPercent > 0
-            ? TrainingStatus.IN_PROGRESS
-            : TrainingStatus.NOT_STARTED;
+        : progressPercent > 0
+          ? TrainingStatus.IN_PROGRESS
+          : TrainingStatus.NOT_STARTED;
     const updated = await tx.trainingAssignment.update({
       where: { id: assignment.id },
       data: {
@@ -349,6 +470,12 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
         status,
       },
     });
+    const completion = trainingLessonCompletionState({
+      progressPercent: lessonProgressPercent,
+      requiredCoverage: course.requiredCoverage,
+      questionsCount: lessonQuestionPositions(lesson.key).length,
+      quizPassed: false,
+    });
     return {
       progressPercent: Math.round(updated.progressPercent * 10) / 10,
       lessonKey: lesson.key,
@@ -358,8 +485,9 @@ export async function recordTrainingHeartbeat(userId: number, input: Heartbeat) 
         progressPercent:
           Math.round((progress.stored[item.key]?.progressPercent ?? 0) * 10) / 10,
       })),
-      canAcknowledge: hasCoverage && !updated.acknowledgedAt,
-      canStartQuiz: hasCoverage && Boolean(updated.acknowledgedAt),
+      canAcknowledge: false,
+      videoCompleted: completion.videoCompleted,
+      canStartQuiz: completion.testAvailable,
     };
   });
 }
@@ -380,16 +508,27 @@ export async function acknowledgeTraining(userId: number) {
       )
     )
       throw new Error("ACKNOWLEDGEMENT_LOCKED");
+    const completedAttempts = await tx.trainingAttempt.findMany({
+      where: { assignmentId: assignment.id, completedAt: { not: null } },
+      select: { status: true, answers: true },
+    });
+    const passedKeys = passedLessonKeys(
+      completedAttempts,
+      progress.lessons,
+      assignment.status === TrainingStatus.PASSED,
+    );
+    if (!progress.lessons.every(
+      (lesson) => !lessonQuestionPositions(lesson.key).length || passedKeys.has(lesson.key),
+    ))
+      throw new Error("ACKNOWLEDGEMENT_LOCKED");
     if (assignment.acknowledgedAt) return assignment;
     const now = new Date();
     const updated = await tx.trainingAssignment.update({
       where: { id: assignment.id },
       data: {
         acknowledgedAt: now,
-        status:
-          assignment.status === TrainingStatus.PASSED
-            ? TrainingStatus.PASSED
-            : TrainingStatus.READY_FOR_TEST,
+        status: TrainingStatus.PASSED,
+        passedAt: assignment.passedAt ?? now,
       },
     });
     await tx.trainingAudit.create({
@@ -420,14 +559,14 @@ export async function recordChatGptAccessReveal(userId: number) {
   });
 }
 
-const quizPayload = async (db: Db, courseId: number) =>
+const quizPayload = async (db: Db, courseId: number, positions: number[]) =>
   db.trainingQuestion.findMany({
-    where: { courseId },
+    where: { courseId, position: { in: positions } },
     select: { id: true, position: true, question: true, options: true },
     orderBy: { position: "asc" },
   });
 
-export async function startTrainingAttempt(userId: number) {
+export async function startTrainingAttempt(userId: number, requestedLessonKey?: string) {
   return prisma.$transaction(async (tx) => {
     const assignment = await ensureCurrentMeasurerTraining(tx, userId);
     if (!assignment) throw new Error("TRAINING_NOT_FOUND");
@@ -435,16 +574,20 @@ export async function startTrainingAttempt(userId: number) {
       where: { id: assignment.courseId },
     });
     const progress = lessonStates(course, assignment);
-    if (
-      !hasRequiredLessonCoverage(
-        progress.lessons,
-        progress.stored,
-        course.requiredCoverage,
-      ) ||
-      !assignment.acknowledgedAt
-    )
+    const lessonKey = requestedLessonKey || (progress.lessons.length === 1 ? progress.lessons[0].key : "");
+    const lesson = progress.lessons.find((item) => item.key === lessonKey);
+    if (!lesson) throw new Error("INVALID_LESSON");
+    if ((progress.stored[lesson.key]?.progressPercent ?? 0) < course.requiredCoverage)
       throw new Error("QUIZ_LOCKED");
-    const recent = await tx.trainingAttempt.findFirst({
+    const positions = lessonQuestionPositions(lesson.key);
+    if (!positions.length) throw new Error("QUIZ_NOT_CONFIGURED");
+    const completedAttempts = await tx.trainingAttempt.findMany({
+      where: { assignmentId: assignment.id, completedAt: { not: null } },
+      select: { status: true, answers: true },
+    });
+    if (passedLessonKeys(completedAttempts, progress.lessons).has(lesson.key))
+      throw new Error("LESSON_QUIZ_PASSED");
+    const recentCandidates = await tx.trainingAttempt.findMany({
       where: {
         assignmentId: assignment.id,
         status: TrainingAttemptStatus.IN_PROGRESS,
@@ -452,15 +595,24 @@ export async function startTrainingAttempt(userId: number) {
       },
       orderBy: { startedAt: "desc" },
     });
+    const recent = recentCandidates.find(
+      (attempt) => attemptLessonKey(attempt.answers) === lesson.key,
+    );
     const attempt =
       recent ??
       (await tx.trainingAttempt.create({
-        data: { assignmentId: assignment.id, courseVersion: course.version },
+        data: {
+          assignmentId: assignment.id,
+          courseVersion: course.version,
+          answers: { lessonKey: lesson.key },
+        },
       }));
     return {
       attemptId: attempt.id,
       startedAt: attempt.startedAt,
-      questions: await quizPayload(tx, course.id),
+      lessonKey: lesson.key,
+      lessonTitle: lesson.title,
+      questions: await quizPayload(tx, course.id, positions),
     };
   });
 }
@@ -487,6 +639,10 @@ export async function submitTrainingAttempt(
         throw new Error("ATTEMPT_NOT_FOUND");
       if (attempt.status !== TrainingAttemptStatus.IN_PROGRESS)
         throw new Error("ATTEMPT_COMPLETED");
+      const lessonKey = attemptLessonKey(attempt.answers);
+      const lessons = courseLessons(attempt.assignment.course);
+      const lesson = lessons.find((item) => item.key === lessonKey);
+      if (!lessonKey || !lesson) throw new Error("INVALID_LESSON");
       const unique = new Map<number, number>();
       for (const answer of answers) {
         if (
@@ -499,7 +655,10 @@ export async function submitTrainingAttempt(
           throw new Error("INVALID_ANSWERS");
         unique.set(answer.questionId, answer.optionIndex);
       }
-      const questions = attempt.assignment.course.questions;
+      const positions = new Set(lessonQuestionPositions(lessonKey));
+      const questions = attempt.assignment.course.questions.filter((question) =>
+        positions.has(question.position),
+      );
       if (!questions.length || unique.size !== questions.length)
         throw new Error("INVALID_ANSWERS");
       if (questions.some((question) => !unique.has(question.id)))
@@ -516,7 +675,7 @@ export async function submitTrainingAttempt(
       await tx.trainingAttempt.update({
         where: { id: attempt.id },
         data: {
-          answers: answers as unknown as Prisma.InputJsonValue,
+          answers: { lessonKey, answers } as unknown as Prisma.InputJsonValue,
           score,
           percent,
           status: passed
@@ -528,6 +687,20 @@ export async function submitTrainingAttempt(
       const attemptsCount = await tx.trainingAttempt.count({
         where: { assignmentId: attempt.assignmentId, completedAt: { not: null } },
       });
+      const completedAttempts = await tx.trainingAttempt.findMany({
+        where: { assignmentId: attempt.assignmentId, completedAt: { not: null } },
+        select: { status: true, answers: true },
+      });
+      const passedKeys = passedLessonKeys(completedAttempts, lessons);
+      const allLessonQuizzesPassed = lessons.every(
+        (item) => !lessonQuestionPositions(item.key).length || passedKeys.has(item.key),
+      );
+      const progress = lessonStates(attempt.assignment.course, attempt.assignment);
+      const allLessonsWatched = hasRequiredLessonCoverage(
+        progress.lessons,
+        progress.stored,
+        attempt.assignment.course.requiredCoverage,
+      );
       const alreadyPassed =
         attempt.assignment.status === TrainingStatus.PASSED;
       await tx.trainingAssignment.update({
@@ -537,11 +710,11 @@ export async function submitTrainingAttempt(
           bestScore: Math.max(attempt.assignment.bestScore, score),
           bestPercent: Math.max(attempt.assignment.bestPercent, percent),
           status:
-            passed || alreadyPassed
+            alreadyPassed
               ? TrainingStatus.PASSED
-              : TrainingStatus.FAILED,
-          passedAt:
-            attempt.assignment.passedAt ?? (passed ? completedAt : null),
+              : allLessonQuizzesPassed && allLessonsWatched
+                ? TrainingStatus.READY_FOR_TEST
+                : TrainingStatus.IN_PROGRESS,
           lastViewedAt: completedAt,
         },
       });
@@ -550,7 +723,7 @@ export async function submitTrainingAttempt(
           assignmentId: attempt.assignmentId,
           actorId: userId,
           action: TrainingAuditAction.QUIZ_SUBMITTED,
-          metadata: { attemptId: attempt.id, score, percent, passed },
+        metadata: { attemptId: attempt.id, lessonKey, score, percent, passed },
         },
       });
       return {
@@ -559,6 +732,9 @@ export async function submitTrainingAttempt(
         total: questions.length,
         percent: Math.round(percent),
         passed,
+        lessonKey,
+        lessonTitle: lesson.title,
+        allLessonQuizzesPassed,
         review: questions.map((question) => ({
           position: question.position,
           correct: unique.get(question.id) === question.correctOption,

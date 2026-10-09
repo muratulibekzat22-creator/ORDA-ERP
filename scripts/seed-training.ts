@@ -35,12 +35,19 @@ async function main() {
   });
 
   for (const item of MEASURER_QUESTIONS) {
+    const question = {
+      position: item.position,
+      question: item.question,
+      options: item.options,
+      correctOption: item.correctOption,
+      explanation: item.explanation,
+    };
     await prisma.trainingQuestion.upsert({
       where: {
         courseId_position: { courseId: course.id, position: item.position },
       },
-      update: item,
-      create: { courseId: course.id, ...item },
+      update: question,
+      create: { courseId: course.id, ...question },
     });
   }
   await prisma.trainingQuestion.deleteMany({
