@@ -107,6 +107,7 @@ const routeShell = readFileSync("components/layout/RouteShell.tsx", "utf8");
 const workspace = readFileSync("components/orders/OrderWorkspace.tsx", "utf8");
 const economy = readFileSync("components/orders/OrderEconomy.tsx", "utf8");
 const orderPageAuth = readFileSync("lib/order-page-auth.ts", "utf8");
+const orderNotFoundPage = readFileSync("app/orders/[id]/not-found.tsx", "utf8");
 const ordersApi = readFileSync("app/api/orders/route.ts", "utf8");
 const orderDetailApi = readFileSync("app/api/orders/[id]/route.ts", "utf8");
 const newOrderForm = readFileSync("components/orders/NewOrderForm.tsx", "utf8");
@@ -124,6 +125,8 @@ assert.match(routeShell, /accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /grantedPermissions\.includes/);
 assert.match(routeShell, /"\/marketing", "Маркетинг"/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
+assert.match(orderNotFoundPage, /Заказ не найден или больше недоступен\./);
+assert.match(orderNotFoundPage, /href="\/orders"/);
 for (const section of ["technical", "documents", "history", "files"])
   assert.match(workspace, new RegExp(`id="${section}"`));
 for (const label of ["Исполнение", "Принять оплату", "Редактировать", "Подробнее"])
