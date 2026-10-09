@@ -13,20 +13,31 @@ function toCsv(report: Awaited<ReturnType<typeof getReportsReadModel>>) {
     [], ["Показатель", "Значение"],
     ["Заявки", report.summary.leads.current], ["Замеры", report.summary.measurements.current], ["Заказы", report.summary.orders.current],
     ["Сумма продаж", report.summary.salesAmount.current], ["Получено", report.summary.received.current], ["Остаток", report.summary.remaining],
-    ...(report.sales.grossMargin === undefined ? [] : [["Валовая маржа", report.sales.grossMargin]]),
+    ["Без цены производства", report.dataQuality.missingProductionPrice],
+    ["Заказов с незаполненными данными", report.dataQuality.incompleteOrders],
+    ...(report.sales.grossMargin === undefined ? [] : [["Валовая маржа", report.sales.grossMargin ?? "Недостаточно данных"]]),
     ...(report.finance ? [
       ["К получению от клиентов", report.finance.customerRemaining],
+      ["Цена производства", report.finance.productionCost],
+      ["Валовая маржа", report.finance.grossMargin],
+      ["Валовая маржа, %", report.finance.grossMarginRate ?? "—"],
+      ["Прочие доходы", report.finance.additionalIncome],
+      ["Операционные расходы", report.finance.operatingExpenses],
       ["Согласовано партнёрам", report.finance.partnerAgreed],
       ["Выплачено партнёрам", report.finance.partnerPaid],
       ["К выплате партнёрам", report.finance.partnerRemaining],
-      ["Payroll начислено", report.finance.payrollAccrued],
-      ["Payroll выплачено", report.finance.payrollPaid],
-      ["Payroll к выплате", report.finance.payrollPayable],
+      ["Записанные расходы", report.finance.recordedExpenses],
+      ...(report.finance.netProfit === null ? [] : [["Чистая прибыль", report.finance.netProfit]]),
+      ...(report.finance.payrollAccrued === null ? [] : [["Payroll начислено", report.finance.payrollAccrued]]),
+      ...(report.finance.payrollPaid === null ? [] : [["Payroll выплачено", report.finance.payrollPaid]]),
+      ...(report.finance.payrollPayable === null ? [] : [["Payroll к выплате", report.finance.payrollPayable]]),
     ] : []),
-    [], ["Менеджер", "Заявки", "Замеры", "Заказы", "Продажи", "Получено", "Конверсия, %"],
-    ...report.managers.map((item) => [item.name, item.leads, item.measurements, item.orders, item.salesAmount, item.received, item.conversion ?? "—"]),
-    [], ["№ заказа", "Клиент", "Менеджер", "Сумма", "Получено", "Остаток", "Статус"],
-    ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.received, item.remaining, item.status]),
+    [], ["Менеджер", "Заявки", "Замеры", "Заказы", "Завершено", "Просрочено", "Продажи", "Получено", "Конверсия, %"],
+    ...report.managers.map((item) => [item.name, item.leads, item.measurements, item.orders, item.completed, item.overdue, item.salesAmount, item.received, item.conversion ?? "—"]),
+    [], ["Что нужно дополнить", "Менеджер", "Заказ", "Клиент"],
+    ...report.dataQuality.tasks.map((item) => [item.missingFields.join(", "), item.manager, item.number, item.client]),
+    [], ["№ заказа", "Клиент", "Менеджер", "Сумма", "Цена производства", "Маржа", "Зарплата по заказу", "Получено", "Остаток", "Статус"],
+    ...report.orders.map((item) => [item.number, item.client, item.manager, item.amount, item.productionPrice ?? "Не заполнена", item.grossMargin ?? "—", item.payrollAccrued, item.received, item.remaining, item.status]),
   ];
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
 }
@@ -36,7 +47,7 @@ export async function GET(request: Request) {
   if (auth.response) return auth.response;
   try {
     const url = new URL(request.url);
-    const report = await getReportsReadModel(url.searchParams, { id: Number(auth.session!.user.id), role: auth.session!.user.role as Role });
+    const report = await getReportsReadModel(url.searchParams, { id: Number(auth.session!.user.id), role: (auth.session!.user.accountRole || auth.session!.user.role) as Role });
     if (url.searchParams.get("export") === "csv") {
       const suffix = report.period.preset === "month" ? report.period.dateFrom.slice(0, 7) : `${report.period.dateFrom}_${report.period.dateTo}`;
       return new Response(toCsv(report), { headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="ORDA_Report_${suffix}.csv"`, "cache-control": "no-store" } });

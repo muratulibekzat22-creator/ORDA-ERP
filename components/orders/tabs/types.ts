@@ -8,6 +8,7 @@ export type OrderTabData = {
   version: number;
   createdAt: Date | string;
   orderReceivedAt: Date | string;
+  orderDateNeedsReview: boolean;
   promisedAt: Date | string | null;
   address: string;
   mapUrl: string;
@@ -22,7 +23,11 @@ export type OrderTabData = {
   cladding: boolean;
   claddingDetails: string;
   additionalDetails: string;
+  designStyle: string;
+  designNotes: string;
   paymentMethod: string;
+  orderKind?: string;
+  fulfillmentStatus?: string;
   manager: string;
   amount: NumericValue;
   prepayment: NumericValue;
@@ -31,6 +36,7 @@ export type OrderTabData = {
   companyProfit: NumericValue;
   partnerPaid: NumericValue;
   partnerBalance: NumericValue;
+  productionPrice?: NumericValue | null;
   client: {
     id: number;
     name: string;
@@ -52,7 +58,15 @@ export type OrderTabData = {
     client?: { total: number; received: number; remaining: number; overpayment: number; status: string };
     partner?: {
       partnerId: number | null; partnerName: string | null; priceSet: boolean; agreed: number | null; paid: number; remaining: number; overpayment: number; status: string;
-      payouts: Array<{ id: number; amount: number; type: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
+      allocation?: {
+        dataComplete: boolean; totalSale: number; productionCost: number; plannedCompanyIncome: number | null;
+        plannedLoss: number | null; clientReceived: number; clientRemaining: number;
+        companyIncomeRetained: number | null; companyIncomeRemaining: number | null;
+        productionFunded: number | null; workshopReceived: number; readyToPayWorkshop: number | null;
+        workshopRemaining: number | null; awaitingClientForWorkshop: number | null; workshopAdvance: number | null;
+        companyCashHeld: number; directWorkshopHeld: number;
+      };
+      payouts: Array<{ id: number; amount: number; type: string; purpose: string; method: string; comment: string | null; author: string | null; operationDate: Date | string | null }>;
       assignments: Array<{ id: number; newPayable: number; reason: string; createdAt: Date | string; authorName: string | null }>;
     };
     manager?: EmployeeSettlement;
@@ -74,10 +88,11 @@ export type OrderTabData = {
       totalSale: NumericValue; partnerCost: NumericValue; directExpenses: NumericValue;
       materials: NumericValue; delivery: NumericValue; contractors: NumericValue;
       bankFees: NumericValue; otherDirectExpenses: NumericValue;
-      marginBeforePayroll: NumericValue; managerBonus: NumericValue; measurer: NumericValue;
+      dataComplete: boolean;
+      marginBeforePayroll: NumericValue | null; managerBonus: NumericValue; measurer: NumericValue;
       installers: NumericValue; driver: NumericValue; expediter: NumericValue;
-      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue;
-      netMarginPercent: NumericValue;
+      otherPayroll: NumericValue; payrollAccrued: NumericValue; netProfit: NumericValue | null;
+      netMarginPercent: NumericValue | null;
     };
     cash: {
       clientReceived: NumericValue; partnerPaid: NumericValue; payrollPaid: NumericValue;
@@ -140,6 +155,66 @@ export type OrderTabData = {
       totalSale: NumericValue;
       comment: string | null;
       enabled: boolean;
+    }>;
+  }>;
+  items?: Array<{
+    id: number;
+    materialId: number | null;
+    skuSnapshot: string;
+    nameSnapshot: string;
+    variantSnapshot: string | null;
+    unitSnapshot: string;
+    quantity: NumericValue;
+    unitPrice: NumericValue;
+    discount: NumericValue;
+    lineTotal: NumericValue;
+    stockTracked: boolean;
+    reservedQuantity: NumericValue;
+    issuedQuantity: NumericValue;
+    returnedQuantity: NumericValue;
+    position: number;
+    reservations: Array<{
+      id: number;
+      quantity: number;
+      consumed: number;
+      status: string;
+      location: { id: number; name: string } | null;
+    }>;
+  }>;
+  warehouseShipments?: Array<{
+    id: number;
+    number: string;
+    status: string;
+    shippedAt: Date | string;
+    recipientName: string | null;
+    documentId: number;
+    location: { id: number; name: string };
+    issuedBy: { id: number; name: string };
+    document: { id: number; number: string; currentVersion: number };
+    lines: Array<{
+      id: number;
+      orderItemId: number;
+      quantity: NumericValue;
+      lineTotal: NumericValue;
+      returnLines: Array<{
+        id: number;
+        quantity: NumericValue;
+        condition: string;
+      }>;
+    }>;
+  }>;
+  warehouseReturns?: Array<{
+    id: number;
+    number: string;
+    acceptedAt: Date | string;
+    reason: string;
+    documentId: number;
+    document: { id: number; number: string };
+    lines: Array<{
+      id: number;
+      orderItemId: number;
+      quantity: NumericValue;
+      condition: string;
     }>;
   }>;
 };

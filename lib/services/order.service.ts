@@ -1,8 +1,14 @@
-import { DocumentStatus, DocumentType, Prisma, Role } from "@prisma/client";
+import { OrderLifecycle, Prisma, Role } from "@prisma/client";
 import { normalizePhone } from "@/lib/leads/domain";
+import { companyMonthRange } from "@/lib/company-calendar";
+import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { orderDataGaps } from "@/lib/orders/completeness";
+import { hasProductionPrice } from "@/lib/orders/production-price";
+import { orderDeadline, projectOrderStatus } from "@/lib/orders/presentation";
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { createPaymentReceiptRecord, ensurePaymentReceiptPdf } from "@/lib/services/payment-receipt.service";
+import { assertPaymentFollowUpInput } from "@/lib/services/payment-follow-up.service";
 
 export async function getOrders(
   where: import("@prisma/client").Prisma.OrderWhereInput = {},
@@ -17,66 +23,62 @@ export async function getOrders(
     select: {
       id: true,
       number: true,
-      address: true,
-      staircase: true,
-      material: true,
       amount: true,
-      prepayment: true,
-      balance: true,
+      partnerId: true,
       partnerPrice: true,
       partnerAgreedAt: true,
-      companyProfit: true,
-      partnerPaid: true,
-      partnerBalance: true,
+      partnerPlannedReadyAt: true,
       manager: true,
       managerUserId: true,
       deletedAt: true,
-      deletedById: true,
-      deletedBy: { select: { id: true, name: true } },
       lifecycle: true,
-      version: true,
-      status: true,
       productionDeadline: true,
       promisedAt: true,
-      partnerPlannedReadyAt: true,
-      completedAt: true,
+      orderReceivedAt: true,
+      orderDateNeedsReview: true,
       createdAt: true,
       updatedAt: true,
       client: { select: { id: true, name: true, phone: true, city: true } },
-      partner: { select: { id: true, name: true } },
-      productions: {
-        take: 1,
-        orderBy: { createdAt: "desc" },
-        select: { stage: true, master: true, plannedEndAt: true },
-      },
-      installation: {
+      installation: { select: { scheduledAt: true } },
+      commercialAdjustments: { select: { balanceImpact: true } },
+      payments: {
         select: {
-          scheduledAt: true,
-          installerUser: { select: { name: true } },
+          type: true,
+          amount: true,
+          partnerId: true,
         },
       },
-      blockers: {
-        where: { status: "OPEN" },
-        take: 1,
-        orderBy: { createdAt: "desc" },
-        select: { title: true, severity: true },
-      },
-      documents: {
-        where: {
-          type: DocumentType.CONTRACT,
-          status: {
-            notIn: [DocumentStatus.ARCHIVED, DocumentStatus.CANCELLED],
-          },
-        },
-        take: 1,
-        select: { id: true },
-      },
-      _count: {
+      payrollAccruals: {
         select: {
-          payments: true,
-          companyLedgerEntries: true,
-          financeAuditEvents: true,
-          payrollAccruals: true,
+          type: true,
+          direction: true,
+          amount: true,
+          reversalOfId: true,
+          reversedBy: { select: { id: true } },
+          employee: { select: { position: true, user: { select: { role: true } } } },
+          payments: { select: { amount: true, reversalOfId: true, reversedAt: true } },
+        },
+      },
+      companyLedgerEntries: {
+        select: {
+          direction: true,
+          amount: true,
+          source: true,
+          category: true,
+          type: true,
+          affectsProfit: true,
+          voidedAt: true,
+        },
+      },
+      calculations: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          workshopCost: true,
+          materialCost: true,
+          installationCost: true,
+          deliveryCost: true,
+          otherDirectCosts: true,
         },
       },
     },
@@ -84,27 +86,77 @@ export async function getOrders(
     skip: Math.max(0, options.skip ?? 0),
     take: Math.min(100, Math.max(1, options.take ?? 100)),
   });
-  return orders.map(({ _count, ...order }) => ({
-    ...order,
-    hasFinancialHistory:
-      _count.payments > 0 ||
-      _count.companyLedgerEntries > 0 ||
-      _count.financeAuditEvents > 0 ||
-      _count.payrollAccruals > 0,
-  }));
+  return orders.map((order) => {
+    const economy = calculateOrderEconomy({
+      totalSale: order.amount,
+      commercialAdjustments: order.commercialAdjustments,
+      payments: order.payments,
+      partnerId: order.partnerId,
+      partnerAgreed: order.partnerPrice,
+      partnerAgreedAt: order.partnerAgreedAt,
+      partnerDueAt: order.partnerPlannedReadyAt,
+      clientDueAt: order.promisedAt,
+      payrollAccruals: order.payrollAccruals,
+      ledgerEntries: order.companyLedgerEntries,
+      calculation: order.calculations[0] ?? null,
+    });
+    return {
+      id: order.id,
+      number: order.number,
+      client: order.client,
+      lifecycle: order.lifecycle,
+      userStatus: projectOrderStatus(order.lifecycle),
+      manager: order.manager,
+      managerUserId: order.managerUserId,
+      deadline: orderDeadline(order),
+      orderReceivedAt: order.orderReceivedAt,
+      orderDateNeedsReview: order.orderDateNeedsReview,
+      amount: Number(order.amount),
+      received: Number(economy.client.netReceived),
+      balance: Number(economy.client.remaining),
+      netProfit: economy.profit.netProfit === null ? null : Number(economy.profit.netProfit),
+      netMargin: economy.profit.netMarginPercent === null ? null : Number(economy.profit.netMarginPercent),
+      costDataComplete: economy.profit.dataComplete,
+      partnerPrice: Number(order.partnerPrice),
+      partnerPaid: Number(economy.partner.paid),
+      partnerBalance: Number(economy.partner.remaining),
+      partnerAgreedAt: order.partnerAgreedAt,
+      productionPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt)
+        ? Number(order.partnerPrice)
+        : null,
+      productionPriceMissing: !hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
+      missingFields: orderDataGaps(order),
+      deletedAt: order.deletedAt,
+      createdAt: order.createdAt,
+      updatedAt: order.updatedAt,
+    };
+  });
 }
 
 export type OrderSearchActor = { role: Role; userId: number; name: string };
 
-export async function searchOrderOptions(actor: OrderSearchActor, query = "", limit = 20) {
-  const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
-    ? { OR: [
+type OrderSearchOptions = {
+  payrollBonusEligible?: boolean;
+};
+
+export async function searchOrderOptions(
+  actor: OrderSearchActor,
+  query = "",
+  limit = 20,
+  period?: { year: number; month: number },
+  options: OrderSearchOptions = {},
+) {
+  const managerRoleScope: Prisma.OrderWhereInput = options.payrollBonusEligible
+    ? { managerUserId: actor.userId }
+    : { OR: [
         { managerUserId: actor.userId },
-        { managerUserId: null, manager: actor.name },
+        { managerUserId: null, manager: { equals: actor.name, mode: "insensitive" } },
         { leadConversion: { managerId: actor.userId } },
-      ] }
+      ] };
+  const roleScope: Prisma.OrderWhereInput = actor.role === Role.MANAGER
+    ? managerRoleScope
     : actor.role === Role.PARTNER
-      ? { partner: { userId: actor.userId }, partnerAgreedAt: { not: null } }
+      ? { partner: { userId: actor.userId } }
       : actor.role === Role.PRODUCTION
         ? { productions: { some: { masterUserId: actor.userId, archivedAt: null } } }
         : actor.role === Role.INSTALLER
@@ -114,6 +166,16 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
             : {};
   const search = query.trim().slice(0, 120);
   const digits = search.replace(/\D/g, "");
+  const monthRange = period ? companyMonthRange(period.year, period.month) : null;
+  const payrollBonusScope: Prisma.OrderWhereInput = options.payrollBonusEligible
+    ? {
+        managerUserId: { not: null },
+        NOT: [
+          { manager: { equals: "Компания", mode: "insensitive" } },
+          { manager: { equals: "Company", mode: "insensitive" } },
+        ],
+      }
+    : {};
   const searchWhere: Prisma.OrderWhereInput = search ? { OR: [
     { number: { contains: search, mode: "insensitive" } },
     { client: { name: { contains: search, mode: "insensitive" } } },
@@ -121,9 +183,17 @@ export async function searchOrderOptions(actor: OrderSearchActor, query = "", li
     ...(digits.length >= 3 && digits !== search ? [{ client: { phone: { contains: digits } } }] : []),
   ] } : {};
   return prisma.order.findMany({
-    where: { deletedAt: null, lifecycle: { not: "CANCELLED" }, AND: [roleScope, searchWhere] },
-    select: { id: true, number: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    where: {
+      deletedAt: null,
+      lifecycle: { not: "CANCELLED" },
+      ...(monthRange ? {
+        orderDateNeedsReview: false,
+        orderReceivedAt: { gte: monthRange.start, lt: monthRange.end },
+      } : {}),
+      AND: [roleScope, payrollBonusScope, searchWhere],
+    },
+    select: { id: true, number: true, amount: true, orderReceivedAt: true, createdAt: true, client: { select: { id: true, name: true, phone: true } }, partner: { select: { id: true, name: true } } },
+    orderBy: [{ orderReceivedAt: "desc" }, { id: "desc" }],
     take: Math.min(50, Math.max(1, Math.trunc(limit))),
   });
 }
@@ -139,23 +209,154 @@ export async function getOrder(id: number) {
     },
     include: {
       client: true,
-      partner: true,
+      partner: {
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          email: true,
+          city: true,
+          active: true,
+        },
+      },
       deletedBy: { select: { id: true, name: true } },
-      managerUser: { include: { payrollProfile: { select: { id: true } } } },
+      managerUser: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          payrollProfile: { select: { id: true } },
+        },
+      },
       measurements: {
         include: {
           measurerUser: {
-            include: { payrollProfile: { select: { id: true } } },
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              payrollProfile: { select: { id: true } },
+            },
           },
         },
       },
       payments: {
-        include: { partner: true },
+        include: {
+          partner: { select: { id: true, name: true } },
+          registeredBy: { select: { id: true, name: true } },
+          parts: {
+            select: { id: true, method: true, amount: true, reference: true },
+            orderBy: { id: "asc" },
+          },
+          receipt: {
+            select: {
+              id: true,
+              displayNumber: true,
+              status: true,
+              verificationToken: true,
+              publicAccessEnabled: true,
+              documentId: true,
+              createdAt: true,
+              document: {
+                select: {
+                  currentVersion: true,
+                  versions: {
+                    select: { id: true, version: true, fileName: true },
+                    orderBy: { version: "desc" },
+                    take: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
         orderBy: [{ operationDate: "desc" }, { id: "desc" }],
+      },
+      items: {
+        select: {
+          id: true,
+          materialId: true,
+          skuSnapshot: true,
+          nameSnapshot: true,
+          variantSnapshot: true,
+          unitSnapshot: true,
+          quantity: true,
+          unitPrice: true,
+          discount: true,
+          lineTotal: true,
+          stockTracked: true,
+          reservedQuantity: true,
+          issuedQuantity: true,
+          returnedQuantity: true,
+          position: true,
+          reservations: {
+            select: {
+              id: true,
+              quantity: true,
+              consumed: true,
+              status: true,
+              location: { select: { id: true, name: true } },
+            },
+            orderBy: { id: "asc" },
+          },
+        },
+        orderBy: [{ position: "asc" }, { id: "asc" }],
+      },
+      warehouseShipments: {
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          shippedAt: true,
+          recipientName: true,
+          documentId: true,
+          location: { select: { id: true, name: true } },
+          issuedBy: { select: { id: true, name: true } },
+          document: { select: { id: true, number: true, currentVersion: true } },
+          lines: {
+            select: {
+              id: true,
+              orderItemId: true,
+              quantity: true,
+              lineTotal: true,
+              returnLines: {
+                select: { id: true, quantity: true, condition: true },
+                orderBy: { id: "asc" },
+              },
+            },
+          },
+        },
+        orderBy: [{ shippedAt: "desc" }, { id: "desc" }],
+      },
+      warehouseReturns: {
+        select: {
+          id: true,
+          number: true,
+          acceptedAt: true,
+          reason: true,
+          documentId: true,
+          document: { select: { id: true, number: true } },
+          lines: {
+            select: { id: true, orderItemId: true, quantity: true, condition: true },
+          },
+        },
+        orderBy: [{ acceptedAt: "desc" }, { id: "desc" }],
       },
       partnerAssignmentHistory: {
         include: { author: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
+      },
+      partnerRelation: {
+        include: {
+          operations: {
+            select: {
+              type: true,
+              status: true,
+              amount: true,
+              adjustmentEffect: true,
+            },
+          },
+        },
       },
       payrollAccruals: {
         include: {
@@ -166,6 +367,7 @@ export async function getOrder(id: number) {
         orderBy: { createdAt: "desc" },
       },
       productions: true,
+      installation: true,
       commercialAdjustments: { orderBy: { createdAt: "asc" } },
       companyLedgerEntries: { orderBy: { operationDate: "asc" } },
       documents: true,
@@ -255,6 +457,7 @@ type CreateOrderInput = {
   material: string;
   mapUrl?: string;
   orderReceivedAt?: Date;
+  orderDateNeedsReview?: boolean;
   promisedAt?: Date | null;
   frameComment?: string;
   railingType?: string;
@@ -268,6 +471,8 @@ type CreateOrderInput = {
   paymentMethod?: string;
   initialPaymentDate?: Date;
   initialPaymentComment?: string;
+  paymentPromiseAmount?: number | null;
+  paymentPromiseAt?: Date | null;
   amount: number;
   prepayment: number;
   partnerPrice: number;
@@ -275,10 +480,12 @@ type CreateOrderInput = {
   partnerPaid: number;
   manager: string;
   managerUserId?: number;
+  actorUserId?: number;
   actorRole?: Role;
   enforceClientOwnership?: boolean;
   idempotencyKey?: string;
   requestHash?: string;
+  validationNow?: Date;
 };
 
 function orderNumber() {
@@ -309,12 +516,17 @@ export async function createOrder(data: CreateOrderInput) {
   if (!data.clientId && !data.client) throw new Error("CLIENT_REQUIRED");
   if (data.actorRole === Role.MANAGER && !data.managerUserId)
     throw new Error("MANAGER_REQUIRED");
+  if ((data.paymentPromiseAmount == null) !== (data.paymentPromiseAt == null))
+    throw new Error("INVALID_PAYMENT_FOLLOW_UP");
+  if (data.paymentPromiseAmount != null && (data.paymentPromiseAmount <= 0 || data.paymentPromiseAmount > data.amount - data.prepayment))
+    throw new Error("INVALID_PAYMENT_FOLLOW_UP");
   const eventKey = data.idempotencyKey
     ? `order:${data.idempotencyKey}`
     : undefined;
   const balance = data.amount - data.prepayment;
   const partnerBalance = data.partnerPrice - data.partnerPaid;
   const companyProfit = data.amount - data.partnerPrice;
+  const orderReceivedAt = data.orderReceivedAt ?? new Date();
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -338,6 +550,8 @@ export async function createOrder(data: CreateOrderInput) {
               };
             }
           }
+          if (data.paymentPromiseAmount != null && data.paymentPromiseAt)
+            assertPaymentFollowUpInput(data.paymentPromiseAmount, data.paymentPromiseAt, data.validationNow ?? new Date());
 
           let clientId = data.clientId;
           if (data.client) {
@@ -433,6 +647,28 @@ export async function createOrder(data: CreateOrderInput) {
               },
             });
 
+          if (data.enforceClientOwnership) {
+            const receivedDayStart = new Date(orderReceivedAt);
+            receivedDayStart.setUTCHours(0, 0, 0, 0);
+            const receivedDayEnd = new Date(receivedDayStart);
+            receivedDayEnd.setUTCDate(receivedDayEnd.getUTCDate() + 1);
+            const duplicate = await tx.order.findFirst({
+              where: {
+                clientId,
+                managerUserId: data.managerUserId,
+                deletedAt: null,
+                lifecycle: { not: OrderLifecycle.CANCELLED },
+                amount: money(data.amount),
+                prepayment: money(data.prepayment),
+                orderReceivedAt: { gte: receivedDayStart, lt: receivedDayEnd },
+              },
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              select: { id: true, number: true },
+            });
+            if (duplicate)
+              throw new Error(`DUPLICATE_ORDER:${duplicate.id}:${duplicate.number}`);
+          }
+
           const order = await tx.order.create({
             data: {
               number: orderNumber(),
@@ -442,7 +678,9 @@ export async function createOrder(data: CreateOrderInput) {
               staircase: data.staircase,
               material: data.material,
               mapUrl: data.mapUrl ?? "",
-              orderReceivedAt: data.orderReceivedAt ?? new Date(),
+              orderReceivedAt,
+              orderDateNeedsReview:
+                data.orderDateNeedsReview ?? !data.orderReceivedAt,
               promisedAt: data.promisedAt,
               frameComment: data.frameComment ?? "",
               railingType: data.railingType ?? "",
@@ -540,6 +778,45 @@ export async function createOrder(data: CreateOrderInput) {
               requestHash: data.requestHash,
             },
           });
+          if (data.paymentPromiseAmount != null && data.paymentPromiseAt) {
+            const creatorId = data.actorUserId ?? data.managerUserId;
+            if (!creatorId || !data.managerUserId) throw new Error("MANAGER_REQUIRED");
+            const amountLabel = Math.round(data.paymentPromiseAmount).toLocaleString("ru-RU");
+            const task = await tx.calendarTask.create({
+              data: {
+                title: `Получить доплату ${amountLabel} ₸ · ${order.number}`,
+                description: `Клиент ${ownedClient.name} обещал внести ${amountLabel} ₸. В указанный срок свяжитесь с клиентом, напомните об оплате и зафиксируйте фактический результат в ORDA. Если деньги поступили, зарегистрируйте оплату в заказе.`,
+                type: "REMINDER",
+                dueAt: data.paymentPromiseAt,
+                status: "PLANNED",
+                priority: "URGENT",
+                assigneeId: data.managerUserId,
+                creatorId,
+                clientId,
+                orderId: order.id,
+                acknowledgementRequired: true,
+                workflow: "PAYMENT_COLLECTION",
+                workflowKey: `order-payment-collection:${order.id}:1`,
+                expectedAmount: money(data.paymentPromiseAmount),
+              },
+            });
+            await tx.calendarTaskAudit.create({
+              data: {
+                taskId: task.id,
+                action: "PAYMENT_FOLLOW_UP_SCHEDULED",
+                actorId: creatorId,
+                after: { amount: data.paymentPromiseAmount, dueAt: data.paymentPromiseAt.toISOString(), requestHash: data.requestHash ?? null },
+              },
+            });
+            await tx.orderEvent.create({
+              data: {
+                orderId: order.id,
+                title: "Запланирована доплата клиента",
+                description: `${amountLabel} ₸ · ${data.paymentPromiseAt.toISOString()}`,
+                user: data.manager,
+              },
+            });
+          }
           return { order, created: true, initialPaymentId };
         },
         {

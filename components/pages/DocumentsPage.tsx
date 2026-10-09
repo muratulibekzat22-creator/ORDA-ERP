@@ -28,7 +28,7 @@ export default function DocumentsPage({ initialOrderId, initialClientId, embedde
   const [paymentId, setPaymentId] = useState(""), [paymentAmount, setPaymentAmount] = useState(""), [paymentDate, setPaymentDate] = useState(today()), [paymentMethod, setPaymentMethod] = useState("");
   const [orderResults, setOrderResults] = useState<Entity[]>([]), deferredOrderQuery = useDeferredValue(orderQuery);
   const [page, setPage] = useState(1), [hasMore, setHasMore] = useState(false);
-  const canUpload = ["DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(session?.user.role ?? "");
+  const canUpload = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(session?.user.role ?? "");
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();

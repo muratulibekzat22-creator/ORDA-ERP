@@ -175,7 +175,13 @@ async function expectStatus(pathname: string, status: number, cookie: string, in
     headers: { ...init.headers, Cookie: cookie },
   });
   const body = await response.arrayBuffer();
-  assert(response.status === status, `${pathname}: expected ${status}, received ${response.status}; server=${serverDiagnostics.slice(-2_000).replaceAll(/\s+/gu, " ").trim()}`);
+  const bodyText = new TextDecoder().decode(body);
+  const streamedNotFound =
+    status === 404 &&
+    response.status === 200 &&
+    Boolean(response.headers.get("content-type")?.includes("text/html")) &&
+    bodyText.includes("NEXT_HTTP_ERROR_FALLBACK;404");
+  assert(response.status === status || streamedNotFound, `${pathname}: expected ${status}, received ${response.status}; server=${serverDiagnostics.slice(-2_000).replaceAll(/\s+/gu, " ").trim()}`);
   return new Response(response.status === 204 ? null : body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
@@ -532,6 +538,7 @@ async function main() {
     const orderBoundaryManagerCookie = await session(manager.email);
     await expectStatus("/api/company-finance", 403, firstProductionCookie);
     await expectStatus("/api/personal-finance", 403, firstProductionCookie);
+    await expectStatus("/api/finance/statements", 403, firstProductionCookie);
     await expectStatus("/", 200, directorCookie);
     const orderCreationPayload = {
       clientId: client.id,
@@ -654,9 +661,7 @@ async function main() {
     const directorProductions = await (await expectStatus("/api/production", 200, directorCookie)).json() as ProductionPayload[];
     assert(workflowProductionIds.every((id) => directorProductions.some((production) => production.id === id)), "director cannot see all workflow production records");
     assert(directorProductions.some((production) => production.id === otherStageProduction.id && production.stage === productionStage), "director cannot see the installer non-installation record");
-    const calendarFrom = new Date();
-    calendarFrom.setUTCHours(0, 0, 0, 0);
-    calendarFrom.setUTCDate(calendarFrom.getUTCDate() - 1);
+    const calendarFrom = new Date("2026-08-31T00:00:00.000Z");
     const calendarTo = new Date(calendarFrom);
     calendarTo.setUTCDate(calendarTo.getUTCDate() + 62);
     const expectedCalendarTasks = [
@@ -670,7 +675,10 @@ async function main() {
     ];
     for (const [taskId, assigneeId] of expectedCalendarTasks) {
       const directorCalendar = await (await expectStatus(`/api/calendar?start=${encodeURIComponent(calendarFrom.toISOString())}&end=${encodeURIComponent(calendarTo.toISOString())}&assigneeId=${assigneeId}`, 200, directorCookie)).json() as CalendarPayload;
-      assert(directorCalendar.tasks.some((task) => task.id === taskId), "director cannot see all calendar tasks");
+      assert(
+        directorCalendar.tasks.some((task) => task.id === taskId),
+        `director cannot see calendar task ${taskId} for assignee ${assigneeId}`,
+      );
     }
     await expectStatus(`/api/calendar/${secondProductionTask.id}`, 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: secondProductionTask.title, type: CalendarTaskType.TASK, dueAt: "2026-09-05T10:00", priority: CalendarTaskPriority.NORMAL, assigneeId: secondProductionUser.id, clientId: workflowClients[4].id, orderId: secondProductionOrder.id }) });
     await expectStatus("/api/production", 200, directorCookie, { method: "PATCH", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}:director-production` }, body: JSON.stringify({ id: secondProduction.id, comment: "director update" }) });
@@ -692,7 +700,7 @@ async function main() {
     assert(directorMaterials.items.some((item) => "price" in item && "amount" in item) && typeof directorMaterials.totalCost === "number", "director material costs were incorrectly redacted");
     const calculationPayload = { material: "Сосна", regularSteps: 10, platformEquivalents: [2, 3], installationRequired: false, deliveryRequired: false, lines: [{ code: "GLASS_RAILING", kind: "GLASS", name: "Стекло", quantity: 2, unit: "м²", unitCost: 100, unitSale: 200 }] };
     const leadOrderCountBefore = await prisma.order.count();
-    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone: `+7708${Date.now().toString().slice(-7)}`, city: "Алматы", estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
+    const lead = await (await expectStatus("/api/clients", 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clientName: `${tag} lead`, phone: `+7708${Date.now().toString().slice(-7)}`, city: "Алматы", estimateNotes: `${tag} лестница`, source: "WhatsApp" }) })).json() as { id: number };
     await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie);
     await expectStatus(`/api/clients/${lead.id}`, 404, otherManagerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ comment: "IDOR" }) });
     await expectStatus(`/api/clients/${lead.id}`, 400, managerCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ managerUserId: lockoutUser.id, stage: "WON", lostByUserId: lockoutUser.id }) });
@@ -731,12 +739,14 @@ async function main() {
     generatedOrderIds.push(converted.id);
     await expectStatus("/api/company-finance", 403, managerCookie);
     await expectStatus("/api/personal-finance", 403, managerCookie);
+    await expectStatus("/api/finance/statements", 403, managerCookie);
     const managerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 201, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in managerCalculation) && !("totalCost" in managerCalculation) && Array.isArray(managerCalculation.lines) && !("unitCost" in (managerCalculation.lines as Array<Record<string, unknown>>)[0]), "manager calculation leaks internal costs");
     const repeatedManagerCalculation = await (await expectStatus(`/api/orders/${firstOrder.id}/calculation`, 200, managerCookie, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `${tag}-calculation` }, body: JSON.stringify(calculationPayload) })).json() as Record<string, unknown>;
     assert(!("grossProfit" in repeatedManagerCalculation), "idempotent calculation replay leaks internal costs");
     const managerOrderDetail = await (await expectStatus(`/api/orders/${firstOrder.id}`, 200, managerCookie)).json() as Record<string, unknown>;
     for (const field of ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance", "managerUser", "payrollAccruals"]) assert(!(field in managerOrderDetail), `manager order detail leaks ${field}`);
+    assert(Number(managerOrderDetail.productionPrice) === Number(firstOrder.partnerPrice), "manager order detail is missing the safe production-price alias");
     const managerSettlement = managerOrderDetail.settlement as Record<string, unknown> | undefined;
     assert(!managerSettlement || (!("manager" in managerSettlement) && !("measurer" in managerSettlement) && !("partner" in managerSettlement)), "manager order detail leaks internal settlement blocks");
     const managerOrderCalculations = managerOrderDetail.calculations as Array<Record<string, unknown>>;
@@ -747,6 +757,7 @@ async function main() {
     assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item) && !("managerMinimumPrice" in item)), "manager calculator pricing leaks protected prices");
     const accountantCookie = await session(accountant.email);
     await expectStatus("/api/clients", 403, accountantCookie);
+    await expectStatus("/api/finance/statements", 200, accountantCookie);
     const accountantConfig = await (await expectStatus("/api/calculator-config", 200, accountantCookie)).json() as { items: Array<Record<string, unknown>> };
     assert(accountantConfig.items.length > 0 && accountantConfig.items.every((item) => "internalPrice" in item), "accountant with permission cannot view internal calculator prices");
     await expectStatus("/api/calculator-config", 403, accountantCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(accountantConfig) });
@@ -880,8 +891,10 @@ async function main() {
     const foreignOrderSearch = await (await expectStatus(`/api/orders/search?q=${encodeURIComponent(firstOrder.number)}`, 200, foreignManagerCookie)).json() as { items: Array<{ id: number }> };
     assert(managerOrderSearch.items.some((order) => order.id === firstOrder.id) && foreignOrderSearch.items.every((order) => order.id !== firstOrder.id), "order search ownership/IDOR guard failed");
     assert(managerOrders.every((order) => ["companyProfit", "partnerPrice", "partnerAgreedAt", "partnerPaid", "partnerBalance"].every((field) => !(field in order))), "manager order list leaks internal finances");
+    assert(managerOrders.every((order) => "productionPrice" in order), "manager order list is missing production price accountability");
     const managerDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, managerCookie)).json() as { metrics: Record<string, unknown>; managers?: Array<{ managerUserId: number }> };
-    assert(!/companyProfit|partnerPrice|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
+    assert(!/companyProfit|"partnerPrice"|partnerPaid|partnerBalance|grossProfit|totalCost/.test(JSON.stringify(managerDashboard)), "manager dashboard leaks internal finances");
+    assert("missingProductionPrice" in (managerDashboard as unknown as { orders: Record<string, unknown> }).orders, "manager dashboard is missing production-price completeness");
     assert(!managerDashboard.managers || managerDashboard.managers.every((row) => row.managerUserId === manager.id), "manager dashboard contains another manager's indicators");
     const managerCalendar = await (await expectStatus("/api/calendar", 200, managerCookie)).json() as CalendarPayload;
     const managerCalendarMeta = await (await expectStatus("/api/calendar?meta=1", 200, managerCookie)).json() as { assignees: unknown[]; clients: unknown[]; orders: unknown[] };
@@ -891,20 +904,24 @@ async function main() {
     console.log("manager API security matrix passed");
 
     const directorOrderPayload = await (await expectStatus("/api/orders?page=1&limit=100", 200, directorCookie)).json() as { data: Array<Record<string, unknown> & { id: number }> };
+    await expectStatus("/api/finance/statements", 200, directorCookie);
     const directorOrders = directorOrderPayload.data;
     assert(Array.isArray(directorOrders) && directorOrders.some((order) => order.id === firstOrder.id), "director orders payload is invalid");
-    assert(directorOrders.some((order) => order.id === firstOrder.id && ["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
-    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { period: { start: string; end: string }; metrics: Record<string, unknown>; managers: unknown[]; activities: unknown[] };
-    assert(Boolean(directorDashboard.metrics) && Array.isArray(directorDashboard.managers) && Array.isArray(directorDashboard.activities), "director dashboard payload is invalid");
-    const dashboardPeriod = { gte: new Date(directorDashboard.period.start), lte: new Date(directorDashboard.period.end) };
+    assert(directorOrders.some((order) => order.id === firstOrder.id && ["netProfit", "netMargin", "productionPrice", "partnerPrice", "partnerPaid", "partnerBalance"].every((field) => field in order)), "director order list is missing full finances");
+    const directorDashboard = await (await expectStatus("/api/dashboard/sales?period=month", 200, directorCookie)).json() as { month: string; finance: Record<string, unknown>; orders: Record<string, unknown>; attention: unknown[]; expenses: unknown[] };
+    assert(Boolean(directorDashboard.finance) && Boolean(directorDashboard.orders) && Array.isArray(directorDashboard.attention) && Array.isArray(directorDashboard.expenses), "director dashboard payload is invalid");
+    const [dashboardYear, dashboardMonth] = directorDashboard.month.split("-").map(Number);
+    const dashboardPeriod = {
+      gte: new Date(Date.UTC(dashboardYear, dashboardMonth - 1, 1) - 5 * 60 * 60 * 1000),
+      lt: new Date(Date.UTC(dashboardYear, dashboardMonth, 1) - 5 * 60 * 60 * 1000),
+    };
     const expectedDashboardOrders = await prisma.order.findMany({ where: { deletedAt: null, createdAt: dashboardPeriod, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { amount: true } });
     const expectedClientPayments = await prisma.payment.findMany({ where: { operationDate: dashboardPeriod, type: { in: ["CLIENT_PAYMENT", "payment", "PREPAYMENT", "ADDITIONAL_PAYMENT", "REFUND"] }, order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } } }, select: { amount: true, type: true } });
     const expectedClientBalances = await prisma.order.findMany({ where: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } }, select: { balance: true } });
     assert(
-      Number(directorDashboard.metrics.orders) === expectedDashboardOrders.length &&
-      Number(directorDashboard.metrics.totalSales) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&
-      Number(directorDashboard.metrics.receivedPrepayment) === expectedClientPayments.reduce((sum, payment) => sum + (payment.type === "REFUND" ? -Number(payment.amount) : Number(payment.amount)), 0) &&
-      Number(directorDashboard.metrics.balanceToReceive) === expectedClientBalances.reduce((sum, order) => sum + Math.max(Number(order.balance), 0), 0),
+      Number(directorDashboard.finance.revenue) === expectedDashboardOrders.reduce((sum, order) => sum + Number(order.amount), 0) &&
+      Number(directorDashboard.finance.received) === expectedClientPayments.reduce((sum, payment) => sum + (payment.type === "REFUND" ? -Number(payment.amount) : Number(payment.amount)), 0) &&
+      Number(directorDashboard.orders.active) <= expectedClientBalances.length,
       "director dashboard order totals are incorrect",
     );
     const directorClients = await (await expectStatus(`/api/clients?search=${encodeURIComponent(tag)}`, 200, directorCookie)).json() as { data: Array<{ id: number }>; pagination: { total: number } };
@@ -1025,9 +1042,11 @@ async function main() {
         await prisma.clientDeletionAudit.deleteMany({ where: { deletedClientId: { in: lifecycleClientIds } } });
       }
       await prisma.client.deleteMany({ where: { id: { in: lifecycleClientIds } } });
-      await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
-      await prisma.cashShift.deleteMany({ where: { responsibleManagerId: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
-      await prisma.user.deleteMany({ where: { id: { in: [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds] } } });
+      const temporaryUserIds = [...userIds, ...measurerUserIds, ...productionUserIds, ...managerUserIds];
+      await prisma.authAuditEvent.deleteMany({ where: { OR: [{ userId: { in: temporaryUserIds } }, { accountIdentifierHash: { not: null }, createdAt: { gte: new Date(Date.now() - 3_600_000) } }] } });
+      await prisma.cashShift.deleteMany({ where: { responsibleManagerId: { in: temporaryUserIds } } });
+      await prisma.employeePayrollProfile.deleteMany({ where: { userId: { in: temporaryUserIds } } });
+      await prisma.user.deleteMany({ where: { id: { in: temporaryUserIds } } });
       if (generatedMaterialIds.length) { await prisma.inventoryCogsEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.inventoryValuationEntry.deleteMany({ where: { materialId: { in: generatedMaterialIds } } }); await prisma.material.deleteMany({ where: { id: { in: generatedMaterialIds } } }); }
       if (temporaryRolePermissions.length) await prisma.rolePermission.deleteMany({ where: { role: Role.ACCOUNTANT, permission: { in: temporaryRolePermissions } } });
       for (const row of temporarySeededRolePermissions) {

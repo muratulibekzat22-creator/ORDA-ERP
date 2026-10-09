@@ -1,4 +1,7 @@
 import {
+  DocumentSource,
+  DocumentStatus,
+  DocumentType,
   InventoryCostStatus,
   Prisma,
   PurchaseAllocationMethod,
@@ -8,6 +11,7 @@ import {
 
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { nextBusinessDocumentNumber } from "@/lib/services/business-document-number.service";
 
 export type PurchaseActor = { userId: number; role: Role; name: string | null };
 export class PurchaseError extends Error {
@@ -71,9 +75,9 @@ export function allocateLandedCost(
 }
 
 function assertManage(actor: PurchaseActor, manual = false) {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.ACCOUNTANT)
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.ACCOUNTANT)
     throw new PurchaseError("FORBIDDEN");
-  if (manual && actor.role !== Role.DIRECTOR)
+  if (manual && actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new PurchaseError("FORBIDDEN");
 }
 
@@ -322,64 +326,152 @@ export async function receivePurchaseBatch(
     rejectedQuantity?: number;
   }>,
   actor: PurchaseActor,
+  options: {
+    locationId: number;
+    supplierDocumentNumber?: string;
+    supplierDocumentDate?: Date;
+    receivedAt?: Date;
+    note?: string;
+    key: string;
+    requestHash: string;
+  },
 ) {
   assertManage(actor);
-  return prisma.$transaction(
-    async (tx) => {
+  const replay = await prisma.purchaseReceipt.findUnique({ where: { idempotencyKey: options.key } });
+  if (replay) {
+    if (!compareRequestHash(replay.requestHash, options.requestHash)) throw new PurchaseError("IDEMPOTENCY_CONFLICT");
+    return { receipt: replay, created: false };
+  }
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+      const repeated = await tx.purchaseReceipt.findUnique({ where: { idempotencyKey: options.key } });
+      if (repeated) {
+        if (!compareRequestHash(repeated.requestHash, options.requestHash)) throw new PurchaseError("IDEMPOTENCY_CONFLICT");
+        return { receipt: repeated, created: false };
+      }
       const batch = await tx.purchaseBatch.findUnique({
         where: { id: batchId },
-        include: { lines: true },
+        include: { lines: true, supplier: true },
       });
       if (!batch) throw new PurchaseError("NOT_FOUND");
       if (
         batch.status !== PurchaseBatchStatus.ORDERED &&
         batch.status !== PurchaseBatchStatus.IN_TRANSIT &&
-        batch.status !== PurchaseBatchStatus.DRAFT
+        batch.status !== PurchaseBatchStatus.DRAFT &&
+        batch.status !== PurchaseBatchStatus.RECEIVED_PROVISIONAL
       )
         throw new PurchaseError("CONFLICT");
+      const location = await tx.warehouseLocation.findFirst({ where: { id: options.locationId, active: true } });
+      if (!location) throw new PurchaseError("NOT_FOUND");
+      if (!received.length || new Set(received.map((item) => item.lineId)).size !== received.length) throw new PurchaseError("INVALID");
+      const prepared = [];
       for (const item of received) {
         const line = batch.lines.find((value) => value.id === item.lineId);
         if (
           !line ||
-          item.receivedQuantity < 0 ||
-          (item.rejectedQuantity && item.rejectedQuantity < 0)
+          !Number.isFinite(item.receivedQuantity) ||
+          item.receivedQuantity <= 0 ||
+          !Number.isFinite(item.rejectedQuantity ?? 0) ||
+          (item.rejectedQuantity ?? 0) < 0 ||
+          (item.rejectedQuantity ?? 0) > item.receivedQuantity ||
+          new Prisma.Decimal(line.receivedQuantity).add(item.receivedQuantity).gt(line.orderedQuantity)
         )
           throw new PurchaseError("INVALID");
         const accepted = item.receivedQuantity - (item.rejectedQuantity ?? 0);
-        if (accepted <= 0) continue;
+        prepared.push({ line, item, accepted });
+      }
+      const receivedAt = options.receivedAt ?? new Date();
+      const number = await nextBusinessDocumentNumber(tx, "IN", receivedAt);
+      const snapshot = {
+        templateVersion: "ALTYN_SAPA_GOODS_RECEIPT_V1",
+        number,
+        receivedAt: receivedAt.toISOString(),
+        batch: { id: batch.id, number: batch.number },
+        supplier: { id: batch.supplier.id, name: batch.supplier.name },
+        supplierDocumentNumber: options.supplierDocumentNumber ?? null,
+        supplierDocumentDate: options.supplierDocumentDate?.toISOString() ?? null,
+        warehouse: { id: location.id, name: location.name, address: location.address },
+        acceptedBy: { userId: actor.userId, name: actor.name ?? "Сотрудник ORDA" },
+        lines: prepared.map(({ line, item, accepted }) => ({ lineId: line.id, materialId: line.materialId, receivedQuantity: item.receivedQuantity, acceptedQuantity: accepted, rejectedQuantity: item.rejectedQuantity ?? 0, unitCost: Number(line.provisionalUnitLandedCost) })),
+      };
+      const document = await tx.document.create({
+        data: {
+          type: DocumentType.GOODS_RECEIPT,
+          number,
+          title: `Приходная накладная ${number}`,
+          documentDate: receivedAt,
+          status: DocumentStatus.READY,
+          source: DocumentSource.GENERATED_WAREHOUSE,
+          authorId: actor.userId,
+          templateVersion: "ALTYN_SAPA_GOODS_RECEIPT_V1",
+          snapshot,
+          idempotencyKey: `purchase-receipt-document:${options.key}`,
+          requestHash: options.requestHash,
+        },
+      });
+      const receipt = await tx.purchaseReceipt.create({
+        data: {
+          number,
+          batchId: batch.id,
+          locationId: location.id,
+          acceptedById: actor.userId,
+          supplierDocumentNumber: options.supplierDocumentNumber,
+          supplierDocumentDate: options.supplierDocumentDate,
+          receivedAt,
+          note: options.note,
+          documentId: document.id,
+          idempotencyKey: options.key,
+          requestHash: options.requestHash,
+        },
+      });
+      for (const { line, item, accepted } of prepared) {
+        await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${line.materialId}, ${0})`;
+        await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${line.materialId}, ${location.id})`;
         const material = await tx.material.findUniqueOrThrow({
           where: { id: line.materialId },
+        });
+        const balance = await tx.warehouseBalance.upsert({
+          where: { materialId_locationId: { materialId: line.materialId, locationId: location.id } },
+          create: { materialId: line.materialId, locationId: location.id, stock: 0, reserved: 0 },
+          update: {},
         });
         const unitCost = Number(line.provisionalUnitLandedCost),
           oldValue = Number(material.inventoryValue),
           newStock = material.stock + accepted,
+          locationStockAfter = Number(balance.stock) + accepted,
           newValue = oldValue + accepted * unitCost,
           version = material.valuationVersion + 1;
         await tx.purchaseBatchLine.update({
           where: { id: line.id },
           data: {
-            receivedQuantity: String(item.receivedQuantity),
-            rejectedQuantity: String(item.rejectedQuantity ?? 0),
+            receivedQuantity: { increment: item.receivedQuantity },
+            rejectedQuantity: { increment: item.rejectedQuantity ?? 0 },
           },
         });
+        await tx.warehouseBalance.update({ where: { id: balance.id }, data: { stock: { increment: accepted } } });
         const movement = await tx.materialMovement.create({
           data: {
             materialId: line.materialId,
             purchaseBatchLineId: line.id,
+            locationId: location.id,
             type: "purchase_receipt",
             quantity: accepted,
             stockDelta: accepted,
             price: String(unitCost),
             amount: String(roundMoney(accepted * unitCost)),
             unitCostSnapshot: String(unitCost),
-            valuationMethod: "MOVING_WEIGHTED_AVERAGE",
-            valuationVersion: version,
-            stockAfter: newStock,
-            reservedAfter: material.reserved,
+            valuationMethod: accepted > 0 ? "MOVING_WEIGHTED_AVERAGE" : null,
+            valuationVersion: accepted > 0 ? version : null,
+            stockAfter: locationStockAfter,
+            reservedAfter: Number(balance.reserved),
             employeeId: actor.userId,
-            comment: `Provisional receipt ${batch.number}`,
+            comment: `Поступление ${number} · партия ${batch.number}`,
+            idempotencyKey: `purchase-receipt-movement:${options.key}:${line.id}`,
+            requestHash: options.requestHash,
           },
         });
+        if (accepted > 0) {
         await tx.material.update({
           where: { id: line.materialId },
           data: {
@@ -388,6 +480,9 @@ export async function receivePurchaseBatch(
             inventoryValue: String(roundMoney(newValue)),
             valuationVersion: version,
             costStatus: InventoryCostStatus.PROVISIONAL,
+            purchasePrice: String(unitCost),
+            availabilityConfirmed: true,
+            quantityKnown: true,
           },
         });
         await tx.inventoryValuationEntry.create({
@@ -403,20 +498,39 @@ export async function receivePurchaseBatch(
             costStatus: InventoryCostStatus.PROVISIONAL,
           },
         });
-        void movement;
+        }
+        await tx.purchaseReceiptLine.create({
+          data: {
+            receiptId: receipt.id,
+            purchaseBatchLineId: line.id,
+            materialId: line.materialId,
+            receivedQuantity: item.receivedQuantity,
+            acceptedQuantity: accepted,
+            rejectedQuantity: item.rejectedQuantity ?? 0,
+            unitCostSnapshot: unitCost,
+            movementId: movement.id,
+          },
+        });
       }
-      return tx.purchaseBatch.update({
+      const updatedLines = await tx.purchaseBatchLine.findMany({ where: { batchId: batch.id }, select: { orderedQuantity: true, receivedQuantity: true } });
+      const complete = updatedLines.every((line) => line.receivedQuantity.gte(line.orderedQuantity));
+      await tx.purchaseBatch.update({
         where: { id: batchId },
         data: {
-          status: PurchaseBatchStatus.RECEIVED_PROVISIONAL,
-          actualArrivalDate: new Date(),
+          status: complete ? PurchaseBatchStatus.RECEIVED_PROVISIONAL : PurchaseBatchStatus.IN_TRANSIT,
+          actualArrivalDate: complete ? receivedAt : null,
           version: { increment: 1 },
         },
-        include: { lines: true },
       });
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
+      await tx.documentAudit.create({ data: { documentId: document.id, actorId: actor.userId, action: "PURCHASE_RECEIPT_POSTED", after: { receiptId: receipt.id, batchId: batch.id, number } } });
+      return { receipt, documentId: document.id, created: true, complete };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 30_000 });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" && attempt < 4) continue;
+      throw error;
+    }
+  }
+  throw new PurchaseError("CONFLICT");
 }
 
 export async function finalizePurchaseBatch(
@@ -477,7 +591,7 @@ export async function finalizePurchaseBatch(
         const consumes = await tx.materialMovement.findMany({
           where: {
             purchaseBatchLineId: line.id,
-            type: { in: ["consume", "outgoing"] },
+            type: { in: ["consume", "outgoing", "sale", "writeoff", "workshop_issue", "shipment"] },
           },
           include: { cogsEntry: true },
         });

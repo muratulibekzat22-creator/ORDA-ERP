@@ -7,6 +7,7 @@ import {
   PartnerSettlementOperationStatus,
   PartnerSettlementOperationType,
   PartnerSettlementStatus,
+  OrderLifecycle,
   Prisma,
   Role,
 } from "@prisma/client";
@@ -14,6 +15,8 @@ import {
 import { compareRequestHash } from "@/lib/idempotency";
 import { normalizePhone } from "@/lib/leads/domain";
 import { calculateOrderEconomy } from "@/lib/orders/economy";
+import { hasProductionPrice, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
+import { calculateProfitFirstAllocation } from "@/lib/partners/profit-first";
 import { calculatePartnerSettlement } from "@/lib/partners/settlement";
 import { prisma } from "@/lib/prisma";
 import { createFinanceOperation, reverseFinanceOperation } from "@/lib/services/payment.service";
@@ -98,15 +101,17 @@ function canonicalPaymentTotals(relation: LoadedRelation) {
 
 export function calculateLoadedPartnerRelation(relation: LoadedRelation) {
   const canonical = canonicalPaymentTotals(relation);
+  const confirmedOrderCost = relation.order.partnerId === relation.partnerId &&
+    hasProductionPrice(relation.order.partnerPrice, relation.order.partnerAgreedAt);
   return calculatePartnerSettlement({
     orderAmount: relation.order.amount,
     companyProfit: relation.profitBasis,
     companyClientReceived: canonical.clientReceived,
     companyPaidPartner: canonical.partnerPaid,
-    rewardRule: relation.rewardRule,
+    rewardRule: confirmedOrderCost ? PartnerRewardRule.MANUAL : relation.rewardRule,
     rewardPercent: relation.rewardPercent,
     fixedAmount: relation.fixedAmount,
-    manualAmount: relation.manualAmount,
+    manualAmount: confirmedOrderCost ? relation.order.partnerPrice : relation.manualAmount,
     operations: relation.operations,
     disputed: relation.settlementStatus === PartnerSettlementStatus.DISPUTED,
     cancelled:
@@ -118,13 +123,29 @@ export function calculateLoadedPartnerRelation(relation: LoadedRelation) {
 
 function relationView(relation: LoadedRelation) {
   const metrics = calculateLoadedPartnerRelation(relation);
+  const productionPriceSet = hasProductionPrice(
+    metrics.partnerAccrued,
+    relation.order.partnerAgreedAt ?? (metrics.partnerAccrued.gte(MIN_PRODUCTION_PRICE) ? relation.startsAt : null),
+  );
+  const allocation = calculateProfitFirstAllocation({
+    totalSale: metrics.orderAmount,
+    productionCost: metrics.partnerAccrued,
+    companyClientReceived: metrics.companyClientReceived,
+    clientPaidToWorkshop: metrics.clientPaidToPartner,
+    workshopReturnedToClient: metrics.partnerReturned,
+    workshopTransferredToCompany: metrics.partnerTransferred,
+    companyPaidWorkshop: metrics.companyPaidPartner,
+    dataComplete: productionPriceSet,
+  });
   const economy = calculateOrderEconomy({
     totalSale: relation.order.amount,
     commercialAdjustments: relation.order.commercialAdjustments,
     payments: relation.order.payments,
     partnerId: relation.partnerId,
     partnerAgreed: metrics.partnerAccrued,
-    partnerAgreedAt: relation.startsAt,
+    partnerAgreedAt: productionPriceSet
+      ? relation.order.partnerAgreedAt ?? relation.startsAt
+      : null,
     partnerAgreedBy: relation.createdBy.name,
     partnerDueAt: relation.order.partnerPlannedReadyAt,
     clientDueAt: relation.order.promisedAt,
@@ -154,6 +175,7 @@ function relationView(relation: LoadedRelation) {
       number: relation.order.number,
       createdAt: relation.order.createdAt,
       orderReceivedAt: relation.order.orderReceivedAt,
+      orderDateNeedsReview: relation.order.orderDateNeedsReview,
       promisedAt: relation.order.promisedAt,
       client: relation.order.client,
       manager: relation.order.managerUser ?? { id: null, name: relation.order.manager },
@@ -169,6 +191,7 @@ function relationView(relation: LoadedRelation) {
     operations: relation.operations,
     metrics,
     economy,
+    allocation,
   };
 }
 
@@ -183,6 +206,9 @@ export async function setPartnerAgreedCost(
   if (!relation) throw new PartnerManagementError("RELATION_NOT_FOUND");
   const agreed = positiveMoney(amount);
   const before = calculateLoadedPartnerRelation(relation);
+  if (agreed.lt(before.companyPaidPartner))
+    throw new PartnerManagementError("PRODUCTION_PRICE_BELOW_PAID");
+  const agreedAt = new Date();
   await prisma.$transaction([
     prisma.partnerOrderRelation.update({
       where: { id: relation.id },
@@ -191,8 +217,18 @@ export async function setPartnerAgreedCost(
         rewardPercent: null,
         fixedAmount: null,
         manualAmount: agreed,
-        startsAt: new Date(),
+        startsAt: agreedAt,
         comment: comment.trim().slice(0, 2000) || relation.comment,
+      },
+    }),
+    prisma.order.update({
+      where: { id: relation.orderId },
+      data: {
+        partnerId: relation.partnerId,
+        partnerPrice: agreed,
+        partnerAgreedAt: agreedAt,
+        partnerBalance: agreed.sub(before.companyPaidPartner),
+        companyProfit: relation.order.amount.sub(agreed),
       },
     }),
     prisma.partnerAuditEvent.create({
@@ -332,7 +368,10 @@ export async function createManagedPartner(input: {
         active: status === PartnerBusinessStatus.ACTIVE,
         archived: status === PartnerBusinessStatus.ARCHIVED,
         comment: input.comment?.trim().slice(0, 2000) || null,
-        managementDirectory: true,
+        // The director workspace is the canonical workshop directory.  Keeping
+        // these rows operational makes a newly added workshop immediately
+        // available in order assignment and on the production board.
+        managementDirectory: false,
         createdById: actor.userId,
         isTest: false,
       },
@@ -367,7 +406,7 @@ export async function updateManagedPartner(id: number, input: Partial<{
   comment: string;
 }>, actor: PartnerManagementActor) {
   director(actor);
-  const current = await prisma.partner.findFirst({ where: { id, companyId: companyId(), managementDirectory: true } });
+  const current = await prisma.partner.findFirst({ where: { id, companyId: companyId(), isTest: false } });
   if (!current) throw new PartnerManagementError("PARTNER_NOT_FOUND");
   const status = input.businessStatus ?? current.businessStatus;
   const phone = input.phone === undefined ? undefined : input.phone ? normalizePhone(input.phone) : null;
@@ -426,7 +465,7 @@ export async function linkPartnerOrder(input: {
   director(actor);
   const tenant = companyId();
   const [partner, order, existing] = await Promise.all([
-    prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, managementDirectory: true, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } }),
+    prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, isTest: false, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } }),
     prisma.order.findFirst({ where: { id: input.orderId, companyId: tenant, deletedAt: null } }),
     prisma.partnerOrderRelation.findFirst({ where: { companyId: tenant, orderId: input.orderId }, include: relationInclude }),
   ]);
@@ -488,7 +527,7 @@ export async function createPartnerOrder(input: {
 }, actor: PartnerManagementActor) {
   director(actor);
   const tenant = companyId();
-  const partner = await prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, managementDirectory: true, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } });
+  const partner = await prisma.partner.findFirst({ where: { id: input.partnerId, companyId: tenant, isTest: false, businessStatus: { not: PartnerBusinessStatus.ARCHIVED } } });
   if (!partner) throw new PartnerManagementError("PARTNER_NOT_FOUND");
   const manager = input.managerUserId
     ? await prisma.user.findFirst({ where: { id: input.managerUserId, companyId: tenant, role: Role.MANAGER, active: true }, select: { id: true, name: true } })
@@ -789,6 +828,51 @@ export async function searchPartnerClients(query: string) {
   });
 }
 
+/**
+ * Older workshop assignments live on Order.partnerId, while the newer
+ * settlement dashboard reads PartnerOrderRelation.  Repair missing links
+ * idempotently so both screens always describe the same real orders.
+ */
+export async function synchronizeWorkshopOrderRelations(actorId: number) {
+  const tenant = companyId();
+  const missing = await prisma.order.findMany({
+    where: {
+      companyId: tenant,
+      deletedAt: null,
+      lifecycle: { not: OrderLifecycle.CANCELLED },
+      partnerId: { not: null },
+      partnerRelation: null,
+      partner: { isTest: false, managementDirectory: false },
+    },
+    select: {
+      id: true,
+      companyId: true,
+      partnerId: true,
+      partnerPrice: true,
+      partnerAgreedAt: true,
+      companyProfit: true,
+      orderReceivedAt: true,
+      createdAt: true,
+    },
+  });
+  if (!missing.length) return 0;
+  const created = await prisma.partnerOrderRelation.createMany({
+    data: missing.map((order) => ({
+      companyId: order.companyId,
+      partnerId: order.partnerId!,
+      orderId: order.id,
+      rewardRule: PartnerRewardRule.MANUAL,
+      manualAmount: order.partnerAgreedAt ? order.partnerPrice : new Prisma.Decimal(0),
+      profitBasis: order.companyProfit,
+      startsAt: order.partnerAgreedAt ?? order.orderReceivedAt ?? order.createdAt,
+      comment: "Восстановлено из назначения цеха в заказе",
+      createdById: actorId,
+    })),
+    skipDuplicates: true,
+  });
+  return created.count;
+}
+
 export async function getPartnerManagementReadModel(filters: {
   partnerId?: number;
   query?: string;
@@ -796,10 +880,12 @@ export async function getPartnerManagementReadModel(filters: {
   to?: Date;
   settlementStatus?: PartnerSettlementStatus;
   debt?: "company" | "partner" | "any";
-} = {}) {
+} = {}, syncActorId?: number) {
   const tenant = companyId();
+  if (syncActorId) await synchronizeWorkshopOrderRelations(syncActorId);
   const relationWhere: Prisma.PartnerOrderRelationWhereInput = {
     companyId: tenant,
+    order: { deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
     ...(filters.partnerId ? { partnerId: filters.partnerId } : {}),
     ...(filters.from || filters.to ? { startsAt: { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lte: filters.to } : {}) } } : {}),
     ...(filters.query ? { OR: [
@@ -809,10 +895,10 @@ export async function getPartnerManagementReadModel(filters: {
       { partner: { name: { contains: filters.query, mode: "insensitive" } } },
     ] } : {}),
   };
-  const [partners, relations, managers, audits] = await Promise.all([
+  const [partners, relations, managers, audits, allOrders, unassignedOrders, activeOrderStats] = await Promise.all([
     prisma.partner.findMany({
       where: {
-        companyId: tenant, isTest: false, managementDirectory: true,
+        companyId: tenant, isTest: false,
         ...(filters.partnerId ? { id: filters.partnerId } : {}),
         ...(filters.query ? { OR: [
           { name: { contains: filters.query, mode: "insensitive" } },
@@ -832,6 +918,25 @@ export async function getPartnerManagementReadModel(filters: {
       include: { actor: { select: { id: true, name: true } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: 200,
     }),
+    prisma.order.count({
+      where: { companyId: tenant, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED } },
+    }),
+    prisma.order.count({
+      where: { companyId: tenant, deletedAt: null, lifecycle: { not: OrderLifecycle.CANCELLED }, partnerId: null },
+    }),
+    Promise.all([
+      prisma.order.count({
+        where: { companyId: tenant, deletedAt: null, lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] } },
+      }),
+      prisma.order.count({
+        where: {
+          companyId: tenant,
+          deletedAt: null,
+          lifecycle: { notIn: [OrderLifecycle.COMPLETED, OrderLifecycle.CANCELLED] },
+          OR: [{ partnerAgreedAt: null }, { partnerPrice: { lt: MIN_PRODUCTION_PRICE } }],
+        },
+      }),
+    ]).then(([active, missingProductionCost]) => ({ active, missingProductionCost })),
   ]);
   let orderRows = relations.map(relationView);
   if (filters.settlementStatus) orderRows = orderRows.filter((item) => item.settlementStatus === filters.settlementStatus);
@@ -848,21 +953,33 @@ export async function getPartnerManagementReadModel(filters: {
     partnerPaid: sum.partnerPaid.add(item.metrics.companyPaidPartner),
     companyDebt: sum.companyDebt.add(item.metrics.companyDebt),
     partnerDebt: sum.partnerDebt.add(item.metrics.partnerDebt),
-    profit: sum.profit.add(item.economy.profit.netProfit),
+    profit: sum.profit.add(item.economy.profit.netProfit ?? 0),
+    ordersWithoutProductionCost: sum.ordersWithoutProductionCost + (item.allocation.dataComplete ? 0 : 1),
+    plannedCompanyIncome: sum.plannedCompanyIncome.add(item.allocation.plannedCompanyIncome ?? 0),
+    companyIncomeRetained: sum.companyIncomeRetained.add(item.allocation.companyIncomeRetained ?? 0),
+    productionFunded: sum.productionFunded.add(item.allocation.productionFunded ?? 0),
+    readyToPayWorkshop: sum.readyToPayWorkshop.add(item.allocation.readyToPayWorkshop ?? 0),
+    awaitingClientForWorkshop: sum.awaitingClientForWorkshop.add(item.allocation.awaitingClientForWorkshop ?? 0),
+    workshopAdvance: sum.workshopAdvance.add(item.allocation.workshopAdvance ?? 0),
   }), {
-    orders: 0,
+    orders: 0, ordersWithoutProductionCost: 0,
     orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0),
     companyAmount: new Prisma.Decimal(0), partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0),
     companyDebt: new Prisma.Decimal(0), partnerDebt: new Prisma.Decimal(0), profit: new Prisma.Decimal(0),
+    plannedCompanyIncome: new Prisma.Decimal(0), companyIncomeRetained: new Prisma.Decimal(0),
+    productionFunded: new Prisma.Decimal(0), readyToPayWorkshop: new Prisma.Decimal(0),
+    awaitingClientForWorkshop: new Prisma.Decimal(0), workshopAdvance: new Prisma.Decimal(0),
   });
   const monthMap = new Map<string, { month: string; orders: number; sales: Prisma.Decimal; received: Prisma.Decimal }>();
   const partnerMap = new Map<number, { partnerId: number; name: string; orders: number; sales: Prisma.Decimal; profit: Prisma.Decimal; debt: Prisma.Decimal }>();
   for (const item of orderRows) {
-    const month = item.order.orderReceivedAt.toISOString().slice(0, 7);
-    const trend = monthMap.get(month) ?? { month, orders: 0, sales: new Prisma.Decimal(0), received: new Prisma.Decimal(0) };
-    trend.orders += 1; trend.sales = trend.sales.add(item.metrics.orderAmount); trend.received = trend.received.add(item.metrics.received); monthMap.set(month, trend);
+    if (!item.order.orderDateNeedsReview) {
+      const month = item.order.orderReceivedAt.toISOString().slice(0, 7);
+      const trend = monthMap.get(month) ?? { month, orders: 0, sales: new Prisma.Decimal(0), received: new Prisma.Decimal(0) };
+      trend.orders += 1; trend.sales = trend.sales.add(item.metrics.orderAmount); trend.received = trend.received.add(item.metrics.received); monthMap.set(month, trend);
+    }
     const byPartner = partnerMap.get(item.partnerId) ?? { partnerId: item.partnerId, name: item.partner.name, orders: 0, sales: new Prisma.Decimal(0), profit: new Prisma.Decimal(0), debt: new Prisma.Decimal(0) };
-    byPartner.orders += 1; byPartner.sales = byPartner.sales.add(item.metrics.orderAmount); byPartner.profit = byPartner.profit.add(item.economy.profit.netProfit); byPartner.debt = byPartner.debt.add(item.metrics.partnerBalance); partnerMap.set(item.partnerId, byPartner);
+    byPartner.orders += 1; byPartner.sales = byPartner.sales.add(item.metrics.orderAmount); byPartner.profit = byPartner.profit.add(item.economy.profit.netProfit ?? 0); byPartner.debt = byPartner.debt.add(item.metrics.partnerBalance); partnerMap.set(item.partnerId, byPartner);
   }
   const partnerSummaries = partners.map((partner) => {
     const rows = orderRows.filter((item) => item.partnerId === partner.id);
@@ -873,8 +990,19 @@ export async function getPartnerManagementReadModel(filters: {
         orderAmount: sum.orderAmount.add(item.metrics.orderAmount), received: sum.received.add(item.metrics.received),
         clientRemaining: sum.clientRemaining.add(item.metrics.clientRemaining), partnerAccrued: sum.partnerAccrued.add(item.metrics.partnerAccrued),
         partnerPaid: sum.partnerPaid.add(item.metrics.companyPaidPartner), balance: sum.balance.add(item.metrics.partnerBalance),
-        profit: sum.profit.add(item.economy.profit.netProfit),
-      }), { orders: 0, orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0), partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0), balance: new Prisma.Decimal(0), profit: new Prisma.Decimal(0) }),
+        profit: sum.profit.add(item.economy.profit.netProfit ?? 0),
+        plannedCompanyIncome: sum.plannedCompanyIncome.add(item.allocation.plannedCompanyIncome ?? 0),
+        companyIncomeRetained: sum.companyIncomeRetained.add(item.allocation.companyIncomeRetained ?? 0),
+        readyToPayWorkshop: sum.readyToPayWorkshop.add(item.allocation.readyToPayWorkshop ?? 0),
+        awaitingClientForWorkshop: sum.awaitingClientForWorkshop.add(item.allocation.awaitingClientForWorkshop ?? 0),
+      }), {
+        orders: 0,
+        orderAmount: new Prisma.Decimal(0), received: new Prisma.Decimal(0), clientRemaining: new Prisma.Decimal(0),
+        partnerAccrued: new Prisma.Decimal(0), partnerPaid: new Prisma.Decimal(0), balance: new Prisma.Decimal(0),
+        profit: new Prisma.Decimal(0), plannedCompanyIncome: new Prisma.Decimal(0),
+        companyIncomeRetained: new Prisma.Decimal(0), readyToPayWorkshop: new Prisma.Decimal(0),
+        awaitingClientForWorkshop: new Prisma.Decimal(0),
+      }),
     };
   });
   return {
@@ -885,7 +1013,12 @@ export async function getPartnerManagementReadModel(filters: {
     managers,
     totals: {
       ...totals,
-      activePartners: partners.filter((partner) => partner.businessStatus === PartnerBusinessStatus.ACTIVE).length,
+      activePartners: partners.filter((partner) => partner.businessStatus === PartnerBusinessStatus.ACTIVE && partner.active && !partner.archived).length,
+      activeOrders: orderRows.filter((item) => item.order.lifecycle !== OrderLifecycle.COMPLETED && item.order.lifecycle !== OrderLifecycle.CANCELLED).length,
+      activeOrdaOrders: activeOrderStats.active,
+      activeOrdersWithoutProductionCost: activeOrderStats.missingProductionCost,
+      allOrders,
+      unassignedOrders,
       averageOrder: totals.orders ? totals.orderAmount.div(totals.orders).toDecimalPlaces(2) : new Prisma.Decimal(0),
     },
     charts: {

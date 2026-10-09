@@ -1,0 +1,62 @@
+import { OrderLifecycle } from "@prisma/client";
+
+export const ORDER_BOARD_COLUMNS = [
+  {
+    key: "ORDERED",
+    label: "Заказ оформлен",
+    description: "Заказ создан, данные клиента проверяются",
+  },
+  {
+    key: "CONTRACT",
+    label: "Договор",
+    description: "Договор и подготовка к передаче в цех",
+  },
+  {
+    key: "WORKSHOP",
+    label: "Передан в цех",
+    description: "Передан, в работе, готов к монтажу или на монтаже",
+  },
+  {
+    key: "COMPLETED",
+    label: "Заказ завершён",
+    description: "Работы завершены и заказ закрыт",
+  },
+] as const;
+
+export type OrderBoardColumn = (typeof ORDER_BOARD_COLUMNS)[number]["key"];
+
+// Completion remains available in the order card; the daily board is active work only.
+export const ACTIVE_ORDER_BOARD_COLUMNS = ORDER_BOARD_COLUMNS.filter(column => column.key !== "COMPLETED");
+
+export const ORDER_BOARD_TARGET_LIFECYCLE: Record<
+  OrderBoardColumn,
+  OrderLifecycle
+> = {
+  ORDERED: OrderLifecycle.CREATED,
+  CONTRACT: OrderLifecycle.PREPARATION,
+  WORKSHOP: OrderLifecycle.READY_FOR_PRODUCTION,
+  COMPLETED: OrderLifecycle.COMPLETED,
+};
+
+export const ORDER_BOARD_LABELS = Object.fromEntries(
+  ORDER_BOARD_COLUMNS.map((column) => [column.key, column.label]),
+) as Record<OrderBoardColumn, string>;
+
+export function orderBoardColumn(lifecycle: OrderLifecycle | string): OrderBoardColumn | null {
+  if (lifecycle === OrderLifecycle.CREATED) return "ORDERED";
+  if (lifecycle === OrderLifecycle.PREPARATION) return "CONTRACT";
+  if (
+    lifecycle === OrderLifecycle.READY_FOR_PRODUCTION ||
+    lifecycle === OrderLifecycle.IN_PRODUCTION ||
+    lifecycle === OrderLifecycle.READY_FOR_INSTALLATION ||
+    lifecycle === OrderLifecycle.INSTALLATION ||
+    lifecycle === OrderLifecycle.ACCEPTANCE
+  ) return "WORKSHOP";
+  if (lifecycle === OrderLifecycle.COMPLETED) return "COMPLETED";
+  return null;
+}
+
+export function orderBoardLabel(lifecycle: OrderLifecycle | string) {
+  const column = orderBoardColumn(lifecycle);
+  return column ? ORDER_BOARD_LABELS[column] : "Отменён";
+}

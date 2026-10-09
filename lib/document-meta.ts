@@ -13,7 +13,12 @@ export const documentTypeLabels: Record<DocumentType, string> = {
   MEASUREMENT_SHEET: "Замерный лист",
   ACT: "Акт",
   INVOICE: "Счёт",
-  PAYMENT_RECEIPT: "Квитанция / подтверждение оплаты",
+  PAYMENT_RECEIPT: "Квитанция об оплате",
+  GOODS_RECEIPT: "Приходная накладная",
+  OUTGOING_INVOICE: "Расходная накладная",
+  GOODS_RETURN: "Возврат товара",
+  STOCK_TRANSFER: "Перемещение товара",
+  REFUND_CONFIRMATION: "Подтверждение возврата",
   PHOTO: "Фото / вложение",
   OTHER: "Другой документ",
 };
@@ -37,5 +42,6 @@ export const documentTabs: Array<{ label: string; type: "" | DocumentType }> = [
   { label: "Проекты", type: DocumentType.PROJECT },
   { label: "Замерные листы", type: DocumentType.MEASUREMENT_SHEET },
   { label: "Оплаты", type: DocumentType.PAYMENT_RECEIPT },
+  { label: "Склад", type: DocumentType.OUTGOING_INVOICE },
   { label: "Другие", type: DocumentType.OTHER },
 ];

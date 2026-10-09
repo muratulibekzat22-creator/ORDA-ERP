@@ -6,7 +6,8 @@ const calculationApi = read("app/api/orders/[id]/calculation/route.ts");
 const calculator = read("components/calculator/StairCalculator.tsx");
 const configApi = read("app/api/calculator-config/route.ts");
 const settings = read("components/pages/SettingsPage.tsx");
-const navigation = read("components/layout/RouteShell.tsx");
+const header = read("components/Header.tsx");
+const routeShell = read("components/layout/RouteShell.tsx");
 
 for (const field of [
   "companyProfit",
@@ -40,8 +41,12 @@ if (settings.includes("Цены калькулятора"))
     "Calculator configuration still exists inside general settings",
   );
 if (
-  !navigation.includes('session?.user.role === "DIRECTOR"') ||
-  !navigation.includes("Конфигурация калькулятора")
+  !routeShell.includes('accountRole === "OPERATIONS_DIRECTOR"') ||
+  !routeShell.includes('grantedPermissions.includes("settings")') ||
+  !routeShell.includes("canManageSettings={canManageSettings}") ||
+  !header.includes("canManageSettings") ||
+  !header.includes('/calculator-config') ||
+  !header.includes("Настройки калькулятора")
 )
   throw new Error("Protected calculator configuration navigation is missing");
 console.log("commercial and management boundary checks passed");

@@ -55,7 +55,7 @@ export function acceptedHeartbeatRange(input: {
   playerState: string;
 }): WatchedRange | null {
   if (
-    input.playerState !== "PLAYING" ||
+    (input.playerState !== "PLAYING" && input.playerState !== "ENDED") ||
     input.previousTime === null ||
     input.previousAt === null
   )

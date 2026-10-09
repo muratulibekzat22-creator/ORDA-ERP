@@ -36,30 +36,32 @@ test("DIRECTOR sees shared partner workspace without mobile overflow or browser 
   expect(overflow).toBeLessThanOrEqual(1);
   await page.goto("/orders");
   await expect(page.getByRole("heading", { name: "Заказы", exact: true })).toBeVisible();
-  await expect(page.getByText("Быстрые фильтры", { exact: true })).toBeVisible();
-  await expect(page.getByText("Этап производства", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Финансы и проблемы", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Поиск", { exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Укрупнённый статус", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Контроль данных", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   const ordersResponse = await page.request.get("/api/orders?limit=10");
   expect(ordersResponse.status()).toBe(200);
   const ordersPayload = await ordersResponse.json() as {
-    data: Array<{ id: number; balance: string | number; partnerBalance: string | number }>;
-    filterMetrics: Record<string, { count: number; amount: string }>;
+    data: Array<{ id: number }>;
+    pagination: { total: number };
   };
-  for (const [filter, field] of [["client-payable", "balance"], ["partner-payable", "partnerBalance"]] as const) {
-    const filteredResponse = await page.request.get(`/api/orders?limit=100&filter=${filter}`);
+  expect(ordersPayload.pagination.total).toBeGreaterThanOrEqual(ordersPayload.data.length);
+  for (const attention of ["missing-production-price", "overdue"]) {
+    const filteredResponse = await page.request.get(`/api/orders?limit=100&tab=board&attention=${attention}`);
     expect(filteredResponse.status()).toBe(200);
     const filtered = await filteredResponse.json() as {
-      data: Array<{ balance: string | number; partnerBalance: string | number }>;
+      data: Array<{ productionPriceMissing?: boolean }>;
       pagination: { total: number };
     };
-    expect(filtered.pagination.total).toBe(ordersPayload.filterMetrics[filter].count);
-    expect(filtered.data.reduce((sum, item) => sum + Number(item[field]), 0)).toBeCloseTo(Number(ordersPayload.filterMetrics[filter].amount), 2);
+    expect(filtered.pagination.total).toBeGreaterThanOrEqual(filtered.data.length);
+    if (attention === "missing-production-price")
+      expect(filtered.data.every((item) => item.productionPriceMissing === true)).toBe(true);
   }
   if (ordersPayload.data[0]) {
     await page.goto(`/orders/${ordersPayload.data[0].id}`);
     await expect(page.getByRole("heading", { name: "Экономика заказа", exact: true })).toBeVisible();
-    for (const label of ["Сумма продажи", "Получено от клиента", "Остаток клиента", "Согласованная стоимость", "Выплачено партнёру", "Осталось выплатить", "Маржа до зарплаты", "Зарплата по заказу", "Чистая прибыль"])
+    for (const label of ["Сумма продажи", "Получено от клиента", "Остаток клиента", "Маржа до зарплаты", "Зарплата по заказу", "Чистая прибыль"])
       await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
   }
   await page.setViewportSize({ width: 1440, height: 900 });

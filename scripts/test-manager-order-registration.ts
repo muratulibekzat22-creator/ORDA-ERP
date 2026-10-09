@@ -61,6 +61,18 @@ async function main() {
     assert.equal(payment.method, "BANK_TRANSFER");
     assert.equal(payment.operationDate.toISOString(), "2026-07-02T00:00:00.000Z");
 
+    await assert.rejects(
+      () => createOrder({
+        ...base,
+        clientId: first.order.clientId,
+        enforceClientOwnership: true,
+        idempotencyKey: `${tag}-duplicate`,
+        requestHash: hash("duplicate"),
+      }),
+      new RegExp(`DUPLICATE_ORDER:${first.order.id}:`),
+      "the registration form must block a repeated order for the same client, manager, date, amount and payment",
+    );
+
     const second = await createOrder({ ...base, prepayment: 0, client: { name: "Другое имя", phone, city: "Алматы", address: "" }, idempotencyKey: `${tag}-second`, requestHash: hash("second") });
     orderIds.push(second.order.id);
     assert.equal(second.order.clientId, first.order.clientId);

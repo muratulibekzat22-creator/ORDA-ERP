@@ -21,6 +21,7 @@ import { countPdfPages } from "@/lib/documents/pdf-utils";
 import { ensureEmployeeCode } from "@/lib/employee-code";
 import { get, put } from "@/lib/private-blob";
 import { prisma } from "@/lib/prisma";
+import { nextBusinessDocumentNumber } from "@/lib/services/business-document-number.service";
 import type { DocumentActor } from "@/lib/services/document.service";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
@@ -85,30 +86,67 @@ function receiptItems(
     cladding: boolean;
     claddingDetails: string;
     additionalDetails: string;
+    items: Array<{
+      skuSnapshot: string;
+      nameSnapshot: string;
+      variantSnapshot: string | null;
+      unitSnapshot: string;
+      quantity: Prisma.Decimal;
+      unitPrice: Prisma.Decimal;
+      discount: Prisma.Decimal;
+      lineTotal: Prisma.Decimal;
+    }>;
+    calculations: Array<{
+      lines: Array<{
+        code: string | null;
+        name: string;
+        quantity: Prisma.Decimal;
+        unit: string;
+        unitSale: Prisma.Decimal;
+        totalSale: Prisma.Decimal;
+      }>;
+    }>;
   },
   contractSnapshot: ContractSnapshot | null,
+  total: number,
 ) {
+  if (order.items.length) return order.items.map((item) => ({
+    sku: item.skuSnapshot,
+    name: item.nameSnapshot,
+    variant: item.variantSnapshot,
+    unit: item.unitSnapshot,
+    quantity: Number(item.quantity),
+    unitPrice: Number(item.unitPrice),
+    discount: Number(item.discount),
+    total: Number(item.lineTotal),
+  }));
+  const calculationLines = order.calculations[0]?.lines ?? [];
+  if (calculationLines.length) return calculationLines.map((item) => ({
+    sku: item.code,
+    name: item.name,
+    variant: null,
+    unit: item.unit,
+    quantity: Number(item.quantity),
+    unitPrice: Number(item.unitSale),
+    discount: 0,
+    total: Number(item.totalSale),
+  }));
   const material = contractSnapshot?.stairMaterial || order.material;
-  const frame = contractSnapshot?.frameType || order.staircase;
-  const railing = contractSnapshot?.balusterType || order.railingType;
-  const items = [
-    `Изготовление лестницы${material ? ` · ${material}` : ""}`,
-    frame ? `Каркас · ${frame}` : "",
-    railing ? `Ограждение / балясина · ${railing}` : "",
-    contractSnapshot?.installationText !== "Не включён" ? "Монтажные работы" : "",
-    order.lighting
-      ? `Подсветка${order.lightingDetails ? ` · ${order.lightingDetails}` : ""}`
-      : "",
-    order.cladding
-      ? `Обшивка${order.claddingDetails ? ` · ${order.claddingDetails}` : ""}`
-      : "",
-    order.additionalDetails
-      ? `Дополнительные согласованные услуги · ${order.additionalDetails}`
-      : "",
-  ];
-  return items
-    .map((item) => item.replace(/\s+/g, " ").trim().slice(0, 150))
-    .filter(Boolean);
+  const detail = [
+    material ? `материал: ${material}` : "",
+    order.staircase ? `каркас: ${order.staircase}` : "",
+    order.railingType ? `ограждение: ${order.railingType}` : "",
+  ].filter(Boolean).join("; ");
+  return [{
+    sku: null,
+    name: `Лестница под заказ${detail ? ` по договору, ${detail}` : " по договору"}`.slice(0, 500),
+    variant: null,
+    unit: "компл.",
+    quantity: 1,
+    unitPrice: total,
+    discount: 0,
+    total,
+  }];
 }
 
 function paymentBasis(input: {
@@ -143,6 +181,23 @@ async function currentShift(
 ) {
   await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${1_500_000_000 + responsibleManagerId})`;
   const businessDate = almatyBusinessDate(operationDate);
+  const today = almatyBusinessDate(new Date());
+  if (businessDate.iso !== today.iso) {
+    const historical = await tx.cashShift.findFirst({
+      where: { responsibleManagerId, businessDate: businessDate.date },
+      orderBy: { id: "asc" },
+    });
+    if (historical) return historical;
+    return tx.cashShift.create({
+      data: {
+        businessDate: businessDate.date,
+        responsibleManagerId,
+        openedAt: operationDate,
+        closedAt: operationDate,
+        status: CashShiftStatus.CLOSED,
+      },
+    });
+  }
   const opened = await tx.cashShift.findFirst({
     where: { responsibleManagerId, status: CashShiftStatus.OPEN },
     orderBy: { openedAt: "desc" },
@@ -181,8 +236,15 @@ export async function createPaymentReceiptRecord(
         include: {
           client: true,
           managerUser: { select: { id: true, name: true, role: true, active: true } },
+          items: { orderBy: [{ position: "asc" }, { id: "asc" }] },
+          calculations: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            include: { lines: { where: { enabled: true }, orderBy: [{ position: "asc" }, { id: "asc" }] } },
+          },
         },
       },
+      parts: { orderBy: { id: "asc" } },
     },
   });
   if (
@@ -193,17 +255,18 @@ export async function createPaymentReceiptRecord(
     throw new Error("CONFIRMED_CLIENT_PAYMENT_REQUIRED");
   const order = payment.order;
   const manager = order.managerUser;
-  if (!manager || !manager.active || manager.role !== Role.MANAGER)
-    throw new Error("RESPONSIBLE_MANAGER_REQUIRED");
-  const employeeCode = await ensureEmployeeCode(tx, manager.id);
-  const actualRegisteredById = registeredByUserId ?? manager.id;
+  const actualRegisteredById = registeredByUserId ?? manager?.id;
+  if (!actualRegisteredById) throw new Error("REGISTERED_BY_USER_REQUIRED");
   const registeredBy = await tx.user.findUnique({
     where: { id: actualRegisteredById },
-    select: { id: true, name: true, active: true },
+    select: { id: true, name: true, role: true, active: true },
   });
   if (!registeredBy?.active) throw new Error("REGISTERED_BY_USER_REQUIRED");
-  const shift = await currentShift(tx, manager.id, payment.operationDate);
+  const responsibleUser = manager?.active ? manager : registeredBy;
+  const employeeCode = await ensureEmployeeCode(tx, responsibleUser.id);
+  const shift = await currentShift(tx, responsibleUser.id, payment.operationDate);
   const receiptNumber = await nextReceiptNumber(tx);
+  const displayNumber = await nextBusinessDocumentNumber(tx, "PAY", payment.operationDate);
   const contract = await tx.document.findFirst({
     where: {
       orderId: order.id,
@@ -240,6 +303,7 @@ export async function createPaymentReceiptRecord(
   const snapshot: PaymentReceiptSnapshot = {
     templateVersion: PAYMENT_RECEIPT_TEMPLATE_VERSION,
     receiptNumber,
+    displayNumber,
     shiftNumber: shift.shiftNumber,
     createdAt: new Date().toISOString(),
     businessDate: almatyBusinessDate(payment.operationDate).iso,
@@ -256,13 +320,19 @@ export async function createPaymentReceiptRecord(
     },
     order: { id: order.id, number: order.number },
     contract: { number: contract?.number ?? null, total },
-    responsibleManager: { name: manager.name, employeeCode },
+    responsibleManager: { name: manager?.name || order.manager || registeredBy.name, employeeCode },
     registeredBy: { userId: registeredBy.id, name: registeredBy.name },
     payment: {
       id: payment.id,
       amount: currentPayment,
       method: payment.method,
       methodLabel: paymentMethodLabel(payment.method),
+      parts: (payment.parts.length ? payment.parts : [{ method: payment.method, amount: payment.amount, reference: null }]).map((part) => ({
+        method: part.method,
+        methodLabel: paymentMethodLabel(part.method),
+        amount: Number(part.amount),
+        reference: part.reference,
+      })),
       basis: paymentBasis({
         paidBefore,
         paidAfter,
@@ -272,7 +342,7 @@ export async function createPaymentReceiptRecord(
       operationDate: payment.operationDate.toISOString(),
     },
     totals: { paidBefore, paidAfter, remaining, overpayment },
-    items: receiptItems(order, contractSnapshot),
+    items: receiptItems(order, contractSnapshot, total),
     verificationPath: `/verify/payment-receipt/${verificationToken}`,
   };
   const snapshotChecksum = createHash("sha256")
@@ -284,8 +354,8 @@ export async function createPaymentReceiptRecord(
       clientId: order.clientId,
       paymentId: payment.id,
       type: DocumentType.PAYMENT_RECEIPT,
-      number: String(receiptNumber),
-      title: `Квитанция об оплате №${receiptNumber}`,
+      number: displayNumber,
+      title: `Квитанция об оплате ${displayNumber}`,
       documentDate: payment.operationDate,
       status: DocumentStatus.DRAFT,
       source: DocumentSource.GENERATED_ORDER,
@@ -299,6 +369,7 @@ export async function createPaymentReceiptRecord(
   const receipt = await tx.paymentReceipt.create({
     data: {
       receiptNumber,
+      displayNumber,
       paymentId: payment.id,
       documentId: document.id,
       orderId: order.id,
@@ -321,7 +392,8 @@ export async function createPaymentReceiptRecord(
       after: {
         receiptNumber,
         shiftNumber: shift.shiftNumber,
-        responsibleManagerId: manager.id,
+        displayNumber,
+        responsibleManagerId: responsibleUser.id,
         registeredByUserId: registeredBy.id,
         paymentId: payment.id,
       },
@@ -337,10 +409,11 @@ export async function createPaymentReceiptRecord(
       after: {
         receiptNumber,
         shiftNumber: shift.shiftNumber,
-        responsibleManagerId: manager.id,
+        displayNumber,
+        responsibleManagerId: responsibleUser.id,
         registeredByUserId: registeredBy.id,
       },
-      reason: "Нефискальная квитанция создана после подтверждённой оплаты",
+      reason: "Квитанция создана после зарегистрированной оплаты",
       authorId: registeredBy.id,
     },
   });
@@ -367,8 +440,8 @@ export async function ensurePaymentReceiptPdf(paymentId: number) {
   const snapshot = receipt.snapshot as unknown as PaymentReceiptSnapshot;
   const bytes = await buildPaymentReceiptPdf(snapshot, publicBaseUrl());
   if (countPdfPages(bytes) !== 1) throw new Error("RECEIPT_PDF_NOT_ONE_PAGE");
-  const fileName = `Квитанция-${receipt.receiptNumber}.pdf`;
-  const pathname = `documents/payment-receipts/${receipt.receiptNumber}/receipt.pdf`;
+  const fileName = `Квитанция-${receipt.displayNumber}.pdf`;
+  const pathname = `documents/payment-receipts/${receipt.id}/receipt-80mm.pdf`;
   const checksum = createHash("sha256").update(bytes).digest("hex");
   const blob = await put(pathname, bytes, {
     access: "private",
@@ -397,7 +470,7 @@ export async function ensurePaymentReceiptPdf(paymentId: number) {
         documentId: receipt.documentId,
         version: 1,
         uploadedById: snapshot.registeredBy.userId,
-        comment: "Автоматически сформированная нефискальная квитанция",
+        comment: "Автоматически сформированная квитанция об оплате",
         fileName,
         pathname: blob.pathname,
         contentType: "application/pdf",
@@ -417,7 +490,7 @@ export async function ensurePaymentReceiptPdf(paymentId: number) {
         documentId: receipt.documentId,
         actorId: snapshot.registeredBy.userId,
         action: "PAYMENT_RECEIPT_PDF_GENERATED",
-        after: { receiptNumber: receipt.receiptNumber, pages: 1, checksum },
+        after: { receiptNumber: receipt.displayNumber, pages: 1, checksum },
       },
     });
     return version;
@@ -467,7 +540,8 @@ export async function voidPaymentReceipt(
 }
 
 export async function closeCashShift(shiftId: number, actor: DocumentActor) {
-  if (actor.role !== Role.DIRECTOR) throw new Error("FORBIDDEN");
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new Error("FORBIDDEN");
   const shift = await prisma.cashShift.findUnique({ where: { id: shiftId } });
   if (!shift) throw new Error("NOT_FOUND");
   if (shift.status === CashShiftStatus.CLOSED) return shift;
@@ -487,30 +561,88 @@ export async function paymentReceiptPublicProjection(token: string) {
     where: { verificationToken: token },
     select: {
       receiptNumber: true,
+      displayNumber: true,
       status: true,
       snapshot: true,
-      snapshotChecksum: true,
+      publicAccessEnabled: true,
       voidedAt: true,
     },
   });
-  if (!receipt) return null;
+  if (!receipt || !receipt.publicAccessEnabled) return null;
   const snapshot = receipt.snapshot as unknown as PaymentReceiptSnapshot;
   return {
-    company: snapshot.company.name,
-    receiptNumber: receipt.receiptNumber,
+    company: snapshot.company,
+    receiptNumber: receipt.displayNumber,
     status: receipt.status === PaymentReceiptStatus.VOID ? "VOID" : "VALID",
     dateTime: snapshot.payment.operationDate,
+    generatedAt: snapshot.createdAt,
     orderNumber: snapshot.order.number,
     contractNumber: snapshot.contract.number,
     paymentAmount: snapshot.payment.amount,
     paymentMethod: snapshot.payment.methodLabel,
+    paymentParts: snapshot.payment.parts ?? [],
+    items: snapshot.items,
+    totals: snapshot.totals,
     responsibleManager: snapshot.responsibleManager.name,
+    registeredBy: snapshot.registeredBy.name,
     maskedClientName: snapshot.client.maskedName,
-    checksum: receipt.snapshotChecksum,
     voidedAt: receipt.voidedAt?.toISOString() ?? null,
-    notice:
-      "Нефискальное подтверждение оплаты. Не является чеком ККМ.",
   };
+}
+
+export async function ensurePaymentReceiptForExistingPayment(
+  paymentId: number,
+  actor: DocumentActor,
+) {
+  const payment = await prisma.payment.findFirst({
+    where: {
+      id: paymentId,
+      type: { in: [...CLIENT_PAYMENT_TYPES] },
+      order: {
+        deletedAt: null,
+        ...(actor.role === Role.MANAGER ? { managerUserId: actor.userId } : {}),
+      },
+    },
+    select: { id: true },
+  });
+  if (!payment) throw new Error("NOT_FOUND");
+  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.ACCOUNTANT, Role.MANAGER])).has(actor.role))
+    throw new Error("FORBIDDEN");
+  await prisma.$transaction(
+    (tx) => createPaymentReceiptRecord(tx, payment.id, actor.userId),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 },
+  );
+  await ensurePaymentReceiptPdf(payment.id);
+  return prisma.paymentReceipt.findUniqueOrThrow({
+    where: { paymentId: payment.id },
+    select: { id: true, displayNumber: true, documentId: true, verificationToken: true, createdAt: true },
+  });
+}
+
+export async function setPaymentReceiptPublicAccess(
+  receiptId: number,
+  enabled: boolean,
+  actor: DocumentActor,
+) {
+  if (actor.role !== Role.DIRECTOR && actor.role !== Role.OPERATIONS_DIRECTOR)
+    throw new Error("FORBIDDEN");
+  const receipt = await prisma.paymentReceipt.findUnique({ where: { id: receiptId } });
+  if (!receipt) throw new Error("NOT_FOUND");
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.paymentReceipt.update({
+      where: { id: receipt.id },
+      data: { publicAccessEnabled: enabled },
+    });
+    await tx.documentAudit.create({
+      data: {
+        documentId: receipt.documentId,
+        actorId: actor.userId,
+        action: enabled ? "CLIENT_LINK_ENABLED" : "CLIENT_LINK_DISABLED",
+        after: { publicAccessEnabled: enabled },
+      },
+    });
+    return updated;
+  });
 }
 
 export async function getPaymentReceiptPdf(
@@ -530,6 +662,7 @@ export async function getPaymentReceiptPdf(
   if (!receipt) return null;
   const allowed =
     actor.role === Role.DIRECTOR ||
+    actor.role === Role.OPERATIONS_DIRECTOR ||
     actor.role === Role.ACCOUNTANT ||
     (actor.role === Role.MANAGER &&
       (await prisma.order.count({

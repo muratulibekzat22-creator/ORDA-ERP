@@ -13,22 +13,39 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { LucideIcon } from "lucide-react";
+import PurchaseBatchesPanel from "@/components/warehouse/PurchaseBatchesPanel";
+import WarehouseRetailPanel from "@/components/warehouse/WarehouseRetailPanel";
 
 type Material = {
   id: number;
   name: string;
+  model?: string | null;
+  description?: string | null;
   category: string;
   unit: string;
   minimumStock: number;
   stock: number;
   reserved: number;
-  available: number;
-  purchasePrice?: string;
+  available: number | null;
+  purchasePrice?: string | null;
+  averageCost?: string;
+  sellingPrice?: string | null;
+  code?: string | null;
+  color?: string | null;
+  finish?: string | null;
+  dimensions?: string | null;
+  variantGroup?: string | null;
+  quantityKnown?: boolean;
+  quantityPrecision?: number;
+  availabilityLabel?: string;
+  photoUrl?: string | null;
+  balances?: Array<{ stock: string; reserved: string; location: { id: number; name: string; address: string } }>;
   supplier: string | null;
   active: boolean;
   alerts: string[];
 };
 type Order = { id: number; number: string; client: { name: string } };
+type WarehouseLocationOption = { id: number; name: string; isDefault: boolean };
 type Movement = {
   id: number;
   type: string;
@@ -44,6 +61,10 @@ type Movement = {
   material: { name: string; unit: string };
   order: { id: number; number: string; client: { name: string } } | null;
   employee: { name: string } | null;
+  location?: { id: number; name: string } | null;
+  fromLocation?: { id: number; name: string } | null;
+  toLocation?: { id: number; name: string } | null;
+  document?: { id: number; number: string } | null;
 };
 type Reservation = {
   id: number;
@@ -90,10 +111,13 @@ const empty: Data = {
 };
 const materialBlank = {
   name: "",
+  model: "",
+  description: "",
   category: "",
   unit: "шт",
   minimumStock: "0",
-  purchasePrice: "0",
+  purchasePrice: "",
+  sellingPrice: "",
   supplier: "",
   initialStock: "0",
   active: true,
@@ -106,6 +130,7 @@ const currentLocalDateTime = () => {
 const operationBlank = {
   type: "incoming",
   materialId: "",
+  locationId: "",
   orderId: "",
   quantity: "",
   price: "",
@@ -117,6 +142,10 @@ const operationBlank = {
 const labels: Record<string, string> = {
   incoming: "Приход",
   outgoing: "Расход",
+  sale: "Продажа со склада",
+  writeoff: "Списание",
+  supplier_return: "Возврат поставщику",
+  workshop_issue: "Передача в цех",
   adjustment: "Корректировка",
   return: "Возврат",
   reserve: "Резерв",
@@ -132,20 +161,24 @@ export default function WarehousePage() {
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
     [tab, setTab] = useState("materials");
+  const [operationLocations, setOperationLocations] = useState<WarehouseLocationOption[]>([]);
   const [material, setMaterial] = useState(materialBlank),
     [editing, setEditing] = useState<Material | null>(null),
     [operation, setOperation] = useState(operationBlank);
   const [search, setSearch] = useState(""),
     [category, setCategory] = useState(""),
+    [color, setColor] = useState(""),
+    [location, setLocation] = useState(""),
     [supplier, setSupplier] = useState(""),
     [lowOnly, setLowOnly] = useState(false),
     [movementType, setMovementType] = useState(""),
     [orderFilter, setOrderFilter] = useState(""),
     [page, setPage] = useState(1);
-  const canCreateMaterial = role === Role.DIRECTOR,
-    canEdit = role === Role.DIRECTOR || role === Role.ACCOUNTANT,
-    canDelete = role === Role.DIRECTOR,
-    canSeeCost = role === Role.DIRECTOR || role === Role.ACCOUNTANT;
+  const leadership = role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
+  const canCreateMaterial = leadership,
+    canEdit = leadership,
+    canDelete = leadership,
+    canSeeCost = leadership || role === Role.ACCOUNTANT;
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -172,6 +205,21 @@ export default function WarehousePage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/warehouse/locations", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        return response.json() as Promise<{ locations: WarehouseLocationOption[] }>;
+      })
+      .then(({ locations }) => {
+        if (!active) return;
+        setOperationLocations(locations);
+        setOperation((current) => current.locationId ? current : { ...current, locationId: String(locations.find((item) => item.isDefault)?.id ?? locations[0]?.id ?? "") });
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   async function mutate(
     method: "POST" | "PATCH" | "DELETE",
     body?: unknown,
@@ -208,10 +256,13 @@ export default function WarehousePage() {
     event.preventDefault();
     const payload = {
       name: material.name,
+      model: material.model,
+      description: material.description,
       category: material.category,
       unit: material.unit,
       minimumStock: material.minimumStock,
       purchasePrice: material.purchasePrice,
+      sellingPrice: material.sellingPrice,
       supplier: material.supplier,
     };
     const ok = editing
@@ -240,16 +291,19 @@ export default function WarehousePage() {
       supplier: operation.supplier || undefined,
       expiresAt: operation.expiresAt || undefined,
     });
-    if (ok) setOperation({ ...operationBlank, type: operation.type });
+    if (ok) setOperation({ ...operationBlank, type: operation.type, locationId: operation.locationId });
   }
   function edit(item: Material) {
     setEditing(item);
     setMaterial({
       name: item.name,
+      model: item.model ?? "",
+      description: item.description ?? "",
       category: item.category,
       unit: item.unit,
       minimumStock: String(item.minimumStock),
-      purchasePrice: String(item.purchasePrice ?? 0),
+      purchasePrice: item.purchasePrice ?? "",
+      sellingPrice: item.sellingPrice ?? "",
       supplier: item.supplier ?? "",
       initialStock: "0",
       active: item.active,
@@ -261,16 +315,18 @@ export default function WarehousePage() {
       data.materials.filter(
         (item) =>
           (!search ||
-            [item.name, item.category, item.supplier ?? ""].some((value) =>
+            [item.name, item.code ?? "", item.model ?? "", item.description ?? "", item.category, item.color ?? "", item.supplier ?? ""].some((value) =>
               value
                 .toLocaleLowerCase("ru")
                 .includes(search.toLocaleLowerCase("ru")),
             )) &&
           (!category || item.category === category) &&
+          (!color || item.color === color) &&
+          (!location || item.balances?.some((balance) => balance.location.name === location)) &&
           (!supplier || item.supplier === supplier) &&
           (!lowOnly || item.stock <= item.minimumStock),
       ),
-    [data.materials, search, category, supplier, lowOnly],
+    [data.materials, search, category, color, location, supplier, lowOnly],
   );
   const operationOptions =
     role === Role.ACCOUNTANT
@@ -281,7 +337,10 @@ export default function WarehousePage() {
           ? ["consume"]
           : [
               "incoming",
-              "outgoing",
+              "sale",
+              "writeoff",
+              "supplier_return",
+              "workshop_issue",
               "adjustment",
               "return",
               "reserve",
@@ -294,7 +353,7 @@ export default function WarehousePage() {
         <div>
           <h1 className="text-3xl font-bold text-white">Склад</h1>
           <p className="mt-2 text-slate-400">
-            Материалы, физический и доступный остаток, резервы и списания
+            Товары, закупки, точная себестоимость, продажи и передача в цех
           </p>
         </div>
       </div>
@@ -344,6 +403,7 @@ export default function WarehousePage() {
       <div className="mb-5 flex gap-2 overflow-x-auto pb-2">
         {[
           ["materials", "Материалы"],
+          ...(canSeeCost ? [["purchases", "Закупки"]] : []),
           ["operations", "Операции"],
           ["reservations", "Резервы"],
           ["history", "История"],
@@ -365,6 +425,7 @@ export default function WarehousePage() {
         <>
           {tab === "materials" && (
             <div className="space-y-5">
+              <WarehouseRetailPanel materials={data.materials} role={role} onRefresh={load} />
               {(canCreateMaterial || editing) && (
                 <form
                   onSubmit={saveMaterial}
@@ -373,10 +434,13 @@ export default function WarehousePage() {
                   {(
                     [
                       "name",
+                      "model",
+                      "description",
                       "category",
                       "unit",
                       "minimumStock",
                       "purchasePrice",
+                      "sellingPrice",
                       "supplier",
                     ] as const
                   ).map((field) => (
@@ -384,7 +448,7 @@ export default function WarehousePage() {
                       key={field}
                       required={["name", "category", "unit"].includes(field)}
                       type={
-                        ["minimumStock", "purchasePrice"].includes(field)
+                        ["minimumStock", "purchasePrice", "sellingPrice"].includes(field)
                           ? "number"
                           : "text"
                       }
@@ -400,10 +464,13 @@ export default function WarehousePage() {
                       placeholder={
                         {
                           name: "Название",
+                          model: "Модель / артикул",
+                          description: "Состав комплекта, например: пара = 2 шт.",
                           category: "Категория",
                           unit: "Единица",
                           minimumStock: "Минимальный остаток",
                           purchasePrice: "Закупочная цена",
+                          sellingPrice: "Продажная цена",
                           supplier: "Поставщик",
                         }[field]
                       }
@@ -465,7 +532,7 @@ export default function WarehousePage() {
                   )}
                 </form>
               )}
-              <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 md:grid-cols-4">
+              <div className="grid gap-3 rounded-2xl border border-slate-700 bg-[#101827] p-4 md:grid-cols-3 xl:grid-cols-6">
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -483,6 +550,14 @@ export default function WarehousePage() {
                       <option key={x}>{x}</option>
                     ),
                   )}
+                </select>
+                <select value={color} onChange={(event) => setColor(event.target.value)} className="rounded-xl bg-slate-900 p-3 text-white">
+                  <option value="">Все цвета</option>
+                  {[...new Set(data.materials.map((item) => item.color).filter((value): value is string => Boolean(value)))].map((value) => <option key={value}>{value}</option>)}
+                </select>
+                <select value={location} onChange={(event) => setLocation(event.target.value)} className="rounded-xl bg-slate-900 p-3 text-white">
+                  <option value="">Все места хранения</option>
+                  {[...new Set(data.materials.flatMap((item) => item.balances?.map((balance) => balance.location.name) ?? []))].map((value) => <option key={value}>{value}</option>)}
                 </select>
                 <select
                   value={supplier}
@@ -527,10 +602,11 @@ export default function WarehousePage() {
                         <StockStatus item={item} />
                       </div>
                       <dl className="mt-4 grid grid-cols-3 gap-3 text-sm">
-                        <StockValue label="В наличии" value={item.stock} />
-                        <StockValue label="Резерв" value={item.reserved} />
+                        <StockValue label="В наличии" value={item.quantityKnown === false ? null : item.stock} />
+                        <StockValue label="Резерв" value={item.quantityKnown === false ? null : item.reserved} />
                         <StockValue label="Доступно" value={item.available} />
                       </dl>
+                      <p className="mt-3 text-sm font-semibold text-emerald-300">{item.sellingPrice == null ? "Цена не задана" : `${Number(item.sellingPrice).toLocaleString("ru-RU")} ₸`}</p>
                       {(canEdit || canDelete) && (
                         <div className="mt-4 flex gap-2">
                           {canEdit && (
@@ -578,7 +654,8 @@ export default function WarehousePage() {
                           "Физический",
                           "Резерв",
                           "Доступно",
-                          ...(canSeeCost ? ["Цена"] : []),
+                          ...(canSeeCost ? ["Себестоимость"] : []),
+                          "Цена продажи",
                           "Поставщик",
                           "Статус",
                           "",
@@ -599,6 +676,7 @@ export default function WarehousePage() {
                             {item.name}
                             <span className="block text-xs text-slate-500">
                               {item.unit}
+                            {item.model ? ` · ${item.model}` : ""}
                             </span>
                           </td>
                           <td>{item.category}</td>
@@ -606,7 +684,7 @@ export default function WarehousePage() {
                           <td>{item.reserved}</td>
                           <td
                             className={
-                              item.available <= 0
+                              item.available !== null && item.available <= 0
                                 ? "text-red-400"
                                 : "text-green-400"
                             }
@@ -615,9 +693,10 @@ export default function WarehousePage() {
                           </td>
                           {canSeeCost && (
                             <td>
-                              {Number(item.purchasePrice).toLocaleString()} ₸
+                              {item.purchasePrice == null ? "Не задана" : `${Number(item.averageCost ?? item.purchasePrice).toLocaleString()} ₸`}
                             </td>
                           )}
+                          <td>{item.sellingPrice == null ? "Не задана" : `${Number(item.sellingPrice).toLocaleString()} ₸`}</td>
                           <td>{item.supplier || "—"}</td>
                           <td>
                             <StockStatus item={item} />
@@ -658,6 +737,15 @@ export default function WarehousePage() {
               </div>
             </div>
           )}
+          {tab === "purchases" && (
+            <PurchaseBatchesPanel
+              materials={data.materials.map((item) => ({
+                id: item.id,
+                name: item.name,
+                unit: item.unit,
+              }))}
+            />
+          )}
           {tab === "operations" && (
             <form
               onSubmit={saveOperation}
@@ -681,6 +769,15 @@ export default function WarehousePage() {
               </select>
               <select
                 required
+                value={operation.locationId}
+                onChange={(e) => setOperation({ ...operation, locationId: e.target.value })}
+                className="rounded-xl bg-slate-900 p-3 text-white"
+              >
+                <option value="">Место хранения</option>
+                {operationLocations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <select
+                required
                 value={operation.materialId}
                 onChange={(e) =>
                   setOperation({ ...operation, materialId: e.target.value })
@@ -696,10 +793,10 @@ export default function WarehousePage() {
                     </option>
                   ))}
               </select>
-              {["reserve", "release", "consume"].includes(operation.type) ||
+              {["reserve", "release", "consume", "workshop_issue", "sale"].includes(operation.type) ||
               operation.type === "outgoing" ? (
                 <select
-                  required={["reserve", "release", "consume"].includes(
+                  required={["reserve", "release", "consume", "workshop_issue"].includes(
                     operation.type,
                   )}
                   value={operation.orderId}
@@ -742,7 +839,7 @@ export default function WarehousePage() {
                     onChange={(e) =>
                       setOperation({ ...operation, price: e.target.value })
                     }
-                    placeholder="Фактическая цена"
+                    placeholder={operation.type === "sale" ? "Цена продажи" : "Фактическая цена / себестоимость"}
                     className="rounded-xl bg-slate-900 p-3 text-white"
                   />
                   <input
@@ -774,12 +871,13 @@ export default function WarehousePage() {
                 />
               )}
               <input
+                required={["adjustment", "writeoff", "supplier_return"].includes(operation.type)}
                 value={operation.comment}
                 maxLength={1000}
                 onChange={(e) =>
                   setOperation({ ...operation, comment: e.target.value })
                 }
-                placeholder="Комментарий"
+                placeholder={["adjustment", "writeoff", "supplier_return"].includes(operation.type) ? "Причина (обязательно)" : "Комментарий"}
                 className="rounded-xl bg-slate-900 p-3 text-white"
               />
               <button
@@ -895,6 +993,7 @@ export default function WarehousePage() {
                       <b className="text-white">{labels[x.type] ?? x.type}</b>
                       <span>
                         {x.material.name}: {x.quantity} {x.material.unit}
+                        <small className="block text-slate-500">{x.fromLocation && x.toLocation ? `${x.fromLocation.name} → ${x.toLocation.name}` : x.location?.name ?? "Место не указано"}</small>
                       </span>
                       {canSeeCost && (
                         <span>{Number(x.price).toLocaleString()} ₸</span>
@@ -913,6 +1012,7 @@ export default function WarehousePage() {
                         ) : (
                           "Без заказа"
                         )}
+                        {x.document ? <Link href={`/documents/${x.document.id}`} className="mt-1 block text-blue-400 hover:text-blue-300">Документ {x.document.number}</Link> : null}
                       </span>
                       <span>
                         {x.employee?.name ?? "Система"}
@@ -963,13 +1063,19 @@ function StockStatus({ item }: { item: Material }) {
         Неактивен
       </span>
     );
+  if (item.quantityKnown === false)
+    return (
+      <span className="rounded-full bg-blue-950 px-2.5 py-1 text-xs text-blue-300">
+        Наличие подтверждено
+      </span>
+    );
   if (item.stock <= 0)
     return (
       <span className="rounded-full bg-red-950 px-2.5 py-1 text-xs text-red-300">
         Нет в наличии
       </span>
     );
-  if (item.available <= 0 && item.reserved > 0)
+  if (item.available !== null && item.available <= 0 && item.reserved > 0)
     return (
       <span className="rounded-full bg-blue-950 px-2.5 py-1 text-xs text-blue-300">
         Зарезервировано
@@ -988,11 +1094,11 @@ function StockStatus({ item }: { item: Material }) {
   );
 }
 
-function StockValue({ label, value }: { label: string; value: number }) {
+function StockValue({ label, value }: { label: string; value: number | null }) {
   return (
     <div>
       <dt className="text-xs text-slate-500">{label}</dt>
-      <dd className="mt-1 font-semibold text-white">{value}</dd>
+      <dd className="mt-1 font-semibold text-white">{value ?? "—"}</dd>
     </div>
   );
 }

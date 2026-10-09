@@ -5,7 +5,7 @@ import { getPermissionMatrix, replacePermissionMatrix } from "@/lib/services/per
 import { prisma } from "@/lib/prisma";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
-const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "secondaryPhone", "whatsapp", "email", "bankDetails", "directorName", "directorFullName", "iik", "bank", "bik", "logoUrl"] as const;
+const companyFields = ["name", "bin", "legalAddress", "actualAddress", "phone", "secondaryPhone", "whatsapp", "email", "bankDetails", "kaspiGoldName", "kaspiGoldPhone", "directorName", "directorFullName", "iik", "bank", "bik", "logoUrl"] as const;
 const systemStringFields = ["currency", "timezone", "dateFormat", "offerPrefix", "contractPrefix", "actPrefix", "invoicePrefix"] as const;
 const systemNumberFields = ["minimumPrepayment", "measurementLeadDays", "measurerOrderBonus", "productionLeadDays", "installationLeadDays", "paydayDayOfMonth", "nextDocumentNumber", "nextContractNumber"] as const;
 const calculatorFields = ["pinePrice", "elmPrice", "oakPrice", "woodRailing", "glassRailing", "brassRailing", "ledPrice", "paintingPrice", "installationPrice"] as const;
@@ -28,7 +28,7 @@ function strings(value: RecordValue, fields: readonly string[]) {
 
 function companyStrings(value: RecordValue) {
   const data = strings(value, companyFields);
-  for (const field of ["phone", "secondaryPhone"] as const) {
+  for (const field of ["phone", "secondaryPhone", "kaspiGoldPhone"] as const) {
     if (!(field in data) || !data[field]) continue;
     const normalized = normalizeCompanyPhone(data[field]);
     if (!normalized) throw new Error("INVALID_SETTINGS");

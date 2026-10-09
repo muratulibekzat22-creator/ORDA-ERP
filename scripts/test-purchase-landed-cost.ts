@@ -127,6 +127,19 @@ async function main() {
       },
     });
     ids.material = material.id;
+    await prisma.inventoryValuationEntry.create({
+      data: {
+        materialId: material.id,
+        quantity: 1,
+        unitCost: 10000,
+        totalValue: 10000,
+        type: "OPENING",
+        sourceType: "LEGACY",
+        version: 1,
+        costStatus: "LEGACY_UNVERIFIED",
+        reason: "Synthetic legacy opening valuation",
+      },
+    });
     const payload = {
       supplierId: supplier.id,
       orderDate: new Date(),
@@ -155,10 +168,13 @@ async function main() {
     const line = await prisma.purchaseBatchLine.findFirstOrThrow({
       where: { batchId: batch.id },
     });
+    const location = await prisma.warehouseLocation.findFirstOrThrow({ where: { isDefault: true } });
+    const receiptPayload = { batchId: batch.id, locationId: location.id, lines: [{ lineId: line.id, receivedQuantity: 1 }] };
     await receivePurchaseBatch(
       batch.id,
       [{ lineId: line.id, receivedQuantity: 1 }],
       actor,
+      { locationId: location.id, key: key("receipt"), requestHash: createRequestHash(receiptPayload) },
     );
     assert.equal(
       Number(
@@ -313,7 +329,7 @@ async function main() {
     );
     assert.equal(replay.created, false);
     const legacy = await prisma.inventoryValuationEntry.findFirst({
-      where: { costStatus: "LEGACY_UNVERIFIED", sourceType: "LEGACY" },
+      where: { materialId: material.id, costStatus: "LEGACY_UNVERIFIED", sourceType: "LEGACY" },
     });
     assert(legacy, "legacy opening valuation missing");
     console.log(
@@ -334,6 +350,20 @@ async function main() {
       await prisma.materialReservation.deleteMany({
         where: { materialId: ids.material },
       });
+      const receipts = await prisma.purchaseReceipt.findMany({
+        where: { batchId: ids.batch },
+        select: { id: true, documentId: true },
+      });
+      const receiptIds = receipts.map((item) => item.id);
+      const documentIds = receipts.map((item) => item.documentId);
+      if (receiptIds.length)
+        await prisma.purchaseReceiptLine.deleteMany({ where: { receiptId: { in: receiptIds } } });
+      await prisma.purchaseReceipt.deleteMany({ where: { batchId: ids.batch } });
+      if (documentIds.length) {
+        await prisma.documentAudit.deleteMany({ where: { documentId: { in: documentIds } } });
+        await prisma.documentVersion.deleteMany({ where: { documentId: { in: documentIds } } });
+        await prisma.document.deleteMany({ where: { id: { in: documentIds } } });
+      }
       await prisma.materialMovement.deleteMany({
         where: { materialId: ids.material },
       });
@@ -349,7 +379,9 @@ async function main() {
       await prisma.purchaseBatch.deleteMany({ where: { id: ids.batch } });
       await prisma.order.deleteMany({ where: { id: ids.order } });
       await prisma.client.deleteMany({ where: { id: ids.client } });
+      await prisma.warehouseBalance.deleteMany({ where: { materialId: ids.material } });
       await prisma.material.deleteMany({ where: { id: ids.material } });
+      await prisma.warehouseMutation.deleteMany({ where: { key: { startsWith: tag } } });
       await prisma.supplier.deleteMany({ where: { id: ids.supplier } });
       await prisma.user.deleteMany({ where: { id: ids.user } });
     }

@@ -43,6 +43,40 @@ const draft: MeasurementDraft = {
   comment: "Фактический замер",
 };
 
+async function prepareDesignWorkflow(
+  measurementId: number,
+  uploaderId: number,
+  suffix: string,
+) {
+  const types = [
+    MeasurementPhotoType.SHEET,
+    MeasurementPhotoType.OBJECT_FRONT,
+    MeasurementPhotoType.OBJECT_SIDE,
+    MeasurementPhotoType.OBJECT_REAR,
+    MeasurementPhotoType.DESIGN_REFERENCE,
+    MeasurementPhotoType.DESIGN_RESULT,
+  ];
+  await prisma.measurementAttachment.createMany({
+    data: types.map((type) => ({
+      measurementId,
+      type,
+      uploadedById: uploaderId,
+      fileName: `${suffix}-${type}.jpg`,
+      pathname: `${tag}/${suffix}-${type}.jpg`,
+      contentType: "image/jpeg",
+      size: 1024,
+    })),
+  });
+  await prisma.measurement.update({
+    where: { id: measurementId },
+    data: {
+      designStyle: "Современный",
+      designPromptCopiedAt: new Date(),
+      designShownAt: new Date(),
+    },
+  });
+}
+
 async function cleanupStaleRuns() {
   const users = await prisma.user.findMany({ where: { email: { startsWith: "measurements-", endsWith: "@test.local" } }, select: { id: true } });
   const userIds = users.map((row) => row.id);
@@ -130,7 +164,8 @@ async function main() {
     const accountantActor = { userId: accountant.id, role: Role.ACCOUNTANT, name: accountant.name };
     const client = await prisma.client.create({ data: { name: `${tag}-client`, phone: "+77010000001", whatsapp: "+77010000001", city: "Алматы", address: "ул. Абая, 10", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
     const noOrderClient = await prisma.client.create({ data: { name: `${tag}-no-order`, phone: "+77010000002", city: "Алматы", address: "ул. Толе би, 20", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
-    ids.clients.push(client.id, noOrderClient.id);
+    const unassignedClient = await prisma.client.create({ data: { name: `${tag}-unassigned`, phone: "+77010000003", city: "Алматы", address: "ул. Сатпаева, 30", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
+    ids.clients.push(client.id, noOrderClient.id, unassignedClient.id);
     const visitDate = parseBusinessDateTime("2026-08-10T14:00");
     assert.ok(visitDate);
     const scheduled = await scheduleMeasurement(managerActor, { clientId: client.id, measurerUserId: measurerA.id, visitDate, city: "Алматы", address: "ул. Абая, 10", comment: "Позвонить за час" });
@@ -151,6 +186,17 @@ async function main() {
     assert.equal(syncedMeasurement.visitDate.toISOString(), rescheduledAt.toISOString());
     assert.equal(syncedTask.dueAt.toISOString(), rescheduledAt.toISOString());
     assert.equal(await prisma.calendarTask.count({ where: { clientId: client.id, type: "MEASUREMENT" } }), 1, "Reschedule must update the canonical task without duplicates");
+    const unassigned = await scheduleMeasurement(managerActor, { clientId: unassignedClient.id, visitDate: parseBusinessDateTime("2026-08-11T10:00")!, address: unassignedClient.address });
+    ids.measurements.push(unassigned.measurement.id);
+    assert.equal(unassigned.measurement.measurerUserId, null, "Manager can save a measurement without choosing a measurer");
+    assert.equal(unassigned.measurement.calendarTaskId, null, "Unassigned measurement must not create a fake employee calendar task");
+    assert.equal(unassigned.measurement.measurer, "Замерщик не выбран");
+    assert.match(unassigned.whatsappText, /Замерщик: не выбран/);
+    await rescheduleMeasurement(managerActor, unassigned.measurement.id, { visitDate: parseBusinessDateTime("2026-08-11T11:00")!, measurerUserId: measurerB.id, address: unassignedClient.address });
+    const assignedLater = await prisma.measurement.findUniqueOrThrow({ where: { id: unassigned.measurement.id } });
+    assert.equal(assignedLater.measurerUserId, measurerB.id, "An unassigned measurement can be assigned later");
+    assert.ok(assignedLater.calendarTaskId, "Later assignment creates the employee calendar task");
+    assert.equal(await prisma.calendarTask.count({ where: { clientId: unassignedClient.id, type: "MEASUREMENT" } }), 1, "Later assignment creates exactly one calendar task");
     const overdueAt = new Date(Date.now() - 2 * 3_600_000);
     await rescheduleMeasurement(actorA, scheduled.measurement.id, { visitDate: overdueAt, measurerUserId: measurerA.id, address: "ул. Абая, 10", comment: "Клиент попросил изменить время" });
     await assert.rejects(
@@ -185,7 +231,7 @@ async function main() {
     const savedDraft = await saveMeasurementDraft(actorA, scheduled.measurement.id, partialDraft);
     assert.equal(savedDraft.status, "IN_PROGRESS", "Saving the first draft must start the measurement lifecycle");
     assert.equal((savedDraft.individualSteps as Array<{ length: number | null }>)[1].length, null, "Partial measurement draft was not persisted");
-    await prisma.measurementAttachment.create({ data: { measurementId: scheduled.measurement.id, type: MeasurementPhotoType.SHEET, uploadedById: measurerA.id, fileName: "sheet.jpg", pathname: `${tag}/sheet.jpg`, contentType: "image/jpeg", size: 1024 } });
+    await prepareDesignWorkflow(scheduled.measurement.id, measurerA.id, "main");
     await assert.rejects(() => completeMeasurement(actorA, scheduled.measurement.id, draft), (error) => error instanceof MeasurementError && error.message === "CLIENT_OUTCOME_REQUIRED");
     const completed = await completeMeasurement(actorA, scheduled.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.READY_TO_CONTINUE });
     assert.equal(completed.status, "COMPLETED");
@@ -227,7 +273,7 @@ async function main() {
     const noOrder = await scheduleMeasurement(managerActor, { clientId: noOrderClient.id, measurerUserId: measurerA.id, visitDate: parseBusinessDateTime("2026-08-12T10:00")!, address: noOrderClient.address });
     console.log("measurement test: no-order measurement scheduled");
     ids.measurements.push(noOrder.measurement.id);
-    await prisma.measurementAttachment.create({ data: { measurementId: noOrder.measurement.id, type: MeasurementPhotoType.SHEET, uploadedById: measurerA.id, fileName: "sheet-2.jpg", pathname: `${tag}/sheet-2.jpg`, contentType: "image/jpeg", size: 1024 } });
+    await prepareDesignWorkflow(noOrder.measurement.id, measurerA.id, "no-order");
     await completeMeasurement(actorA, noOrder.measurement.id, draft, { clientOutcome: MeasurementClientOutcome.RETURN_TO_MANAGER, outcomeComment: "Уточнить детали заказа" });
     await handMeasurementToManager(actorA, noOrder.measurement.id);
     console.log("measurement test: no-order path completed");

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("documents"); if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER && role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER && role !== Role.ACCOUNTANT) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   try {
     const multipart = request.headers.get("content-type")?.includes("multipart/form-data");

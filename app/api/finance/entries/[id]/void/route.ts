@@ -12,6 +12,7 @@ export async function POST(
   if (auth.response) return auth.response;
   if (
     auth.session!.user.role !== Role.DIRECTOR &&
+    auth.session!.user.role !== Role.OPERATIONS_DIRECTOR &&
     auth.session!.user.role !== Role.ACCOUNTANT
   )
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });

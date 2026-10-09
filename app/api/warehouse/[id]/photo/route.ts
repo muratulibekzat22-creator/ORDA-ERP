@@ -16,10 +16,10 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("warehouse"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR])).has(auth.session!.user.role as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   const id = parseId((await context.params).id); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const file = (await request.formData()).get("file");
   if (!(file instanceof File) || !WAREHOUSE_PHOTO_TYPES.has(file.type) || file.size <= 0 || file.size > MAX_WAREHOUSE_PHOTO_SIZE) return NextResponse.json({ error: "Разрешены JPG, PNG и WEBP до 8 МБ" }, { status: 400 });
-  const result = await uploadWarehousePhoto(id, file, idempotency.key); return result ? NextResponse.json(result, { status: result.replayed ? 200 : 201 }) : NextResponse.json({ error: "Товар не найден" }, { status: 404 });
+  const result = await uploadWarehousePhoto(id, file, idempotency.key, Number(auth.session!.user.id)); return result ? NextResponse.json(result, { status: result.replayed ? 200 : 201 }) : NextResponse.json({ error: "Товар не найден" }, { status: 404 });
 }

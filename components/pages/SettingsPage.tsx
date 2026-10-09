@@ -93,6 +93,7 @@ export default function SettingsPage() {
           ...payload.company,
           phone: formatCompanyPhone(payload.company.phone),
           secondaryPhone: formatCompanyPhone(payload.company.secondaryPhone),
+          kaspiGoldPhone: payload.company.kaspiGoldPhone ? formatCompanyPhone(payload.company.kaspiGoldPhone) : "",
         },
       });
     } catch (cause) {
@@ -295,6 +296,8 @@ export default function SettingsPage() {
               ["whatsapp", "WhatsApp"],
               ["email", "Email"],
               ["bankDetails", "Банковские реквизиты"],
+              ["kaspiGoldName", "Kaspi Gold — получатель"],
+              ["kaspiGoldPhone", "Kaspi Gold — телефон"],
               ["directorName", "Директор"],
               ["directorFullName", "ФИО директора для договоров"],
               ["iik", "ИИК"],

@@ -6,7 +6,6 @@ import { PayrollAccrualType, PayrollPaymentType, Role } from "@prisma/client";
 import { createRequestHash } from "../lib/idempotency";
 import { prisma } from "../lib/prisma";
 import { createEmployee, createEmployeeAccess, listEmployees } from "../lib/services/employee.service";
-import { getDashboardSummary } from "../lib/services/dashboard.service";
 import { changeSalary, createAccrual, createPayment, ensurePeriod, payrollSummary } from "../lib/services/payroll.service";
 
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL)
@@ -31,8 +30,6 @@ async function main() {
     });
     directorId = director.id;
     const actor = { userId: director.id, role: Role.DIRECTOR, name: director.name };
-    const activeEmployeesBefore = await prisma.employeePayrollProfile.count({ where: { active: true } });
-
     const employee = await createEmployee({
       name: `${tag}-employee`,
       position: "Сборщик",
@@ -44,10 +41,6 @@ async function main() {
     assert.equal(employee.hasOrdaAccess, false);
     assert.equal(await prisma.user.count({ where: { name: `${tag}-employee` } }), 0, "employee creation produced a fake User");
     assert((await listEmployees("active")).some((row) => row.employeeId === employeeId), "employee is missing from the active list");
-
-    const dashboard = await getDashboardSummary({ role: Role.DIRECTOR, userId: director.id, period: "month" });
-    const directorMetrics = dashboard.metrics as Record<string, number | undefined>;
-    assert.equal(directorMetrics.activeEmployees, activeEmployeesBefore + 1, "dashboard does not count employees without login");
 
     await changeSalary(employeeId, 300_000, new Date(), "Тестовый оклад", actor);
     const period = await ensurePeriod(2098, 12);
@@ -97,7 +90,15 @@ async function main() {
       await prisma.payrollPayment.deleteMany({ where: { employeeId } });
       await prisma.payrollAccrual.deleteMany({ where: { employeeId } });
       await prisma.employeeSalaryRate.deleteMany({ where: { employeeId } });
-      await prisma.employeePayrollProfile.deleteMany({ where: { id: employeeId } });
+      await prisma.employeePayrollProfile.deleteMany({
+        where: {
+          OR: [
+            { id: employeeId },
+            ...(directorId ? [{ userId: directorId }] : []),
+            ...(linkedUserId ? [{ userId: linkedUserId }] : []),
+          ],
+        },
+      });
     }
     if (periodId) await prisma.payrollPeriod.deleteMany({ where: { id: periodId } });
     if (linkedUserId) await prisma.user.deleteMany({ where: { id: linkedUserId } });

@@ -14,7 +14,7 @@ export async function GET(
   if (auth.response) return auth.response;
   const id = Number((await params).id),
     role = auth.session!.user.role as Role;
-  if (!Number.isInteger(id) || (role !== Role.DIRECTOR && role !== Role.MANAGER))
+  if (!Number.isInteger(id) || (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.MANAGER))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const proposal = await prisma.commercialProposal.findFirst({
     where: {

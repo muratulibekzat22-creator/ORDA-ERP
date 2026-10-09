@@ -34,11 +34,6 @@ export const authOptions: NextAuthOptions = {
         await audit(undefined, false, "RATE_LIMITED");
         throw new SafeAuthError("RATE_LIMITED");
       }
-      if (user?.lockedUntil && user.lockedUntil > new Date()) {
-        await bcrypt.compare(credentials.password, user.password);
-        await audit(user.id, false, "TEMPORARILY_LOCKED");
-        throw new SafeAuthError("TEMPORARILY_LOCKED");
-      }
       const passwordMatches = await bcrypt.compare(credentials.password, user?.password ?? DUMMY_PASSWORD_HASH);
       if (!user || !user.active || !passwordMatches) {
         if (user?.active) {
@@ -53,12 +48,13 @@ export const authOptions: NextAuthOptions = {
         throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       await runWithSystemAccess(() => prisma.$transaction([
-        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null } }),
+        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null, mustChangePassword: false } }),
         prisma.authAuditEvent.create({ data: { userId: user.id, email: null, accountIdentifierHash: identifierHash, success: true, reason: "LOGIN_SUCCESS", requestId: correlationId, ipHash, userAgentClass: agentClass } }),
       ]));
       return {
         id: String(user.id), name: user.name, email: user.email, role: user.role,
-        sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
+        accountRole: user.role,
+        sessionVersion: user.sessionVersion, mustChangePassword: false,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
       };
@@ -72,7 +68,7 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id; token.role = user.role; token.sessionVersion = user.sessionVersion;
+        token.id = user.id; token.role = user.role; token.accountRole = user.accountRole; token.sessionVersion = user.sessionVersion;
         token.mustChangePassword = user.mustChangePassword; token.companyId = user.companyId;
         token.companySlug = user.companySlug; token.companyName = user.companyName;
         token.isDemo = user.isDemo; token.invalid = false;
@@ -87,7 +83,7 @@ export const authOptions: NextAuthOptions = {
         }));
         token.invalid = !current?.active || !current.company.active || current.sessionVersion !== token.sessionVersion || current.companyId !== token.companyId;
         if (current) {
-          token.role = current.role; token.mustChangePassword = current.mustChangePassword;
+          token.role = current.role; token.accountRole = current.role; token.mustChangePassword = current.mustChangePassword;
           token.companyId = current.companyId; token.companySlug = current.company.slug;
           token.companyName = current.company.name; token.isDemo = current.company.isDemo;
         }
@@ -96,7 +92,13 @@ export const authOptions: NextAuthOptions = {
     },
     session({ session, token }) {
       session.user.id = String(token.id ?? "");
-      session.user.role = token.invalid ? "" : String(token.role ?? "");
+      const accountRole = String(token.accountRole ?? token.role ?? "");
+      session.user.accountRole = token.invalid ? "" : accountRole;
+      session.user.role = token.invalid
+        ? ""
+        : accountRole === "OPERATIONS_DIRECTOR"
+          ? "DIRECTOR"
+          : accountRole;
       session.user.mustChangePassword = token.invalid ? false : token.mustChangePassword === true;
       session.user.companyId = Number(token.companyId ?? 0);
       session.user.companySlug = String(token.companySlug ?? "");

@@ -1,4 +1,9 @@
+import { OrderBlockerStatus, PartnerPayoutPurpose, Prisma, Role } from "@prisma/client";
+import bcrypt from "bcrypt";
+import { compareRequestHash } from "@/lib/idempotency";
+import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
+import { INITIAL_PRODUCTION_STAGE } from "@/lib/production/stage-policy";
 import { createFinanceOperation } from "@/lib/services/payment.service";
 
 type PartnerOrderStatsSource = {
@@ -10,12 +15,36 @@ type PartnerOrderStatsSource = {
   lifecycle: string;
 };
 
+async function resolveAutomaticSetupBlockers(
+  tx: Prisma.TransactionClient,
+  input: {
+    orderId: number;
+    actorId?: number;
+    partnerAssigned: boolean;
+    productionPriceSet: boolean;
+  },
+) {
+  const resolvedAt = new Date();
+  const resolve = (type: "PARTNER_REQUIRED" | "PARTNER_COST_REQUIRED") =>
+    tx.orderBlocker.updateMany({
+      where: { orderId: input.orderId, type, status: OrderBlockerStatus.OPEN },
+      data: {
+        status: OrderBlockerStatus.RESOLVED,
+        resolvedAt,
+        ...(input.actorId ? { resolvedById: input.actorId } : {}),
+        resolution: "Закрыто автоматически: данные цеха и цены уже заполнены",
+      },
+    });
+  if (input.partnerAssigned) await resolve("PARTNER_REQUIRED");
+  if (input.productionPriceSet) await resolve("PARTNER_COST_REQUIRED");
+}
+
 function partnerStats(orders: PartnerOrderStatsSource[]) {
   const financialOrders = orders.filter(
     (order) => order.lifecycle !== "CANCELLED",
   );
   const agreedOrders = financialOrders.filter(
-    (order) => order.partnerAgreedAt !== null,
+    (order) => hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
   );
   const partnerAgreed = agreedOrders.reduce(
     (sum, order) => sum + Number(order.partnerPrice),
@@ -54,6 +83,7 @@ export async function getPartners(options: { includeArchived?: boolean } = {}) {
       ? { isTest: false, managementDirectory: false }
       : { active: true, archived: false, isTest: false, managementDirectory: false },
     include: {
+      user: { select: { id: true, email: true, active: true } },
       orders: {
         include: {
           client: true,
@@ -84,6 +114,7 @@ export async function getPartner(id: number) {
       managementDirectory: false,
     },
     include: {
+      user: { select: { id: true, email: true, active: true } },
       orders: {
         include: {
           client: true,
@@ -118,14 +149,45 @@ export async function createPartner(data: {
   phone?: string;
   city?: string;
   email?: string;
+  contactPerson?: string;
+  accessEmail?: string;
+  accessPassword?: string;
 }) {
-  return prisma.partner.create({
-    data: {
-      ...data,
-      active: true,
-      archived: false,
-      isTest: false,
-    },
+  const accessEmail = data.accessEmail?.trim().toLowerCase();
+  const accessPassword = data.accessPassword ?? "";
+  if (Boolean(accessEmail) !== Boolean(accessPassword) || (accessPassword && accessPassword.length < 12))
+    throw new Error("PARTNER_ACCESS_FIELDS_REQUIRED");
+  if (accessEmail && !accessEmail.includes("@")) throw new Error("INVALID_EMAIL");
+  const password = accessPassword ? await bcrypt.hash(accessPassword, 12) : null;
+  return prisma.$transaction(async (tx) => {
+    const user = accessEmail && password
+      ? await tx.user.create({
+          data: {
+            name: data.contactPerson?.trim() || data.name,
+            email: accessEmail,
+            password,
+            phone: data.phone?.trim() || null,
+            role: Role.PARTNER,
+            active: true,
+            mustChangePassword: false,
+            passwordChangedAt: new Date(),
+          },
+        })
+      : null;
+    return tx.partner.create({
+      data: {
+        name: data.name,
+        phone: data.phone,
+        city: data.city,
+        email: data.email,
+        contactPerson: data.contactPerson,
+        userId: user?.id,
+        active: true,
+        archived: false,
+        isTest: false,
+      },
+      include: { user: { select: { id: true, email: true, active: true } } },
+    });
   });
 }
 
@@ -136,24 +198,67 @@ export async function updatePartner(
     phone?: string;
     city?: string;
     email?: string;
+    contactPerson?: string;
     active?: boolean;
+    accessEmail?: string;
+    accessPassword?: string;
   },
 ) {
-  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true } });
+  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true, userId: true } });
   if (!partner) throw new Error("PARTNER_NOT_FOUND");
-  return prisma.partner.update({
-    where: {
-      id,
-    },
-    data: {
-      ...data,
-      ...(typeof data.active === "boolean" ? { archived: !data.active } : {}),
-    },
+  const accessEmail = data.accessEmail?.trim().toLowerCase();
+  const accessPassword = data.accessPassword ?? "";
+  if (accessEmail && !accessEmail.includes("@")) throw new Error("INVALID_EMAIL");
+  if (accessPassword && accessPassword.length < 12) throw new Error("PARTNER_ACCESS_FIELDS_REQUIRED");
+  if (!partner.userId && (Boolean(accessEmail) !== Boolean(accessPassword)))
+    throw new Error("PARTNER_ACCESS_FIELDS_REQUIRED");
+  const password = accessPassword ? await bcrypt.hash(accessPassword, 12) : null;
+  return prisma.$transaction(async (tx) => {
+    let userId = partner.userId;
+    if (userId) {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          name: data.contactPerson?.trim() || data.name,
+          phone: data.phone?.trim() || null,
+          ...(accessEmail ? { email: accessEmail } : {}),
+          ...(password ? { password, passwordChangedAt: new Date(), mustChangePassword: false, sessionVersion: { increment: 1 } } : {}),
+          ...(typeof data.active === "boolean" ? { active: data.active, sessionVersion: { increment: 1 } } : {}),
+        },
+      });
+    } else if (accessEmail && password) {
+      const user = await tx.user.create({
+        data: {
+          name: data.contactPerson?.trim() || data.name,
+          email: accessEmail,
+          password,
+          phone: data.phone?.trim() || null,
+          role: Role.PARTNER,
+          active: data.active ?? true,
+          mustChangePassword: false,
+          passwordChangedAt: new Date(),
+        },
+      });
+      userId = user.id;
+    }
+    return tx.partner.update({
+      where: { id },
+      data: {
+        name: data.name,
+        phone: data.phone,
+        city: data.city,
+        email: data.email,
+        contactPerson: data.contactPerson,
+        userId,
+        ...(typeof data.active === "boolean" ? { active: data.active, archived: !data.active } : {}),
+      },
+      include: { user: { select: { id: true, email: true, active: true } } },
+    });
   });
 }
 
 export async function deletePartner(id: number) {
-  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true } });
+  const partner = await prisma.partner.findFirst({ where: { id, managementDirectory: false }, select: { id: true, userId: true } });
   if (!partner) throw new Error("PARTNER_NOT_FOUND");
   const orders = await prisma.order.count({
     where: { partnerId: id, deletedAt: null },
@@ -165,10 +270,11 @@ export async function deletePartner(id: number) {
     );
   }
 
-  return prisma.partner.delete({
-    where: {
-      id,
-    },
+  return prisma.$transaction(async (tx) => {
+    const deleted = await tx.partner.delete({ where: { id } });
+    if (partner.userId)
+      await tx.user.update({ where: { id: partner.userId }, data: { active: false, sessionVersion: { increment: 1 } } });
+    return deleted;
   });
 }
 
@@ -182,6 +288,7 @@ export async function payPartner(data: {
   operationDate?: Date;
   idempotencyKey?: string;
   requestHash?: string;
+  partnerPayoutPurpose?: PartnerPayoutPurpose;
 }) {
   const result = await createFinanceOperation({
     ...data,
@@ -190,10 +297,97 @@ export async function payPartner(data: {
   return result?.payment ?? null;
 }
 
+export async function setProductionPrice(data: {
+  orderId: number;
+  amount: number;
+  actor: { id: number; name: string; role: Role };
+  idempotencyKey: string;
+  requestHash: string;
+}) {
+  if (
+    data.actor.role !== Role.DIRECTOR &&
+    data.actor.role !== Role.OPERATIONS_DIRECTOR &&
+    data.actor.role !== Role.MANAGER
+  )
+    throw new Error("FORBIDDEN");
+  if (!isProductionPriceAmount(data.amount))
+    throw new Error("INVALID_PRODUCTION_PRICE");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${data.orderId})`;
+    const eventKey = `production-price:${data.orderId}:${data.idempotencyKey}`;
+    const replay = await tx.orderEvent.findUnique({
+      where: { idempotencyKey: eventKey },
+      select: { requestHash: true },
+    });
+    if (replay) {
+      if (!compareRequestHash(replay.requestHash, data.requestHash))
+        throw new Error("IDEMPOTENCY_CONFLICT");
+      return {
+        order: await tx.order.findUniqueOrThrow({ where: { id: data.orderId } }),
+        created: false,
+      };
+    }
+    const order = await tx.order.findFirst({
+      where: { id: data.orderId, deletedAt: null },
+    });
+    if (!order) throw new Error("ORDER_NOT_FOUND");
+    if (data.amount < Number(order.partnerPaid))
+      throw new Error("PRODUCTION_PRICE_BELOW_PAID");
+    const wasSet = order.partnerAgreedAt !== null;
+    const agreedAt = new Date();
+    const updated = await tx.order.update({
+      where: { id: order.id },
+      data: {
+        partnerPrice: new Prisma.Decimal(data.amount),
+        partnerAgreedAt: agreedAt,
+        partnerBalance: new Prisma.Decimal(data.amount).sub(order.partnerPaid),
+        companyProfit: order.amount.sub(data.amount),
+      },
+    });
+    await resolveAutomaticSetupBlockers(tx, {
+      orderId: order.id,
+      actorId: data.actor.id,
+      partnerAssigned: Boolean(order.partnerId),
+      productionPriceSet: true,
+    });
+    await tx.financeAuditEvent.create({
+      data: {
+        orderId: order.id,
+        action: wasSet ? "PRODUCTION_PRICE_CHANGED" : "PRODUCTION_PRICE_SET",
+        entityType: "Order",
+        entityId: order.id,
+        before: {
+          productionPrice: wasSet ? order.partnerPrice.toString() : null,
+          setAt: order.partnerAgreedAt?.toISOString() ?? null,
+        },
+        after: {
+          productionPrice: updated.partnerPrice.toString(),
+          setAt: agreedAt.toISOString(),
+        },
+        reason: "Цена производства обновлена",
+        authorId: data.actor.id,
+      },
+    });
+    await tx.orderEvent.create({
+      data: {
+        orderId: order.id,
+        title: wasSet
+          ? "Цена производства изменена"
+          : "Цена производства указана",
+        description: `${data.amount.toLocaleString("ru-RU")} ₸`,
+        user: data.actor.name,
+        idempotencyKey: eventKey,
+        requestHash: data.requestHash,
+      },
+    });
+    return { order: updated, created: true };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 export async function assignPartnerToOrder(data: {
   orderId: number;
   partnerId: number;
-  partnerPrice: number;
+  partnerPrice?: number;
   partnerAgreedAt?: Date;
   manager?: string;
   authorId?: number;
@@ -231,12 +425,30 @@ export async function assignPartnerToOrder(data: {
     const previousPaid = Number(previousPayouts._sum.amount ?? 0),
       paid = Number(newPartnerPayouts._sum.amount ?? 0);
     const samePartner = order.partnerId === partner.id;
-    const agreedAt = data.partnerAgreedAt ?? new Date();
-    if (Number.isNaN(agreedAt.getTime()))
+    const priceSet =
+      data.partnerPrice !== undefined &&
+      isProductionPriceAmount(data.partnerPrice);
+    if (
+      data.partnerPrice !== undefined &&
+      !isProductionPriceAmount(data.partnerPrice)
+    )
+      throw new Error("INVALID_PARTNER_PRICE");
+    const agreedAt = priceSet ? (data.partnerAgreedAt ?? new Date()) : null;
+    if (agreedAt && Number.isNaN(agreedAt.getTime()))
       throw new Error("INVALID_PARTNER_AGREEMENT_DATE");
+    if (samePartner && data.partnerPrice === undefined) {
+      await resolveAutomaticSetupBlockers(tx, {
+        orderId: order.id,
+        actorId: data.authorId,
+        partnerAssigned: true,
+        productionPriceSet: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt),
+      });
+      return order;
+    }
     if (
       samePartner &&
       order.partnerAgreedAt &&
+      agreedAt &&
       Number(order.partnerPrice) === data.partnerPrice &&
       order.partnerAgreedAt.getTime() === agreedAt.getTime()
     )
@@ -248,19 +460,27 @@ export async function assignPartnerToOrder(data: {
       !data.directorConfirmed
     )
       throw new Error("DIRECTOR_CONFIRMATION_REQUIRED");
-    const reason = data.reason?.trim() || "Partner assignment";
-    if (data.partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
-    const companyProfit = Number(order.amount) - data.partnerPrice;
+    const reason = data.reason?.trim() || "Цех назначен";
+    if (!priceSet && paid > 0) throw new Error("PARTNER_PRICE_REQUIRED");
+    const partnerPrice = priceSet ? data.partnerPrice! : 0;
+    if (partnerPrice < paid) throw new Error("PARTNER_PRICE_BELOW_PAID");
+    const companyProfit = priceSet ? Number(order.amount) - partnerPrice : 0;
     const updated = await tx.order.update({
       where: { id: order.id },
       data: {
         partnerId: partner.id,
-        partnerPrice: String(data.partnerPrice),
+        partnerPrice: String(partnerPrice),
         partnerAgreedAt: agreedAt,
         partnerPaid: String(paid),
-        partnerBalance: String(data.partnerPrice - paid),
+        partnerBalance: String(partnerPrice - paid),
         companyProfit: String(companyProfit),
       },
+    });
+    await resolveAutomaticSetupBlockers(tx, {
+      orderId: order.id,
+      actorId: data.authorId,
+      partnerAssigned: true,
+      productionPriceSet: priceSet,
     });
     if (data.authorId) {
       await tx.partnerAssignmentHistory.create({
@@ -269,7 +489,7 @@ export async function assignPartnerToOrder(data: {
           previousPartnerId: order.partnerId,
           newPartnerId: partner.id,
           previousPayable: order.partnerPrice,
-          newPayable: String(data.partnerPrice),
+          newPayable: String(partnerPrice),
           paidAtChange: String(previousPaid),
           remainingAtChange: String(
             Math.max(Number(order.partnerPrice) - previousPaid, 0),
@@ -298,10 +518,10 @@ export async function assignPartnerToOrder(data: {
           },
           after: {
             partnerId: partner.id,
-            partnerPrice: String(data.partnerPrice),
-            partnerAgreedAt: agreedAt.toISOString(),
+            partnerPrice: String(partnerPrice),
+            partnerAgreedAt: agreedAt?.toISOString() ?? null,
             partnerPaid: String(paid),
-            partnerBalance: String(data.partnerPrice - paid),
+            partnerBalance: String(partnerPrice - paid),
           },
           reason,
           authorId: data.authorId,
@@ -309,23 +529,20 @@ export async function assignPartnerToOrder(data: {
       });
     }
     const production = await tx.production.findFirst({
-      where: { orderId: order.id },
+      where: { orderId: order.id, archivedAt: null },
       orderBy: { createdAt: "desc" },
     });
-    if (production)
-      await tx.production.update({
-        where: { id: production.id },
-        data: { stage: "Дерево" },
-      });
-    else
+    if (!production)
       await tx.production.create({
-        data: { orderId: order.id, stage: "Дерево", percent: 0, master: "" },
+        data: { orderId: order.id, stage: INITIAL_PRODUCTION_STAGE, percent: 0, master: "" },
       });
     await tx.orderEvent.create({
       data: {
         orderId: order.id,
         title: "Передан партнёру",
-        description: `${partner.name} • ${data.partnerPrice.toLocaleString("ru-RU")} ₸`,
+        description: priceSet
+          ? `${partner.name} • ${partnerPrice.toLocaleString("ru-RU")} ₸`
+          : partner.name,
         user: data.manager ?? order.manager,
       },
     });

@@ -15,7 +15,7 @@ function asDirection(value: unknown): FinanceDirection | null {
 export async function POST(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = (await request.json()) as Record<string, unknown>;
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const body = (await request.json()) as Record<string, unknown>;

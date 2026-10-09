@@ -1,4 +1,4 @@
-import { Role } from "@prisma/client";
+import { PartnerPayoutPurpose, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
@@ -18,12 +18,15 @@ export async function POST(request: Request) {
     if (!Number.isInteger(orderId) || orderId <= 0 || !Number.isFinite(amount) || amount <= 0 || typeof body.method !== "string" || !body.method.trim()) return NextResponse.json({ error: "Некорректная выплата цеху" }, { status: 400 });
     const operationDate = typeof body.operationDate === "string" && body.operationDate ? new Date(`${body.operationDate}T12:00:00+05:00`) : new Date();
     if (Number.isNaN(operationDate.getTime())) return NextResponse.json({ error: "Некорректная дата" }, { status: 400 });
-    const requestHash = createRequestHash({ orderId, amount, method: body.method, comment: body.comment ?? null, operationDate: operationDate.toISOString() });
+    const purpose = Object.values(PartnerPayoutPurpose).includes(body.purpose as PartnerPayoutPurpose)
+      ? body.purpose as PartnerPayoutPurpose
+      : PartnerPayoutPurpose.OTHER;
+    const requestHash = createRequestHash({ orderId, amount, method: body.method, purpose, comment: body.comment ?? null, operationDate: operationDate.toISOString() });
     const existing = await prisma.payment.findUnique({ where: { idempotencyKey: idempotency.key } });
     if (existing) return existing.requestHash === requestHash ? NextResponse.json(existing) : idempotencyConflict();
     const order = await prisma.order.findFirst({ where: { id: orderId, deletedAt: null }, select: { id: true } });
     if (!order) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
-    const payment = await payPartner({ orderId, amount, method: body.method.trim(), comment: typeof body.comment === "string" ? body.comment.trim() || undefined : undefined, operationDate, author: auth.session!.user.name ?? "System", authorId: Number(auth.session!.user.id), idempotencyKey: idempotency.key, requestHash });
+    const payment = await payPartner({ orderId, amount, method: body.method.trim(), partnerPayoutPurpose: purpose, comment: typeof body.comment === "string" ? body.comment.trim() || undefined : undefined, operationDate, author: auth.session!.user.name ?? "System", authorId: Number(auth.session!.user.id), idempotencyKey: idempotency.key, requestHash });
     return payment ? NextResponse.json(payment, { status: 201 }) : NextResponse.json({ error: "Заказ не связан с цехом" }, { status: 409 });
   } catch (error) {
     if (error instanceof Error && error.message === "IDEMPOTENCY_CONFLICT") return idempotencyConflict();

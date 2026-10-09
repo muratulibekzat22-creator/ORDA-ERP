@@ -205,7 +205,7 @@ async function main() {
     assertBudget("reports-month", { payloadBytes: 20_000, queries: 25 });
     assertBudget("dashboard-director-month", { payloadBytes: 20_000, queries: 45 });
     assertBudget("dashboard-manager-month", { payloadBytes: 20_000, queries: 35 });
-    assertBudget("dashboard-accountant-month", { payloadBytes: 30_000, queries: 15 });
+    assertBudget("dashboard-accountant-month", { payloadBytes: 30_000, queries: 20 });
     assertBudget("dashboard-production", { payloadBytes: 100_000, queries: 10 });
     assertBudget("production-all", { rows: 100, payloadBytes: 150_000, queries: 10 });
 

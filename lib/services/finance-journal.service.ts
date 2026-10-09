@@ -9,6 +9,8 @@ import { requireTenantIdentity } from "@/lib/tenant-context";
 export type FinanceDirection = "INCOME" | "EXPENSE";
 export type FinanceSource =
   | "MANUAL"
+  | "BANK_STATEMENT"
+  | "RECURRING_EXPENSE"
   | "CLIENT_PAYMENT"
   | "PARTNER_PAYOUT"
   | "PAYROLL_PAYMENT"
@@ -46,21 +48,43 @@ const clientPaymentTypes = new Set([
   "ADDITIONAL_PAYMENT",
 ]);
 
-function selectedRange(filters: FinanceJournalFilters) {
+const BUSINESS_TIME_ZONE = "Asia/Almaty";
+const BUSINESS_OFFSET = "+05:00";
+const businessDateKey = (date: Date) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+const businessBoundary = (date: string, end = false) =>
+  new Date(`${date}T${end ? "23:59:59.999" : "00:00:00.000"}${BUSINESS_OFFSET}`);
+
+export function selectedFinanceJournalRange(
+  filters: FinanceJournalFilters,
+  now = new Date(),
+) {
   if (filters.from || filters.to) return { from: filters.from, to: filters.to };
   if (!filters.period || filters.period === "all") return {};
-  const to = new Date();
-  const from = new Date(to);
-  from.setHours(0, 0, 0, 0);
-  if (filters.period === "week") from.setDate(from.getDate() - 6);
-  if (filters.period === "month") from.setDate(1);
-  if (filters.period === "previous_month") {
-    from.setMonth(from.getMonth() - 1, 1);
-    to.setDate(0);
-    to.setHours(23, 59, 59, 999);
+  const today = businessDateKey(now);
+  let fromDate = today;
+  let to = now;
+  if (filters.period === "week") {
+    fromDate = businessDateKey(
+      new Date(businessBoundary(today).getTime() - 6 * 86_400_000),
+    );
   }
-  if (filters.period === "year") from.setMonth(0, 1);
-  return { from, to };
+  if (filters.period === "month") fromDate = `${today.slice(0, 7)}-01`;
+  if (filters.period === "previous_month") {
+    const previousLast = new Date(
+      businessBoundary(`${today.slice(0, 7)}-01`).getTime() - 1,
+    );
+    const previousLastDate = businessDateKey(previousLast);
+    fromDate = `${previousLastDate.slice(0, 7)}-01`;
+    to = businessBoundary(previousLastDate, true);
+  }
+  if (filters.period === "year") fromDate = `${today.slice(0, 4)}-01-01`;
+  return { from: businessBoundary(fromDate), to };
 }
 
 function paymentCategory(type: string) {
@@ -122,7 +146,7 @@ function auditSnapshot(entry: {
 
 export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
   const companyId = requireTenantIdentity().companyId;
-  const range = selectedRange(filters);
+  const range = selectedFinanceJournalRange(filters);
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
   const pageSize = Math.min(100, Math.max(10, Math.trunc(filters.pageSize ?? 50)));
   const offset = (page - 1) * pageSize;
@@ -147,6 +171,12 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
           THEN 'EXPENSE'
           ELSE 'INCOME'
         END::text AS direction,
+        CASE
+          WHEN payment.type IN ('PARTNER_PAYOUT', 'PARTNER_PAYOUT_REVERSAL') THEN 'PRODUCTION'
+          WHEN payment.type = 'REFUND'
+            OR (payment.type = 'ADJUSTMENT' AND payment.comment LIKE '%[EXPENSE]%') THEN 'ONE_TIME'
+          ELSE 'INCOME'
+        END::text AS expense_kind,
         payment.type::text AS category_code,
         CASE
           WHEN payment.type = 'ADDITIONAL_PAYMENT' THEN 'Доплата клиента'
@@ -170,6 +200,13 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
         'LEDGER'::text AS source,
         ledger.id,
         ledger.direction::text,
+        CASE
+          WHEN ledger.direction = 'INCOME' THEN 'INCOME'
+          WHEN ledger."recurringExpensePlanId" IS NOT NULL OR ledger.source = 'RECURRING_EXPENSE' THEN 'FIXED'
+          WHEN ledger."payrollPaymentId" IS NOT NULL THEN 'PAYROLL'
+          WHEN ledger."partnerId" IS NOT NULL OR COALESCE(category.code, ledger.category) IN ('PARTNER_PAYOUT', 'MATERIALS', 'DELIVERY') THEN 'PRODUCTION'
+          ELSE 'ONE_TIME'
+        END::text AS expense_kind,
         COALESCE(category.code, ledger.category)::text AS category_code,
         COALESCE(category.name, ledger.category)::text AS category_name,
         ledger."operationDate" AS operation_date,
@@ -200,6 +237,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
   type PageRow = { source: "PAYMENT" | "LEDGER"; id: number; total: bigint };
   type AggregateRow = {
     direction: FinanceDirection;
+    expense_kind: "INCOME" | "FIXED" | "ONE_TIME" | "PRODUCTION" | "PAYROLL";
     category_code: string;
     category_name: string;
     operation_day: Date;
@@ -217,13 +255,14 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
       prisma.$queryRaw<AggregateRow[]>`${operationCte}
         SELECT
           direction,
+          expense_kind,
           category_code,
           category_name,
           DATE_TRUNC('day', operation_date) AS operation_day,
           SUM(amount) AS amount
         FROM operations
         ${resultWhereSql}
-        GROUP BY direction, category_code, category_name, DATE_TRUNC('day', operation_date)`,
+        GROUP BY direction, expense_kind, category_code, category_name, DATE_TRUNC('day', operation_date)`,
       prisma.financeCategory.findMany({
         orderBy: [
           { direction: "asc" },
@@ -436,6 +475,37 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
     current[item.direction === "INCOME" ? "income" : "expense"] += Number(item.amount);
     timelineMap.set(date, current);
   });
+  const expenseGroupLabels = {
+    FIXED: {
+      name: "Постоянные расходы",
+      description: "Аренда, интернет, уборка и другие ежемесячные обязательства",
+    },
+    ONE_TIME: {
+      name: "Разовые расходы",
+      description: "Реклама, подписки, съёмки, бензин, транспорт, налоги и офис",
+    },
+    PRODUCTION: {
+      name: "Прямая себестоимость заказов",
+      description: "Фактические расчёты с цехами и прямые затраты. Это не операционный расход; сумма уменьшает маржу соответствующего заказа автоматически",
+    },
+    PAYROLL: {
+      name: "Зарплаты и авансы",
+      description: "Фактически выплаченные зарплаты, бонусы и авансы",
+    },
+  } as const;
+  const expenseGroupTotals = aggregateRows.reduce<Record<keyof typeof expenseGroupLabels, number>>(
+    (result, item) => {
+      if (item.direction === "EXPENSE" && item.expense_kind !== "INCOME")
+        result[item.expense_kind] += Number(item.amount);
+      return result;
+    },
+    { FIXED: 0, ONE_TIME: 0, PRODUCTION: 0, PAYROLL: 0 },
+  );
+  const expenseGroups = (Object.keys(expenseGroupLabels) as Array<keyof typeof expenseGroupLabels>).map((key) => ({
+    key,
+    ...expenseGroupLabels[key],
+    amount: expenseGroupTotals[key],
+  }));
   return {
     operations,
     pagination: {
@@ -447,6 +517,7 @@ export async function getFinanceJournal(filters: FinanceJournalFilters = {}) {
     totals: { ...totals, cashResult: totals.income - totals.expense },
     incomeByCategory: grouped("INCOME"),
     expenseByCategory: grouped("EXPENSE"),
+    expenseGroups,
     timeline: [...timelineMap.values()].sort((a, b) =>
       a.date.localeCompare(b.date),
     ),

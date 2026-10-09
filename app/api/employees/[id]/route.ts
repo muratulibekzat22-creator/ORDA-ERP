@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { ensureCurrentMeasurerTraining } from "@/lib/services/training.service";
+import { positionByRole } from "@/lib/services/employee.service";
 
 const select = { id: true, name: true, email: true, phone: true, role: true, active: true, createdAt: true, lastLogin: true, mustChangePassword: true, lockedUntil: true, partnerProfile: { select: { id: true, name: true } } } as const;
 const idFrom = (value: string) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
@@ -26,6 +27,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (role === null) return NextResponse.json({ error: "Некорректная роль" }, { status: 400 });
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) return NextResponse.json({ error: "Сотрудник не найден" }, { status: 404 });
+    const actorRole = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+    if (actorRole === Role.OPERATIONS_DIRECTOR && (
+      (new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.ACCOUNTANT])).has(user.role) ||
+      role && !(new Set<Role>([Role.MARKETER, Role.MANAGER, Role.MEASURER, Role.DESIGNER, Role.PRODUCTION, Role.INSTALLER])).has(role)
+    ))
+      return NextResponse.json({ error: "Этот аккаунт может изменять только основатель" }, { status: 403 });
+    if (user.role === Role.DIRECTOR && (body.active !== undefined || body.role !== undefined || body.name !== undefined || body.phone !== undefined))
+      return NextResponse.json({ error: "Аккаунт основателя защищён. Здесь можно изменить только его пароль" }, { status: 409 });
     const partnerId = Number(body.partnerId);
     const updated = await prisma.$transaction(async (tx) => {
       await ensureDirectorRemains(user.role === Role.DIRECTOR && user.active && (role !== undefined && role !== Role.DIRECTOR || body.active === false), tx);
@@ -44,7 +53,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         data: {
           ...(typeof body.name === "string" && body.name.trim() ? { name: body.name.trim() } : {}),
           ...(typeof body.phone === "string" ? { phone: body.phone.trim() || null } : {}),
-          ...(role ? { position: role } : {}),
+          ...(role ? { position: positionByRole[role] ?? role } : {}),
         },
       });
       if (result.role === Role.MEASURER && result.active)
@@ -69,6 +78,7 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     await prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id } });
       if (!user) throw new Error("NOT_FOUND");
+      if (user.role === Role.DIRECTOR) throw new Error("FOUNDER_PROTECTED");
       const profile = await tx.employeePayrollProfile.findUnique({
         where: { userId: id },
         select: {
@@ -86,7 +96,6 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       });
       if (profile && Object.values(profile._count).some((count) => count > 0))
         throw new Error("PAYROLL_HISTORY");
-      await ensureDirectorRemains(user.role === Role.DIRECTOR && user.active, tx);
       if (profile) {
         await tx.payrollAuditEvent.deleteMany({ where: { employeeId: profile.id } });
         await tx.employeePayrollProfile.delete({ where: { id: profile.id } });
@@ -96,6 +105,6 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ ok: true });
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
-    return NextResponse.json({ error: code === "LAST_DIRECTOR" ? "Нельзя удалить последнего активного директора" : code === "PAYROLL_HISTORY" ? "Сотрудника с историей зарплаты можно только отключить" : "Сотрудник не найден" }, { status: code === "LAST_DIRECTOR" || code === "PAYROLL_HISTORY" ? 409 : 404 });
+    return NextResponse.json({ error: code === "FOUNDER_PROTECTED" ? "Аккаунт основателя нельзя удалить" : code === "LAST_DIRECTOR" ? "Нельзя удалить последнего активного директора" : code === "PAYROLL_HISTORY" ? "Сотрудника с историей зарплаты можно только отключить" : "Сотрудник не найден" }, { status: code === "FOUNDER_PROTECTED" || code === "LAST_DIRECTOR" || code === "PAYROLL_HISTORY" ? 409 : 404 });
   }
 }

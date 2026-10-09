@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+import "./require-test-database";
+
 import {
   CalendarTaskType,
   DocumentSource,
@@ -15,11 +17,6 @@ import {
   runWithTenant,
   type TenantIdentity,
 } from "../lib/tenant-context";
-import { assertSafeTestDatabaseUrl } from "./test-database-safety";
-
-assertSafeTestDatabaseUrl(process.env.TEST_DATABASE_URL);
-assert.equal(process.env.DATABASE_URL, process.env.TEST_DATABASE_URL);
-
 const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const live: TenantIdentity = {
   companyId: 1,

@@ -6,7 +6,7 @@ import { ensureMeasurerBonusForOrder } from "@/lib/services/measurement.service"
 type Context = { params: Promise<{ id: string }> };
 export async function POST(_: Request, { params }: Context) {
   const auth = await requirePermission("orders"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (auth.session!.user.role !== Role.DIRECTOR && auth.session!.user.role !== Role.OPERATIONS_DIRECTOR && auth.session!.user.role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const proposalId = Number((await params).id); if (!Number.isInteger(proposalId)) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
     const order = await prisma.$transaction(async (tx) => {

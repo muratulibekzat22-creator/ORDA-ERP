@@ -3,8 +3,9 @@ import { NextResponse } from "next/server";
 
 import { idempotencyConflict, readIdempotencyKey } from "@/lib/idempotency";
 import { logRequestFailure } from "@/lib/observability";
+import { isAttachmentPurpose } from "@/lib/orders/design-brief";
 import { requirePermission } from "@/lib/server-auth";
-import { ALLOWED_ATTACHMENT_TYPES, deleteAttachment, listAttachments, MAX_ATTACHMENT_SIZE, uploadAttachment, type AttachmentActor } from "@/lib/services/attachment.service";
+import { ALLOWED_ATTACHMENT_TYPES, attachmentSizeLimit, deleteAttachment, listAttachments, uploadAttachment, type AttachmentActor } from "@/lib/services/attachment.service";
 
 const actor = (session: { user: { id: string; role: string; name?: string | null } }): AttachmentActor => ({ userId: Number(session.user.id), role: session.user.role as Role, name: session.user.name ?? "" });
 const positiveId = (value: unknown) => { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; };
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
   const auth = await requirePermission("documents");
   if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request);
   if ("response" in idempotency) return idempotency.response;
   try {
@@ -35,11 +36,12 @@ export async function POST(request: Request) {
     const orderId = positiveId(form.get("orderId"));
     const documentValue = form.get("documentId");
     const documentId = documentValue == null || documentValue === "" ? undefined : positiveId(documentValue);
+    const purpose = form.get("purpose") ?? "GENERAL";
     const file = form.get("file");
-    if (!orderId || documentId === null || !(file instanceof File) || !file.name || file.size <= 0 || file.size > MAX_ATTACHMENT_SIZE || !ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
-      return NextResponse.json({ error: "Разрешены PDF, JPG, PNG, WEBP, DOC, DOCX, XLS и XLSX размером до 10 МБ" }, { status: 400 });
+    if (!orderId || documentId === null || !isAttachmentPurpose(purpose) || !(file instanceof File) || !file.name || file.size <= 0 || file.size > attachmentSizeLimit(file.type) || !ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
+      return NextResponse.json({ error: "Разрешены фото и документы до 10 МБ, MP4 и MOV до 100 МБ" }, { status: 400 });
     }
-    const result = await uploadAttachment({ orderId, documentId, file, idempotencyKey: idempotency.key, actor: actor(auth.session!) });
+    const result = await uploadAttachment({ orderId, documentId, purpose, file, idempotencyKey: idempotency.key, actor: actor(auth.session!) });
     if (!result) return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
     return NextResponse.json(result.attachment, { status: result.created ? 201 : 200 });
   } catch (error) {

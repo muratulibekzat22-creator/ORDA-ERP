@@ -8,12 +8,15 @@ import {
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
+import { isCompanyMonthStarted } from "@/lib/company-calendar";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 import {
   changeAllowance,
   changeSalary,
+  correctPayrollAccrual,
+  approveManagerPayrollManual,
   closePeriod,
   createAccrual,
   createPayment,
@@ -30,10 +33,10 @@ import {
 } from "@/lib/services/payroll.service";
 
 const actor = (session: {
-  user: { id: string; role: string; name?: string | null };
+  user: { id: string; role: string; accountRole?: string | null; name?: string | null };
 }) => ({
   userId: Number(session.user.id),
-  role: session.user.role as Role,
+  role: (session.user.accountRole || session.user.role) as Role,
   name: session.user.name ?? "",
 });
 const fail = (error: unknown) =>
@@ -58,14 +61,19 @@ export async function GET(request: Request) {
     const params = new URL(request.url).searchParams;
     const year = Number(params.get("year"));
     const month = Number(params.get("month"));
-    const period = await prisma.payrollPeriod.findUnique({
+    const identity = actor(auth.session!);
+    const canManageAccruals =
+      identity.role === Role.DIRECTOR ||
+      identity.role === Role.OPERATIONS_DIRECTOR;
+    let period = await prisma.payrollPeriod.findUnique({
       where: { companyId_year_month: { companyId: requireTenantIdentity().companyId, year, month } },
     });
-    const settings = await prisma.systemSettings.upsert({
-      where: { companyId: requireTenantIdentity().companyId }, create: {}, update: {}, select: { paydayDayOfMonth: true },
-    });
-    const identity = actor(auth.session!);
-    const unconfigured = identity.role === Role.DIRECTOR
+    if (!period && canManageAccruals && isCompanyMonthStarted(year, month))
+      period = await ensurePeriod(year, month);
+    const settings = await prisma.systemSettings.findUnique({
+      where: { companyId: requireTenantIdentity().companyId }, select: { paydayDayOfMonth: true },
+    }) ?? { paydayDayOfMonth: 1 };
+    const unconfigured = canManageAccruals
       ? await prisma.user.findMany({ where: { active: true, payrollProfile: null, role: { not: Role.PARTNER } }, select: { id: true, name: true, role: true }, orderBy: { name: "asc" } })
       : [];
     if (!period)
@@ -102,7 +110,11 @@ export async function POST(request: Request) {
     const action = String(body.action ?? "");
     const hash = createRequestHash(body);
     if (action === "create-period") {
-      if (identity.role !== Role.DIRECTOR) throw new PayrollError("FORBIDDEN");
+      if (
+        identity.role !== Role.DIRECTOR &&
+        identity.role !== Role.OPERATIONS_DIRECTOR
+      )
+        throw new PayrollError("FORBIDDEN");
       return NextResponse.json(
         await ensurePeriod(Number(body.year), Number(body.month)),
       );
@@ -143,7 +155,33 @@ export async function POST(request: Request) {
           identity,
         ),
       );
-    if (action === "accrual")
+    if (action === "correct-accrual")
+      return NextResponse.json(
+        await correctPayrollAccrual(
+          {
+            accrualId: Number(body.id),
+            amount: Number(body.amount),
+            reason: String(body.reason ?? ""),
+            key: keyResult.key,
+            requestHash: hash,
+          },
+          identity,
+        ),
+      );
+    if (action === "accrual") {
+      const type = body.type as PayrollAccrualType;
+      if (type === PayrollAccrualType.BASE_SALARY) {
+        const period = await prisma.payrollPeriod.findFirst({
+          where: {
+            id: Number(body.periodId),
+            companyId: requireTenantIdentity().companyId,
+          },
+          select: { year: true, month: true },
+        });
+        if (!period) throw new PayrollError("PERIOD_NOT_FOUND");
+        if (!isCompanyMonthStarted(period.year, period.month))
+          throw new PayrollError("PAYROLL_PERIOD_NOT_STARTED");
+      }
       return NextResponse.json(
         await createAccrual(
           {
@@ -153,17 +191,23 @@ export async function POST(request: Request) {
               body.earnedPeriodId == null
                 ? undefined
                 : Number(body.earnedPeriodId),
-            type: body.type as PayrollAccrualType,
+            type,
             amount: Number(body.amount),
             orderId: body.orderId == null ? undefined : Number(body.orderId),
             reason: String(body.reason ?? ""),
+            externalReference:
+              typeof body.externalReference === "string"
+                ? body.externalReference
+                : undefined,
             paymentMode: body.paymentMode as BonusPaymentMode | undefined,
+            manualOverride: body.manualOverride === true,
             key: keyResult.key,
             requestHash: hash,
           },
           identity,
         ),
       );
+    }
     if (action === "payment")
       return NextResponse.json(
         await createPayment(
@@ -176,14 +220,31 @@ export async function POST(request: Request) {
               String(body.paymentDate ?? new Date().toISOString()),
             ),
             method: typeof body.method === "string" ? body.method : undefined,
+            externalReference:
+              typeof body.externalReference === "string"
+                ? body.externalReference
+                : undefined,
             comment:
               typeof body.comment === "string" ? body.comment : undefined,
             relatedAccrualId:
               body.relatedAccrualId == null
                 ? undefined
                 : Number(body.relatedAccrualId),
+            partialSalary: body.partialSalary === true,
             key: keyResult.key,
             requestHash: hash,
+          },
+          identity,
+        ),
+      );
+    if (action === "approve-manager-payroll-manual")
+      return NextResponse.json(
+        await approveManagerPayrollManual(
+          {
+            employeeId: Number(body.employeeId),
+            periodId: Number(body.periodId),
+            reason: String(body.reason ?? ""),
+            key: keyResult.key,
           },
           identity,
         ),
@@ -238,6 +299,10 @@ export async function POST(request: Request) {
             method: typeof body.method === "string" ? body.method : undefined,
             comment:
               typeof body.comment === "string" ? body.comment : undefined,
+            paymentDate:
+              body.paymentDate == null
+                ? undefined
+                : new Date(String(body.paymentDate)),
           },
           identity,
         ),

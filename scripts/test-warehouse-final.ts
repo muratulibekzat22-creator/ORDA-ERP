@@ -29,7 +29,7 @@ async function main() {
     ids.users = users.map(({ id }) => id);
     const [director, manager, accountant, production, foreignProduction, installer, partner] = users;
     const client = await prisma.client.create({ data: { name: tag, phone: tag, city: "QA", manager: manager.name, amount: "0", status: "Новый" } }); ids.client = client.id;
-    const orders = await Promise.all(["own", "foreign"].map((suffix) => prisma.order.create({ data: { number: `${tag}-${suffix}`, clientId: client.id, address: "QA", staircase: "Прямая", material: "QA", amount: "100", manager: manager.name } })));
+    const orders = await Promise.all(["own", "foreign"].map((suffix) => prisma.order.create({ data: { number: `${tag}-${suffix}`, clientId: client.id, address: "QA", staircase: "Прямая", material: "QA", amount: "100", manager: manager.name, managerUserId: manager.id } })));
     ids.orders = orders.map(({ id }) => id);
     await prisma.production.createMany({ data: [{ orderId: orders[0].id, stage: "Каркас", master: production.name, masterUserId: production.id }, { orderId: orders[1].id, stage: "Каркас", master: foreignProduction.name, masterUserId: foreignProduction.id }] });
 
@@ -45,7 +45,7 @@ async function main() {
     const concurrentData = { ...materialInput, name: `${tag} concurrent`, initialStock: 0 };
     const concurrent = await Promise.allSettled(["one", "two"].map((suffix) => createMaterialCommand({ data: concurrentData, key: `${tag}:concurrent:${suffix}`, requestHash: suffix, actor: actor(director) })));
     check(concurrent.filter((result) => result.status === "fulfilled").length === 1 && concurrent.filter((result) => result.status === "rejected" && isWarehouseError(result.reason, "MATERIAL_DUPLICATE")).length === 1, "concurrent duplicate material is rejected");
-    const concurrentMaterial = await prisma.material.findUniqueOrThrow({ where: { lookupKey: `${concurrentData.name.toLocaleLowerCase("ru")}::кг` } }); ids.materials.push(concurrentMaterial.id);
+    const concurrentMaterial = await prisma.material.findFirstOrThrow({ where: { lookupKey: `${concurrentData.name.toLocaleLowerCase("ru")}::кг` } }); ids.materials.push(concurrentMaterial.id);
     check(concurrentMaterial.code !== (created.result as { code: string }).code, "concurrent material codes are unique");
     await updateMaterialCommand({ id: materialId, data: { minimumStock: 6, active: false }, key: `${tag}:disable`, requestHash: "disable", actor: actor(director) });
     await updateMaterialCommand({ id: materialId, data: { active: true }, key: `${tag}:enable`, requestHash: "enable", actor: actor(director) });
@@ -85,7 +85,8 @@ async function main() {
     check(own.movements.every((movement) => movement.orderId === orders[0].id || movement.employeeId === production.id), "movement scope");
     const costs = await getOrderMaterials(orders[0].id);
     check(costs.totalCost === 52 && costs.items.length === 2, "order actual cost uses moving-average snapshot");
-    await updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price`, requestHash: "price", actor: actor(accountant) });
+    await rejects(() => updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price-accountant`, requestHash: "price-accountant", actor: actor(accountant) }), "FORBIDDEN");
+    await updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price`, requestHash: "price", actor: actor(director) });
     check((await getOrderMaterials(orders[0].id)).totalCost === 52, "historical cost remains stable");
     const latest = await getWarehouse(actor(director), { page: 1, pageSize: 2 });
     check(latest.movements.length === 2 && latest.pagination.total >= 7 && latest.movements[0].operationAt >= latest.movements[1].operationAt, "paginated sorted history");
@@ -106,6 +107,7 @@ async function main() {
     await prisma.productionStageHistory.deleteMany({ where: { production: { orderId: { in: ids.orders } } } });
     await prisma.production.deleteMany({ where: { orderId: { in: ids.orders } } });
     await prisma.order.deleteMany({ where: { id: { in: ids.orders } } });
+    if (ids.materials.length) await prisma.warehouseBalance.deleteMany({ where: { materialId: { in: ids.materials } } });
     if (ids.materials.length) await prisma.material.deleteMany({ where: { id: { in: ids.materials } } });
     if (ids.client) await prisma.client.deleteMany({ where: { id: ids.client } });
     if (ids.users.length) await prisma.user.deleteMany({ where: { id: { in: ids.users } } });

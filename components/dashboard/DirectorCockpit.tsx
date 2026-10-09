@@ -1,271 +1,1008 @@
 "use client";
 
-import type { ReactNode } from "react";
-import Link from "next/link";
 import {
-  Activity,
-  ArrowUpRight,
-  BanknoteArrowDown,
-  BanknoteArrowUp,
-  BriefcaseBusiness,
-  CalendarClock,
-  CheckCircle2,
-  CircleDollarSign,
+  AlertTriangle,
+  Banknote,
+  CalendarDays,
   ClipboardList,
   Factory,
-  FileWarning,
-  HandCoins,
+  Megaphone,
+  Plus,
   RefreshCw,
-  Ruler,
-  ShoppingBag,
-  TriangleAlert,
-  UserRoundCheck,
+  ReceiptText,
   Users,
-  WalletCards,
+  X,
 } from "lucide-react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
-type Period = "today" | "week" | "month";
-type ActivityItem = { id: string; title: string; subject: string; href: string; user: string | null; createdAt: string };
-type SalesMetrics = {
-  newLeads: number; activeLeads: number; overdueNextActions: number; proposalsSent: number;
-  orders: number; activeOrders: number; readyForInstallation: number; overdueOrders: number;
-  totalSales: number; receivedPrepayment: number; balanceToReceive: number; conversion: number;
-  partnerBalancePayable?: number; payrollBalancePayable?: number; ordersWithoutPartner?: number;
-  tasksToday: number; overdueTasks: number; measurementsToday: number; measurementsUpcoming: number;
-  measurementsOverdue: number; proposalsNeedResponse: number; expensesForMonth?: number;
-  activeEmployees?: number; clientsWithBalance?: number; partnerPayableOrders?: number;
-  ordersWithoutContract?: number; productionPreparation?: number; productionPainting?: number;
-  productionReady?: number; productionOverdue?: number;
+import {
+  USER_ORDER_STATUS_LABELS,
+  type UserOrderStatus,
+} from "@/lib/orders/presentation";
+import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
+import SalesPlanCard from "@/components/sales-plan/SalesPlanCard";
+import FounderControlPanel from "@/components/dashboard/FounderControlPanel";
+
+type ManagementPayload = {
+  role: "DIRECTOR" | "ACCOUNTANT";
+  month: string;
+  weekly: {
+    from: string;
+    to: string;
+    orders: number;
+    leads: number;
+    revenue: number;
+    received: number;
+    ordersWithProductionPrice: number;
+    activeOrders: number;
+    overdueOrders: number;
+    incompleteOrders: number;
+    overdueTeamTasks: number;
+  };
+  finance: {
+    revenue: number;
+    received: number;
+    receivedForPeriodOrders: number;
+    receivedFromOtherOrders: number;
+    customerPayments: Array<{
+      id: number;
+      orderId: number | null;
+      orderNumber: string;
+      orderReceivedAt: string | null;
+      orderDateNeedsReview: boolean;
+      operationDate: string;
+      amount: number;
+      fromPeriodOrder: boolean;
+    }>;
+    directExpenses: number;
+    additionalIncome: number;
+    operatingExpenses: number;
+    payrollAccrued: number;
+    payrollPaid: number;
+    netProfit: number;
+    netMargin: number | null;
+    pricedRevenue: number;
+    businessProfitability: number | null;
+    dataComplete: boolean;
+    ordersWithMargin: number;
+    ordersWithoutMargin: number;
+    customerOutstanding: number;
+    activeProductionCost: number;
+    activeOrdersWithProductionPrice: number;
+    pendingOrderDates: number;
+    productionCostOrders: Array<{ id: number; number: string; amount: number }>;
+    operatingExpenseEntries: Array<{
+      id: number;
+      category: string;
+      amount: number;
+      operationDate: string;
+      comment: string | null;
+    }>;
+  };
+  orders: {
+    active: number;
+    beforeWorkshop: number;
+    transferredToWorkshop: number;
+    inWork: number;
+    readyForInstallation: number;
+    installation: number;
+    overdue: number;
+    missingProductionPrice: number;
+    incompleteData: number;
+  };
+  attention: Array<{
+    id: number;
+    number: string;
+    client: string;
+    responsible: string;
+    status: UserOrderStatus;
+    deadline: string | null;
+    balance: number;
+    netProfit: number | null;
+    netMargin: number | null;
+    reasons: string[];
+  }>;
+  expenses: Array<{
+    id: number;
+    category: string;
+    amount: number;
+    operationDate: string;
+    comment: string | null;
+    orderId: number | null;
+    orderNumber: string | null;
+  }>;
+  marketing: {
+    spend: number;
+    leads: number;
+    qualifiedLeads: number;
+    orders: number;
+    revenue: number;
+    qualifiedShare: number | null;
+    cpl: number | null;
+    cac: number | null;
+    roas: number | null;
+    advertisingConversion: number | null;
+    salesConversion: number | null;
+    conversion: number | null;
+    spendTracked: boolean;
+    crmTracked: boolean;
+    metaAttributionMissing: boolean;
+  };
+  team: Array<{
+    id: number;
+    name: string;
+    role: string;
+    lastLogin: string | null;
+    activeDays: number;
+    leads: number;
+    orders: number;
+    sales: number;
+    completedTasks: number;
+    overdueTasks: number;
+  }>;
+  salesTools: {
+    designRecorded: number;
+    designDone: number;
+    designSkipped: number;
+    designConverted: number;
+    designConversion: number | null;
+  };
+  dailyCrm: DailyCrmPayload;
 };
-type ManagerRow = { managerUserId: number; manager: string; newLeads: number; orders: number; totalSales: number; conversion: number };
-type MeasurementAttention = { id: number; nextActionAt: string; nextActionComment?: string | null; client: { id: number; name: string; phone: string } };
-type SalesPayload = { role: "DIRECTOR" | "MANAGER"; metrics: SalesMetrics; managers?: ManagerRow[]; measurementAttention?: MeasurementAttention[]; activities: ActivityItem[] };
-type AccountantPayload = { role: "ACCOUNTANT"; metrics: { receipts: number; expenses: number; partnerPayable: number; payrollPayable: number; pendingPayrollPayments: number; attentionOperations: number }; recentFinance: Array<{ id: number; type: string; category: string; direction: string; amount: string; operationDate: string; comment?: string | null }> };
-type ProductionPayload = { role: "PRODUCTION"; metrics: { preparation: number; painting: number; readyForInstallation: number; overdue: number; tasksToday: number; attentionOrders: number; missingMaterials: number; readyMaterials: number }; jobs: Array<{ id: number; stage: string; percent: number; href: string; order: { number: string; client: { name: string; city: string } } }> };
-type InstallationItem = { id: number; scheduledAt: string; href: string; order: { number: string; address: string; client: { name: string; city: string } } };
-type InstallerPayload = { role: "INSTALLER"; metrics: { today: number; upcoming: number; overdue: number; assigned: number }; nextInstallation: InstallationItem | null; installations: InstallationItem[] };
-type Payload = SalesPayload | AccountantPayload | ProductionPayload | InstallerPayload;
 
-const periods: Record<Period, string> = { today: "Сегодня", week: "Неделя", month: "Месяц" };
-const money = (value: number | string) => `${Math.round(Number(value) || 0).toLocaleString("ru-RU")} ₸`;
+type DailyCrmPayload = {
+  dateKey: string;
+  dateLabel: string;
+  totals: {
+    leadsReceived: number;
+    contacted: number;
+    interested: number;
+    measurementsScheduled: number;
+    measurementsCompleted: number;
+    ordersCreated: number;
+    revenue: number;
+  };
+  managers: Array<{
+    managerId: number;
+    manager: string;
+    leadsReceived: number;
+    contacted: number;
+    interested: number;
+    measurementsScheduled: number;
+    measurementsCompleted: number;
+    ordersCreated: number;
+    revenue: number;
+    reportStatus: "NOT_SENT" | "ACKNOWLEDGED" | "SENT";
+    reportTaskId: number | null;
+    reportSubmittedAt: string | null;
+  }>;
+};
 
-export default function DirectorCockpit() {
+type ManagerPayload = {
+  role: "MANAGER";
+  orders: { active: number; overdue: number; missingProductionPrice: number; incompleteData: number };
+  attention: Array<{
+    id: number;
+    number: string;
+    client: string;
+    status: UserOrderStatus;
+    deadline: string | null;
+    missingFields: string[];
+    productionPriceMissing: boolean;
+  }>;
+  paymentFollowUps: Array<{
+    id: number;
+    dueAt: string;
+    expectedAmount: string | number | null;
+    acknowledgedAt: string | null;
+    overdue: boolean;
+    order: { id: number; number: string; client: { name: string; phone: string } } | null;
+  }>;
+  dailyCrm: DailyCrmPayload;
+};
+type OperationsPayload = Pick<ManagementPayload, "month" | "orders" | "marketing" | "team" | "salesTools" | "dailyCrm"> & {
+  role: "OPERATIONS_DIRECTOR";
+  attention: Array<Pick<ManagementPayload["attention"][number], "id" | "number" | "client" | "responsible" | "status" | "deadline" | "reasons">>;
+};
+type ProductionPayload = {
+  role: "PRODUCTION";
+  jobs: Array<{
+    id: number;
+    percent: number;
+    plannedEndAt: string | null;
+    href: string;
+    status: UserOrderStatus;
+    order: { number: string; client: { name: string } };
+  }>;
+};
+type InstallerPayload = {
+  role: "INSTALLER";
+  installations: Array<{
+    id: number;
+    scheduledAt: string;
+    href: string;
+    order: { number: string; address: string; client: { name: string } };
+  }>;
+};
+type Payload =
+  | ManagementPayload
+  | OperationsPayload
+  | ManagerPayload
+  | ProductionPayload
+  | InstallerPayload;
+
+const expenseCategories = [
+  ["ADVERTISING", "Реклама"],
+  ["RENT", "Аренда"],
+  ["FUEL", "Топливо"],
+  ["DELIVERY", "Доставка"],
+  ["TAX", "Налоги"],
+  ["ACCOUNTING", "Бухгалтерия"],
+  ["COMMUNICATION", "Связь"],
+  ["OFFICE", "Офис"],
+  ["SERVICES", "Услуги"],
+  ["EQUIPMENT", "Оборудование"],
+  ["COMPANY_LOAN", "Заём компании"],
+  ["OTHER", "Другое"],
+] as const;
+const incomeCategories = [
+  ["OTHER_INCOME", "Прочий доход"],
+  ["INVESTMENT", "Инвестиция"],
+  ["REFUND_INCOME", "Возврат средств"],
+  ["COMPANY_LOAN_INCOME", "Заём компании"],
+] as const;
+const expenseLabel = Object.fromEntries(expenseCategories);
+const money = (value: number) =>
+  `${Math.round(value).toLocaleString("ru-RU")} ₸`;
+const companyToday = () => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Almaty",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+};
+const today = () => companyToday();
+const currentMonth = () => companyToday().slice(0, 7);
+const date = (value: string | null) =>
+  value ? new Intl.DateTimeFormat("ru-RU").format(new Date(value)) : "Без срока";
+
+export default function DirectorCockpit({ founder = false }: { founder?: boolean }) {
   const { data: session } = useSession();
-  const [period, setPeriod] = useState<Period>("month");
+  const operationsDirector = session?.user.accountRole === "OPERATIONS_DIRECTOR";
+  const [month, setMonth] = useState(currentMonth);
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [entryDirection, setEntryDirection] = useState<"INCOME" | "EXPENSE" | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/dashboard/sales?period=${period}`, { cache: "no-store" });
-      const body = await response.json() as Payload & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить показатели");
+      const response = await fetch(
+        `/api/dashboard/sales?month=${encodeURIComponent(month)}`,
+        { cache: "no-store" },
+      );
+      const body = (await response.json()) as Payload & { error?: string };
+      if (!response.ok)
+        throw new Error(body.error ?? "Не удалось загрузить показатели");
       setData(body);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось загрузить показатели");
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Не удалось загрузить показатели",
+      );
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [month]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const role = session?.user.role ?? data?.role;
-  const isDirector = role === "DIRECTOR";
-  const directorMetrics = data?.role === "DIRECTOR" ? data.metrics : null;
+  return (
+    <main className="mx-auto w-full max-w-[1500px] space-y-5 overflow-x-hidden p-4 pb-24 text-slate-100 sm:p-6 lg:p-8">
+      <header className={`flex flex-col gap-4 border border-slate-800 bg-[#101827] lg:flex-row lg:items-end lg:justify-between ${founder ? "rounded-2xl p-4 sm:p-5" : "rounded-3xl p-5 sm:p-6"}`}>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-300">
+            ORDA · ALTYN SAPA
+          </p>
+          <h1 className={`mt-2 font-bold text-white ${founder ? "text-2xl" : "text-3xl"}`}>{founder ? "Картина бизнеса" : "Главная"}</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            {founder
+              ? "Оборот, расходы, прибыль, заказы и команда — на одном экране."
+              : operationsDirector
+                ? "Заявки, замеры, заказы и задачи, которые требуют контроля."
+                : "Деньги компании и состояние заказов — без лишних модулей."}
+          </p>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          {(session?.user.role === "DIRECTOR" ||
+            session?.user.role === "OPERATIONS_DIRECTOR" ||
+            session?.user.role === "ACCOUNTANT") && (
+            <input
+              aria-label="Выбранный месяц"
+              type="month"
+              value={month}
+              onChange={(event) => setMonth(event.target.value)}
+              className="min-h-11 rounded-xl border border-slate-700 bg-slate-950 px-3 text-white"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 font-semibold disabled:opacity-50"
+          >
+            <RefreshCw size={17} className={loading ? "animate-spin" : ""} />
+            Обновить
+          </button>
+        </div>
+      </header>
 
-  return <section className="min-w-0 space-y-5 overflow-x-hidden p-4 text-slate-100 sm:p-6 md:p-8">
-    {isDirector
-      ? <DirectorHero metrics={directorMetrics} period={period} setPeriod={setPeriod} loading={loading} onRefresh={load}/>
-      : <WorkspaceHeader role={role} period={period} setPeriod={setPeriod} loading={loading} onRefresh={load}/>
-    }
-    {error && <div role="alert" className="rounded-2xl border border-red-500/30 bg-red-950/30 p-4 text-red-200">{error}</div>}
-    {loading && !data
-      ? <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{Array.from({ length: 8 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-slate-900"/>)}</div>
-      : data && <Projection data={data}/>
-    }
+      {error && (
+        <p
+          role="alert"
+          className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200"
+        >
+          {error}
+        </p>
+      )}
+      {loading && !data ? <DashboardSkeleton /> : null}
+      {founder && <FounderControlPanel />}
+      {data && !founder && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <SalesPlanCard month={month} /> : null}
+      {data && !founder && "dailyCrm" in data && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(data.role) ? <DailyCrmPanel data={data.dailyCrm} managerView={data.role === "MANAGER"} /> : null}
+      {data?.role === "DIRECTOR" || data?.role === "ACCOUNTANT" ? (
+        founder ? <FounderDashboard data={data} /> : (
+          <ManagementDashboard
+            data={data}
+            historyOpen={historyOpen}
+            onHistory={() => setHistoryOpen((value) => !value)}
+            onAddEntry={setEntryDirection}
+          />
+        )
+      ) : null}
+      {data?.role === "OPERATIONS_DIRECTOR" ? <OperationsDashboard data={data} /> : null}
+      {data?.role === "MANAGER" ? <ManagerDashboard data={data} /> : null}
+      {data?.role === "PRODUCTION" ? <ProductionDashboard data={data} /> : null}
+      {data?.role === "INSTALLER" ? <InstallerDashboard data={data} /> : null}
+
+      {entryDirection && (
+        <FinanceEntryDialog
+          direction={entryDirection}
+          onClose={() => setEntryDirection(null)}
+          onSaved={async () => {
+            setEntryDirection(null);
+            await load();
+          }}
+        />
+      )}
+    </main>
+  );
+}
+
+function percent(value: number | null) {
+  return value === null || !Number.isFinite(value)
+    ? "—"
+    : `${value.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} %`;
+}
+
+function FounderDashboard({ data }: { data: ManagementPayload }) {
+  const [detailsOpen, setDetailsOpen] = useState<"cash" | "costs" | "profit" | null>(null);
+  const revealDetails = (view: "cash" | "costs" | "profit") => {
+    setDetailsOpen(view);
+    window.setTimeout(() => document.getElementById("founder-finance-details")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+  const totalOrders = data.finance.ordersWithMargin + data.finance.ordersWithoutMargin;
+  const averageOrder = totalOrders > 0 ? data.finance.revenue / totalOrders : null;
+  const totalExpenses = data.finance.directExpenses + data.finance.operatingExpenses + data.finance.payrollAccrued;
+  const monthLabel = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "Asia/Almaty" })
+    .format(new Date(`${data.month}-15T12:00:00Z`));
+  const outstanding = data.finance.customerOutstanding;
+  const profitLabel = "Чистая прибыль";
+  const activeEmployees = data.team.filter((employee) => employee.activeDays > 0).length;
+  const completedTasks = data.team.reduce((sum, employee) => sum + employee.completedTasks, 0);
+  const overdueTasks = data.team.reduce((sum, employee) => sum + employee.overdueTasks, 0);
+  const attention = [
+    data.orders.overdue > 0 ? `${data.orders.overdue} просроченных заказов` : null,
+    data.orders.missingProductionPrice > 0 ? `${data.orders.missingProductionPrice} заказов без цены производства` : null,
+    data.orders.incompleteData > 0 ? `${data.orders.incompleteData} заказов нужно дополнить` : null,
+    data.finance.pendingOrderDates > 0 ? `${data.finance.pendingOrderDates} заказов ждут подтверждения фактической даты` : null,
+    !data.marketing.spendTracked ? "расход Meta ещё не подключён" : null,
+    data.marketing.leads === 0 ? "нет обращений в CRM за выбранный месяц" : null,
+  ].filter((item): item is string => Boolean(item));
+  const roleLabel: Record<string, string> = {
+    OPERATIONS_DIRECTOR: "Директор",
+    MARKETER: "Маркетолог",
+    MANAGER: "Менеджер",
+  };
+  return (
+    <>
+      <section className="rounded-2xl border border-blue-500/25 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-bold text-white">Недельный отчёт собственника</h2><p className="text-sm text-slate-400">Сформирован автоматически за последние 7 дней · без ручного ввода</p></div><span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200">{date(data.weekly.from)} — {date(data.weekly.to)}</span></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <FounderEfficiency label="Продажи за неделю" value={money(data.weekly.revenue)} hint={`${data.weekly.orders} заказов по дате заказа`} tone="blue" />
+          <FounderEfficiency label="Получено денег" value={money(data.weekly.received)} hint="Фактические поступления минус возвраты" tone="emerald" />
+          <FounderEfficiency label="Обращения в CRM" value={String(data.weekly.leads)} hint="Новые заявки за 7 дней" href="/clients" tone="blue" />
+          <FounderEfficiency label="Цена производства заполнена" value={`${data.weekly.ordersWithProductionPrice} / ${data.weekly.orders}`} hint="По новым заказам недели" tone={data.weekly.ordersWithProductionPrice < data.weekly.orders ? "amber" : "neutral"} />
+        </div>
+        <p className="mt-4 text-sm font-semibold text-white">Открытые вопросы директору сейчас</p>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          <FounderEfficiency label="Просроченные заказы" value={String(data.weekly.overdueOrders)} hint="Открыть список заказов →" href="/orders?tab=active&attention=overdue" tone={data.weekly.overdueOrders ? "red" : "neutral"} />
+          <FounderEfficiency label="Нужно дополнить" value={String(data.weekly.incompleteOrders)} hint="Открыть неполные карточки →" href="/orders?tab=active&attention=incomplete" tone={data.weekly.incompleteOrders ? "amber" : "neutral"} />
+          <FounderEfficiency label="Просроченные задачи" value={String(data.weekly.overdueTeamTasks)} hint="Открыть просроченные задачи →" href="/calendar?state=overdue" tone={data.weekly.overdueTeamTasks ? "red" : "neutral"} />
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-400">Эти три показателя показывают состояние на сейчас. В карточке «Контроль исполнения» видны конкретные замечания и ответственные.</p>
+      </section>
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><h2 className="text-xl font-bold text-white">Главная картина бизнеса</h2><p className="text-sm text-slate-400">Деньги и результат за {monthLabel}</p></div>
+          <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${attention.length ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"}`}>{attention.length ? `Требуют внимания: ${attention.length}` : "Всё под контролем"}</span>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <FounderKpi label="Оборот компании" value={money(data.finance.revenue)} hint={`${totalOrders} заказов · средний чек ${averageOrder === null ? "—" : money(averageOrder)}`} tone="blue" />
+          <FounderKpi label="Получено денег" value={money(data.finance.received)} hint={`По заказам месяца ${money(data.finance.receivedForPeriodOrders)} · открыть платежи`} tone="cyan" onClick={() => setDetailsOpen(detailsOpen === "cash" ? null : "cash")} />
+          <FounderKpi label="Затраты и расходы месяца" value={money(totalExpenses)} hint="Цена производства заказов + расходы по датам + зарплата по ведомости · открыть состав" tone="amber" onClick={() => setDetailsOpen(detailsOpen === "costs" ? null : "costs")} />
+          <FounderKpi label={profitLabel} value={data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных"} hint={data.finance.dataComplete ? `Маржа ${percent(data.finance.netMargin)} · открыть расчёт` : "Открыть расчёт и заполнить цены производства"} tone={data.finance.dataComplete ? "emerald" : "amber"} onClick={() => setDetailsOpen(detailsOpen === "profit" ? null : "profit")} />
+        </div>
+        {detailsOpen && <FounderFinanceDetails data={data} view={detailsOpen} monthLabel={monthLabel} />}
+        {attention.length ? <div className="mt-4 flex flex-wrap gap-2">{attention.map((item) => <span key={item} className="rounded-full bg-amber-500/10 px-3 py-1.5 text-xs text-amber-100">{item}</span>)}</div> : null}
+      </section>
+
+      <SalesPlanCard month={data.month} compact />
+
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
+        <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Доходы и расходы</h2><p className="text-sm text-slate-400">Итог выбранного месяца и текущие обязательства по активным заказам</p></div><Link href="/finance" className="text-sm font-semibold text-blue-300">Открыть финансы</Link></div>
+          <div className="mt-4 overflow-hidden rounded-xl border border-slate-800">
+            <table className="w-full text-sm"><tbody>
+              <FounderFinanceRow label="Оборот по заказам" value={data.finance.revenue} />
+              <FounderFinanceRow label="Поступило от клиентов" value={data.finance.received} onClick={() => revealDetails("cash")} />
+              <FounderFinanceRow label="По заказам выбранного месяца" value={data.finance.receivedForPeriodOrders} />
+              <FounderFinanceRow label="По заказам вне оборота месяца" value={data.finance.receivedFromOtherOrders} />
+              <FounderFinanceRow label="Осталось получить по всем активным заказам" value={outstanding} warning={outstanding > 0} />
+              <FounderFinanceRow label="Цена производства всех активных заказов" value={data.finance.activeProductionCost} />
+              <FounderFinanceRow label="Прочие доходы" value={data.finance.additionalIncome} />
+              <FounderFinanceRow label="Цена производства заказов месяца" value={data.finance.directExpenses} expense />
+              <FounderFinanceRow label="Операционные расходы по дате операции" value={data.finance.operatingExpenses} expense />
+              <FounderFinanceRow label="Зарплата по ведомости месяца" value={data.finance.payrollAccrued} expense />
+              <FounderFinanceRow label="Затраты и расходы месяца" value={totalExpenses} expense strong onClick={() => revealDetails("costs")} />
+              {data.finance.dataComplete ? <FounderFinanceRow label={profitLabel} value={data.finance.netProfit} strong profit onClick={() => revealDetails("profit")} /> : <tr className="border-t-2 border-slate-700"><td className="px-4 py-3">{profitLabel}</td><td className="px-4 py-3 text-right text-amber-200">Недостаточно данных</td></tr>}
+            </tbody></table>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-400">Поступления считаются по дате платежа, оборот — по дате заказа. Поэтому деньги по старым заказам могут быть больше оборота этого месяца. Цена производства — затрата по заказам месяца, даже если фактическая выплата цеху была в другой день.</p>
+          {data.finance.pendingOrderDates > 0 ? <p className="mt-3 text-xs leading-5 text-amber-200">Ещё {data.finance.pendingOrderDates} заказов не входят в отчёт месяца, пока менеджеры не подтвердят фактическую дату заказа.</p> : null}
+          {!data.finance.dataComplete ? <p className="mt-3 text-xs leading-5 text-amber-200">Прибыль не рассчитана: цена производства заполнена по {data.finance.ordersWithMargin} из {totalOrders} заказов. Учтённые расходы показаны отдельно и не означают полноту данных.</p> : null}
+        </article>
+
+        <article className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+          <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold text-white">Процессы заказов</h2><p className="text-sm text-slate-400">Где сейчас находится работа</p></div><Link href="/orders" className="text-sm font-semibold text-blue-300">Все заказы</Link></div>
+          <div className="mt-4 divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-950/40">
+            <FounderProcessRow label="Активные заказы" value={data.orders.active} href="/orders?tab=active" />
+            <FounderProcessRow label="До передачи в цех" value={data.orders.beforeWorkshop} href="/orders?tab=active&status=BEFORE_WORKSHOP" />
+            <FounderProcessRow label="Передано и в работе" value={data.orders.transferredToWorkshop + data.orders.inWork} href="/orders?tab=active&status=IN_WORK" />
+            <FounderProcessRow label="Готово и на монтаже" value={data.orders.readyForInstallation + data.orders.installation} href="/orders?tab=active&status=INSTALLATION" />
+            <FounderProcessRow label="Просрочено" value={data.orders.overdue} href="/orders?tab=active&attention=overdue" warning={data.orders.overdue > 0} />
+            <FounderProcessRow label="Нужно дополнить" value={data.orders.incompleteData} href="/orders?tab=active&attention=incomplete" warning={data.orders.incompleteData > 0} />
+          </div>
+        </article>
+      </section>
+
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Users size={20} className="text-blue-300"/><div><h2 className="text-lg font-bold text-white">Команда и рабочая активность</h2><p className="text-sm text-slate-400">Входы и реальные действия сотрудников в ORDA</p></div></div><Link href="/employees" className="text-sm font-semibold text-blue-300">Сотрудники</Link></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><FounderEfficiency label="Сотрудников" value={String(data.team.length)} hint="В контролируемой команде"/><FounderEfficiency label="Активны в месяце" value={`${activeEmployees} / ${data.team.length}`} hint="Есть входы в ORDA"/><FounderEfficiency label="Задач выполнено" value={String(completedTasks)} hint="Фактический результат"/><FounderEfficiency label="Просрочено задач" value={String(overdueTasks)} hint={overdueTasks ? "Нужно вмешательство" : "Просрочек нет"}/></div>
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Сотрудник", "Активных дней", "Заявки", "Заказы", "Продажи", "Выполнено", "Просрочено", "Последний вход"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((employee) => <tr key={employee.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{employee.name}</b><span className="block text-xs text-slate-500">{roleLabel[employee.role] ?? employee.role}</span></td><td className="px-3">{employee.activeDays}</td><td className="px-3">{employee.leads}</td><td className="px-3">{employee.orders}</td><td className="px-3 tabular-nums text-emerald-200">{employee.role === "MANAGER" ? money(employee.sales) : "—"}</td><td className="px-3 text-emerald-300">{employee.completedTasks}</td><td className={employee.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{employee.overdueTasks}</td><td className="px-3 text-slate-400">{employee.lastLogin ? date(employee.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-lg font-bold text-white">Маркетинг и продажи</h2><p className="text-sm text-slate-400">Расход, результат и стоимость привлечения</p></div></div><Link href="/marketing" className="text-sm font-semibold text-fuchsia-300">Открыть маркетинг</Link></div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5 xl:grid-cols-10">
+          <FounderEfficiency label="Расход рекламы" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint={data.marketing.spendTracked ? "В аналитике маркетинга" : "Доступ Meta не подключён"}/>
+          <FounderEfficiency label="Обращения Meta" value={String(data.marketing.leads)} hint="Начатые переписки WhatsApp"/>
+          <FounderEfficiency label="Заявки CRM" value={String(data.marketing.qualifiedLeads)} hint="Квалифицированы менеджером"/>
+          <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По дате заказа за месяц"/>
+          <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="Продажи заказов месяца"/>
+          <FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / переписки"/>
+          <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы"/>
+          <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход"/>
+          <FounderEfficiency label="Конверсия рекламы" value={percent(data.marketing.advertisingConversion)} hint="Переписки / клики"/>
+          <FounderEfficiency label="Конверсия продаж" value={percent(data.marketing.salesConversion)} hint="Заказы / заявки CRM"/>
+        </div>
+        {!data.marketing.spendTracked ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">Обращения, заказы и выручка считаются из CRM. Расход появится после подключения служебного доступа Meta.</p> : data.marketing.metaAttributionMissing ? <p className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-blue-100">Цена заказа и ROAS рассчитаны на уровне выбранного месяца: расход Meta сопоставлен с заказами и выручкой CRM.</p> : null}
+      </section>
+
+      <nav aria-label="Основные разделы собственника" className="flex flex-wrap gap-2">
+        {[['/sales-plan', 'План продаж'], ['/reports', 'Все отчёты'], ['/finance', 'Финансы'], ['/employees', 'Сотрудники'], ['/settings', 'Настройки']].map(([href, label]) => <Link key={href} href={href} className="rounded-xl border border-slate-700 bg-[#101827] px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-blue-500/50 hover:text-white">{label}</Link>)}
+      </nav>
+    </>
+  );
+}
+
+function FounderFinanceDetails({ data, view, monthLabel }: { data: ManagementPayload; view: "cash" | "costs" | "profit"; monthLabel: string }) {
+  const finance = data.finance;
+  return (
+    <section id="founder-finance-details" className="mt-4 rounded-xl border border-slate-700 bg-slate-950/70 p-4">
+      <h3 className="font-bold text-white">
+        {view === "cash" ? "Поступления" : view === "costs" ? "Состав затрат и расходов" : "Расчёт чистой прибыли"} · {monthLabel}
+      </h3>
+      {view === "cash" ? (
+        <>
+          <p className="mt-2 text-sm text-slate-300">Платежи привязаны к месяцу по дате получения. Оборот учитывает заказы с подтверждённой датой выбранного месяца. Поэтому поступления по старым заказам или заказам без подтверждённой даты могут быть больше оборота.</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <MetricLine label="Все поступления" value={finance.received} />
+            <MetricLine label="Заказы этого месяца" value={finance.receivedForPeriodOrders} />
+            <MetricLine label="Заказы вне оборота месяца" value={finance.receivedFromOtherOrders} />
+          </div>
+          <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+            {finance.customerPayments.map((payment) => (
+              <Link key={payment.id} href={payment.orderId ? `/orders/${payment.orderId}` : "/finance"} className="flex flex-wrap justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800">
+                <span>{date(payment.operationDate)} · {payment.orderNumber} <small className="block text-slate-400">Дата заказа: {date(payment.orderReceivedAt)} · {payment.fromPeriodOrder ? "в обороте месяца" : payment.orderDateNeedsReview ? "дата требует подтверждения" : "вне оборота месяца"}</small></span>
+                <b className={payment.amount < 0 ? "text-red-300" : "text-emerald-300"}>{money(payment.amount)}</b>
+              </Link>
+            ))}
+            {!finance.customerPayments.length && <p className="text-sm text-slate-400">Поступлений за этот месяц нет.</p>}
+          </div>
+        </>
+      ) : (
+        <>
+          {view === "profit" && (
+            <div className="mt-3 space-y-1 rounded-lg bg-slate-900 p-3 text-sm">
+              <MetricLine label="Продажи с подтверждённой ценой производства" value={finance.pricedRevenue} />
+              <MetricLine label="Прочие доходы месяца" value={finance.additionalIncome} />
+              <MetricLine label="Цена производства заказов месяца" value={-finance.directExpenses} />
+              <MetricLine label="Операционные расходы по дате операции" value={-finance.operatingExpenses} />
+              <MetricLine label="Зарплата по ведомости месяца" value={-finance.payrollAccrued} />
+              <MetricLine label={finance.dataComplete ? "Чистая прибыль" : "Промежуточный итог по заполненным заказам"} value={finance.netProfit} strong />
+              {!finance.dataComplete && <p className="pt-2 text-amber-200">Расчёт неполный: {finance.ordersWithoutMargin} заказ(а) без подтверждённой цены производства.</p>}
+            </div>
+          )}
+          <p className="mt-3 text-sm text-slate-300">Цена производства относится к заказам {monthLabel}, операционные расходы — к дате записи, зарплата совпадает с показателем «Начислено» в ведомости месяца. Пока ведомость открыта, зарплатная сумма может измениться. Расходы сентября не переносятся в октябрь автоматически.</p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div>
+              <h4 className="text-sm font-semibold text-white">Производство по заказам · {money(finance.directExpenses)}</h4>
+              <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                {finance.productionCostOrders.map((order) => <Link key={order.id} href={`/orders/${order.id}`} className="flex justify-between rounded-lg bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"><span>{order.number}</span><b>{money(order.amount)}</b></Link>)}
+                {!finance.productionCostOrders.length && <p className="text-sm text-slate-500">Заказов с подтверждённой ценой нет.</p>}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-semibold text-white">Операционные расходы · {money(finance.operatingExpenses)}</h4>
+              <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
+                {finance.operatingExpenseEntries.map((entry) => <div key={entry.id} className="flex justify-between gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm"><span>{date(entry.operationDate)} · {expenseLabel[entry.category] ?? entry.category}{entry.comment ? ` · ${entry.comment}` : ""}</span><b className="shrink-0">{money(entry.amount)}</b></div>)}
+                {!finance.operatingExpenseEntries.length && <p className="text-sm text-slate-500">Операционных расходов за месяц нет.</p>}
+              </div>
+            </div>
+          </div>
+          <Link href="/payroll" className="mt-3 inline-block text-sm font-semibold text-blue-300">Зарплата по ведомости · {money(finance.payrollAccrued)} → открыть ведомость</Link>
+        </>
+      )}
+    </section>
+  );
+}
+
+function MetricLine({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+  return <div className={`flex justify-between gap-3 py-1 ${strong ? "border-t border-slate-700 pt-2 font-bold text-white" : "text-slate-300"}`}><span>{label}</span><b className="shrink-0 tabular-nums">{money(value)}</b></div>;
+}
+
+function FounderKpi({ label, value, hint, tone, onClick }: { label: string; value: string; hint: string; tone: "blue" | "cyan" | "amber" | "emerald"; onClick?: () => void }) {
+  const tones = { blue: "border-blue-500/25 bg-blue-500/5 text-blue-200", cyan: "border-cyan-500/25 bg-cyan-500/5 text-cyan-200", amber: "border-amber-500/25 bg-amber-500/5 text-amber-200", emerald: "border-emerald-500/25 bg-emerald-500/5 text-emerald-200" };
+  const className = `rounded-xl border p-4 text-left ${tones[tone]} ${onClick ? "cursor-pointer hover:border-white/50" : ""}`;
+  const content = <><p className="text-sm">{label}</p><p className="mt-2 break-words text-2xl font-bold text-white">{value}</p><p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p></>;
+  return onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <article className={className}>{content}</article>;
+}
+
+function FounderFinanceRow({ label, value, expense = false, warning = false, strong = false, profit = false, onClick }: { label: string; value: number; expense?: boolean; warning?: boolean; strong?: boolean; profit?: boolean; onClick?: () => void }) {
+  return <tr className={strong ? "border-t-2 border-slate-700 bg-slate-900/70" : "border-t border-slate-800 first:border-0"}><td className={`px-4 py-3 ${strong ? "font-semibold text-white" : "text-slate-300"}`}>{onClick ? <button type="button" onClick={onClick} className="text-left underline decoration-dotted underline-offset-4 hover:text-blue-200">{label}</button> : label}</td><td className={`px-4 py-3 text-right tabular-nums ${profit ? value >= 0 ? "font-bold text-emerald-300" : "font-bold text-red-300" : warning ? "font-semibold text-amber-300" : expense ? "text-slate-200" : "font-semibold text-white"}`}>{expense && value > 0 ? "− " : ""}{money(value)}</td></tr>;
+}
+
+function FounderProcessRow({ label, value, href, warning = false }: { label: string; value: number; href: string; warning?: boolean }) {
+  return <Link href={href} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-900"><span className="text-sm text-slate-300">{label}</span><span className={`text-lg font-bold tabular-nums ${warning ? "text-amber-300" : "text-white"}`}>{value}</span></Link>;
+}
+
+function FounderEfficiency({ label, value, hint, href, tone = "neutral" }: { label: string; value: string; hint: string; href?: string; tone?: "neutral" | "blue" | "emerald" | "amber" | "red" }) {
+  const toneClasses = { neutral: "border-slate-800", blue: "border-blue-500/40", emerald: "border-emerald-500/40", amber: "border-amber-500/50", red: "border-red-500/50" };
+  const valueClasses = { neutral: "text-white", blue: "text-blue-100", emerald: "text-emerald-100", amber: "text-amber-200", red: "text-red-200" };
+  const className = `rounded-xl border bg-slate-950/45 p-4 ${toneClasses[tone]} ${href ? "block hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-blue-400" : ""}`;
+  const content = <><p className="text-sm font-medium text-slate-300">{label}</p><p className={`mt-2 break-words text-2xl font-bold tabular-nums ${valueClasses[tone]}`}>{value}</p><p className="mt-1 text-xs leading-5 text-slate-400">{hint}</p></>;
+  return href ? <Link href={href} className={className}>{content}</Link> : <article className={className}>{content}</article>;
+}
+
+function OperationsDashboard({ data }: { data: OperationsPayload }) {
+  const cards = [
+    ["Активные заказы", data.orders.active, "/orders?tab=active"],
+    ["Просроченные", data.orders.overdue, "/orders?tab=active&attention=overdue"],
+    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active&attention=incomplete"],
+    ["Передано в цех", data.orders.transferredToWorkshop + data.orders.inWork, "/orders?tab=active&status=IN_WORK"],
+  ] as const;
+  return <>
+    <section>
+      <div className="mb-3"><h2 className="text-xl font-bold text-white">Операционный контроль</h2><p className="text-sm text-slate-400">Система автоматически выделяет просрочки и незаполненные данные</p></div>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {cards.map(([label, value, href]) => <Link key={label} href={href} className={`rounded-2xl border p-4 ${label === "Просроченные" && value > 0 ? "border-red-500/35 bg-red-500/10" : "border-slate-800 bg-[#101827]"}`}><p className="text-sm text-slate-400">{label}</p><p className="mt-2 text-3xl font-bold text-white">{value}</p></Link>)}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <Link href="/clients" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Контролировать заявки</Link>
+        <Link href="/measurements" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Контролировать замеры</Link>
+        <Link href="/marketing" className="rounded-xl border border-slate-800 bg-slate-900 p-4 font-semibold text-blue-200">Маркетинг и вакансии</Link>
+      </div>
+    </section>
+    <MarketingAndTeam data={data} />
+    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+      <div className="flex items-center gap-2"><AlertTriangle size={20} className="text-amber-300"/><div><h2 className="text-xl font-bold">Требуют внимания</h2><p className="text-sm text-slate-400">Без финансовых показателей и прибыли</p></div></div>
+      <div className="mt-4 space-y-3">
+        {data.attention.length ? data.attention.map((order) => <Link key={order.id} href={`/orders/${order.id}`} className="block rounded-xl border border-slate-800 bg-slate-950/60 p-4 hover:border-blue-500/50"><div className="flex flex-wrap items-center gap-2"><strong>{order.number}</strong><span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">{USER_ORDER_STATUS_LABELS[order.status]}</span></div><p className="mt-1 text-sm text-slate-300">{order.client} · {order.responsible || "Ответственный не указан"} · срок {date(order.deadline)}</p><div className="mt-2 flex flex-wrap gap-2">{order.reasons.filter((reason) => !/цен.*производ|марж/i.test(reason)).map((reason) => <span key={reason} className="rounded-full bg-amber-500/10 px-2 py-1 text-xs text-amber-200">{reason}</span>)}</div></Link>) : <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Заказов, требующих внимания, нет.</p>}
+      </div>
+    </section>
+    <CalendarAgenda />
+  </>;
+}
+
+function MarketingAndTeam({ data, founder = false }: { data: ManagementPayload | OperationsPayload; founder?: boolean }) {
+  const roleLabel: Record<string, string> = {
+    OPERATIONS_DIRECTOR: "Директор",
+    MARKETER: "Маркетолог",
+    MANAGER: "Менеджер",
+  };
+  return <>
+    <section className="rounded-2xl border border-fuchsia-500/20 bg-[#101827] p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div className="flex items-center gap-2"><Megaphone size={20} className="text-fuchsia-300"/><div><h2 className="text-xl font-bold">Маркетинг и CRM</h2><p className="text-sm text-slate-400">Расход рекламы и обращения выбранного месяца</p></div></div><Link href="/marketing" className="rounded-xl border border-fuchsia-500/30 px-3 py-2 text-sm font-semibold text-fuchsia-200">Открыть маркетинг</Link></div>
+      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5 xl:grid-cols-10">
+        <FounderEfficiency label="Расход" value={data.marketing.spendTracked ? money(data.marketing.spend) : "—"} hint="В аналитике маркетинга" />
+        <FounderEfficiency label="Обращения Meta" value={String(data.marketing.leads)} hint="Переписки WhatsApp" />
+        <FounderEfficiency label="Заявки CRM" value={String(data.marketing.qualifiedLeads)} hint="Квалифицированы менеджером" />
+        <FounderEfficiency label="Заказы" value={String(data.marketing.orders)} hint="По дате заказа за месяц" />
+        <FounderEfficiency label="Выручка" value={money(data.marketing.revenue)} hint="Продажи заказов месяца" />
+        <FounderEfficiency label="Цена обращения" value={data.marketing.cpl === null ? "—" : money(data.marketing.cpl)} hint="Расход / переписки" />
+        <FounderEfficiency label="Цена заказа" value={data.marketing.cac === null ? "—" : money(data.marketing.cac)} hint="Расход / заказы" />
+        <FounderEfficiency label="ROAS" value={data.marketing.roas === null ? "—" : `${data.marketing.roas.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}×`} hint="Выручка / расход" />
+        <FounderEfficiency label="Конверсия рекламы" value={percent(data.marketing.advertisingConversion)} hint="Переписки / клики" />
+        <FounderEfficiency label="Конверсия продаж" value={percent(data.marketing.salesConversion)} hint="Заказы / заявки CRM" />
+      </div>
+      {!data.marketing.spendTracked && <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Расход Meta за этот месяц ещё не синхронизирован. Проверьте статус подключения в маркетинге.</p>}
+      {data.marketing.metaAttributionMissing && data.marketing.spendTracked && <p className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-blue-100">Цена заказа, ROAS и конверсия продаж показаны как управленческие показатели выбранного месяца.</p>}
+      <div className="mt-4 rounded-xl bg-slate-950/60 p-4 text-sm text-slate-300"><b className="text-white">3D после КП:</b> сделано {data.salesTools.designDone}, не использовано {data.salesTools.designSkipped}, заказов после 3D {data.salesTools.designConverted}. Фактическая конверсия: {percent(data.salesTools.designConversion)}.</div>
+    </section>
+    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+      <div className="flex items-center gap-2"><Users size={20} className="text-blue-300"/><div><h2 className="text-xl font-bold">Рабочая активность команды</h2><p className="text-sm text-slate-400">Только проверяемые действия в ORDA — без придуманной оценки</p></div></div>
+      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-sm"><thead className="text-left text-slate-400"><tr>{["Сотрудник", "Дней входа", "Заявки", "Заказы", "Продажи", "Задач выполнено", "Просрочено", "Последний вход"].map((label)=><th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.team.map((item)=><tr key={item.id} className="border-t border-slate-800"><td className="px-3 py-3"><b className="text-white">{item.name}</b><span className="block text-xs text-slate-500">{roleLabel[item.role] ?? item.role}</span></td><td className="px-3">{item.activeDays}</td><td className="px-3">{item.leads}</td><td className="px-3">{item.orders}</td><td className="px-3 tabular-nums text-emerald-200">{item.role === "MANAGER" ? money(item.sales) : "—"}</td><td className="px-3 text-emerald-300">{item.completedTasks}</td><td className={item.overdueTasks ? "px-3 font-semibold text-amber-300" : "px-3"}>{item.overdueTasks}</td><td className="px-3 text-slate-400">{item.lastLogin ? date(item.lastLogin) : "Не входил"}</td></tr>)}</tbody></table></div>
+      {founder && <p className="mt-3 text-xs text-slate-500">Входы показывают интерес к работе только как факт активности. Штрафы не начисляются автоматически: решение всегда принимает основатель.</p>}
+    </section>
+  </>;
+}
+
+function ManagementDashboard({
+  data,
+  historyOpen,
+  onHistory,
+  onAddEntry,
+}: {
+  data: ManagementPayload;
+  historyOpen: boolean;
+  onHistory: () => void;
+  onAddEntry: (direction: "INCOME" | "EXPENSE") => void;
+}) {
+  const finance = [
+    ["Выручка", money(data.finance.revenue), "Все продажи месяца"],
+    ["Получено от клиентов", money(data.finance.received), "Платежи минус возвраты"],
+    ["Цена производства", money(data.finance.directExpenses), "По заказам с обеими суммами"],
+    ["Прочие доходы", money(data.finance.additionalIncome), "Внесены директором"],
+    ["Операционные расходы", money(data.finance.operatingExpenses), "Расходы компании вне заказов"],
+    ["Начисленная зарплата", money(data.finance.payrollAccrued), "Расход месяца"],
+    ["Выплаченная зарплата", money(data.finance.payrollPaid), "Фактические выплаты"],
+    [
+      "Чистая прибыль",
+      data.finance.dataComplete ? money(data.finance.netProfit) : "Недостаточно данных",
+      "Маржа заказов + доходы − расходы − зарплата",
+    ],
+    [
+      "Чистая маржа",
+      !data.finance.dataComplete || data.finance.netMargin === null
+        ? "Недостаточно данных"
+        : `${data.finance.netMargin.toLocaleString("ru-RU")} %`,
+      "Чистая прибыль / продажи с обеими суммами",
+    ],
+  ];
+  const orders = [
+    ["Активные", data.orders.active, "/orders?tab=active"],
+    ["До цеха", data.orders.beforeWorkshop, "/orders?tab=active&status=BEFORE_WORKSHOP"],
+    ["Передано в цех", data.orders.transferredToWorkshop, "/orders?tab=active&status=TRANSFERRED_TO_WORKSHOP"],
+    ["В работе", data.orders.inWork, "/orders?tab=active&status=IN_WORK"],
+    ["Готово к монтажу", data.orders.readyForInstallation, "/orders?tab=active&status=READY_FOR_INSTALLATION"],
+    ["На монтаже", data.orders.installation, "/orders?tab=active&status=INSTALLATION"],
+    ["Просрочено", data.orders.overdue, "/orders?tab=active&attention=overdue"],
+    ["Без цены производства", data.orders.missingProductionPrice, "/orders?tab=active&attention=missing-production-price"],
+    ["Нужно дополнить", data.orders.incompleteData, "/orders?tab=active&attention=incomplete"],
+  ] as const;
+  return (
+    <>
+      <section>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-white">Финансовый результат</h2>
+            <p className="text-sm text-slate-400">За выбранный месяц</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onHistory}
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 text-sm font-semibold sm:flex-none"
+            >
+              <ReceiptText size={17} /> История расходов
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddEntry("INCOME")}
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 text-sm font-semibold sm:flex-none"
+            >
+              <Plus size={17} /> Добавить доход
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddEntry("EXPENSE")}
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold sm:flex-none"
+            >
+              <Plus size={17} /> Добавить расход
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {finance.map(([label, value, hint], index) => (
+            <article
+              key={label}
+              className={`rounded-2xl border p-4 ${index >= 6 ? "border-emerald-500/25 bg-emerald-500/5" : "border-slate-800 bg-[#101827]"}`}
+            >
+              <p className="text-sm text-slate-400">{label}</p>
+              <p className="mt-2 break-words text-xl font-bold text-white">{value}</p>
+              <p className="mt-2 text-xs leading-5 text-slate-500">{hint}</p>
+            </article>
+          ))}
+        </div>
+        <p className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-blue-100">
+          Прибыль рассчитана по {data.finance.ordersWithMargin} заказам с суммой продажи и ценой производства.
+          {data.finance.ordersWithoutMargin > 0
+            ? ` Ещё ${data.finance.ordersWithoutMargin} заказов ждут заполнения и не искажают итог.`
+            : " Все заказы месяца заполнены."}
+        </p>
+        {!data.finance.dataComplete && (
+          <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            Заполните цену производства в отмеченных заказах, чтобы они вошли в прибыль месяца.
+          </p>
+        )}
+      </section>
+
+      {historyOpen && (
+        <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+          <h2 className="font-bold text-white">Расходы месяца</h2>
+          <div className="mt-3 space-y-2">
+            {data.expenses.length ? (
+              data.expenses.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="grid gap-1 rounded-xl bg-slate-950/60 p-3 text-sm sm:grid-cols-[140px_1fr_auto] sm:items-center"
+                >
+                  <span className="text-slate-400">{date(entry.operationDate)}</span>
+                  <span className="min-w-0 break-words text-slate-200">
+                    {expenseLabel[entry.category] ?? entry.category}
+                    {entry.orderNumber ? ` · заказ ${entry.orderNumber}` : ""}
+                    {entry.comment ? ` · ${entry.comment}` : ""}
+                  </span>
+                  <strong className="text-white">{money(entry.amount)}</strong>
+                </div>
+              ))
+            ) : (
+              <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-slate-400">
+                Расходов за месяц нет.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <h2 className="mb-3 text-xl font-bold text-white">Заказы</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-9">
+          {orders.map(([label, value, href]) => (
+            <Link
+              key={label}
+              href={href}
+              className={`rounded-2xl border p-4 transition hover:border-blue-500/50 ${label === "Просрочено" && value > 0 ? "border-red-500/30 bg-red-500/5" : "border-slate-800 bg-[#101827]"}`}
+            >
+              <p className="text-sm text-slate-400">{label}</p>
+              <p className="mt-2 text-2xl font-bold text-white">{value}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={20} className="text-amber-300" />
+          <h2 className="text-xl font-bold text-white">Требуют внимания</h2>
+        </div>
+        <div className="mt-4 space-y-3">
+          {data.attention.length ? (
+            data.attention.map((order) => (
+              <Link
+                key={order.id}
+                href={`/orders/${order.id}`}
+                className="grid min-w-0 gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4 transition hover:border-blue-500/50 md:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <strong className="text-white">{order.number}</strong>
+                    <span className="rounded-full bg-blue-500/10 px-2 py-1 text-xs text-blue-200">
+                      {USER_ORDER_STATUS_LABELS[order.status]}
+                    </span>
+                  </div>
+                  <p className="mt-1 break-words text-sm text-slate-300">
+                    {order.client} · {order.responsible || "Ответственный не указан"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {order.reasons.map((reason) => (
+                      <span
+                        key={reason}
+                        className="rounded-full bg-amber-500/10 px-2 py-1 text-xs text-amber-200"
+                      >
+                        {reason}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-sm md:text-right">
+                  <p className="text-slate-400">Срок: {date(order.deadline)}</p>
+                  <p className="mt-1 font-semibold text-white">
+                    {order.netProfit === null ? "Прибыль: нет данных" : `Прибыль: ${money(order.netProfit)}`}
+                  </p>
+                </div>
+              </Link>
+            ))
+          ) : (
+            <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">
+              Заказов, требующих внимания, нет.
+            </p>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function ManagerDashboard({ data }: { data: ManagerPayload }) {
+  const duePayments = data.paymentFollowUps ?? [];
+  return (
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <SimpleCard icon={<ClipboardList />} label="Мои активные заказы" value={String(data.orders.active)} href="/orders" />
+      <SimpleCard icon={<AlertTriangle />} label="Просрочено" value={String(data.orders.overdue)} href="/orders?attention=overdue" />
+      <SimpleCard icon={<Factory />} label="Без цены производства" value={String(data.orders.missingProductionPrice)} href="/orders?attention=missing-production-price" />
+      <SimpleCard icon={<ClipboardList />} label="Нужно дополнить" value={String(data.orders.incompleteData)} href="/orders" />
+      <div className="sm:col-span-2 xl:col-span-4 rounded-2xl border border-blue-500/25 bg-[#101827] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-white">Обещанные доплаты клиентов</h2><p className="mt-1 text-sm text-slate-400">ORDA напомнит в срок и потребует зафиксировать результат.</p></div><span className="rounded-full bg-blue-500/15 px-3 py-1 text-sm text-blue-200">Активно: {duePayments.length}</span></div>
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {duePayments.map((item) => item.order ? <Link key={item.id} href={`/orders/${item.order.id}`} className={`rounded-xl border p-3 ${item.overdue ? "border-red-500/40 bg-red-500/5" : "border-slate-800 bg-slate-950"}`}>
+            <div className="flex items-start justify-between gap-3"><div><b>{item.order.number}</b><p className="text-sm text-slate-400">{item.order.client.name}</p></div><span className={`text-sm font-semibold ${item.overdue ? "text-red-300" : "text-blue-300"}`}>{Number(item.expectedAmount ?? 0).toLocaleString("ru-RU")} ₸</span></div>
+            <p className="mt-2 text-xs text-slate-500">{new Intl.DateTimeFormat("ru-RU", { timeZone: "Asia/Almaty", dateStyle: "medium", timeStyle: "short" }).format(new Date(item.dueAt))} · {item.overdue ? "просрочено" : item.acknowledgedAt ? "ознакомлен" : "ожидает срока"}</p>
+          </Link> : null)}
+          {!duePayments.length ? <p className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500 lg:col-span-2">Нет активных обещаний по доплате.</p> : null}
+        </div>
+      </div>
+      <div className="sm:col-span-2 xl:col-span-4 rounded-2xl border border-slate-800 bg-[#101827] p-5">
+        <h2 className="font-bold">Что нужно дополнить по заказам</h2>
+        <div className="mt-3 space-y-2">
+          {data.attention.map((order) => (
+            <Link key={order.id} href={`/orders/${order.id}`} className="block rounded-xl bg-slate-950 p-3">
+              <b>{order.number}</b> · {order.client} · {USER_ORDER_STATUS_LABELS[order.status]}
+              {order.missingFields.length ? (
+                <span className="mt-2 block text-sm text-amber-300">{order.missingFields.join(" · ")}</span>
+              ) : <span className="mt-2 block text-sm text-slate-400">Есть неоплаченный остаток</span>}
+            </Link>
+          ))}
+          {!data.attention.length ? <p className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-slate-400">Все обязательные данные заполнены.</p> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DailyCrmPanel({ data, managerView = false }: { data: DailyCrmPayload; managerView?: boolean }) {
+  const statusLabel = (status: DailyCrmPayload["managers"][number]["reportStatus"]) => status === "SENT" ? "Отправлен" : status === "ACKNOWLEDGED" ? "Ознакомлен" : "Ждёт отчёта";
+  const statusTone = (status: DailyCrmPayload["managers"][number]["reportStatus"]) => status === "SENT" ? "text-emerald-300" : status === "ACKNOWLEDGED" ? "text-blue-300" : "text-amber-300";
+  return <section className="rounded-2xl border border-slate-800 bg-[#101827] p-4 sm:p-5">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[.18em] text-cyan-300">Ежедневный CRM-контроль</p><h2 className="mt-1 text-xl font-bold text-white">Результат за {data.dateLabel}</h2><p className="mt-1 text-sm text-slate-400">Цифры собраны из заявок, контактов, замеров и заказов ORDA. Менеджер подтверждает результат отдельной задачей.</p></div><Link href="/clients" className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-blue-200">Открыть заявки</Link></div>
+    <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+      <DailyMetric label="Новые заявки" value={data.totals.leadsReceived}/><DailyMetric label="Есть контакт" value={data.totals.contacted}/><DailyMetric label="Заинтересованы" value={data.totals.interested}/><DailyMetric label="Замеры назначены" value={data.totals.measurementsScheduled}/><DailyMetric label="Замеры завершены" value={data.totals.measurementsCompleted}/><DailyMetric label="Заказы" value={data.totals.ordersCreated}/><DailyMetric label="Продажи" value={money(data.totals.revenue)}/>
+    </div>
+    <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead className="text-left text-slate-500"><tr>{["Менеджер", "Заявки", "Контакт", "Интерес", "Замеры", "Заказы", "Продажи", "Отчёт"].map((label) => <th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead><tbody className="divide-y divide-slate-800">{data.managers.map((row) => <tr key={row.managerId}><td className="px-3 py-3 font-semibold text-white">{row.manager}</td><td className="px-3 py-3">{row.leadsReceived}</td><td className="px-3 py-3">{row.contacted}</td><td className="px-3 py-3">{row.interested}</td><td className="px-3 py-3">{row.measurementsScheduled} / {row.measurementsCompleted}</td><td className="px-3 py-3">{row.ordersCreated}</td><td className="px-3 py-3">{money(row.revenue)}</td><td className={`px-3 py-3 font-semibold ${statusTone(row.reportStatus)}`}>{statusLabel(row.reportStatus)}</td></tr>)}</tbody></table></div>
+    {!data.managers.length ? <p className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">Активных менеджеров нет.</p> : null}
+    {managerView && data.managers.some((row) => row.reportStatus !== "SENT") ? <p className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-100">В 10:00 откроется обязательная задача: проверьте карточки за вчера, подтвердите ознакомление и отправьте короткий результат.</p> : null}
   </section>;
 }
 
-function DirectorHero({ metrics, period, setPeriod, loading, onRefresh }: { metrics: SalesMetrics | null; period: Period; setPeriod: (period: Period) => void; loading: boolean; onRefresh: () => Promise<void> }) {
-  return <header className="relative overflow-hidden rounded-[28px] border border-amber-300/20 bg-[#0b1220] p-5 shadow-2xl shadow-black/20 sm:p-7">
-    <div className="absolute inset-x-0 top-0 h-px bg-amber-300/70"/>
-    <div className="relative flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-      <div className="max-w-2xl">
-        <p className="text-xs font-bold uppercase tracking-[0.28em] text-amber-300">Director dashboard</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">Состояние компании</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-400 sm:text-base">Краткий статус бизнеса за выбранный период</p>
+function DailyMetric({ label, value }: { label: string; value: string | number }) {
+  return <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3"><p className="text-xs text-slate-500">{label}</p><p className="mt-1 text-lg font-bold text-white">{value}</p></div>;
+}
+
+function ProductionDashboard({ data }: { data: ProductionPayload }) {
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5">
+      <h2 className="flex items-center gap-2 text-xl font-bold"><Factory /> Исполнение заказов</h2>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {data.jobs.map((job) => (
+          <Link key={job.id} href={job.href} className="rounded-xl bg-slate-950 p-4">
+            <b>{job.order.number}</b><p className="text-sm text-slate-400">{job.order.client.name} · {USER_ORDER_STATUS_LABELS[job.status]}</p>
+          </Link>
+        ))}
       </div>
-      <DashboardControls period={period} setPeriod={setPeriod} loading={loading} onRefresh={onRefresh}/>
-    </div>
-    <div className="relative mt-7 grid gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 sm:grid-cols-2 xl:grid-cols-4">
-      <HeroMetric icon={<CircleDollarSign size={19}/>} label="Продажи" value={metrics ? money(metrics.totalSales) : "—"} href="/orders"/>
-      <HeroMetric icon={<BanknoteArrowUp size={19}/>} label="Получено от клиентов" value={metrics ? money(metrics.receivedPrepayment) : "—"} href="/finance"/>
-      <HeroMetric icon={<WalletCards size={19}/>} label="К получению от клиентов" value={metrics ? money(metrics.balanceToReceive) : "—"} href="/orders?settlement=client-payable"/>
-      <HeroMetric icon={<HandCoins size={19}/>} label="К выплате партнёрам" value={metrics ? money(metrics.partnerBalancePayable ?? 0) : "—"} href="/orders?settlement=partner-payable"/>
-    </div>
-  </header>;
-}
-
-function WorkspaceHeader({ role, period, setPeriod, loading, onRefresh }: { role?: string; period: Period; setPeriod: (period: Period) => void; loading: boolean; onRefresh: () => Promise<void> }) {
-  const titles: Record<string, [string, string]> = {
-    MANAGER: ["МОИ ПОКАЗАТЕЛИ", "Рабочий стол менеджера"],
-    ACCOUNTANT: ["ФИНАНСЫ", "Рабочий стол бухгалтера"],
-    PRODUCTION: ["ПРОИЗВОДСТВО", "Работа цеха сегодня"],
-    INSTALLER: ["МОНТАЖ", "Мои установки"],
-  };
-  return <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-    <div><p className="text-sm font-semibold uppercase tracking-widest text-amber-400">{titles[role ?? ""]?.[0]}</p><h1 className="mt-1 text-2xl font-bold text-white sm:text-3xl">{titles[role ?? ""]?.[1] ?? "Dashboard"}</h1><p className="mt-1 text-sm text-slate-400">Реальные данные · Asia/Almaty</p></div>
-    {(role === "MANAGER" || role === "ACCOUNTANT")
-      ? <DashboardControls period={period} setPeriod={setPeriod} loading={loading} onRefresh={onRefresh}/>
-      : <RefreshButton loading={loading} onRefresh={onRefresh}/>
-    }
-  </header>;
-}
-
-function DashboardControls({ period, setPeriod, loading, onRefresh }: { period: Period; setPeriod: (period: Period) => void; loading: boolean; onRefresh: () => Promise<void> }) {
-  return <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-    <div className="grid grid-cols-3 rounded-xl border border-white/10 bg-black/20 p-1">{(Object.keys(periods) as Period[]).map((value) => <button type="button" key={value} onClick={() => setPeriod(value)} className={`min-h-11 rounded-lg px-3 text-sm font-semibold transition sm:px-4 ${period === value ? "bg-amber-300 text-slate-950" : "text-slate-300 hover:bg-white/5"}`}>{periods[value]}</button>)}</div>
-    <RefreshButton loading={loading} onRefresh={onRefresh}/>
-  </div>;
-}
-
-function RefreshButton({ loading, onRefresh }: { loading: boolean; onRefresh: () => Promise<void> }) {
-  return <button type="button" onClick={() => void onRefresh()} disabled={loading} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-white/10 bg-slate-900 px-4 font-semibold text-slate-100 transition hover:border-amber-300/40 disabled:opacity-60"><RefreshCw size={18} className={loading ? "animate-spin" : ""}/>Обновить</button>;
-}
-
-function Projection({ data }: { data: Payload }) {
-  if (data.role === "DIRECTOR" || data.role === "MANAGER") return <SalesDashboard data={data}/>;
-  if (data.role === "ACCOUNTANT") return <AccountantDashboard data={data}/>;
-  if (data.role === "PRODUCTION") return <ProductionDashboard data={data}/>;
-  if (data.role === "INSTALLER") return <InstallerDashboard data={data}/>;
-  return null;
-}
-
-function SalesDashboard({ data }: { data: SalesPayload }) {
-  if (data.role === "DIRECTOR") return <>
-    <DirectorSalesDashboard metrics={data.metrics} managers={data.managers ?? []}/>
-    <DirectorActivityFeed activities={data.activities}/>
-  </>;
-  return <>
-    <ManagerSalesDashboard metrics={data.metrics} attention={data.measurementAttention ?? []}/>
-    <Panel title="Последние важные действия"><LegacyActivityFeed activities={data.activities}/></Panel>
-  </>;
-}
-
-function DirectorSalesDashboard({ metrics: m, managers }: { metrics: SalesMetrics; managers: ManagerRow[] }) {
-  const overdueTotal = m.overdueNextActions + m.overdueOrders + m.overdueTasks + m.measurementsOverdue;
-  const sortedManagers = [...managers].sort((left, right) => right.totalSales - left.totalSales || right.orders - left.orders);
-  const maxManagerSales = Math.max(...sortedManagers.map((manager) => manager.totalSales), 1);
-  const production = [
-    { label: "На подготовке", value: m.productionPreparation ?? 0, tone: "bg-slate-400" },
-    { label: "На покраске", value: m.productionPainting ?? 0, tone: "bg-blue-400" },
-    { label: "Готово", value: m.productionReady ?? 0, tone: "bg-emerald-400" },
-    { label: "Просрочено", value: m.productionOverdue ?? 0, tone: "bg-red-400" },
-  ];
-  const productionTotal = Math.max(production.reduce((sum, item) => sum + item.value, 0), 1);
-
-  return <div className="space-y-5">
-    <section aria-label="Ключевые показатели" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <OperationalMetric icon={<ClipboardList size={19}/>} href="/clients" label="Заявки" value={m.newLeads} detail={`${m.activeLeads} активных`} progress={m.conversion}/>
-      <OperationalMetric icon={<ShoppingBag size={19}/>} href="/orders" label="Заказы" value={m.orders} detail={`${m.activeOrders} в работе`} progress={m.orders ? Math.round(m.readyForInstallation / m.orders * 100) : 0}/>
-      <OperationalMetric icon={<Ruler size={19}/>} href="/measurements" label="Замеры сегодня" value={m.measurementsToday} detail={`${m.measurementsOverdue} требуют закрытия`}/>
-      <OperationalMetric icon={<TriangleAlert size={19}/>} href="/calendar?state=overdue" label="Просрочено / требует внимания" value={overdueTotal} detail={overdueTotal ? "Нужно проверить сегодня" : "Работа идёт стабильно"} alert={overdueTotal > 0}/>
     </section>
+  );
+}
 
-    <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)]">
-      <SectionShell eyebrow="Приоритет" title="Требует внимания" icon={<TriangleAlert size={20}/>}>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <AttentionLink href="/orders?settlement=without-partner" label="Заказы без партнёра" value={m.ordersWithoutPartner ?? 0} icon={<Factory size={17}/>}/>
-          <AttentionLink href="/orders?settlement=client-payable" label="Клиенты с остатком" value={m.clientsWithBalance ?? 0} icon={<WalletCards size={17}/>}/>
-          <AttentionLink href="/orders?settlement=without-contract" label="Заказы без договора" value={m.ordersWithoutContract ?? 0} icon={<FileWarning size={17}/>}/>
-          <AttentionLink href="/calendar?state=overdue" label="Просроченные задачи" value={m.overdueTasks} icon={<CalendarClock size={17}/>}/>
-          <AttentionLink href="/measurements?filter=needs-closing" label="Замеры, требующие закрытия" value={m.measurementsOverdue} icon={<Ruler size={17}/>}/>
-          <AttentionLink href="/orders?settlement=partner-payable" label="Заказы к выплате партнёру" value={m.partnerPayableOrders ?? 0} icon={<HandCoins size={17}/>}/>
-        </div>
-        {!overdueTotal && !(m.ordersWithoutPartner ?? 0) && !(m.clientsWithBalance ?? 0) && !(m.ordersWithoutContract ?? 0) && <StableState text="Нет новых проблем — операционная работа идёт стабильно."/>}
-      </SectionShell>
+function InstallerDashboard({ data }: { data: InstallerPayload }) {
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-[#101827] p-5">
+      <h2 className="flex items-center gap-2 text-xl font-bold"><CalendarDays /> Монтажи</h2>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {data.installations.map((item) => (
+          <Link key={item.id} href={item.href} className="rounded-xl bg-slate-950 p-4">
+            <b>{item.order.number}</b><p className="text-sm text-slate-400">{item.order.client.name} · {date(item.scheduledAt)}</p>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-      <SectionShell eyebrow="Деньги" title="Финансы" href="/finance" hrefLabel="Открыть финансы" icon={<CircleDollarSign size={20}/>}>
-        <div className="space-y-1">
-          <FinanceRow href="/orders?settlement=client-payable" label="Остаток клиентов" value={money(m.balanceToReceive)} icon={<BanknoteArrowUp size={17}/>}/>
-          <FinanceRow href="/orders?settlement=partner-payable" label="К выплате партнёрам" value={money(m.partnerBalancePayable ?? 0)} icon={<HandCoins size={17}/>}/>
-          <FinanceRow href="/payroll" label="К выплате сотрудникам" value={money(m.payrollBalancePayable ?? 0)} icon={<Users size={17}/>}/>
-          <FinanceRow href="/finance" label="Расходы за месяц" value={money(m.expensesForMonth ?? 0)} icon={<BanknoteArrowDown size={17}/>}/>
-        </div>
-      </SectionShell>
-    </div>
+function SimpleCard({ icon, label, value, href }: { icon: React.ReactNode; label: string; value: string; href: string }) {
+  return <Link href={href} className="rounded-2xl border border-slate-800 bg-[#101827] p-5"><span className="text-blue-300">{icon}</span><p className="mt-3 text-sm text-slate-400">{label}</p><p className="mt-1 text-3xl font-bold">{value}</p></Link>;
+}
 
-    <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.6fr)]">
-      <SectionShell eyebrow="Performance" title="Команда" href="/employees" icon={<UserRoundCheck size={20}/>} aside={`${m.activeEmployees ?? 0} активных`}>
-        <div className="mb-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-white/8 bg-white/8 text-sm">
-          <Link href="/employees" className="bg-black/15 p-3"><span className="block text-xs text-slate-500">Активные сотрудники</span><strong className="mt-1 block text-white">{m.activeEmployees ?? 0}</strong></Link>
-          <Link href="/payroll" className="bg-black/15 p-3"><span className="block text-xs text-slate-500">Payroll к выплате</span><strong className="mt-1 block break-words text-white">{money(m.payrollBalancePayable ?? 0)}</strong></Link>
-        </div>
-        {sortedManagers.length ? <div className="space-y-2">{sortedManagers.map((manager, index) => <article key={manager.managerUserId} className="rounded-2xl border border-white/8 bg-black/15 p-4">
-          <div className="flex min-w-0 items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-amber-300/30 bg-amber-300/10 text-sm font-bold text-amber-200">{index + 1}</span><div className="min-w-0"><h3 className="truncate font-semibold text-white">{manager.manager}</h3><p className="mt-0.5 text-xs text-slate-500">Конверсия {manager.conversion}%</p></div></div>
-            <strong className="shrink-0 text-sm text-white sm:text-base">{money(manager.totalSales)}</strong>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-2 text-xs"><TeamStat label="Заявки" value={manager.newLeads}/><TeamStat label="Заказы" value={manager.orders}/><TeamStat label="Конверсия" value={`${manager.conversion}%`}/></div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-amber-300" style={{ width: `${Math.max(4, Math.round(manager.totalSales / maxManagerSales * 100))}%` }}/></div>
-        </article>)}</div> : <Empty text="Активных менеджеров пока нет."/>}
-        <Link href="/payroll" className="mt-4 inline-flex min-h-11 items-center gap-2 text-sm font-medium text-blue-300 hover:text-blue-200"><BriefcaseBusiness size={16}/>Открыть начисления команды<ArrowUpRight size={15}/></Link>
-      </SectionShell>
+function DashboardSkeleton() {
+  return <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">{Array.from({ length: 8 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-slate-900" />)}</div>;
+}
 
-      <SectionShell eyebrow="Operations" title="Производство" href="/production" icon={<Factory size={20}/>}>
-        <div className="mb-5 flex h-2 overflow-hidden rounded-full bg-slate-800">{production.filter((item) => item.value > 0).map((item) => <span key={item.label} className={item.tone} style={{ width: `${item.value / productionTotal * 100}%` }}/>)}</div>
-        <div className="grid grid-cols-2 gap-3">{production.map((item) => <Link href="/production" key={item.label} className="rounded-xl border border-white/8 bg-black/10 p-3 transition hover:border-white/20"><div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${item.tone}`}/><span className="text-xs text-slate-400">{item.label}</span></div><strong className={`mt-2 block text-2xl ${item.label === "Просрочено" && item.value ? "text-red-300" : "text-white"}`}>{item.value}</strong></Link>)}</div>
-        {!production.some((item) => item.value) && <StableState text="Производственных задач за период нет."/>}
-      </SectionShell>
-    </div>
+function FinanceEntryDialog({ direction, onClose, onSaved }: { direction: "INCOME" | "EXPENSE"; onClose: () => void; onSaved: () => Promise<void> }) {
+  const income = direction === "INCOME";
+  const categories = income ? incomeCategories : expenseCategories;
+  const [form, setForm] = useState<{ amount: string; category: string; operationDate: string; comment: string; orderId: string }>({ amount: "", category: categories[0][0], operationDate: today(), comment: "", orderId: "" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true); setError("");
+    try {
+      const response = await fetch("/api/company-finance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({ direction, type: income ? "MANUAL_INCOME" : "MANUAL_EXPENSE", category: form.category, amount: Number(form.amount), operationDate: form.operationDate, comment: form.comment, orderId: form.orderId ? Number(form.orderId) : undefined }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? `Не удалось добавить ${income ? "доход" : "расход"}`);
+      await onSaved();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Не удалось добавить ${income ? "доход" : "расход"}`);
+    } finally { setSaving(false); }
+  }
+  const control = "mt-1 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white";
+  return <div role="dialog" aria-modal="true" className="fixed inset-0 z-[90] grid place-items-end bg-black/70 sm:place-items-center sm:p-4">
+    <form onSubmit={submit} className="max-h-[92vh] w-full overflow-y-auto rounded-t-2xl border border-slate-700 bg-[#101827] p-5 sm:max-w-lg sm:rounded-2xl">
+      <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Добавить {income ? "доход" : "расход"}</h2><p className="text-sm text-slate-400">{income ? "Дополнительный доход компании" : "Начисленный расход компании"}</p></div><button type="button" onClick={onClose} aria-label="Закрыть" className="grid size-11 place-items-center rounded-xl border border-slate-700"><X /></button></div>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <label className="text-sm text-slate-300">Сумма<input required autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className={control} /></label>
+        <label className="text-sm text-slate-300">Категория<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={control}>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="text-sm text-slate-300">Дата<input required type="date" value={form.operationDate} onChange={(e) => setForm({ ...form, operationDate: e.target.value })} className={control} /></label>
+        <label className="text-sm text-slate-300">ID заказа <span className="text-slate-500">(необязательно)</span><input type="number" min="1" inputMode="numeric" value={form.orderId} onChange={(e) => setForm({ ...form, orderId: e.target.value })} className={control} /></label>
+        <label className="text-sm text-slate-300 sm:col-span-2">Комментарий<textarea rows={3} value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} className={`${control} py-3`} /></label>
+      </div>
+      {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}
+      <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" onClick={onClose} className="min-h-11 rounded-xl px-4 text-slate-300">Отмена</button><button disabled={saving} className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 font-semibold disabled:opacity-50 ${income ? "bg-emerald-700" : "bg-blue-600"}`}><Banknote size={17}/>{saving ? "Сохранение…" : `Добавить ${income ? "доход" : "расход"}`}</button></div>
+    </form>
   </div>;
 }
-
-function DirectorActivityFeed({ activities }: { activities: ActivityItem[] }) {
-  return <SectionShell eyebrow="Timeline" title="Последние важные действия" href="/reports" icon={<Activity size={20}/>}>
-    {activities.length ? <div className="space-y-1">{activities.map((item, index) => <Link key={item.id} href={item.href} className="group grid min-w-0 grid-cols-[36px_minmax(0,1fr)] gap-3 rounded-xl p-2 transition hover:bg-white/5 sm:grid-cols-[36px_minmax(0,1fr)_auto] sm:items-center">
-      <span className="relative grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-slate-900 text-amber-300"><Activity size={15}/>{index < activities.length - 1 && <span className="absolute left-1/2 top-9 h-4 w-px bg-white/10"/>}</span>
-      <span className="min-w-0"><strong className="block truncate text-sm text-white group-hover:text-amber-200">{item.subject}</strong><span className="mt-0.5 block truncate text-xs text-slate-400">{item.title} · {item.user ?? "Система"}</span></span>
-      <time className="col-start-2 text-xs text-slate-500 sm:col-start-3 sm:row-start-1">{new Date(item.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time>
-    </Link>)}</div> : <StableState text="Важных действий пока нет — новые события появятся здесь."/>}
-  </SectionShell>;
-}
-
-function ManagerSalesDashboard({ metrics: m, attention }: { metrics: SalesMetrics; attention: MeasurementAttention[] }) {
-  return <><div className="grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4">
-    <Metric href="/clients" label="Мои новые заявки" value={m.newLeads} featured/>
-    <Metric href="/clients" label="Мои активные заявки" value={m.activeLeads} featured/>
-    <Metric href="/orders" label="Мои заказы" value={m.orders} featured/>
-    <Metric href="/orders" label="Мои продажи" value={money(m.totalSales)} featured/>
-    <Metric href="/clients" label="Мои отправленные КП" value={m.proposalsSent}/>
-    <Metric href="/measurements" label="Мои замеры сегодня" value={m.measurementsToday}/>
-    <Metric href="/calendar" label="Мои задачи сегодня" value={m.tasksToday}/>
-    <Metric href="/calendar?state=overdue" label="Мои просроченные" value={m.overdueNextActions + m.overdueTasks + m.overdueOrders} alert/>
-  </div><Panel title="Требует внимания после замера">{attention.length ? <div className="grid gap-2 md:grid-cols-2">{attention.map((item) => <Link key={item.id} href={`/clients/${item.client.id}`} className="min-w-0 rounded-xl border border-amber-800/60 bg-amber-950/20 p-3 hover:border-amber-500"><b className="block truncate text-white">{item.client.name || item.client.phone}</b><span className="mt-1 block break-words text-sm text-amber-200">{item.nextActionComment || "Замер выполнен — требуется работа менеджера"}</span><time className="mt-2 block text-xs text-slate-500">до {new Date(item.nextActionAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link>)}</div> : <Empty text="Новых результатов замеров, требующих внимания, нет."/>}</Panel></>;
-}
-
-function LegacyActivityFeed({ activities }: { activities: ActivityItem[] }) {
-  return activities.length ? <div className="divide-y divide-slate-800">{activities.map((item) => <Link key={item.id} href={item.href} className="flex min-w-0 flex-col gap-1 py-3 hover:text-blue-300 sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0"><strong className="block truncate text-white">{item.subject}</strong><span className="block truncate text-sm text-slate-400">{item.title} · {item.user ?? "Система"}</span></span><time className="shrink-0 text-xs text-slate-500">{new Date(item.createdAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link>)}</div> : <Empty text="Важных действий пока нет."/>;
-}
-
-function AccountantDashboard({ data }: { data: AccountantPayload }) { const m = data.metrics; return <><div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><Metric href="/finance" label="Поступления" value={money(m.receipts)} featured/><Metric href="/finance" label="Расходы" value={money(m.expenses)} featured/><Metric href="/partners" label="К выплате партнёрам" value={money(m.partnerPayable)}/><Metric href="/payroll" label="Payroll к выплате" value={money(m.payrollPayable)}/><Metric href="/payroll" label="Ожидают выплаты" value={m.pendingPayrollPayments}/><Metric href="/finance" label="Требуют внимания" value={m.attentionOperations} alert/></div><Panel title="Последние финансовые операции" href="/finance">{data.recentFinance.length ? <div className="divide-y divide-slate-800">{data.recentFinance.map((item) => <div key={item.id} className="flex items-center justify-between gap-3 py-3 text-sm"><span className="min-w-0"><b className="block truncate text-white">{item.category}</b><span className="block truncate text-slate-400">{item.comment || item.type}</span></span><b className={item.direction === "INCOME" ? "text-emerald-300" : "text-red-300"}>{item.direction === "INCOME" ? "+" : "−"}{money(item.amount)}</b></div>)}</div> : <Empty text="Финансовых операций за период нет."/>}</Panel></>; }
-function ProductionDashboard({ data }: { data: ProductionPayload }) { const m = data.metrics; return <><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric href="/production" label="На заготовке" value={m.preparation} featured/><Metric href="/production" label="На покраске" value={m.painting} featured/><Metric href="/production" label="Готово к установке" value={m.readyForInstallation}/><Metric href="/production" label="Просрочено" value={m.overdue} alert/><Metric href="/calendar" label="Задачи сегодня" value={m.tasksToday}/><Metric href="/production" label="Требуют внимания" value={m.attentionOrders} alert/><Metric href="/warehouse" label="Материалов не хватает" value={m.missingMaterials} alert/><Metric href="/warehouse" label="Материалы готовы" value={m.readyMaterials}/></div><Panel title="Заказы, требующие внимания" href="/production">{data.jobs.length ? <div className="grid gap-2 md:grid-cols-2">{data.jobs.map((job) => <Link key={job.id} href={job.href} className="min-w-0 rounded-xl border border-slate-800 p-3 hover:border-blue-500"><b className="block truncate text-white">{job.order.number} · {job.order.client.name}</b><span className="text-sm text-slate-400">{job.stage} · {job.percent}% · {job.order.client.city}</span></Link>)}</div> : <Empty text="Работа ещё не начата."/>}</Panel></>; }
-function InstallerDashboard({ data }: { data: InstallerPayload }) { const m = data.metrics; return <><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric href="/production" label="Установки сегодня" value={m.today} featured/><Metric href="/production" label="Предстоящие" value={m.upcoming} featured/><Metric href="/production" label="Просроченные" value={m.overdue} alert/><Metric href="/orders" label="Назначенные заказы" value={m.assigned}/></div><Panel title="Следующая установка" href="/production">{data.nextInstallation ? <Link href={data.nextInstallation.href} className="block min-w-0 rounded-xl border border-blue-500/40 bg-blue-500/10 p-4"><b className="block truncate text-white">{data.nextInstallation.order.client.name} · {data.nextInstallation.order.number}</b><span className="block truncate text-sm text-slate-300">{data.nextInstallation.order.client.city} · {data.nextInstallation.order.address}</span><time className="mt-2 block text-blue-300">{new Date(data.nextInstallation.scheduledAt).toLocaleString("ru-RU", { timeZone: "Asia/Almaty" })}</time></Link> : <Empty text="Назначенных установок нет."/>}</Panel></>; }
-
-function HeroMetric({ icon, label, value, href }: { icon: ReactNode; label: string; value: string; href: string }) { return <Link href={href} className="group min-w-0 bg-[#0e1727] p-4 transition hover:bg-[#111d30] sm:p-5"><span className="flex items-center gap-2 text-xs font-medium text-slate-400"><span className="text-amber-300">{icon}</span>{label}</span><strong className="mt-4 block break-words text-xl font-semibold tracking-tight text-white group-hover:text-amber-100 sm:text-2xl">{value}</strong><span className="mt-3 flex items-center gap-1 text-xs text-slate-500 group-hover:text-slate-300">Открыть<ArrowUpRight size={13}/></span></Link>; }
-function OperationalMetric({ icon, label, value, detail, href, progress, alert = false }: { icon: ReactNode; label: string; value: number; detail: string; href: string; progress?: number; alert?: boolean }) { const safeProgress = Math.min(100, Math.max(0, progress ?? 0)); return <Link href={href} className="group min-w-0 rounded-2xl border border-white/8 bg-[#101827] p-4 transition hover:border-amber-300/30 sm:p-5"><div className="flex items-center justify-between gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-white/5 text-slate-300 group-hover:text-amber-300">{icon}</span>{alert && <span className="rounded-full bg-red-400/10 px-2 py-1 text-[11px] font-semibold text-red-300">Внимание</span>}</div><div className="mt-5 flex items-end justify-between gap-3"><div className="min-w-0"><p className="text-sm text-slate-400">{label}</p><strong className={`mt-1 block text-3xl font-semibold ${alert ? "text-red-200" : "text-white"}`}>{value}</strong></div><ArrowUpRight size={17} className="mb-1 shrink-0 text-slate-600 group-hover:text-amber-300"/></div><p className="mt-3 truncate text-xs text-slate-500">{detail}</p>{progress !== undefined && <div className="mt-3 h-1 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-amber-300" style={{ width: `${safeProgress}%` }}/></div>}</Link>; }
-function AttentionLink({ label, value, href, icon }: { label: string; value: number; href: string; icon: ReactNode }) { return <Link href={href} className="group flex min-h-16 items-center gap-3 rounded-xl border border-white/8 bg-black/10 p-3 transition hover:border-amber-300/35 hover:bg-amber-300/5"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${value > 0 ? "bg-amber-300/10 text-amber-300" : "bg-white/5 text-slate-500"}`}>{icon}</span><span className="min-w-0 flex-1 text-sm text-slate-300">{label}</span><strong className={value > 0 ? "text-amber-200" : "text-slate-500"}>{value}</strong><ArrowUpRight size={14} className="text-slate-600 group-hover:text-amber-300"/></Link>; }
-function FinanceRow({ label, value, href, icon }: { label: string; value: string; href: string; icon: ReactNode }) { return <Link href={href} className="group flex min-w-0 items-center gap-3 rounded-xl px-2 py-3 transition hover:bg-white/5"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-white/5 text-slate-400 group-hover:text-amber-300">{icon}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs text-slate-500">{label}</span><strong className="mt-0.5 block break-words text-sm text-white sm:text-base">{value}</strong></span><ArrowUpRight size={14} className="shrink-0 text-slate-600 group-hover:text-amber-300"/></Link>; }
-function TeamStat({ label, value }: { label: string; value: number | string }) { return <span className="rounded-lg bg-white/[0.03] p-2"><span className="block text-slate-500">{label}</span><strong className="mt-1 block text-sm text-slate-200">{value}</strong></span>; }
-function StableState({ text }: { text: string }) { return <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-400/15 bg-emerald-400/5 p-3 text-sm text-emerald-200"><CheckCircle2 size={17} className="shrink-0"/>{text}</div>; }
-function SectionShell({ eyebrow, title, icon, href, hrefLabel = "Открыть", aside, children }: { eyebrow: string; title: string; icon: ReactNode; href?: string; hrefLabel?: string; aside?: string; children: ReactNode }) { return <section className="min-w-0 rounded-[24px] border border-white/8 bg-[#101827] p-4 shadow-lg shadow-black/10 sm:p-5"><div className="mb-5 flex min-w-0 items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/8 bg-white/[0.03] text-amber-300">{icon}</span><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500">{eyebrow}</p><h2 className="mt-1 truncate text-lg font-semibold text-white sm:text-xl">{title}</h2></div></div>{href ? <Link href={href} className="inline-flex min-h-10 shrink-0 items-center gap-1 text-xs font-semibold text-blue-300 hover:text-blue-200">{hrefLabel}<ArrowUpRight size={14}/></Link> : aside && <span className="shrink-0 rounded-full bg-white/5 px-3 py-1.5 text-xs text-slate-400">{aside}</span>}</div>{children}</section>; }
-function Metric({ label, value, href, alert = false, featured = false }: { label: string; value: number | string; href: string; alert?: boolean; featured?: boolean }) { return <Link href={href} className={`min-w-0 rounded-xl border p-3 transition hover:border-blue-500 sm:p-4 ${featured ? "border-blue-500/40 bg-blue-500/10" : "border-slate-700 bg-[#101827]"}`}><p className="text-xs text-slate-400 sm:text-sm">{label}</p><p className={`mt-2 break-words font-bold ${featured ? "text-xl sm:text-3xl" : "text-lg sm:text-2xl"} ${alert && Number(value) > 0 ? "text-red-300" : "text-white"}`}>{value}</p></Link>; }
-function Panel({ title, href, children }: { title: string; href?: string; children: ReactNode }) { return <section className="rounded-2xl border border-slate-700 bg-[#101827] p-4 sm:p-5"><div className="mb-4 flex items-center justify-between gap-3"><h2 className="text-lg font-bold text-white sm:text-xl">{title}</h2>{href && <Link href={href} className="shrink-0 text-sm text-blue-300">Открыть</Link>}</div>{children}</section>; }
-function Empty({ text }: { text: string }) { return <p className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-400">{text}</p>; }

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { compareRequestHash } from "@/lib/idempotency";
+import { MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 
 export const COMPANY_EXPENSE_CATEGORIES = ["SALARY", "MANAGER_BONUS", "ADVERTISING", "RENT", "FUEL", "DELIVERY", "TAX", "ACCOUNTING", "COMMUNICATION", "OFFICE", "SERVICES", "EQUIPMENT", "COMPANY_LOAN", "OTHER"] as const;
 export const PERSONAL_CATEGORIES = ["FOOD", "PERSONAL_FUEL", "LOAN", "HOUSING", "CAR", "TRAVEL", "FAMILY", "PERSONAL_PURCHASE", "OTHER"] as const;
@@ -8,10 +9,10 @@ export type LedgerInput = { type: string; category: string; direction: "INCOME" 
 export async function getCompanyFinance(from?: Date, to?: Date) {
   const where = from || to ? { operationDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {};
   const [entries, completedOrders] = await Promise.all([
-    prisma.companyLedgerEntry.findMany({ where, include: { order: { select: { number: true } }, author: { select: { name: true } } }, orderBy: [{ operationDate: "desc" }, { id: "desc" }] }),
-    prisma.order.findMany({ where: { deletedAt: null, status: "Сдано", ...(from || to ? { updatedAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) }, select: { companyProfit: true } }),
+    prisma.companyLedgerEntry.findMany({ where: { ...where, voidedAt: null }, include: { order: { select: { number: true } }, author: { select: { name: true } } }, orderBy: [{ operationDate: "desc" }, { id: "desc" }] }),
+    prisma.order.findMany({ where: { deletedAt: null, lifecycle: "COMPLETED", amount: { gt: 0 }, partnerPrice: { gte: MIN_PRODUCTION_PRICE }, partnerAgreedAt: { not: null }, ...(from || to ? { completedAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}) }, select: { amount: true, partnerPrice: true } }),
   ]);
-  const orderProfit = completedOrders.reduce((sum, order) => sum + Number(order.companyProfit), 0);
+  const orderProfit = completedOrders.reduce((sum, order) => sum + Number(order.amount) - Number(order.partnerPrice), 0);
   const otherIncome = entries.filter((entry) => entry.direction === "INCOME").reduce((sum, entry) => sum + Number(entry.amount), 0);
   const operatingExpenses = entries.filter((entry) => entry.direction === "EXPENSE" && entry.affectsProfit).reduce((sum, entry) => sum + Number(entry.amount), 0);
   return { entries, totals: { orderProfit, otherIncome, operatingExpenses, companyNetProfit: orderProfit + otherIncome - operatingExpenses } };

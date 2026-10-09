@@ -2,6 +2,7 @@ import { Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import {
+  compareRequestHash,
   createRequestHash,
   idempotencyConflict,
   readIdempotencyKey,
@@ -11,8 +12,14 @@ import {
   normalizeOrderStatus,
   ORDER_STATUSES,
 } from "@/lib/orders/lifecycle";
+import { PAYMENT_METHODS } from "@/lib/orders/registration";
+import { hasProductionPrice, isProductionPriceAmount } from "@/lib/orders/production-price";
+import { partnerOnlySettlement, stripPartnerAllocation } from "@/lib/orders/settlement-redaction";
 import { prisma } from "@/lib/prisma";
-import { assignPartnerToOrder } from "@/lib/services/partner.service";
+import {
+  assignPartnerToOrder,
+  setProductionPrice,
+} from "@/lib/services/partner.service";
 import { adjustOrderAmount } from "@/lib/services/payment.service";
 import { requirePermission } from "@/lib/server-auth";
 import { canAccessOrder360 } from "@/lib/services/order360.service";
@@ -25,16 +32,39 @@ import {
 type Context = { params: Promise<{ id: string }> };
 const include = {
   client: true,
-  partner: true,
+  partner: {
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      city: true,
+      active: true,
+    },
+  },
   deletedBy: { select: { id: true, name: true } },
-  managerUser: { include: { payrollProfile: { select: { id: true } } } },
+  managerUser: {
+    select: {
+      id: true,
+      name: true,
+      role: true,
+      payrollProfile: { select: { id: true } },
+    },
+  },
   measurements: {
     include: {
-      measurerUser: { include: { payrollProfile: { select: { id: true } } } },
+      measurerUser: {
+        select: {
+          id: true,
+          name: true,
+          role: true,
+          payrollProfile: { select: { id: true } },
+        },
+      },
     },
   },
   payments: {
-    include: { partner: true },
+    include: { partner: { select: { id: true, name: true } } },
     orderBy: [{ operationDate: "desc" as const }, { id: "desc" as const }],
   },
   partnerAssignmentHistory: {
@@ -67,8 +97,22 @@ const idOf = (value: string) => {
   const id = Number(value);
   return Number.isInteger(id) && id > 0 ? id : null;
 };
+const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
+const paymentMethods = new Set<string>(PAYMENT_METHODS.map((item) => item.value));
 const text = (value: unknown, max = 1000) =>
   typeof value === "string" ? value.trim().slice(0, max) : null;
+const dateValue = (value: unknown) => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value))
+    return null;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value
+    ? null
+    : parsed;
+};
+const todayAtAlmaty = () =>
+  new Date(Date.now() + ALMATY_OFFSET_MS).toISOString().slice(0, 10);
+const isDirector = (role: Role) =>
+  role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 
 async function canAccess(
   id: number,
@@ -94,10 +138,32 @@ function redactForRole<T extends Record<string, unknown>>(
   order: T,
   role: Role,
 ) {
-  if (role === Role.DIRECTOR) return order;
-  const result: Record<string, unknown> = { ...order };
+  const result: Record<string, unknown> = {
+    ...order,
+    productionPrice: hasProductionPrice(order.partnerPrice, order.partnerAgreedAt) ? order.partnerPrice : null,
+  };
+  if (role === Role.DIRECTOR) return result;
+  if (role === Role.OPERATIONS_DIRECTOR) {
+    delete result.companyProfit;
+    delete result.payrollAccruals;
+    result.settlement = stripPartnerAllocation(result.settlement);
+    if (result.settlement && typeof result.settlement === "object") {
+      const settlement = result.settlement as Record<string, unknown>;
+      delete settlement.manager;
+      delete settlement.measurer;
+    }
+    if (Array.isArray(result.calculations))
+      result.calculations = result.calculations.map((value) => {
+        const calculation = { ...(value as Record<string, unknown>) };
+        delete calculation.grossDifference;
+        delete calculation.grossProfit;
+        return calculation;
+      });
+    return result;
+  }
   if (role === Role.ACCOUNTANT) {
     delete result.companyProfit;
+    result.settlement = stripPartnerAllocation(result.settlement);
     if (Array.isArray(result.calculations))
       result.calculations = result.calculations.map((value) => {
         const calculation = { ...(value as Record<string, unknown>) };
@@ -117,21 +183,7 @@ function redactForRole<T extends Record<string, unknown>>(
     delete result.calculations;
     delete result.payrollAccruals;
     delete result.managerUser;
-    if (result.settlement && typeof result.settlement === "object") {
-      const settlement = result.settlement as Record<string, unknown>;
-      delete settlement.client;
-      if (settlement.partner && typeof settlement.partner === "object") {
-        const partner = settlement.partner as Record<string, unknown>;
-        partner.payouts = Array.isArray(partner.payouts)
-          ? partner.payouts.filter(
-              (item) =>
-                (item as Record<string, unknown>).partnerId ===
-                result.partnerId,
-            )
-          : [];
-        delete partner.assignments;
-      }
-    }
+    result.settlement = partnerOnlySettlement(result.settlement, result.partnerId);
     return result;
   }
   for (const field of [
@@ -163,6 +215,7 @@ function redactForRole<T extends Record<string, unknown>>(
     role === Role.INSTALLER ||
     role === Role.MEASURER
   ) {
+    delete result.productionPrice;
     delete result.amount;
     delete result.prepayment;
     delete result.balance;
@@ -204,9 +257,9 @@ export async function GET(_: Request, { params }: Context) {
   const id = idOf((await params).id);
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (
-    !(await canAccess(id, role, auth.session!.user.id, role === Role.DIRECTOR))
+    !(await canAccess(id, role, auth.session!.user.id, isDirector(role)))
   )
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   const order = await prisma.order.findUnique({ where: { id }, include });
@@ -237,7 +290,7 @@ export async function PATCH(request: Request, { params }: Context) {
   const id = idOf((await params).id);
   if (!id)
     return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  const role = auth.session!.user.role as Role;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
   if (!(await canAccess(id, role, auth.session!.user.id)))
     return NextResponse.json({ error: "Заказ не найден" }, { status: 404 });
   try {
@@ -264,7 +317,7 @@ export async function PATCH(request: Request, { params }: Context) {
         { status: 400 },
       );
     if (body.action === "commercialAdjustment") {
-      if (role !== Role.DIRECTOR)
+      if (!isDirector(role) && role !== Role.MANAGER)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
@@ -288,6 +341,37 @@ export async function PATCH(request: Request, { params }: Context) {
       });
       return NextResponse.json(result, { status: result.created ? 201 : 200 });
     }
+    if (body.action === "setProductionPrice") {
+      if (!isDirector(role) && role !== Role.MANAGER)
+        return NextResponse.json(
+          { error: "Недостаточно прав" },
+          { status: 403 },
+        );
+      const amount = Number(body.productionPrice);
+      if (!isProductionPriceAmount(amount))
+        return NextResponse.json(
+          { error: "Укажите реальную цену производства, не менее 10 000 ₸" },
+          { status: 400 },
+        );
+      const idempotency = readIdempotencyKey(request);
+      if ("response" in idempotency) return idempotency.response;
+      const payload = { orderId: id, productionPrice: amount };
+      const result = await setProductionPrice({
+        orderId: id,
+        amount,
+        actor: {
+          id: Number(auth.session!.user.id),
+          name: auth.session!.user.name ?? "Сотрудник",
+          role,
+        },
+        idempotencyKey: idempotency.key,
+        requestHash: createRequestHash(payload),
+      });
+      return NextResponse.json(
+        redactForRole(result.order as unknown as Record<string, unknown>, role),
+        { status: result.created ? 201 : 200 },
+      );
+    }
     const financial = [
       "prepayment",
       "balance",
@@ -303,6 +387,15 @@ export async function PATCH(request: Request, { params }: Context) {
             "Расчётные финансовые поля меняются только через финансовые операции",
         },
         { status: 400 },
+      );
+    const designFields = ["designStyle", "designNotes"];
+    if (
+      designFields.some((key) => key in body) &&
+      !(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(role)
+    )
+      return NextResponse.json(
+        { error: "Недостаточно прав для изменения 3D-брифа" },
+        { status: 403 },
       );
     if (role === Role.PARTNER) {
       const allowed = new Set([
@@ -320,24 +413,21 @@ export async function PATCH(request: Request, { params }: Context) {
         );
     }
     if (body.action === "assignPartner") {
-      if (role !== Role.DIRECTOR)
+      if (!isDirector(role) && role !== Role.MANAGER)
         return NextResponse.json(
           { error: "Недостаточно прав" },
           { status: 403 },
         );
-      const partnerId = Number(body.partnerId),
-        partnerPrice = Number(body.partnerPrice);
-      const partnerAgreedAt = body.partnerAgreedAt
-        ? new Date(String(body.partnerAgreedAt))
-        : new Date();
-      const partnerReason = text(body.reason, 1000);
+      const partnerId = Number(body.partnerId);
+      const partnerPrice =
+        body.partnerPrice === undefined || body.partnerPrice === ""
+          ? undefined
+          : Number(body.partnerPrice);
       if (
         !Number.isInteger(partnerId) ||
         partnerId <= 0 ||
-        !Number.isFinite(partnerPrice) ||
-        partnerPrice < 0 ||
-        Number.isNaN(partnerAgreedAt.getTime()) ||
-        !partnerReason
+        (partnerPrice !== undefined &&
+          !isProductionPriceAmount(partnerPrice))
       )
         return NextResponse.json(
           { error: "Некорректные данные цеха" },
@@ -347,12 +437,10 @@ export async function PATCH(request: Request, { params }: Context) {
         orderId: id,
         partnerId,
         partnerPrice,
-        partnerAgreedAt,
         manager: auth.session!.user.name ?? undefined,
         authorId: Number(auth.session!.user.id),
-        reason: partnerReason,
         directorConfirmed:
-          role === Role.DIRECTOR && body.directorConfirmed === true,
+          isDirector(role) && body.directorConfirmed === true,
       });
       return updated
         ? NextResponse.json(
@@ -370,6 +458,48 @@ export async function PATCH(request: Request, { params }: Context) {
           );
     }
 
+    const changesOrderDate = Object.hasOwn(body, "orderReceivedAt");
+    if (changesOrderDate && !isDirector(role) && role !== Role.MANAGER)
+      return NextResponse.json(
+        { error: "Фактическую дату заказа подтверждает менеджер или директор" },
+        { status: 403 },
+      );
+    const nextOrderDate = changesOrderDate
+      ? dateValue(body.orderReceivedAt)
+      : null;
+    if (
+      changesOrderDate &&
+      (!nextOrderDate || nextOrderDate.toISOString().slice(0, 10) > todayAtAlmaty())
+    )
+      return NextResponse.json(
+        { error: "Укажите фактическую дату заказа, не позднее сегодняшнего дня" },
+        { status: 400 },
+      );
+    const changesPromisedAt = Object.hasOwn(body, "promisedAt");
+    if (changesPromisedAt && !isDirector(role) && role !== Role.MANAGER)
+      return NextResponse.json(
+        { error: "Срок заказа указывает менеджер или директор" },
+        { status: 403 },
+      );
+    const nextPromisedAt = changesPromisedAt
+      ? dateValue(body.promisedAt)
+      : null;
+    if (!nextPromisedAt && changesPromisedAt)
+      return NextResponse.json(
+        { error: "Укажите обещанный срок заказа" },
+        { status: 400 },
+      );
+    if (
+      nextPromisedAt &&
+      nextOrderDate &&
+      nextPromisedAt.toISOString().slice(0, 10) <
+        nextOrderDate.toISOString().slice(0, 10)
+    )
+      return NextResponse.json(
+        { error: "Срок заказа не может быть раньше даты заказа" },
+        { status: 400 },
+      );
+
     const idempotency = readIdempotencyKey(request);
     if ("response" in idempotency) return idempotency.response;
     const status =
@@ -385,6 +515,10 @@ export async function PATCH(request: Request, { params }: Context) {
       partnerComment: body.partnerComment ?? null,
       readyForInstallation: body.readyForInstallation,
       installationCompleted: body.installationCompleted,
+      designStyle: body.designStyle ?? null,
+      designNotes: body.designNotes ?? null,
+      orderReceivedAt: nextOrderDate?.toISOString() ?? null,
+      promisedAt: nextPromisedAt?.toISOString() ?? null,
     };
     const requestHash = createRequestHash(payload);
     const historyKey =
@@ -395,11 +529,27 @@ export async function PATCH(request: Request, { params }: Context) {
       !status && comment && idempotency.key
         ? `order-comment:${id}:${idempotency.key}`
         : null;
+    const orderDateKey = changesOrderDate
+      ? `order-date:${id}:${idempotency.key}`
+      : null;
+    const promisedAtKey = changesPromisedAt
+      ? `order-promised-at:${id}:${idempotency.key}`
+      : null;
 
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.order.findUnique({
         where: { id },
-        select: { status: true },
+        select: {
+          status: true,
+          clientId: true,
+          amount: true,
+          prepayment: true,
+          balance: true,
+          partnerPrice: true,
+          companyProfit: true,
+          orderReceivedAt: true,
+          promisedAt: true,
+        },
       });
       if (!current) return null;
       if (commentKey) {
@@ -424,7 +574,37 @@ export async function PATCH(request: Request, { params }: Context) {
           return tx.order.findUnique({ where: { id }, include });
         }
       }
+      if (orderDateKey) {
+        const existing = await tx.orderEvent.findUnique({
+          where: { idempotencyKey: orderDateKey },
+          select: { requestHash: true },
+        });
+        if (existing) {
+          if (existing.requestHash !== requestHash)
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return tx.order.findUnique({ where: { id }, include });
+        }
+      }
+      if (promisedAtKey) {
+        const existing = await tx.orderEvent.findUnique({
+          where: { idempotencyKey: promisedAtKey },
+          select: { requestHash: true },
+        });
+        if (existing) {
+          if (existing.requestHash !== requestHash)
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          return tx.order.findUnique({ where: { id }, include });
+        }
+      }
       const data: Prisma.OrderUpdateInput = {};
+      if (role !== Role.PARTNER && "clientName" in body) {
+        const clientName = text(body.clientName, 200);
+        if (!clientName) throw new Error("INVALID_CLIENT_NAME");
+        await tx.client.update({
+          where: { id: current.clientId },
+          data: { name: clientName },
+        });
+      }
       if (status) {
         if (!canTransitionOrderStatus(role, current.status, status))
           throw new Error("TRANSITION_FORBIDDEN");
@@ -439,16 +619,93 @@ export async function PATCH(request: Request, { params }: Context) {
         ] as const)
           if (typeof body[key] === "string")
             data[key] = text(body[key], 500) ?? "";
+      if (role !== Role.PARTNER && "paymentMethod" in body) {
+        const paymentMethod = text(body.paymentMethod, 40);
+        if (!paymentMethod || !paymentMethods.has(paymentMethod))
+          throw new Error("INVALID_PAYMENT_METHOD");
+        data.paymentMethod = paymentMethod;
+      }
+      if (role !== Role.PARTNER && typeof body.designStyle === "string")
+        data.designStyle = text(body.designStyle, 120) ?? "";
+      if (role !== Role.PARTNER && typeof body.designNotes === "string")
+        data.designNotes = text(body.designNotes, 2000) ?? "";
+      if (role !== Role.PARTNER && changesOrderDate && nextOrderDate) {
+        data.orderReceivedAt = nextOrderDate;
+        data.orderDateNeedsReview = false;
+      }
+      if (role !== Role.PARTNER && changesPromisedAt && nextPromisedAt) {
+        const effectiveOrderDate = nextOrderDate ?? current.orderReceivedAt;
+        if (
+          nextPromisedAt.toISOString().slice(0, 10) <
+          effectiveOrderDate.toISOString().slice(0, 10)
+        )
+          throw new Error("ORDER_DEADLINE_BEFORE_ORDER_DATE");
+        data.promisedAt = nextPromisedAt;
+      }
       if (role !== Role.PARTNER && "amount" in body) {
         const amount = Number(body.amount);
         if (!Number.isFinite(amount) || amount < 0)
           throw new Error("INVALID_AMOUNT");
-        const hasFinancialHistory = await tx.payment.count({
-          where: { orderId: id },
-        });
-        if (hasFinancialHistory)
-          throw new Error("COMMERCIAL_ADJUSTMENT_REQUIRED");
-        data.amount = amount;
+        const nextAmount = new Prisma.Decimal(amount);
+        if (!nextAmount.equals(current.amount)) {
+          const reason = text(body.adjustmentReason, 1000) ||
+            "Изменение суммы продажи при редактировании заказа";
+          const adjustmentKey = `order-edit-amount:${id}:${idempotency.key}`;
+          const adjustmentHash = createRequestHash({ orderId: id, newAmount: amount });
+          const existing = await tx.commercialAdjustment.findUnique({
+            where: { idempotencyKey: adjustmentKey },
+            select: { requestHash: true },
+          });
+          if (existing && !compareRequestHash(existing.requestHash, adjustmentHash))
+            throw new Error("IDEMPOTENCY_CONFLICT");
+          const nextBalance = nextAmount.sub(current.prepayment);
+          const nextProfit = nextAmount.sub(current.partnerPrice);
+          if (!existing) {
+            await tx.commercialAdjustment.create({
+              data: {
+                orderId: id,
+                previousAmount: current.amount,
+                newAmount: nextAmount,
+                balanceImpact: nextAmount.sub(current.amount),
+                reason,
+                authorId: Number(auth.session!.user.id),
+                idempotencyKey: adjustmentKey,
+                requestHash: adjustmentHash,
+              },
+            });
+            await tx.financeAuditEvent.create({
+              data: {
+                orderId: id,
+                action: "COMMERCIAL_ADJUSTMENT",
+                entityType: "Order",
+                entityId: id,
+                before: {
+                  amount: current.amount.toString(),
+                  balance: current.balance.toString(),
+                  companyProfit: current.companyProfit.toString(),
+                },
+                after: {
+                  amount: nextAmount.toString(),
+                  balance: nextBalance.toString(),
+                  companyProfit: nextProfit.toString(),
+                },
+                reason,
+                authorId: Number(auth.session!.user.id),
+              },
+            });
+            await tx.orderEvent.create({
+              data: {
+                orderId: id,
+                title: "Коммерческая корректировка",
+                description: `${current.amount.toString()} → ${nextAmount.toString()} · ${reason}`,
+                user: auth.session!.user.name ?? "Сотрудник",
+              },
+            });
+          }
+          data.amount = nextAmount;
+          data.balance = nextBalance;
+          data.companyProfit = nextProfit;
+        }
       }
       if ("partnerPlannedReadyAt" in body)
         data.partnerPlannedReadyAt = body.partnerPlannedReadyAt
@@ -461,6 +718,38 @@ export async function PATCH(request: Request, { params }: Context) {
       if (typeof body.installationCompleted === "boolean")
         data.installationCompleted = body.installationCompleted;
       await tx.order.update({ where: { id }, data });
+      if (orderDateKey && nextOrderDate) {
+        const format = (value: Date) =>
+          new Intl.DateTimeFormat("ru-RU", {
+            timeZone: "Asia/Almaty",
+          }).format(value);
+        await tx.orderEvent.create({
+          data: {
+            orderId: id,
+            title: "Фактическая дата заказа подтверждена",
+            description: `Подтверждено: ${format(nextOrderDate)}. Отчёты продаж обновлены; бонус менеджера будет рассчитан в фактическом месяце заказа.`,
+            user: auth.session!.user.name ?? "Сотрудник",
+            idempotencyKey: orderDateKey,
+            requestHash,
+          },
+        });
+      }
+      if (promisedAtKey && nextPromisedAt) {
+        const format = (value: Date) =>
+          new Intl.DateTimeFormat("ru-RU", {
+            timeZone: "Asia/Almaty",
+          }).format(value);
+        await tx.orderEvent.create({
+          data: {
+            orderId: id,
+            title: "Обещанный срок заказа указан",
+            description: `${current.promisedAt ? `${format(current.promisedAt)} → ` : ""}${format(nextPromisedAt)}. Контроль срока заказа обновлён.`,
+            user: auth.session!.user.name ?? "Сотрудник",
+            idempotencyKey: promisedAtKey,
+            requestHash,
+          },
+        });
+      }
       if (status === ORDER_STATUSES[ORDER_STATUSES.length - 1]) {
         const activeReservations = await tx.materialReservation.findMany({
           where: { orderId: id, status: "ACTIVE", quantity: { gt: 0 } },
@@ -552,22 +841,36 @@ export async function PATCH(request: Request, { params }: Context) {
       );
     if (
       error instanceof Error &&
+      error.message === "ORDER_DEADLINE_BEFORE_ORDER_DATE"
+    )
+      return NextResponse.json(
+        { error: "Срок заказа не может быть раньше даты заказа" },
+        { status: 400 },
+      );
+    if (
+      error instanceof Error &&
       [
         "COMMERCIAL_ADJUSTMENT_REQUIRED",
         "DIRECTOR_CONFIRMATION_REQUIRED",
         "PARTNER_PRICE_BELOW_PAID",
+        "PARTNER_PRICE_REQUIRED",
+        "PRODUCTION_PRICE_BELOW_PAID",
       ].includes(error.message)
     )
       return NextResponse.json(
         {
           error:
-            "Изменение требует контролируемой финансовой операции и подтверждения директора",
+            error.message === "PRODUCTION_PRICE_BELOW_PAID"
+              ? "Цена производства не может быть меньше уже выплаченной суммы цеху"
+              : error.message === "PARTNER_PRICE_REQUIRED"
+                ? "Сначала укажите цену производства для цеха с выплатами"
+              : "Изменение требует контролируемой финансовой операции и подтверждения директора",
         },
         { status: 409 },
       );
     if (
       error instanceof Error &&
-      ["INVALID_STATUS", "INVALID_AMOUNT"].includes(error.message)
+      ["INVALID_STATUS", "INVALID_AMOUNT", "INVALID_CLIENT_NAME", "INVALID_PAYMENT_METHOD"].includes(error.message)
     )
       return NextResponse.json(
         { error: "Некорректные данные заказа" },
@@ -583,8 +886,8 @@ export async function PATCH(request: Request, { params }: Context) {
 export async function DELETE(request: Request, { params }: Context) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
-  const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (!isDirector(role) && role !== Role.MANAGER)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = idOf((await params).id);
   if (!id)

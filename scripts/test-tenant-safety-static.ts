@@ -34,7 +34,7 @@ assert.match(auth, /runWithSystemAccess/u);
 assert.doesNotMatch(auth, /credentials\.(?:tenantId|companyId)/u, "tenant identity must not come from credentials");
 
 const tenantScope = read("lib/tenant-scope.ts");
-for (const model of ["User", "Client", "Order", "Measurement", "CalendarTask", "CommercialProposal", "Document", "Payment", "EmployeePayrollProfile", "PayrollPeriod", "CompanyLedgerEntry", "Material", "Partner", "RolePermission"]) {
+for (const model of ["User", "Client", "Order", "Measurement", "CalendarTask", "CommercialProposal", "Document", "Payment", "EmployeePayrollProfile", "PayrollPeriod", "CompanyLedgerEntry", "RecurringExpensePlan", "BankStatementImport", "BankStatementTransaction", "BankStatementRule", "Material", "Partner", "RolePermission"]) {
   assert.ok(tenantScope.includes(`"${model}"`), `tenant model is missing from fail-closed scope: ${model}`);
 }
 assert.match(tenantScope, /TENANT_CONTEXT_REQUIRED/u);
@@ -45,9 +45,24 @@ for (const file of ["lib/services/dashboard.service.ts", "lib/services/finance-j
   assert.match(source, /companyId/u, `${file} raw aggregates must be tenant-scoped`);
 }
 
-for (const file of walk("scripts").filter((item) => /\.(?:ts|tsx|mjs)$/u.test(item))) {
+const scriptFiles = walk("scripts").filter((item) => /\.(?:ts|tsx|mjs)$/u.test(item));
+
+for (const file of scriptFiles) {
   const source = read(file);
   assert.doesNotMatch(source, /(?:=|return)\s*(?:process\.env\.)?TEST_DATABASE_URL\s*(?:\|\||\?\?)\s*(?:process\.env\.)?DATABASE_URL/u, `${file} falls back from TEST_DATABASE_URL to production`);
+}
+
+const mutationScriptName = /(?:^|[\\/])(?:test-|performance-|seed-test-|seed-.*-demo)/u;
+const prismaMutation = /\b(?:prisma|tx)\.\w+\.(?:create|createMany|upsert|update|updateMany|delete|deleteMany)\s*\(/u;
+
+for (const file of scriptFiles.filter((item) => mutationScriptName.test(item))) {
+  const source = read(file);
+  if (!prismaMutation.test(source)) continue;
+  assert.match(
+    source,
+    /import\s+(?:[\s\S]*?\s+from\s+)?["']\.\/require-test-database["']/u,
+    `${file} can mutate data but does not activate the production-database guard`,
+  );
 }
 
 console.log("Tenant and approved UI static safety passed");
