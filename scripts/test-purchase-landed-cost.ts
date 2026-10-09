@@ -84,7 +84,14 @@ async function main() {
     ids.user = user.id;
     actor.userId = user.id;
     const supplier = await prisma.supplier.create({
-      data: { name: tag, country: "CN", defaultCurrency: "KZT" },
+      data: {
+        demoKey: tag,
+        name: tag,
+        phoneMask: "",
+        city: "Test",
+        country: "CN",
+        defaultCurrency: "KZT",
+      },
     });
     ids.supplier = supplier.id;
     const client = await prisma.client.create({

@@ -62,6 +62,7 @@
     "test:bank-statement": "tsx scripts/test-bank-statement.ts",
     "test:finance-go-live": "tsx scripts/test-finance-go-live.ts",
     "test:purchase-cost": "tsx scripts/test-purchase-landed-cost.ts",
+    "test:brass-procurement": "tsx scripts/test-brass-procurement.ts",
     "test:payroll": "tsx scripts/test-payroll.ts",
     "test:payroll-policy": "tsx scripts/test-payroll-policy.ts",
     "test:employee-payroll": "tsx scripts/test-employee-without-user.ts",
