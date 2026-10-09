@@ -495,7 +495,7 @@ export async function createMaterialCommand(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (input.actor.role !== Role.DIRECTOR && input.actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (input.actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new WarehouseError("FORBIDDEN");
   try {
     return await idempotentMutation(
@@ -603,7 +603,6 @@ export async function updateMaterialCommand(input: {
   actor: WarehouseActor;
 }) {
   if (
-    input.actor.role !== Role.DIRECTOR &&
     input.actor.role !== Role.OPERATIONS_DIRECTOR
   )
     throw new WarehouseError("FORBIDDEN");
@@ -658,7 +657,7 @@ export async function deleteMaterialCommand(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (input.actor.role !== Role.DIRECTOR && input.actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (input.actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new WarehouseError("FORBIDDEN");
   return idempotentMutation(
     {
@@ -704,7 +703,7 @@ async function canOperateOrder(
   orderId: number,
   type: WarehouseOperationType,
 ) {
-  if (actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR)
+  if (actor.role === Role.OPERATIONS_DIRECTOR)
     return Boolean(
       await tx.order.findFirst({
         where: { id: orderId, deletedAt: null },
@@ -847,6 +846,7 @@ export async function createWarehouseOperation(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
+  if (input.actor.role === Role.DIRECTOR) throw new WarehouseError("FORBIDDEN");
   if (input.actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
   if (
     input.actor.role === Role.MANAGER &&

@@ -175,11 +175,14 @@ export default function WarehousePage() {
     [movementType, setMovementType] = useState(""),
     [orderFilter, setOrderFilter] = useState(""),
     [page, setPage] = useState(1);
+  const founderReadOnly = role === Role.DIRECTOR;
+  const warehouseOperator = role === Role.OPERATIONS_DIRECTOR;
   const leadership = role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
-  const canCreateMaterial = leadership,
-    canEdit = leadership,
-    canDelete = leadership,
+  const canCreateMaterial = warehouseOperator,
+    canEdit = warehouseOperator,
+    canDelete = warehouseOperator,
     canSeeCost = leadership || role === Role.ACCOUNTANT;
+  const canUseBrass = leadership || role === Role.MANAGER || role === Role.ACCOUNTANT;
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -404,9 +407,9 @@ export default function WarehousePage() {
       <div className="mb-5 flex gap-2 overflow-x-auto pb-2">
         {[
           ["materials", "Материалы"],
-          ...(canSeeCost ? [["brass", "Латунь под заказы"]] : []),
+          ...(canUseBrass ? [["brass", "Латунь под заказы"]] : []),
           ...(canSeeCost ? [["purchases", "Закупки"]] : []),
-          ["operations", "Операции"],
+          ...(!founderReadOnly ? [["operations", "Операции"]] : []),
           ["reservations", "Резервы"],
           ["history", "История"],
         ].map(([id, title]) => (
@@ -741,6 +744,7 @@ export default function WarehousePage() {
           )}
           {tab === "purchases" && (
             <PurchaseBatchesPanel
+              canManage={warehouseOperator}
               materials={data.materials.map((item) => ({
                 id: item.id,
                 name: item.name,
@@ -750,7 +754,10 @@ export default function WarehousePage() {
           )}
           {tab === "brass" && (
             <BrassProcurementsPanel
-              canPay={role === Role.DIRECTOR || role === Role.ACCOUNTANT}
+              canOperate={role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER}
+              canPay={role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER || role === Role.ACCOUNTANT}
+              canAddSupplier={role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER}
+              readOnly={founderReadOnly}
             />
           )}
           {tab === "operations" && (

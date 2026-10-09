@@ -11,7 +11,11 @@ export async function GET(request: Request) {
   const auth = await requirePermission("orders");
   if (auth.response) return auth.response;
   const role = auth.session!.user.role as Role;
-  if (role !== Role.DIRECTOR && role !== Role.MANAGER)
+  if (
+    role !== Role.DIRECTOR &&
+    role !== Role.OPERATIONS_DIRECTOR &&
+    role !== Role.MANAGER
+  )
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
 
   const userId = Number(auth.session!.user.id);

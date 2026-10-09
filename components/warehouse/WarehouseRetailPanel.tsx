@@ -42,7 +42,8 @@ export default function WarehouseRetailPanel({ materials, role, onRefresh }: { m
   const [factsOpen, setFactsOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [message, setMessage] = useState("");
-  const canFill = role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
+  const readOnly = role === Role.DIRECTOR;
+  const canFill = role === Role.OPERATIONS_DIRECTOR;
   useEffect(() => {
     let active = true;
     void fetch("/api/warehouse/locations", { cache: "no-store" }).then(async (response) => {
@@ -76,7 +77,7 @@ export default function WarehouseRetailPanel({ materials, role, onRefresh }: { m
               <Stock label="Доступно" value={item.available ?? "—"} />
             </dl>
             <p className="mt-3 min-h-9 text-xs text-slate-400">{item.availabilityLabel}</p>
-            <button type="button" disabled={item.sellingPrice == null || item.available == null || item.available <= 0} onClick={() => setSaleItem(item)} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"><ShoppingCart size={17} />Продать</button>
+            {!readOnly ? <button type="button" disabled={item.sellingPrice == null || item.available == null || item.available <= 0} onClick={() => setSaleItem(item)} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"><ShoppingCart size={17} />Продать</button> : null}
           </div>
         </article>)}
       </div>

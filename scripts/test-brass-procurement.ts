@@ -8,9 +8,12 @@ import { createRequestHash } from "../lib/idempotency";
 import { calculateOrderEconomy } from "../lib/orders/economy";
 import { prisma } from "../lib/prisma";
 import { deleteAttachment } from "../lib/services/attachment.service";
+import { createSupplier } from "../lib/services/purchase.service";
+import { createWarehouseOperation } from "../lib/services/warehouse.service";
 import {
   createBrassProcurement,
   getOrderBrassProcurement,
+  listBrassProcurements,
   markBrassInTransit,
   placeBrassOrder,
   receiveBrassProcurement,
@@ -28,7 +31,7 @@ const png = Buffer.from([
 ]);
 
 async function main() {
-  let actor = { userId: 0, role: Role.DIRECTOR, name: tag };
+  let actor = { userId: 0, role: Role.MANAGER, name: tag };
   let attachmentId = 0;
   let materialCreated = false;
   try {
@@ -41,26 +44,68 @@ async function main() {
         name: tag,
         email: `${tag}@test.local`,
         password: "test-only-not-for-login",
-        role: Role.DIRECTOR,
+        role: Role.MANAGER,
       },
     });
     ids.user = user.id;
     actor = { ...actor, userId: user.id };
-    const supplier = await prisma.supplier.create({
+    const founder = await prisma.user.create({
       data: {
-        demoKey: tag,
-        name: tag,
-        phoneMask: "",
-        city: "Test",
-        country: "KZ",
-        defaultCurrency: "KZT",
+        name: `${tag}-founder`,
+        email: `${tag}-founder@test.local`,
+        password: "test-only-not-for-login",
+        role: Role.DIRECTOR,
       },
     });
+    ids.founder = founder.id;
+    const founderActor = { userId: founder.id, role: Role.DIRECTOR, name: founder.name };
+    const otherManager = await prisma.user.create({
+      data: {
+        name: `${tag}-other-manager`,
+        email: `${tag}-other-manager@test.local`,
+        password: "test-only-not-for-login",
+        role: Role.MANAGER,
+      },
+    });
+    ids.otherManager = otherManager.id;
+    await assert.rejects(
+      () => createSupplier({ name: `${tag}-forbidden`, country: "KZ" }, founderActor),
+      /FORBIDDEN/,
+      "founder was able to create a supplier",
+    );
+    await assert.rejects(
+      () => createWarehouseOperation({
+        data: { materialId: 1, type: "incoming", quantity: 1 },
+        key: key("founder-warehouse-operation"),
+        requestHash: createRequestHash({ founder: true }),
+        actor: founderActor,
+      }),
+      /FORBIDDEN/,
+      "founder was able to post a warehouse operation",
+    );
+    const supplier = await createSupplier(
+      {
+        name: tag,
+        country: "KZ",
+        defaultCurrency: "KZT",
+        contact: "",
+      },
+      actor,
+    );
     ids.supplier = supplier.id;
     const location = await prisma.warehouseLocation.create({
       data: { code: tag, name: tag, type: "WAREHOUSE", isDefault: false },
     });
     ids.location = location.id;
+    const locationAccess = await prisma.warehouseLocationAccess.create({
+      data: {
+        userId: user.id,
+        locationId: location.id,
+        canSell: true,
+        canReceive: true,
+      },
+    });
+    ids.locationAccess = locationAccess.id;
     const client = await prisma.client.create({
       data: {
         name: tag,
@@ -133,6 +178,31 @@ async function main() {
     assert.equal(replay.created, false, "double submit created a second request");
     assert.equal(await prisma.orderBrassProcurement.count({ where: { orderId: order.id } }), 1);
 
+    await assert.rejects(
+      () =>
+        placeBrassOrder({
+          procurementId: ids.procurement,
+          supplierId: supplier.id,
+          expectedArrivalDate: new Date(Date.now() + 10 * 86_400_000),
+          purchaseCurrency: "KZT",
+          exchangeRate: 1,
+          unitPurchasePrice: 20000,
+          responsibleUserId: founder.id,
+          notes: "Основатель не должен оформлять закупку",
+          key: key("founder-order"),
+          requestHash: createRequestHash({ founder: true }),
+          actor: founderActor,
+        }),
+      /FORBIDDEN/,
+      "founder was able to mutate brass procurement",
+    );
+    assert.equal((await listBrassProcurements(founderActor)).length >= 1, true);
+    assert.equal(
+      (await listBrassProcurements({ userId: otherManager.id, role: Role.MANAGER, name: otherManager.name })).length,
+      0,
+      "manager could see another manager's brass procurement",
+    );
+
     const expectedArrivalDate = new Date(Date.now() + 10 * 86_400_000);
     const orderPayload = {
       procurementId: ids.procurement,
@@ -198,12 +268,12 @@ async function main() {
       () =>
         recordBrassPayment({
           ...paymentPayload,
-          key: key("operations-director-payment"),
+          key: key("founder-payment"),
           requestHash: createRequestHash(paymentHashPayload),
-          actor: { ...actor, role: Role.OPERATIONS_DIRECTOR },
+          actor: founderActor,
         }),
       /FORBIDDEN/,
-      "operations director bypassed protected financial payment",
+      "founder was able to record a supplier payment",
     );
 
     await markBrassInTransit(ids.procurement, actor);
@@ -242,13 +312,13 @@ async function main() {
       "receipt retry created a duplicate",
     );
 
-    const directorView = await getOrderBrassProcurement(order.id, actor);
-    assert.equal(directorView?.landedCostKzt, 135000);
+    const founderView = await getOrderBrassProcurement(order.id, founderActor);
+    assert.equal(founderView?.landedCostKzt, 135000);
     const managerView = await getOrderBrassProcurement(order.id, {
       ...actor,
       role: Role.MANAGER,
     });
-    assert.equal(managerView?.landedCostKzt, 0, "manager received internal landed cost");
+    assert.equal(managerView?.landedCostKzt, 135000, "responsible manager cannot see entered landed cost");
 
     const economy = calculateOrderEconomy({
       totalSale: 500000,
@@ -312,9 +382,12 @@ async function main() {
     if (ids.order) await prisma.order.deleteMany({ where: { id: ids.order } });
     if (ids.client) await prisma.client.deleteMany({ where: { id: ids.client } });
     if (materialCreated && ids.material) await prisma.material.deleteMany({ where: { id: ids.material } });
+    if (ids.locationAccess) await prisma.warehouseLocationAccess.deleteMany({ where: { id: ids.locationAccess } });
     if (ids.location) await prisma.warehouseLocation.deleteMany({ where: { id: ids.location } });
     await prisma.warehouseMutation.deleteMany({ where: { key: { startsWith: tag } } });
     if (ids.supplier) await prisma.supplier.deleteMany({ where: { id: ids.supplier } });
+    if (ids.otherManager) await prisma.user.deleteMany({ where: { id: ids.otherManager } });
+    if (ids.founder) await prisma.user.deleteMany({ where: { id: ids.founder } });
     if (ids.user) await prisma.user.deleteMany({ where: { id: ids.user } });
     await prisma.$disconnect();
     await rm(process.env.TEST_BLOB_DIR!, { recursive: true, force: true });

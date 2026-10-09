@@ -16,7 +16,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("warehouse"); if (auth.response) return auth.response;
-  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR])).has(auth.session!.user.role as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (auth.session!.user.role !== Role.OPERATIONS_DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   const id = parseId((await context.params).id); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const file = (await request.formData()).get("file");

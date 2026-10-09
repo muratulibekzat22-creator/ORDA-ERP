@@ -28,7 +28,7 @@ if (
 const tag = `purchase-${Date.now()}`,
   ids: Record<string, number> = {};
 const key = (value: string) => `${tag}:${value}`;
-const actor = { role: Role.DIRECTOR, userId: 0, name: tag };
+const actor = { role: Role.OPERATIONS_DIRECTOR, userId: 0, name: tag };
 
 async function main() {
   try {
@@ -78,7 +78,7 @@ async function main() {
         name: tag,
         email: `${tag}@test.local`,
         password: "test",
-        role: Role.DIRECTOR,
+        role: Role.OPERATIONS_DIRECTOR,
       },
     });
     ids.user = user.id;

@@ -84,7 +84,7 @@ export async function POST(request: Request, { params }: Context) {
         purchaseCurrency: String(body.purchaseCurrency ?? "KZT"),
         exchangeRate: Number(body.exchangeRate ?? 1),
         unitPurchasePrice: Number(body.unitPurchasePrice),
-        responsibleUserId: Number(body.responsibleUserId),
+        responsibleUserId: requestActor.userId,
         notes: String(body.notes ?? ""),
       };
       return NextResponse.json(

@@ -22,7 +22,8 @@ import { ensureWarehouseShipmentPdf } from "@/lib/services/warehouse-document.se
 import { WarehouseError, type WarehouseActor } from "@/lib/services/warehouse.service";
 import { requireTenantIdentity } from "@/lib/tenant-context";
 
-const LEADERSHIP = new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR]);
+const FULL_VIEW = new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR]);
+const OPERATORS = new Set<Role>([Role.OPERATIONS_DIRECTOR]);
 const RETRIES = 6;
 
 type MutationResult = Record<string, unknown>;
@@ -87,7 +88,7 @@ async function locationFor(
 ) {
   const location = await tx.warehouseLocation.findFirst({ where: { id: locationId, active: true } });
   if (!location) throw new WarehouseError("NOT_FOUND");
-  if (LEADERSHIP.has(actor.role) || actor.role === Role.ACCOUNTANT) return location;
+  if (FULL_VIEW.has(actor.role) || actor.role === Role.ACCOUNTANT) return location;
   const accessCount = await tx.warehouseLocationAccess.count({ where: { userId: actor.userId } });
   if (!accessCount && location.isDefault && permission === "sell") return location;
   const access = await tx.warehouseLocationAccess.findFirst({ where: { userId: actor.userId, locationId } });
@@ -130,7 +131,7 @@ async function assertOrderAccess(tx: Prisma.TransactionClient, actor: WarehouseA
     include: { client: true },
   });
   if (!order) throw new WarehouseError("NOT_FOUND");
-  if (!LEADERSHIP.has(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT)
+  if (!OPERATORS.has(actor.role) && actor.role !== Role.MANAGER && actor.role !== Role.ACCOUNTANT)
     throw new WarehouseError("FORBIDDEN");
   return order;
 }
@@ -156,7 +157,7 @@ export async function getWarehouseLocations(actor: WarehouseActor) {
     include: { access: { where: { userId: actor.userId }, select: { canSell: true, canReceive: true, canAdjust: true } } },
     orderBy: [{ isDefault: "desc" }, { name: "asc" }],
   });
-  if (LEADERSHIP.has(actor.role) || actor.role === Role.ACCOUNTANT) return locations;
+  if (FULL_VIEW.has(actor.role) || actor.role === Role.ACCOUNTANT) return locations;
   const hasExplicit = locations.some((item) => item.access.length > 0);
   return locations.filter((item) => hasExplicit ? item.access.length > 0 : item.isDefault);
 }
@@ -168,7 +169,7 @@ export async function fillMiniSpigotFacts(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (!LEADERSHIP.has(input.actor.role)) throw new WarehouseError("FORBIDDEN");
+  if (!OPERATORS.has(input.actor.role)) throw new WarehouseError("FORBIDDEN");
   if (!input.rows.length || new Set(input.rows.map((row) => row.materialId)).size !== input.rows.length)
     throw new WarehouseError("INVALID_OPERATION");
   return idempotent({
@@ -461,7 +462,7 @@ export async function createRetailSale(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (!LEADERSHIP.has(input.actor.role) && input.actor.role !== Role.MANAGER) throw new WarehouseError("FORBIDDEN");
+  if (!OPERATORS.has(input.actor.role) && input.actor.role !== Role.MANAGER) throw new WarehouseError("FORBIDDEN");
   const { companyId } = requireTenantIdentity();
   const response = await idempotent({
     key: input.key,
@@ -601,7 +602,7 @@ export async function createWarehouseShipment(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (!LEADERSHIP.has(input.actor.role) && input.actor.role !== Role.MANAGER) throw new WarehouseError("FORBIDDEN");
+  if (!OPERATORS.has(input.actor.role) && input.actor.role !== Role.MANAGER) throw new WarehouseError("FORBIDDEN");
   const response = await idempotent({ key: input.key, requestHash: input.requestHash, action: "shipment.post", actor: input.actor, work: (tx) => postShipment(tx, input) });
   let pdfStatus: "READY" | "FAILED" = "READY";
   try { await ensureWarehouseShipmentPdf(Number(response.result.shipmentId)); } catch { pdfStatus = "FAILED"; }
@@ -617,7 +618,7 @@ export async function releaseWarehouseReservation(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (!LEADERSHIP.has(input.actor.role) && input.actor.role !== Role.MANAGER)
+  if (!OPERATORS.has(input.actor.role) && input.actor.role !== Role.MANAGER)
     throw new WarehouseError("FORBIDDEN");
   return idempotent({
     key: input.key,
@@ -717,7 +718,7 @@ export async function transferWarehouseStock(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (!LEADERSHIP.has(input.actor.role)) throw new WarehouseError("FORBIDDEN");
+  if (!OPERATORS.has(input.actor.role)) throw new WarehouseError("FORBIDDEN");
   if (input.fromLocationId === input.toLocationId || !input.reason.trim())
     throw new WarehouseError("INVALID_OPERATION");
   return idempotent({
@@ -829,7 +830,7 @@ export async function createWarehouseReturn(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (!LEADERSHIP.has(input.actor.role)) throw new WarehouseError("FORBIDDEN");
+  if (!OPERATORS.has(input.actor.role)) throw new WarehouseError("FORBIDDEN");
   if (
     !input.reason.trim() ||
     !input.lines.length ||

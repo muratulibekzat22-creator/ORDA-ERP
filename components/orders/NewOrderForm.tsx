@@ -18,7 +18,7 @@ import {
 type Option = { id: number; name: string };
 type PaymentMethodOption = { value: string; label: string };
 type RegistrationOptions = {
-  role: "DIRECTOR" | "MANAGER";
+  role: "DIRECTOR" | "OPERATIONS_DIRECTOR" | "MANAGER";
   currentUserId: number;
   managers: Option[];
   materials: string[];
@@ -56,6 +56,7 @@ export default function NewOrderForm() {
   const [brassPhoto, setBrassPhoto] = useState<File | null>(null);
   const submitting = useRef(false);
   const draftCleared = useRef(false);
+  const canManageBrass = options?.role === "OPERATIONS_DIRECTOR" || options?.role === "MANAGER";
 
   useEffect(() => {
     void fetch("/api/orders/options", { cache: "no-store" })
@@ -73,6 +74,11 @@ export default function NewOrderForm() {
         };
         const restored = saved ? { ...defaults, ...saved.form } : defaults;
         if (body.role === "MANAGER") restored.managerUserId = String(body.currentUserId);
+        if (body.role === "DIRECTOR") {
+          restored.brassRequired = false;
+          restored.brassQuantityPairs = "";
+          restored.brassNotes = "";
+        }
         setOptions(body);
         setForm(restored);
         setExistingClient(saved?.existingClient ?? null);
@@ -113,7 +119,7 @@ export default function NewOrderForm() {
         ...current,
         clientName: body.existingClient?.name ?? current.clientName,
         location: [body.existingClient?.city, body.existingClient?.address].filter(Boolean).join(", ") || current.location,
-        managerUserId: options?.role === "DIRECTOR" && body.existingClient?.managerUserId
+        managerUserId: options?.role !== "MANAGER" && body.existingClient?.managerUserId
           ? String(body.existingClient.managerUserId)
           : current.managerUserId,
       }));
@@ -127,12 +133,13 @@ export default function NewOrderForm() {
     if (Number(form.initialPayment) > Number(form.amount))
       return setError("Полученная сумма не может превышать цену заказа");
     if (
+      canManageBrass &&
       form.brassRequired &&
       (!Number.isFinite(Number(form.brassQuantityPairs)) ||
         Number(form.brassQuantityPairs) <= 0)
     )
       return setError("Для латуни укажите количество пар");
-    if (form.brassRequired && !brassPhoto)
+    if (canManageBrass && form.brassRequired && !brassPhoto)
       return setError("Для заявки на латунь обязательно приложите фото");
     const hasPaymentPromise = Boolean(form.paymentPromiseAmount || form.paymentPromiseAt);
     if (hasPaymentPromise && (!form.paymentPromiseAmount || !form.paymentPromiseAt))
@@ -183,7 +190,7 @@ export default function NewOrderForm() {
       const body = (await response.json()) as { id?: number; error?: string; existingOrderId?: number };
       if (!response.ok && body.existingOrderId) setDuplicateOrderId(body.existingOrderId);
       if (!response.ok || !body.id) throw new Error(body.error ?? "Не удалось создать заказ");
-      if (form.brassRequired && brassPhoto) {
+      if (canManageBrass && form.brassRequired && brassPhoto) {
         const brass = new FormData();
         brass.set("quantityPairs", form.brassQuantityPairs);
         brass.set("notes", form.brassNotes);
@@ -261,7 +268,7 @@ export default function NewOrderForm() {
           <label className="rounded-xl border border-slate-800 p-3 text-sm text-slate-300"><span className="flex items-center gap-2"><input type="checkbox" checked={form.lighting} onChange={(event) => set("lighting", event.target.checked)} /> Подсветка</span>{form.lighting && <input value={form.lightingDetails} onChange={(event) => set("lightingDetails", event.target.value)} placeholder="Комментарий" className={control} />}</label>
           <label className="rounded-xl border border-slate-800 p-3 text-sm text-slate-300"><span className="flex items-center gap-2"><input type="checkbox" checked={form.cladding} onChange={(event) => set("cladding", event.target.checked)} /> Обшивка</span>{form.cladding && <input value={form.claddingDetails} onChange={(event) => set("claddingDetails", event.target.value)} placeholder="Комментарий" className={control} />}</label>
         </div>
-        <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+        {canManageBrass ? <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
           <label className="flex items-start gap-3 text-sm text-slate-200">
             <input
               type="checkbox"
@@ -276,7 +283,7 @@ export default function NewOrderForm() {
             <Field label="Фото модели / образца" required><input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setBrassPhoto(event.target.files?.[0] ?? null)} className={`${control} py-2`} /><span className="mt-1 block text-xs text-slate-500">Фото хранится приватно и доступно только сотрудникам по заказу.</span></Field>
             <Field label="Комментарий для склада"><textarea rows={2} value={form.brassNotes} onChange={(event) => set("brassNotes", event.target.value)} placeholder="Модель, цвет, особенности комплекта" className={`${control} py-3`} /></Field>
           </div> : null}
-        </div>
+        </div> : null}
       </details>
 
       {error && <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-red-200"><p>{error}</p>{duplicateOrderId && <Link href={`/orders/${duplicateOrderId}`} className="mt-2 inline-flex font-semibold text-blue-300 underline">Открыть существующий заказ</Link>}</div>}

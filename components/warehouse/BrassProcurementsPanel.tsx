@@ -2,9 +2,9 @@
 
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type Supplier = { id: number; name: string; defaultCurrency: string };
+type Supplier = { id: number; name: string; country: string; defaultCurrency: string; contact: string };
 type Location = { id: number; name: string };
 type RequestRow = {
   id: number;
@@ -39,7 +39,17 @@ const labels: Record<string, string> = {
   COST_FINALIZED: "Себестоимость рассчитана",
 };
 
-export default function BrassProcurementsPanel({ canPay }: { canPay: boolean }) {
+export default function BrassProcurementsPanel({
+  canOperate,
+  canPay,
+  canAddSupplier,
+  readOnly,
+}: {
+  canOperate: boolean;
+  canPay: boolean;
+  canAddSupplier: boolean;
+  readOnly: boolean;
+}) {
   const { data: session } = useSession();
   const userId = Number(session?.user.id ?? 0);
   const [rows, setRows] = useState<RequestRow[]>([]);
@@ -48,11 +58,18 @@ export default function BrassProcurementsPanel({ canPay }: { canPay: boolean }) 
   const [selected, setSelected] = useState<RequestRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [supplierForm, setSupplierForm] = useState({ name: "", country: "Казахстан", defaultCurrency: "KZT", contact: "" });
   const [orderForm, setOrderForm] = useState({ supplierId: "", expectedArrivalDate: future(), purchaseCurrency: "KZT", exchangeRate: "1", unitPurchasePrice: "", notes: "" });
   const [payment, setPayment] = useState({ kind: "SUPPLIER", amount: "", method: "BANK_TRANSFER", paidAt: today(), comment: "" });
   const [receipt, setReceipt] = useState({ locationId: "", receivedAt: today(), cargoCostKzt: "", cargoProvider: "Карго", supplierDocumentNumber: "", note: "" });
   const actionLock = useRef(false);
   const pendingKeys = useRef(new Map<string, string>());
+  const summary = useMemo(() => rows.reduce((total, row) => ({
+    goods: total.goods + row.goodsCostKzt,
+    cargo: total.cargo + row.cargoCostKzt,
+    paid: total.paid + row.supplierPaidKzt + row.cargoPaidKzt,
+    remaining: total.remaining + row.supplierBalanceKzt + row.cargoBalanceKzt,
+  }), { goods: 0, cargo: 0, paid: 0, remaining: 0 }), [rows]);
 
   const load = useCallback(async () => {
     setMessage("");
@@ -114,7 +131,30 @@ export default function BrassProcurementsPanel({ canPay }: { canPay: boolean }) 
 
   async function placeOrder(event: FormEvent) {
     event.preventDefault();
-    await action({ action: "order", ...orderForm, supplierId: Number(orderForm.supplierId), responsibleUserId: userId, exchangeRate: Number(orderForm.exchangeRate), unitPurchasePrice: Number(orderForm.unitPurchasePrice) });
+    await action({ action: "order", ...orderForm, supplierId: Number(orderForm.supplierId), exchangeRate: Number(orderForm.exchangeRate), unitPurchasePrice: Number(orderForm.unitPurchasePrice) });
+  }
+  async function createSupplier(event: FormEvent) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/suppliers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(supplierForm),
+      });
+      const payload = await response.json() as Supplier & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Не удалось добавить поставщика");
+      setSuppliers((current) => [...current, payload].sort((a, b) => a.name.localeCompare(b.name, "ru")));
+      setOrderForm((current) => ({ ...current, supplierId: String(payload.id), purchaseCurrency: payload.defaultCurrency }));
+      setSupplierForm({ name: "", country: "Казахстан", defaultCurrency: "KZT", contact: "" });
+      setMessage("Поставщик добавлен и выбран для этой закупки");
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "Не удалось добавить поставщика");
+    } finally {
+      setSaving(false);
+    }
   }
   async function pay(event: FormEvent) {
     event.preventDefault();
@@ -128,9 +168,11 @@ export default function BrassProcurementsPanel({ canPay }: { canPay: boolean }) 
 
   return <div className="space-y-5">
     {message ? <p role="status" className="rounded-xl border border-blue-500/25 bg-blue-500/10 p-3 text-sm text-blue-100">{message}</p> : null}
+    {readOnly ? <p className="rounded-xl border border-violet-500/25 bg-violet-500/10 p-3 text-sm text-violet-100"><strong>Режим основателя:</strong> полный обзор закупок и себестоимости без операционного ввода. Данные заполняют директор или ответственный менеджер.</p> : null}
     <section className="rounded-2xl border border-amber-500/25 bg-[#101827] p-5">
       <h2 className="text-xl font-bold text-white">Латунь под заказы</h2>
       <p className="mt-1 text-sm text-slate-400">Заявка менеджера → поставщик → оплата → контроль доставки → приёмка → карго → себестоимость заказа.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><Stat label="Заявок" value={String(rows.length)} /><Stat label="Товар" value={money(summary.goods)} /><Stat label="Карго" value={money(summary.cargo)} /><Stat label="Оплачено" value={money(summary.paid)} /><Stat label="Осталось" value={money(summary.remaining)} strong /></div>
       <div className="mt-4 space-y-3">
         {rows.map((row) => <button type="button" key={row.id} onClick={() => { setSelected(row); setOrderForm((current) => ({ ...current, notes: row.notes })); setMessage(""); }} className={`grid w-full gap-3 rounded-xl border p-4 text-left md:grid-cols-[1.2fr_0.7fr_1fr_1fr] ${selected?.id === row.id ? "border-amber-500/60 bg-amber-500/5" : "border-slate-800 bg-slate-950/55"}`}>
           <span><strong className="text-white">{row.order.number}</strong><small className="block text-slate-400">{row.order.client.name}</small></span>
@@ -143,7 +185,8 @@ export default function BrassProcurementsPanel({ canPay }: { canPay: boolean }) 
     </section>
     {selected ? <section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm text-amber-200">{labels[selected.status] ?? selected.status}</p><h3 className="text-2xl font-bold text-white">{selected.order.number} · {selected.quantityPairs} пар</h3><p className="mt-1 text-sm text-slate-400">Клиент: {selected.order.client.name} · ответственный: {selected.responsibleUser.name}</p></div><div className="flex gap-2"><a href={selected.photoUrl} target="_blank" rel="noreferrer" className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-blue-200">Фото</a><Link href={`/orders/${selected.order.id}`} className="rounded-xl border border-slate-700 px-3 py-2 text-sm text-blue-200">Заказ</Link></div></div>
-      {selected.status === "REQUESTED" ? <form onSubmit={placeOrder} className="mt-5 grid gap-3 rounded-xl bg-slate-950/55 p-4 md:grid-cols-3">
+      {selected.status === "REQUESTED" && canAddSupplier ? <details className="mt-5 rounded-xl border border-slate-800 bg-slate-950/35 p-4"><summary className="cursor-pointer font-semibold text-blue-200">+ Добавить нового поставщика</summary><form onSubmit={createSupplier} className="mt-4 grid gap-3 md:grid-cols-4"><input required value={supplierForm.name} onChange={(event) => setSupplierForm({ ...supplierForm, name: event.target.value })} placeholder="Название поставщика" className={control} /><input value={supplierForm.country} onChange={(event) => setSupplierForm({ ...supplierForm, country: event.target.value })} placeholder="Страна" className={control} /><input required value={supplierForm.defaultCurrency} onChange={(event) => setSupplierForm({ ...supplierForm, defaultCurrency: event.target.value.toUpperCase() })} placeholder="Валюта" className={control} /><input value={supplierForm.contact} onChange={(event) => setSupplierForm({ ...supplierForm, contact: event.target.value })} placeholder="Телефон / WhatsApp" className={control} /><button disabled={saving} className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold text-white disabled:opacity-50 md:col-span-4">{saving ? "Добавляем…" : "Добавить и выбрать поставщика"}</button></form></details> : null}
+      {selected.status === "REQUESTED" && canOperate ? <form onSubmit={placeOrder} className="mt-5 grid gap-3 rounded-xl bg-slate-950/55 p-4 md:grid-cols-3">
         <h4 className="font-semibold text-white md:col-span-3">Оформить заказ поставщику</h4>
         <select required value={orderForm.supplierId} onChange={(event) => { const supplier = suppliers.find((item) => item.id === Number(event.target.value)); setOrderForm({ ...orderForm, supplierId: event.target.value, purchaseCurrency: supplier?.defaultCurrency ?? orderForm.purchaseCurrency }); }} className={control}><option value="">Поставщик</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select>
         <label className="text-xs text-slate-400">Обещанная дата доставки<input required type="date" min={today()} value={orderForm.expectedArrivalDate} onChange={(event) => setOrderForm({ ...orderForm, expectedArrivalDate: event.target.value })} className={`${control} mt-1`} /></label>
@@ -155,9 +198,9 @@ export default function BrassProcurementsPanel({ canPay }: { canPay: boolean }) 
       </form> : null}
       {["ORDERED", "IN_TRANSIT"].includes(selected.status) ? <div className="mt-5 space-y-4">
         <div className="grid gap-3 rounded-xl bg-slate-950/55 p-4 sm:grid-cols-2 lg:grid-cols-4"><Stat label="Товар" value={money(selected.goodsCostKzt)} /><Stat label="Оплачено поставщику" value={money(selected.supplierPaidKzt)} /><Stat label="Осталось поставщику" value={money(selected.supplierBalanceKzt)} /><Stat label="Доставка" value={selected.expectedArrivalDate ? new Date(selected.expectedArrivalDate).toLocaleDateString("ru-RU") : "—"} /></div>
-        {selected.status === "ORDERED" ? <button type="button" disabled={saving} onClick={() => void action({ action: "in_transit" })} className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold text-white">Поставщик отправил · отметить «В пути»</button> : null}
+        {selected.status === "ORDERED" && canOperate ? <button type="button" disabled={saving} onClick={() => void action({ action: "in_transit" })} className="min-h-11 rounded-xl bg-blue-700 px-4 font-semibold text-white">Поставщик отправил · отметить «В пути»</button> : null}
         {canPay ? <form onSubmit={pay} className="grid gap-3 rounded-xl border border-slate-800 p-4 sm:grid-cols-2 lg:grid-cols-5"><h4 className="font-semibold text-white sm:col-span-2 lg:col-span-5">Записать оплату поставщику</h4><input required type="number" min="0.01" max={selected.supplierBalanceKzt} step="0.01" value={payment.amount} onChange={(event) => setPayment({ ...payment, amount: event.target.value, kind: "SUPPLIER" })} placeholder="Сумма" className={control} /><input required type="date" value={payment.paidAt} onChange={(event) => setPayment({ ...payment, paidAt: event.target.value })} className={control} /><input required value={payment.method} onChange={(event) => setPayment({ ...payment, method: event.target.value })} placeholder="Способ оплаты" className={control} /><input value={payment.comment} onChange={(event) => setPayment({ ...payment, comment: event.target.value })} placeholder="Комментарий" className={control} /><button disabled={saving || selected.supplierBalanceKzt <= 0} className="rounded-xl bg-emerald-700 px-4 font-semibold text-white disabled:opacity-50">Сохранить оплату</button></form> : null}
-        <form onSubmit={receive} className="grid gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 sm:grid-cols-2 lg:grid-cols-4"><h4 className="font-semibold text-emerald-100 sm:col-span-2 lg:col-span-4">Принять латунь и рассчитать полную себестоимость</h4><select required value={receipt.locationId} onChange={(event) => setReceipt({ ...receipt, locationId: event.target.value })} className={control}><option value="">Место хранения</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select><input required type="date" value={receipt.receivedAt} onChange={(event) => setReceipt({ ...receipt, receivedAt: event.target.value })} className={control} /><input type="number" min="0" step="0.01" value={receipt.cargoCostKzt} onChange={(event) => setReceipt({ ...receipt, cargoCostKzt: event.target.value })} placeholder="Сумма карго, ₸" className={control} /><input value={receipt.cargoProvider} onChange={(event) => setReceipt({ ...receipt, cargoProvider: event.target.value })} placeholder="Карго / перевозчик" className={control} /><input value={receipt.supplierDocumentNumber} onChange={(event) => setReceipt({ ...receipt, supplierDocumentNumber: event.target.value })} placeholder="Номер документа поставщика" className={control} /><input value={receipt.note} onChange={(event) => setReceipt({ ...receipt, note: event.target.value })} placeholder="Комментарий приёмки" className={`${control} lg:col-span-2`} /><button disabled={saving || !locations.length} className="min-h-11 rounded-xl bg-emerald-700 px-4 font-semibold text-white disabled:opacity-50 lg:col-span-4">{saving ? "Принимаем…" : "Получено · принять на склад и посчитать себестоимость"}</button></form>
+        {canOperate ? <form onSubmit={receive} className="grid gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 sm:grid-cols-2 lg:grid-cols-4"><h4 className="font-semibold text-emerald-100 sm:col-span-2 lg:col-span-4">Принять латунь и рассчитать полную себестоимость</h4><select required value={receipt.locationId} onChange={(event) => setReceipt({ ...receipt, locationId: event.target.value })} className={control}><option value="">Место хранения</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select><input required type="date" value={receipt.receivedAt} onChange={(event) => setReceipt({ ...receipt, receivedAt: event.target.value })} className={control} /><input type="number" min="0" step="0.01" value={receipt.cargoCostKzt} onChange={(event) => setReceipt({ ...receipt, cargoCostKzt: event.target.value })} placeholder="Сумма карго, ₸" className={control} /><input value={receipt.cargoProvider} onChange={(event) => setReceipt({ ...receipt, cargoProvider: event.target.value })} placeholder="Карго / перевозчик" className={control} /><input value={receipt.supplierDocumentNumber} onChange={(event) => setReceipt({ ...receipt, supplierDocumentNumber: event.target.value })} placeholder="Номер документа поставщика" className={control} /><input value={receipt.note} onChange={(event) => setReceipt({ ...receipt, note: event.target.value })} placeholder="Комментарий приёмки" className={`${control} lg:col-span-2`} /><button disabled={saving || !locations.length} className="min-h-11 rounded-xl bg-emerald-700 px-4 font-semibold text-white disabled:opacity-50 lg:col-span-4">{saving ? "Принимаем…" : "Получено · принять на склад и посчитать себестоимость"}</button></form> : null}
       </div> : null}
       {selected.status === "COST_FINALIZED" ? <div className="mt-5 space-y-4"><div className="grid gap-3 rounded-xl bg-slate-950/55 p-4 sm:grid-cols-2 lg:grid-cols-4"><Stat label="Товар" value={money(selected.goodsCostKzt)} /><Stat label="Карго" value={money(selected.cargoCostKzt)} /><Stat label="Полная себестоимость" value={money(selected.landedCostKzt)} strong /><Stat label="Не оплачено" value={money(selected.supplierBalanceKzt + selected.cargoBalanceKzt)} /></div>{canPay && selected.supplierBalanceKzt > 0 ? <form onSubmit={pay} className="grid gap-3 rounded-xl border border-slate-800 p-4 sm:grid-cols-2 lg:grid-cols-5"><h4 className="font-semibold text-white sm:col-span-2 lg:col-span-5">Доплатить поставщику</h4><input required type="number" min="0.01" max={selected.supplierBalanceKzt} step="0.01" value={payment.amount} onChange={(event) => setPayment({ ...payment, amount: event.target.value, kind: "SUPPLIER" })} placeholder="Сумма" className={control} /><input required type="date" value={payment.paidAt} onChange={(event) => setPayment({ ...payment, paidAt: event.target.value })} className={control} /><input required value={payment.method} onChange={(event) => setPayment({ ...payment, method: event.target.value })} placeholder="Способ оплаты" className={control} /><input value={payment.comment} onChange={(event) => setPayment({ ...payment, comment: event.target.value })} placeholder="Комментарий" className={control} /><button disabled={saving} className="rounded-xl bg-emerald-700 px-4 font-semibold text-white">Сохранить доплату</button></form> : null}{canPay && selected.cargoBalanceKzt > 0 ? <form onSubmit={pay} className="grid gap-3 rounded-xl border border-slate-800 p-4 sm:grid-cols-2 lg:grid-cols-5"><h4 className="font-semibold text-white sm:col-span-2 lg:col-span-5">Записать оплату карго</h4><input required type="number" min="0.01" max={selected.cargoBalanceKzt} step="0.01" value={payment.amount} onChange={(event) => setPayment({ ...payment, amount: event.target.value, kind: "CARGO" })} placeholder="Сумма" className={control} /><input required type="date" value={payment.paidAt} onChange={(event) => setPayment({ ...payment, paidAt: event.target.value })} className={control} /><input required value={payment.method} onChange={(event) => setPayment({ ...payment, method: event.target.value })} placeholder="Способ оплаты" className={control} /><input value={payment.comment} onChange={(event) => setPayment({ ...payment, comment: event.target.value })} placeholder="Комментарий" className={control} /><button disabled={saving} className="rounded-xl bg-emerald-700 px-4 font-semibold text-white">Сохранить оплату</button></form> : null}</div> : null}
     </section> : null}

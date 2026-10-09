@@ -51,15 +51,16 @@ export class BrassProcurementError extends Error {
   }
 }
 
-const requestRoles = new Set<Role>([
+const viewRoles = new Set<Role>([
   Role.DIRECTOR,
   Role.OPERATIONS_DIRECTOR,
   Role.MANAGER,
-]);
-const purchasingRoles = new Set<Role>([
-  Role.DIRECTOR,
-  Role.OPERATIONS_DIRECTOR,
   Role.ACCOUNTANT,
+]);
+const requestRoles = new Set<Role>([Role.OPERATIONS_DIRECTOR, Role.MANAGER]);
+const purchasingRoles = new Set<Role>([
+  Role.OPERATIONS_DIRECTOR,
+  Role.MANAGER,
 ]);
 const roundMoney = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -142,34 +143,12 @@ function publicRow(row: ProcurementRow) {
   };
 }
 
-function orderFacingRow(row: ProcurementRow, actor: BrassProcurementActor) {
-  const value = publicRow(row);
-  if (actor.role !== Role.MANAGER) return value;
-  return {
-    ...value,
-    exchangeRate: 0,
-    unitPurchasePrice: 0,
-    goodsCostKzt: 0,
-    cargoCostKzt: 0,
-    landedCostKzt: 0,
-    supplierPaidKzt: 0,
-    cargoPaidKzt: 0,
-    supplierBalanceKzt: 0,
-    cargoBalanceKzt: 0,
-    totalPaidKzt: 0,
-    purchaseBatch: value.purchaseBatch
-      ? {
-          ...value.purchaseBatch,
-          purchaseGoodsCostKzt: new Prisma.Decimal(0),
-          additionalCostKzt: new Prisma.Decimal(0),
-          landedCostKzt: new Prisma.Decimal(0),
-        }
-      : null,
-  };
-}
-
 function assertRequestRole(actor: BrassProcurementActor) {
   if (!requestRoles.has(actor.role)) throw new BrassProcurementError("FORBIDDEN");
+}
+
+function assertViewRole(actor: BrassProcurementActor) {
+  if (!viewRoles.has(actor.role)) throw new BrassProcurementError("FORBIDDEN");
 }
 
 function assertPurchasingRole(actor: BrassProcurementActor) {
@@ -178,8 +157,18 @@ function assertPurchasingRole(actor: BrassProcurementActor) {
 }
 
 function assertFinanceRole(actor: BrassProcurementActor) {
-  if (actor.role !== Role.DIRECTOR && actor.role !== Role.ACCOUNTANT)
+  if (
+    actor.role !== Role.OPERATIONS_DIRECTOR &&
+    actor.role !== Role.MANAGER &&
+    actor.role !== Role.ACCOUNTANT
+  )
     throw new BrassProcurementError("FORBIDDEN");
+}
+
+function managerOrderScope(actor: BrassProcurementActor) {
+  return actor.role === Role.MANAGER
+    ? { order: { managerUserId: actor.userId, deletedAt: null } }
+    : {};
 }
 
 async function findAccessibleOrder(orderId: number, actor: BrassProcurementActor) {
@@ -197,20 +186,23 @@ export async function getOrderBrassProcurement(
   orderId: number,
   actor: BrassProcurementActor,
 ) {
-  assertRequestRole(actor);
+  assertViewRole(actor);
   if (!(await findAccessibleOrder(orderId, actor)))
     throw new BrassProcurementError("NOT_FOUND");
   const row = await prisma.orderBrassProcurement.findFirst({
     where: { orderId },
     include: procurementInclude,
   });
-  return row ? orderFacingRow(row, actor) : null;
+  return row ? publicRow(row) : null;
 }
 
 export async function listBrassProcurements(actor: BrassProcurementActor) {
-  assertPurchasingRole(actor);
+  assertViewRole(actor);
   const rows = await prisma.orderBrassProcurement.findMany({
-    where: { status: { not: "CANCELLED" } },
+    where: {
+      status: { not: "CANCELLED" },
+      ...managerOrderScope(actor),
+    },
     include: procurementInclude,
     orderBy: [
       { expectedArrivalDate: { sort: "asc", nulls: "last" } },
@@ -367,7 +359,7 @@ export async function placeBrassOrder(input: {
   )
     throw new BrassProcurementError("INVALID");
   const request = await prisma.orderBrassProcurement.findFirst({
-    where: { id: input.procurementId },
+    where: { id: input.procurementId, ...managerOrderScope(input.actor) },
     include: { order: true },
   });
   if (!request) throw new BrassProcurementError("NOT_FOUND");
@@ -401,8 +393,9 @@ export async function placeBrassOrder(input: {
       id: input.responsibleUserId,
       active: true,
       role: {
-        in: [Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.ACCOUNTANT],
+        in: [Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT],
       },
+      ...(input.actor.role === Role.MANAGER ? { id: input.actor.userId } : {}),
     },
   });
   if (!supplier || !responsible) throw new BrassProcurementError("INVALID");
@@ -505,7 +498,7 @@ export async function markBrassInTransit(
 ) {
   assertPurchasingRole(actor);
   const request = await prisma.orderBrassProcurement.findFirst({
-    where: { id: procurementId },
+    where: { id: procurementId, ...managerOrderScope(actor) },
   });
   if (!request) throw new BrassProcurementError("NOT_FOUND");
   if (request.status === "IN_TRANSIT") {
@@ -554,6 +547,11 @@ export async function recordBrassPayment(input: {
     !Number.isFinite(input.paidAt.getTime())
   )
     throw new BrassProcurementError("INVALID");
+  const accessible = await prisma.orderBrassProcurement.findFirst({
+    where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+    select: { id: true },
+  });
+  if (!accessible) throw new BrassProcurementError("NOT_FOUND");
   const existing = await prisma.companyLedgerEntry.findUnique({
     where: { idempotencyKey: input.key },
   });
@@ -566,8 +564,11 @@ export async function recordBrassPayment(input: {
     return await prisma.$transaction(
       async (tx) => {
       const request = await tx.orderBrassProcurement.findFirst({
-        where: { id: input.procurementId },
-        include: { supplier: { select: { name: true } } },
+        where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+        include: {
+          supplier: { select: { name: true } },
+          order: { select: { managerUserId: true } },
+        },
       });
       if (!request) throw new BrassProcurementError("NOT_FOUND");
       const current = input.kind === "SUPPLIER"
@@ -659,8 +660,13 @@ export async function receiveBrassProcurement(input: {
   )
     throw new BrassProcurementError("INVALID");
   const request = await prisma.orderBrassProcurement.findFirst({
-    where: { id: input.procurementId },
-    include: { purchaseBatch: true, purchaseBatchLine: true, reminderTask: true },
+    where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+    include: {
+      order: { select: { managerUserId: true } },
+      purchaseBatch: true,
+      purchaseBatchLine: true,
+      reminderTask: true,
+    },
   });
   if (!request) throw new BrassProcurementError("NOT_FOUND");
   if (request.status === "COST_FINALIZED") {
