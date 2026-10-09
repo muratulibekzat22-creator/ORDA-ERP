@@ -55,7 +55,7 @@ function actor(session: { user: { id: string; role?: string; name?: string | nul
 async function directorAuth() {
   const auth = await requirePermission("partners");
   if (auth.response) return { response: auth.response };
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if ((auth.session!.user.accountRole || auth.session!.user.role) !== Role.DIRECTOR)
     return { response: NextResponse.json({ error: "Недостаточно прав" }, { status: 403 }) };
   return { session: auth.session! };
 }

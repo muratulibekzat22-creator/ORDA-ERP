@@ -9,7 +9,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function GET(_: Request, { params }: Context) {
   const auth = await requirePermission("partners");
   if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.DIRECTOR)
+  if ((auth.session!.user.accountRole || auth.session!.user.role) !== Role.DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });

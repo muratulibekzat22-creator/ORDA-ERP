@@ -122,6 +122,11 @@ assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/ca
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
+const partnerManagementPage = read("app/partner-management/page.tsx");
+const partnerManagementRoute = read("app/api/partner-management/route.ts");
+assert.match(partnerManagementPage, /session\.user\.accountRole \|\| session\.user\.role/);
+assert.match(partnerManagementRoute, /user\.accountRole \|\| auth\.session!\.user\.role/);
+
 const salesPlanRoute = read("app/api/sales-plan/route.ts");
 assert.match(salesPlanRoute, /runWithTenant\(actor\.tenant,[\s\S]*getSalesPlan/);
 assert.match(salesPlanRoute, /runWithTenant\([\s\S]*updateSalesPlan/);
