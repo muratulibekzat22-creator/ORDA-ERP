@@ -8,9 +8,9 @@ import { orderDataGaps } from "../lib/orders/completeness";
 import {
   ORDER_BOARD_TARGET_LIFECYCLE,
   orderBoardColumn,
-  workshopRegionGroup,
 } from "../lib/orders/board";
 import { hasProductionPrice } from "../lib/orders/production-price";
+import { orderRegionKey } from "../lib/orders/regions";
 import {
   companyMonthRange,
   companyYearMonth,
@@ -29,10 +29,12 @@ assert.equal(orderBoardColumn(OrderLifecycle.COMPLETED), "COMPLETED");
 assert.equal(orderBoardColumn(OrderLifecycle.CANCELLED), null);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.CONTRACT, OrderLifecycle.PREPARATION);
 assert.equal(ORDER_BOARD_TARGET_LIFECYCLE.WORKSHOP, OrderLifecycle.READY_FOR_PRODUCTION);
-assert.equal(workshopRegionGroup("Алматы, ул. Абая 10"), "ALMATY_CITY");
-assert.equal(workshopRegionGroup("Алматинская область, г. Талгар"), "ALMATY_REGION");
-assert.equal(workshopRegionGroup("https://2gis.kz/almaty/geo/70000001000000000"), "ALMATY_CITY");
-assert.equal(workshopRegionGroup("Астана, ул. Республики 1"), "OTHER");
+assert.equal(orderRegionKey("Алматы, ул. Абая 10"), "ALMATY_CITY");
+assert.equal(orderRegionKey("Алматинская область, г. Талгар"), "ALMATY_REGION");
+assert.equal(orderRegionKey("https://2gis.kz/almaty/geo/70000001000000000"), "ALMATY_CITY");
+assert.equal(orderRegionKey("Астана, ул. Республики 1"), "ASTANA_CITY");
+assert.equal(orderRegionKey("г Астана с Косшы"), "AKMOLA_REGION");
+assert.equal(orderRegionKey("ул Тыныбаева 138"), "UNSPECIFIED");
 assert.equal(hasProductionPrice(1, new Date()), false, "legacy 1 ₸ placeholder entered profit calculations");
 assert.equal(hasProductionPrice(111, new Date()), false, "legacy 111 ₸ placeholder entered profit calculations");
 assert.equal(hasProductionPrice(10_000, new Date()), true);
@@ -160,8 +162,11 @@ for (const column of ["Заказ оформлен", "Договор", "Пере
   assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(column));
 for (const label of ["Продажа:", "Остаток клиента:", "Срок не указан"])
   assert.match(orderKanban, new RegExp(label));
-for (const region of ["Алматы", "Алматинская область", "Другие города"])
-  assert.match(`${orderKanban}\n${orderBoard}`, new RegExp(region));
+for (const regionFilter of ["Все регионы", "regionOptions\.map", "option\.count"])
+  assert.match(ordersPage, new RegExp(regionFilter));
+assert.match(ordersApi, /ORDER_REGION_OPTIONS/);
+assert.match(ordersApi, /orderRegionKey\(order\.client\.city\)/);
+assert.match(ordersApi, /regions,/);
 assert.match(orderKanban, /draggable=/);
 assert.match(orderKanban, /text\/order-id/);
 assert.match(ordersPage, /available-transitions/);

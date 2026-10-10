@@ -6,9 +6,7 @@ import Link from "next/link";
 import type { OrderListItem } from "@/components/orders/OrderTable";
 import {
   ORDER_BOARD_COLUMNS,
-  WORKSHOP_REGION_GROUPS,
   orderBoardColumn,
-  workshopRegionGroup,
   type OrderBoardColumn,
 } from "@/lib/orders/board";
 
@@ -33,12 +31,6 @@ export default function OrderKanban({
           const columnOrders = column.key === "COMPLETED"
             ? []
             : orders.filter((order) => orderBoardColumn(order.lifecycle) === column.key);
-          const groups = column.key === "WORKSHOP"
-            ? WORKSHOP_REGION_GROUPS.map((group) => ({
-                ...group,
-                orders: columnOrders.filter((order) => workshopRegionGroup(order.client.city) === group.key),
-              }))
-            : [{ key: column.key, label: null, orders: columnOrders }];
 
           return (
             <div
@@ -65,37 +57,22 @@ export default function OrderKanban({
                 <p className="mt-1 text-xs leading-5 text-slate-500">{column.description}</p>
               </header>
               <div className="space-y-3">
-                {groups.map((group) => (
-                  <section
-                    key={group.key}
-                    className={group.label ? "rounded-xl border border-slate-800/80 bg-slate-900/35 p-2" : undefined}
-                  >
-                    {group.label ? (
-                      <header className="mb-2 flex items-center justify-between gap-2 px-1">
-                        <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300">{group.label}</h3>
-                        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs text-slate-400">{group.orders.length}</span>
-                      </header>
-                    ) : null}
-                    <div className="space-y-3">
-                      {group.orders.map((order) => (
-                        <KanbanOrderCard
-                          key={order.id}
-                          order={order}
-                          column={column.key}
-                          moving={movingIds.has(order.id)}
-                          onMove={onMove}
-                        />
-                      ))}
-                      {!group.orders.length ? (
-                        <p className="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-500">
-                          {column.key === "COMPLETED"
-                            ? "Перетащите сюда, чтобы завершить заказ. Закрытые карточки сохраняются в истории."
-                            : "Нет заказов"}
-                        </p>
-                      ) : null}
-                    </div>
-                  </section>
+                {columnOrders.map((order) => (
+                  <KanbanOrderCard
+                    key={order.id}
+                    order={order}
+                    column={column.key}
+                    moving={movingIds.has(order.id)}
+                    onMove={onMove}
+                  />
                 ))}
+                {!columnOrders.length ? (
+                  <p className="rounded-xl border border-dashed border-slate-700 p-4 text-center text-xs text-slate-500">
+                    {column.key === "COMPLETED"
+                      ? "Перетащите сюда, чтобы завершить заказ. Закрытые карточки сохраняются в истории."
+                      : "Нет заказов"}
+                  </p>
+                ) : null}
               </div>
             </div>
           );

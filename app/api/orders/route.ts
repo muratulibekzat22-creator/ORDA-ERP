@@ -13,11 +13,16 @@ import {
   USER_ORDER_STATUSES,
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
+import {
+  ORDER_REGION_OPTIONS,
+  isOrderRegionKey,
+  orderRegionKey,
+} from "@/lib/orders/regions";
 import { PAYMENT_METHODS } from "@/lib/orders/registration";
 import { hasProductionPrice, isProductionPriceAmount, MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/server-auth";
-import { countOrders, createOrder, getOrders } from "@/lib/services/order.service";
+import { createOrder, getOrders } from "@/lib/services/order.service";
 
 const MAX_MONEY = 9_999_999_999.99;
 const ALMATY_OFFSET_MS = 5 * 60 * 60 * 1000;
@@ -106,6 +111,9 @@ export async function GET(request: Request) {
     const status = params.get("status");
     if (status && !USER_ORDER_STATUSES.includes(status as UserOrderStatus))
       return NextResponse.json({ error: "Некорректный статус" }, { status: 400 });
+    const region = params.get("region") ?? "all";
+    if (region !== "all" && !isOrderRegionKey(region))
+      return NextResponse.json({ error: "Некорректный регион" }, { status: 400 });
     const now = new Date();
     const lifecycleScope: Prisma.OrderWhereInput =
       tab === "completed"
@@ -154,7 +162,7 @@ export async function GET(request: Request) {
         : attention === "order-date"
           ? { orderDateNeedsReview: true }
         : {};
-    const where: Prisma.OrderWhereInput = {
+    const baseWhere: Prisma.OrderWhereInput = {
       AND: [
         roleScope,
         lifecycleScope,
@@ -172,14 +180,32 @@ export async function GET(request: Request) {
           ? {}
           : { deletedAt: null }),
     };
-    const [orders, total] = await Promise.all([
-      getOrders(where, {
-        includeDeleted,
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      countOrders(where),
-    ]);
+    const regionRows = await prisma.order.findMany({
+      where: baseWhere,
+      select: { id: true, client: { select: { city: true } } },
+    });
+    const regionCounts = new Map<string, number>();
+    for (const order of regionRows) {
+      const key = orderRegionKey(order.client.city);
+      regionCounts.set(key, (regionCounts.get(key) ?? 0) + 1);
+    }
+    const regions = ORDER_REGION_OPTIONS
+      .map((option) => ({ ...option, count: regionCounts.get(option.key) ?? 0 }))
+      .filter((option) => option.count > 0);
+    const selectedIds = region === "all"
+      ? regionRows.map((order) => order.id)
+      : regionRows
+          .filter((order) => orderRegionKey(order.client.city) === region)
+          .map((order) => order.id);
+    const where: Prisma.OrderWhereInput = region === "all"
+      ? baseWhere
+      : { AND: [baseWhere, { id: { in: selectedIds } }] };
+    const total = selectedIds.length;
+    const orders = await getOrders(where, {
+      includeDeleted,
+      skip: (page - 1) * limit,
+      take: limit,
+    });
 
     const data = orders.map((order) => {
       if (role === Role.DIRECTOR || role === Role.ACCOUNTANT) return order;
@@ -216,6 +242,7 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({
       data,
+      regions,
       pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
     });
   } catch (error) {

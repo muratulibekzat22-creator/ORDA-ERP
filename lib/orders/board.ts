@@ -25,49 +25,6 @@ export const ORDER_BOARD_COLUMNS = [
 
 export type OrderBoardColumn = (typeof ORDER_BOARD_COLUMNS)[number]["key"];
 
-export const WORKSHOP_REGION_GROUPS = [
-  { key: "ALMATY_CITY", label: "Алматы" },
-  { key: "ALMATY_REGION", label: "Алматинская область" },
-  { key: "OTHER", label: "Другие города" },
-] as const;
-
-export type WorkshopRegionGroup = (typeof WORKSHOP_REGION_GROUPS)[number]["key"];
-
-const ALMATY_REGION_MARKERS = [
-  "алматинская область",
-  "алматы облысы",
-  "almaty region",
-  "almaty oblast",
-  "каскелен",
-  "қаскелең",
-  "талгар",
-  "талғар",
-  "есик",
-  "есік",
-  "конаев",
-  "қонаев",
-  "капчагай",
-  "боралдай",
-  "отеген батыр",
-  "өтеген батыр",
-  "бесагаш",
-  "бесағаш",
-  "иргели",
-  "іргелі",
-] as const;
-
-export function workshopRegionGroup(city: string | null | undefined): WorkshopRegionGroup {
-  let normalized = (city ?? "").trim().toLocaleLowerCase("ru-RU");
-  try {
-    normalized = decodeURIComponent(normalized);
-  } catch {
-    // Keep malformed legacy addresses readable and classify them by the raw value.
-  }
-  if (ALMATY_REGION_MARKERS.some((marker) => normalized.includes(marker))) return "ALMATY_REGION";
-  if (normalized.includes("алматы") || normalized.includes("алма-ата") || normalized.includes("almaty")) return "ALMATY_CITY";
-  return "OTHER";
-}
-
 // Completion remains available in the order card; the daily board is active work only.
 export const ACTIVE_ORDER_BOARD_COLUMNS = ORDER_BOARD_COLUMNS.filter(column => column.key !== "COMPLETED");
 

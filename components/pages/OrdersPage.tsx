@@ -21,9 +21,14 @@ import {
   USER_ORDER_STATUS_LABELS,
   type UserOrderStatus,
 } from "@/lib/orders/presentation";
+import {
+  isOrderRegionKey,
+  type OrderRegionKey,
+} from "@/lib/orders/regions";
 
 type Tab = "board" | "all" | "completed";
 type Pagination = { page: number; total: number; totalPages?: number; pages?: number };
+type RegionOption = { key: OrderRegionKey; label: string; count: number };
 
 const tabs: Array<[Tab, string]> = [
   ["board", "Активные заказы"],
@@ -38,10 +43,12 @@ export default function OrdersPage({
   initialTab = "board",
   initialStatus = "all",
   initialAttention = "",
+  initialRegion = "all",
 }: {
   initialTab?: string;
   initialStatus?: string;
   initialAttention?: string;
+  initialRegion?: string;
 }) {
   const [tab, setTab] = useState<Tab>(normalizeTab(initialTab));
   const [query, setQuery] = useState("");
@@ -56,6 +63,10 @@ export default function OrdersPage({
       ? initialAttention
       : "",
   );
+  const [region, setRegion] = useState<"all" | OrderRegionKey>(
+    isOrderRegionKey(initialRegion) ? initialRegion : "all",
+  );
+  const [regionOptions, setRegionOptions] = useState<RegionOption[]>([]);
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [pagination, setPagination] = useState<Pagination>({ page: 1, total: 0, totalPages: 1 });
   const [page, setPage] = useState(1);
@@ -63,11 +74,12 @@ export default function OrdersPage({
   const [error, setError] = useState("");
   const [movingIds, setMovingIds] = useState<Set<number>>(new Set());
 
-  const updateUrl = useCallback((nextTab: Tab, nextStatus: string, nextAttention = "") => {
+  const updateUrl = useCallback((nextTab: Tab, nextStatus: string, nextAttention = "", nextRegion: string = "all") => {
     const params = new URLSearchParams();
     params.set("tab", nextTab);
     if (nextStatus !== "all") params.set("status", nextStatus);
     if (nextAttention) params.set("attention", nextAttention);
+    if (nextRegion !== "all") params.set("region", nextRegion);
     window.history.replaceState(null, "", `/orders?${params.toString()}`);
   }, []);
 
@@ -80,24 +92,33 @@ export default function OrdersPage({
       params.set("tab", tab);
       if (status !== "all") params.set("status", status);
       if (attention) params.set("attention", attention);
+      if (region !== "all") params.set("region", region);
       const response = await fetch(
         `/api/orders?${params}`,
         { cache: "no-store" },
       );
       const body = (await response.json()) as {
         data?: OrderListItem[];
+        regions?: RegionOption[];
         pagination?: Pagination;
         error?: string;
       };
       if (!response.ok) throw new Error(body.error ?? "Не удалось загрузить список");
       setOrders(body.data ?? []);
+      const nextRegions = body.regions ?? [];
+      setRegionOptions(nextRegions);
       setPagination(body.pagination ?? { page: 1, total: 0, totalPages: 1 });
+      if (region !== "all" && !nextRegions.some((option) => option.key === region)) {
+        setRegion("all");
+        setPage(1);
+        updateUrl(tab, status, attention, "all");
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось загрузить список");
     } finally {
       setLoading(false);
     }
-  }, [attention, deferredQuery, page, status, tab]);
+  }, [attention, deferredQuery, page, region, status, tab, updateUrl]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 120);
@@ -109,20 +130,27 @@ export default function OrdersPage({
     setPage(1);
     setStatus("all");
     setAttention("");
+    setRegion("all");
     updateUrl(value, "all");
   };
   const changeStatus = (value: "all" | UserOrderStatus) => {
     setStatus(value);
     setPage(1);
     setAttention("");
-    updateUrl(tab, value);
+    updateUrl(tab, value, "", region);
   };
   const changeAttention = (value: string) => {
     setAttention(value);
     setPage(1);
-    updateUrl(tab, status, value);
+    updateUrl(tab, status, value, region);
+  };
+  const changeRegion = (value: "all" | OrderRegionKey) => {
+    setRegion(value);
+    setPage(1);
+    updateUrl(tab, status, attention, value);
   };
   const pages = pagination.totalPages ?? pagination.pages ?? 1;
+  const regionTotal = regionOptions.reduce((total, option) => total + option.count, 0);
 
   async function moveOrder(id: number, column: OrderBoardColumn) {
     const current = orders.find((order) => order.id === id);
@@ -188,7 +216,7 @@ export default function OrdersPage({
 
       {tab === "completed" && <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-sm text-amber-200">Закрытие работ не означает погашение долга. Остатки оплаты видны в таблице; договоры, платежи и история доступны внутри заказа. Здесь ничего не удаляется.</p>}
 
-      <section className="grid gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 sm:grid-cols-[minmax(0,1fr)_220px_240px]">
+      <section className="grid gap-3 rounded-2xl border border-slate-800 bg-[#101827] p-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_220px_220px_240px]">
         <label className="relative min-w-0">
           <span className="sr-only">Поиск</span>
           <Search className="pointer-events-none absolute left-3 top-3 text-slate-500" size={18} />
@@ -203,6 +231,13 @@ export default function OrdersPage({
                 ? value === "COMPLETED"
                 : tab === "all" || (value !== "COMPLETED" && value !== "CANCELLED"),
             ).map((value) => <option key={value} value={value}>{USER_ORDER_STATUS_LABELS[value]}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="sr-only">Регион заказа</span>
+          <select value={region} onChange={(event) => changeRegion(event.target.value as "all" | OrderRegionKey)} className="min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
+            <option value="all">Все регионы ({regionTotal})</option>
+            {regionOptions.map((option) => <option key={option.key} value={option.key}>{option.label} ({option.count})</option>)}
           </select>
         </label>
         <label className="block">

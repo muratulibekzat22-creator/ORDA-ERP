@@ -11,6 +11,7 @@ export default async function Page({
       initialTab={typeof params.tab === "string" ? params.tab : undefined}
       initialStatus={typeof params.status === "string" ? params.status : undefined}
       initialAttention={typeof params.attention === "string" ? params.attention : undefined}
+      initialRegion={typeof params.region === "string" ? params.region : undefined}
     />
   );
 }
