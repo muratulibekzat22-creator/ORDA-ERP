@@ -25,6 +25,7 @@ export type OrderEconomyInput = {
   brassProcurement?: {
     status: string;
     landedCostKzt: DecimalValue;
+    costBearer?: string;
   } | null;
   payrollAccruals?: Array<{
     type: PayrollAccrualType | string;
@@ -149,7 +150,8 @@ export function calculateOrderEconomy(input: OrderEconomyInput) {
     return value && value.gt(0) ? value : ledger;
   };
   const materials = categoryCost(calculation?.materialCost, ledgerMaterials);
-  const brass = input.brassProcurement?.status === "COST_FINALIZED"
+  const brass = input.brassProcurement?.status === "COST_FINALIZED" &&
+    input.brassProcurement.costBearer !== "CONTRACTOR"
     ? money(input.brassProcurement.landedCostKzt)
     : money(0);
   const delivery = categoryCost(calculation?.deliveryCost, ledgerDelivery);

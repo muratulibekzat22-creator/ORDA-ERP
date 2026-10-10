@@ -1,6 +1,11 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
+import {
+  normalizeBrassCostBearer,
+  normalizeBrassModelQuantities,
+  totalBrassPairs,
+} from "@/lib/brass/catalog";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { requireInternalEmployee } from "@/lib/server-auth";
 import {
@@ -29,7 +34,7 @@ function failure(error: unknown) {
             : error.code === "NOT_FOUND"
               ? "Заказ не найден"
               : error.code === "INVALID"
-                ? "Укажите количество пар и приложите фото латуни"
+                ? "Укажите количество хотя бы одной модели латуни"
                 : error.code === "IDEMPOTENCY_CONFLICT"
                   ? "Повторный запрос содержит другие данные"
                   : "Заявка на латунь уже создана для этого заказа",
@@ -76,25 +81,33 @@ export async function POST(request: Request, { params }: Context) {
   if ("response" in idempotency) return idempotency.response;
   try {
     const form = await request.formData();
-    const photo = form.get("photo");
-    const quantityPairs = Number(form.get("quantityPairs"));
+    const photoValue = form.get("photo");
+    const photo = photoValue instanceof File && photoValue.size > 0
+      ? photoValue
+      : null;
+    const modelQuantities = normalizeBrassModelQuantities({
+      OVAL_BLACK: form.get("model_OVAL_BLACK"),
+      OVAL_WHITE: form.get("model_OVAL_WHITE"),
+      SQUARE_BLACK: form.get("model_SQUARE_BLACK"),
+    });
+    const legacyQuantityPairs = Number(form.get("quantityPairs"));
+    if (totalBrassPairs(modelQuantities) === 0 && legacyQuantityPairs > 0)
+      modelQuantities.OVAL_BLACK = legacyQuantityPairs;
+    const costBearer = normalizeBrassCostBearer(form.get("costBearer"));
     const notes = String(form.get("notes") ?? "").trim().slice(0, 1000);
-    if (!(photo instanceof File))
-      return NextResponse.json(
-        { error: "Фото латунных балясин обязательно" },
-        { status: 400 },
-      );
     const payload = {
       orderId,
-      quantityPairs,
+      modelQuantities,
+      costBearer,
       notes,
-      fileName: photo.name,
-      contentType: photo.type,
-      size: photo.size,
+      fileName: photo?.name ?? null,
+      contentType: photo?.type ?? null,
+      size: photo?.size ?? 0,
     };
     const result = await createBrassProcurement({
       orderId,
-      quantityPairs,
+      modelQuantities,
+      costBearer,
       notes,
       photo,
       key: idempotency.key,

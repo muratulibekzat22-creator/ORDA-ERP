@@ -299,6 +299,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
           orderId={order.id}
           readOnly={archived}
           canSeeCost
+          defaultCostBearer={order.brassCostBearer === "CONTRACTOR" ? "CONTRACTOR" : "COMPANY"}
         />
       ) : null}
 

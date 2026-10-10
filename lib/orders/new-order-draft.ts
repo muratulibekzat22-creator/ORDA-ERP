@@ -20,7 +20,10 @@ export type NewOrderFormValues = {
   cladding: boolean;
   claddingDetails: string;
   brassRequired: boolean;
-  brassQuantityPairs: string;
+  brassOvalBlackPairs: string;
+  brassOvalWhitePairs: string;
+  brassSquareBlackPairs: string;
+  brassCostBearer: "COMPANY" | "CONTRACTOR";
   brassNotes: string;
 };
 
@@ -71,7 +74,10 @@ export const EMPTY_NEW_ORDER_FORM: NewOrderFormValues = {
   cladding: false,
   claddingDetails: "",
   brassRequired: false,
-  brassQuantityPairs: "",
+  brassOvalBlackPairs: "",
+  brassOvalWhitePairs: "",
+  brassSquareBlackPairs: "",
+  brassCostBearer: "COMPANY",
   brassNotes: "",
 };
 
@@ -108,7 +114,15 @@ function parseForm(value: unknown): NewOrderFormValues | null {
     cladding: candidate.cladding === true,
     claddingDetails: stringValue(candidate.claddingDetails),
     brassRequired: candidate.brassRequired === true,
-    brassQuantityPairs: stringValue(candidate.brassQuantityPairs),
+    brassOvalBlackPairs: stringValue(
+      candidate.brassOvalBlackPairs,
+      stringValue(candidate.brassQuantityPairs),
+    ),
+    brassOvalWhitePairs: stringValue(candidate.brassOvalWhitePairs),
+    brassSquareBlackPairs: stringValue(candidate.brassSquareBlackPairs),
+    brassCostBearer: candidate.brassCostBearer === "CONTRACTOR"
+      ? "CONTRACTOR"
+      : "COMPANY",
     brassNotes: stringValue(candidate.brassNotes),
   };
 }

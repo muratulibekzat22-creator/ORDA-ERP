@@ -9,6 +9,14 @@ import {
   Role,
 } from "@prisma/client";
 
+import {
+  brassModelSummary,
+  normalizeBrassCostBearer,
+  normalizeBrassModelQuantities,
+  totalBrassPairs,
+  type BrassCostBearer,
+  type BrassModelQuantities,
+} from "@/lib/brass/catalog";
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import {
@@ -119,6 +127,8 @@ function publicRow(row: ProcurementRow) {
   return {
     ...row,
     quantityPairs: Number(row.quantityPairs),
+    modelQuantities: normalizeBrassModelQuantities(row.modelQuantities),
+    costBearer: normalizeBrassCostBearer(row.costBearer),
     exchangeRate: Number(row.exchangeRate),
     unitPurchasePrice: Number(row.unitPurchasePrice),
     goodsCostKzt: goodsCost,
@@ -129,7 +139,9 @@ function publicRow(row: ProcurementRow) {
     supplierBalanceKzt: Math.max(0, roundMoney(goodsCost - supplierPaid)),
     cargoBalanceKzt: Math.max(0, roundMoney(cargoCost - cargoPaid)),
     totalPaidKzt: roundMoney(supplierPaid + cargoPaid),
-    photoUrl: `/api/attachments/${row.photoAttachment.id}?disposition=inline`,
+    photoUrl: row.photoAttachment
+      ? `/api/attachments/${row.photoAttachment.id}?disposition=inline`
+      : null,
   };
 }
 
@@ -144,7 +156,13 @@ async function findAccessibleOrder(orderId: number) {
       id: orderId,
       deletedAt: null,
     },
-    select: { id: true, companyId: true, number: true, managerUserId: true },
+    select: {
+      id: true,
+      companyId: true,
+      number: true,
+      managerUserId: true,
+      brassCostBearer: true,
+    },
   });
 }
 
@@ -208,6 +226,7 @@ export async function getBrassProcurementWorkspace(
       select: {
         id: true,
         number: true,
+        brassCostBearer: true,
         client: { select: { name: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -237,23 +256,40 @@ export async function getBrassProcurement(
 
 export async function createBrassProcurement(input: {
   orderId: number;
-  quantityPairs: number;
+  modelQuantities?: Partial<BrassModelQuantities>;
+  quantityPairs?: number;
+  costBearer?: BrassCostBearer;
   notes?: string;
-  photo: File;
+  photo?: File | null;
   key: string;
   requestHash: string;
   actor: BrassProcurementActor;
 }) {
   assertInternalEmployee(input.actor);
+  let modelQuantities = normalizeBrassModelQuantities(input.modelQuantities);
+  let quantityPairs = totalBrassPairs(modelQuantities);
   if (
-    !Number.isFinite(input.quantityPairs) ||
-    input.quantityPairs <= 0 ||
-    input.quantityPairs > 10_000 ||
-    !input.photo.type.startsWith("image/")
+    quantityPairs === 0 &&
+    Number.isInteger(input.quantityPairs) &&
+    Number(input.quantityPairs) > 0
+  ) {
+    modelQuantities = {
+      ...modelQuantities,
+      OVAL_BLACK: Number(input.quantityPairs),
+    };
+    quantityPairs = totalBrassPairs(modelQuantities);
+  }
+  if (
+    quantityPairs <= 0 ||
+    quantityPairs > 10_000 ||
+    (input.photo && !input.photo.type.startsWith("image/"))
   )
     throw new BrassProcurementError("INVALID");
   const order = await findAccessibleOrder(input.orderId);
   if (!order) throw new BrassProcurementError("NOT_FOUND");
+  const costBearer = normalizeBrassCostBearer(
+    input.costBearer ?? order.brassCostBearer,
+  );
   const repeated = await prisma.orderBrassProcurement.findUnique({
     where: { idempotencyKey: input.key },
     include: procurementInclude,
@@ -266,14 +302,16 @@ export async function createBrassProcurement(input: {
   if (await prisma.orderBrassProcurement.findFirst({ where: { orderId: order.id } }))
     throw new BrassProcurementError("CONFLICT");
 
-  const uploaded = await uploadAttachment({
-    orderId: order.id,
-    purpose: "BRASS_REFERENCE",
-    file: input.photo,
-    idempotencyKey: `${input.key}:photo`,
-    actor: input.actor,
-  });
-  if (!uploaded) throw new BrassProcurementError("FORBIDDEN");
+  const uploaded = input.photo
+    ? await uploadAttachment({
+        orderId: order.id,
+        purpose: "BRASS_REFERENCE",
+        file: input.photo,
+        idempotencyKey: `${input.key}:photo`,
+        actor: input.actor,
+      })
+    : null;
+  if (input.photo && !uploaded) throw new BrassProcurementError("FORBIDDEN");
 
   try {
     const row = await prisma.$transaction(
@@ -305,9 +343,9 @@ export async function createBrassProcurement(input: {
             materialId: material.id,
             skuSnapshot: material.code ?? "BRASS-BALUSTER-PAIR",
             nameSnapshot: material.name,
-            variantSnapshot: "Закупка под конкретный заказ",
+            variantSnapshot: brassModelSummary(modelQuantities),
             unitSnapshot: "пара",
-            quantity: String(input.quantityPairs),
+            quantity: String(quantityPairs),
             unitPrice: 0,
             lineTotal: 0,
             stockTracked: true,
@@ -317,8 +355,10 @@ export async function createBrassProcurement(input: {
         const procurement = await tx.orderBrassProcurement.create({
           data: {
             orderId: order.id,
-            quantityPairs: String(input.quantityPairs),
-            photoAttachmentId: uploaded.attachment.id,
+            quantityPairs: String(quantityPairs),
+            modelQuantities,
+            costBearer,
+            photoAttachmentId: uploaded?.attachment.id,
             materialId: material.id,
             orderItemId: item.id,
             responsibleUserId: input.actor.userId,
@@ -330,11 +370,15 @@ export async function createBrassProcurement(input: {
           },
           include: procurementInclude,
         });
+        await tx.order.update({
+          where: { id: order.id },
+          data: { brassCostBearer: costBearer },
+        });
         await tx.orderEvent.create({
           data: {
             orderId: order.id,
             title: "Запрошена закупка латуни",
-            description: `${input.quantityPairs} пар. Фото приложено. Заявка передана на склад.`,
+            description: `${quantityPairs} пар: ${brassModelSummary(modelQuantities)}. Расходы: ${costBearer === "COMPANY" ? "компания" : "подрядчик / цех"}. Заявка передана на склад${uploaded ? ", фото приложено" : ""}.`,
             user: input.actor.name,
           },
         });
@@ -344,7 +388,7 @@ export async function createBrassProcurement(input: {
     );
     return { procurement: publicRow(row), created: true };
   } catch (error) {
-    if (uploaded.created)
+    if (uploaded?.created)
       await deleteAttachment(uploaded.attachment.id, input.actor).catch(() => undefined);
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -654,6 +698,114 @@ export async function recordBrassPayment(input: {
       });
       if (repeated && compareRequestHash(repeated.requestHash, input.requestHash))
         return repeated;
+      throw new BrassProcurementError("IDEMPOTENCY_CONFLICT");
+    }
+    throw error;
+  }
+}
+
+export async function finalizeBrassCost(input: {
+  procurementId: number;
+  goodsCostKzt: number;
+  cargoCostKzt: number;
+  receivedAt: Date;
+  note?: string;
+  key: string;
+  requestHash: string;
+  actor: BrassProcurementActor;
+}) {
+  assertInternalEmployee(input.actor);
+  if (
+    !Number.isFinite(input.goodsCostKzt) ||
+    input.goodsCostKzt <= 0 ||
+    !Number.isFinite(input.cargoCostKzt) ||
+    input.cargoCostKzt < 0 ||
+    !Number.isFinite(input.receivedAt.getTime())
+  )
+    throw new BrassProcurementError("INVALID");
+
+  const eventKey = `brass-direct-cost:${input.key}`;
+  const replay = await prisma.orderEvent.findUnique({
+    where: { idempotencyKey: eventKey },
+    select: { requestHash: true, orderId: true },
+  });
+  if (replay) {
+    if (!compareRequestHash(replay.requestHash, input.requestHash))
+      throw new BrassProcurementError("IDEMPOTENCY_CONFLICT");
+    const row = await prisma.orderBrassProcurement.findFirst({
+      where: { id: input.procurementId, orderId: replay.orderId },
+      include: procurementInclude,
+    });
+    if (!row) throw new BrassProcurementError("NOT_FOUND");
+    return publicRow(row);
+  }
+
+  const landedCostKzt = roundMoney(
+    input.goodsCostKzt + input.cargoCostKzt,
+  );
+  try {
+    const updated = await prisma.$transaction(
+      async (tx) => {
+        const request = await tx.orderBrassProcurement.findFirst({
+          where: { id: input.procurementId },
+        });
+        if (!request) throw new BrassProcurementError("NOT_FOUND");
+        if (request.status !== "REQUESTED")
+          throw new BrassProcurementError("CONFLICT");
+        const quantityPairs = Number(request.quantityPairs);
+        await tx.orderItem.update({
+          where: { id: request.orderItemId },
+          data: {
+            unitPrice: String(roundMoney(landedCostKzt / quantityPairs)),
+            lineTotal: String(landedCostKzt),
+            stockTracked: false,
+          },
+        });
+        const row = await tx.orderBrassProcurement.update({
+          where: { id: request.id },
+          data: {
+            status: "COST_FINALIZED",
+            goodsCostKzt: String(input.goodsCostKzt),
+            cargoCostKzt: String(input.cargoCostKzt),
+            landedCostKzt: String(landedCostKzt),
+            receivedAt: input.receivedAt,
+            notes: input.note?.trim().slice(0, 1000) || request.notes,
+            updatedById: input.actor.userId,
+            version: { increment: 1 },
+          },
+          include: procurementInclude,
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: request.orderId,
+            title: "Зафиксирована себестоимость латуни",
+            description: `${quantityPairs} пар · товар ${roundMoney(input.goodsCostKzt).toLocaleString("ru-RU")} ₸ · карго ${roundMoney(input.cargoCostKzt).toLocaleString("ru-RU")} ₸ · итого ${landedCostKzt.toLocaleString("ru-RU")} ₸. Расходы несёт ${request.costBearer === "CONTRACTOR" ? "подрядчик / цех" : "компания"}.`,
+            user: input.actor.name,
+            idempotencyKey: eventKey,
+            requestHash: input.requestHash,
+          },
+        });
+        return row;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return publicRow(updated);
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      const repeated = await prisma.orderEvent.findUnique({
+        where: { idempotencyKey: eventKey },
+        select: { requestHash: true, orderId: true },
+      });
+      if (repeated && compareRequestHash(repeated.requestHash, input.requestHash)) {
+        const row = await prisma.orderBrassProcurement.findFirst({
+          where: { id: input.procurementId, orderId: repeated.orderId },
+          include: procurementInclude,
+        });
+        if (row) return publicRow(row);
+      }
       throw new BrassProcurementError("IDEMPOTENCY_CONFLICT");
     }
     throw error;

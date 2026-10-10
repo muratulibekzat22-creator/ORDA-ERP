@@ -5,6 +5,7 @@ import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { requireInternalEmployee } from "@/lib/server-auth";
 import {
   BrassProcurementError,
+  finalizeBrassCost,
   getBrassProcurement,
   markBrassInTransit,
   placeBrassOrder,
@@ -76,6 +77,25 @@ export async function POST(request: Request, { params }: Context) {
       return NextResponse.json(
         await markBrassInTransit(procurementId, requestActor),
       );
+    if (body.action === "finalize_cost") {
+      const receivedAt = requiredDate(body.receivedAt);
+      const payload = {
+        procurementId,
+        goodsCostKzt: Number(body.goodsCostKzt),
+        cargoCostKzt: Number(body.cargoCostKzt ?? 0),
+        receivedAt: receivedAt.toISOString(),
+        note: String(body.note ?? ""),
+      };
+      return NextResponse.json(
+        await finalizeBrassCost({
+          ...payload,
+          receivedAt,
+          key: idempotency.key,
+          requestHash: createRequestHash(payload),
+          actor: requestActor,
+        }),
+      );
+    }
     if (body.action === "order") {
       const expectedArrivalDate = requiredDate(body.expectedArrivalDate);
       const payload = {

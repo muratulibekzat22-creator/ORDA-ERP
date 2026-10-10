@@ -1,6 +1,7 @@
 import { OrderLifecycle, Prisma, Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
+import { normalizeBrassCostBearer } from "@/lib/brass/catalog";
 import {
   createRequestHash,
   idempotencyConflict,
@@ -260,6 +261,7 @@ export async function POST(request: Request) {
     const promisedAt = dateValue(body.readinessDate ?? body.promisedAt);
     const paymentMethod = text(body.paymentMethod) ?? "BANK_TRANSFER";
     const initialPaymentDate = dateValue(body.paymentDate) ?? new Date();
+    const brassCostBearer = normalizeBrassCostBearer(body.brassCostBearer);
     const hasPaymentPromiseInput = (value: unknown) => value !== undefined && value !== null && value !== "";
     const paymentPromiseProvided = hasPaymentPromiseInput(body.paymentPromiseAmount) ||
       hasPaymentPromiseInput(body.paymentPromiseAt);
@@ -330,6 +332,7 @@ export async function POST(request: Request) {
       claddingDetails: text(body.claddingDetails) ?? "",
       additionalDetails: text(body.comment ?? body.additionalDetails) ?? "",
       paymentMethod,
+      brassCostBearer,
       initialPaymentDate,
       initialPaymentComment: text(body.paymentComment) ?? "",
       paymentPromiseAmount,

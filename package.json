@@ -15,6 +15,7 @@
     "prepare:director:release": "tsx scripts/prepare-production-director.ts",
     "prepare:sales-plan:release": "tsx scripts/prepare-sales-plan-release.ts",
     "prepare:daily-operations:release": "tsx scripts/prepare-daily-operations.ts",
+    "prepare:brass:release": "tsx scripts/prepare-brass-applications-release.ts",
     "seed:training": "tsx scripts/seed-training.ts",
     "verify:database-restore": "tsx scripts/verify-database-restore.ts",
     "test:idempotency": "tsx scripts/test-idempotency.ts",

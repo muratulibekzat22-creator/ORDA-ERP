@@ -12,6 +12,7 @@ import { createSupplier } from "../lib/services/purchase.service";
 import { createWarehouseOperation } from "../lib/services/warehouse.service";
 import {
   createBrassProcurement,
+  finalizeBrassCost,
   getOrderBrassProcurement,
   listBrassProcurements,
   markBrassInTransit,
@@ -161,6 +162,7 @@ async function main() {
     ids.procurement = create.procurement.id;
     ids.material = create.procurement.material.id;
     ids.orderItem = create.procurement.orderItem.id;
+    assert.ok(create.procurement.photoAttachment);
     attachmentId = create.procurement.photoAttachment.id;
     materialCreated = materialBefore === null;
     assert.equal(create.procurement.quantityPairs, 6);
@@ -314,7 +316,7 @@ async function main() {
       totalSale: 500000,
       partnerAgreed: 200000,
       partnerAgreedAt: new Date(),
-      brassProcurement: { status: received.status, landedCostKzt: received.landedCostKzt },
+      brassProcurement: { status: received.status, landedCostKzt: received.landedCostKzt, costBearer: "COMPANY" },
       ledgerEntries: [
         {
           direction: "EXPENSE",
@@ -330,8 +332,93 @@ async function main() {
     assert.equal(Number(economy.profit.netProfit), 165000);
     assert.equal(Number(economy.cash.otherExpensesPaid), 50000);
 
-    console.log("shared brass access, lifecycle, idempotency, reminder, landed cost and margin checks passed");
+    const directOrder = await prisma.order.create({
+      data: {
+        number: `TEST-BRASS-DIRECT-${Date.now()}`,
+        clientId: client.id,
+        address: "Test",
+        staircase: "Test",
+        material: "Латунь",
+        amount: 500000,
+        prepayment: 0,
+        balance: 500000,
+        partnerPrice: 200000,
+        partnerAgreedAt: new Date(),
+        companyProfit: 300000,
+        partnerPaid: 0,
+        partnerBalance: 200000,
+        manager: tag,
+        managerUserId: user.id,
+        brassCostBearer: "CONTRACTOR",
+      },
+    });
+    ids.directOrder = directOrder.id;
+    const directPayload = {
+      orderId: directOrder.id,
+      modelQuantities: { OVAL_BLACK: 2, OVAL_WHITE: 3, SQUARE_BLACK: 5 },
+      costBearer: "CONTRACTOR" as const,
+      notes: "Без заказа поставщику",
+    };
+    const directRequest = await createBrassProcurement({
+      ...directPayload,
+      key: key("direct-request"),
+      requestHash: createRequestHash(directPayload),
+      actor,
+    });
+    ids.directProcurement = directRequest.procurement.id;
+    ids.directOrderItem = directRequest.procurement.orderItem.id;
+    assert.equal(directRequest.procurement.quantityPairs, 10);
+    assert.deepEqual(directRequest.procurement.modelQuantities, directPayload.modelQuantities);
+    assert.equal(directRequest.procurement.photoAttachment, null);
+    assert.equal(directRequest.procurement.costBearer, "CONTRACTOR");
+
+    const directCostPayload = {
+      procurementId: ids.directProcurement,
+      goodsCostKzt: 123000,
+      cargoCostKzt: 7000,
+      receivedAt: new Date(),
+      note: "Стоимость внёс склад",
+    };
+    const directCostHash = createRequestHash({
+      ...directCostPayload,
+      receivedAt: directCostPayload.receivedAt.toISOString(),
+    });
+    const directFinalized = await finalizeBrassCost({
+      ...directCostPayload,
+      key: key("direct-cost"),
+      requestHash: directCostHash,
+      actor,
+    });
+    assert.equal(directFinalized.status, "COST_FINALIZED");
+    assert.equal(directFinalized.landedCostKzt, 130000);
+    const directReplay = await finalizeBrassCost({
+      ...directCostPayload,
+      key: key("direct-cost"),
+      requestHash: directCostHash,
+      actor,
+    });
+    assert.equal(directReplay.id, directFinalized.id);
+    const contractorEconomy = calculateOrderEconomy({
+      totalSale: 500000,
+      partnerAgreed: 200000,
+      partnerAgreedAt: new Date(),
+      brassProcurement: {
+        status: directFinalized.status,
+        landedCostKzt: directFinalized.landedCostKzt,
+        costBearer: directFinalized.costBearer,
+      },
+      ledgerEntries: [],
+    });
+    assert.equal(Number(contractorEconomy.profit.brass), 0);
+    assert.equal(Number(contractorEconomy.profit.netProfit), 300000);
+
+    console.log("shared brass access, model totals, optional photo, direct cost, contractor bearer, lifecycle and margin checks passed");
   } finally {
+    if (ids.directOrder) {
+      await prisma.financeAuditEvent.deleteMany({ where: { orderId: ids.directOrder } });
+      await prisma.companyLedgerEntry.deleteMany({ where: { orderId: ids.directOrder } });
+      await prisma.orderEvent.deleteMany({ where: { orderId: ids.directOrder } });
+    }
     if (ids.order) {
       await prisma.financeAuditEvent.deleteMany({ where: { orderId: ids.order } });
       await prisma.companyLedgerEntry.deleteMany({ where: { orderId: ids.order, source: "BRASS_PROCUREMENT_PAYMENT" } });
@@ -339,6 +426,8 @@ async function main() {
     }
     if (ids.procurement)
       await prisma.orderBrassProcurement.deleteMany({ where: { id: ids.procurement } });
+    if (ids.directProcurement)
+      await prisma.orderBrassProcurement.deleteMany({ where: { id: ids.directProcurement } });
     if (ids.task) {
       await prisma.calendarTaskAudit.deleteMany({ where: { taskId: ids.task } });
       await prisma.calendarTaskResultAttachment.deleteMany({ where: { taskId: ids.task } });
@@ -368,8 +457,10 @@ async function main() {
       await prisma.warehouseBalance.deleteMany({ where: { materialId: ids.material, locationId: ids.location } });
     }
     if (ids.orderItem) await prisma.orderItem.deleteMany({ where: { id: ids.orderItem } });
+    if (ids.directOrderItem) await prisma.orderItem.deleteMany({ where: { id: ids.directOrderItem } });
     if (attachmentId) await deleteAttachment(attachmentId, actor).catch(() => undefined);
     if (ids.order) await prisma.order.deleteMany({ where: { id: ids.order } });
+    if (ids.directOrder) await prisma.order.deleteMany({ where: { id: ids.directOrder } });
     if (ids.client) await prisma.client.deleteMany({ where: { id: ids.client } });
     if (materialCreated && ids.material) await prisma.material.deleteMany({ where: { id: ids.material } });
     if (ids.locationAccess) await prisma.warehouseLocationAccess.deleteMany({ where: { id: ids.locationAccess } });

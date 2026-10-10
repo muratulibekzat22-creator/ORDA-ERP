@@ -28,6 +28,7 @@ export type OrderTabData = {
   paymentMethod: string;
   orderKind?: string;
   fulfillmentStatus?: string;
+  brassCostBearer?: string;
   manager: string;
   amount: NumericValue;
   prepayment: NumericValue;

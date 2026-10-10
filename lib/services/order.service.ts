@@ -71,7 +71,7 @@ export async function getOrders(
         },
       },
       brassProcurement: {
-        select: { status: true, landedCostKzt: true },
+        select: { status: true, landedCostKzt: true, costBearer: true },
       },
       calculations: {
         orderBy: { createdAt: "desc" },
@@ -375,7 +375,7 @@ export async function getOrder(id: number) {
       commercialAdjustments: { orderBy: { createdAt: "asc" } },
       companyLedgerEntries: { orderBy: { operationDate: "asc" } },
       brassProcurement: {
-        select: { status: true, landedCostKzt: true },
+        select: { status: true, landedCostKzt: true, costBearer: true },
       },
       documents: true,
       calculations: {
@@ -476,6 +476,7 @@ type CreateOrderInput = {
   claddingDetails?: string;
   additionalDetails?: string;
   paymentMethod?: string;
+  brassCostBearer?: "COMPANY" | "CONTRACTOR";
   initialPaymentDate?: Date;
   initialPaymentComment?: string;
   paymentPromiseAmount?: number | null;
@@ -699,6 +700,7 @@ export async function createOrder(data: CreateOrderInput) {
               claddingDetails: data.claddingDetails ?? "",
               additionalDetails: data.additionalDetails ?? "",
               paymentMethod: data.paymentMethod ?? "",
+              brassCostBearer: data.brassCostBearer ?? "COMPANY",
               amount: money(data.amount),
               prepayment: money(data.prepayment),
               balance: money(balance),

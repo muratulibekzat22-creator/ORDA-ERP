@@ -1017,6 +1017,7 @@ model Order {
   paymentMethod        String   @default("")
   orderKind            String   @default("CUSTOM")
   fulfillmentStatus    String   @default("NOT_APPLICABLE")
+  brassCostBearer      String   @default("COMPANY")
 
   amount Decimal @db.Decimal(12, 2)
 
@@ -2586,9 +2587,11 @@ model OrderBrassProcurement {
   orderId             Int                @unique
   order               Order              @relation(fields: [orderId], references: [id], onDelete: Restrict)
   quantityPairs       Decimal            @db.Decimal(12, 3)
+  modelQuantities     Json               @default("{}")
+  costBearer          String             @default("COMPANY")
   status              String             @default("REQUESTED")
-  photoAttachmentId   Int                @unique
-  photoAttachment     Attachment         @relation(fields: [photoAttachmentId], references: [id], onDelete: Restrict)
+  photoAttachmentId   Int?               @unique
+  photoAttachment     Attachment?        @relation(fields: [photoAttachmentId], references: [id], onDelete: Restrict)
   materialId          Int
   material            Material           @relation(fields: [materialId], references: [id], onDelete: Restrict)
   orderItemId         Int                @unique

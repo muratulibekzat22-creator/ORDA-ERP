@@ -5,6 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import {
+  BRASS_COST_BEARER_LABELS,
+  BRASS_MODEL_OPTIONS,
+} from "@/lib/brass/catalog";
+import {
   clearNewOrderDraft,
   EMPTY_NEW_ORDER_FORM,
   readNewOrderDraft,
@@ -57,6 +61,15 @@ export default function NewOrderForm() {
   const submitting = useRef(false);
   const draftCleared = useRef(false);
   const canManageBrass = Boolean(options);
+  const brassModelFields = {
+    OVAL_BLACK: "brassOvalBlackPairs",
+    OVAL_WHITE: "brassOvalWhitePairs",
+    SQUARE_BLACK: "brassSquareBlackPairs",
+  } as const;
+  const brassTotal = BRASS_MODEL_OPTIONS.reduce(
+    (total, model) => total + Number(form[brassModelFields[model.key]] || 0),
+    0,
+  );
 
   useEffect(() => {
     void fetch("/api/orders/options", { cache: "no-store" })
@@ -130,19 +143,17 @@ export default function NewOrderForm() {
     if (
       canManageBrass &&
       form.brassRequired &&
-      (!Number.isFinite(Number(form.brassQuantityPairs)) ||
-        Number(form.brassQuantityPairs) <= 0)
+      (!Number.isFinite(brassTotal) || brassTotal <= 0 || brassTotal > 10_000)
     )
-      return setError("Для латуни укажите количество пар");
-    if (canManageBrass && form.brassRequired && !brassPhoto)
-      return setError("Для заявки на латунь обязательно приложите фото");
+      return setError("Для латуни укажите количество хотя бы одной модели");
     const hasPaymentPromise = Boolean(form.paymentPromiseAmount || form.paymentPromiseAt);
     if (hasPaymentPromise && (!form.paymentPromiseAmount || !form.paymentPromiseAt))
       return setError("Для доплаты укажите и сумму, и дату обещания клиента");
     if (hasPaymentPromise && Number(form.paymentPromiseAmount) > Number(form.amount) - Number(form.initialPayment))
       return setError("Обещанная доплата не может превышать остаток клиента");
     const paymentPromiseTimestamp = hasPaymentPromise ? new Date(form.paymentPromiseAt).getTime() : 0;
-    if (hasPaymentPromise && (Number.isNaN(paymentPromiseTimestamp) || paymentPromiseTimestamp < Date.now() + 30_000))
+    const minimumPaymentPromiseTimestamp = new Date(minimumPromiseTime()).getTime();
+    if (hasPaymentPromise && (Number.isNaN(paymentPromiseTimestamp) || paymentPromiseTimestamp < minimumPaymentPromiseTimestamp))
       return setError("Дата обещанной доплаты должна быть в будущем");
     submitting.current = true;
     setSaving(true);
@@ -185,11 +196,14 @@ export default function NewOrderForm() {
       const body = (await response.json()) as { id?: number; error?: string; existingOrderId?: number };
       if (!response.ok && body.existingOrderId) setDuplicateOrderId(body.existingOrderId);
       if (!response.ok || !body.id) throw new Error(body.error ?? "Не удалось создать заказ");
-      if (canManageBrass && form.brassRequired && brassPhoto) {
+      if (canManageBrass && form.brassRequired) {
         const brass = new FormData();
-        brass.set("quantityPairs", form.brassQuantityPairs);
+        brass.set("model_OVAL_BLACK", form.brassOvalBlackPairs || "0");
+        brass.set("model_OVAL_WHITE", form.brassOvalWhitePairs || "0");
+        brass.set("model_SQUARE_BLACK", form.brassSquareBlackPairs || "0");
+        brass.set("costBearer", form.brassCostBearer);
         brass.set("notes", form.brassNotes);
-        brass.set("photo", brassPhoto);
+        if (brassPhoto) brass.set("photo", brassPhoto);
         const brassResponse = await fetch(`/api/orders/${body.id}/brass-procurement`, {
           method: "POST",
           headers: { "Idempotency-Key": `${nextSubmission.key}:brass` },
@@ -271,11 +285,13 @@ export default function NewOrderForm() {
               onChange={(event) => set("brassRequired", event.target.checked)}
               className="mt-1"
             />
-            <span><strong className="block text-amber-100">Латунные балясины нужно заказать</strong><span className="text-slate-400">После создания заказа заявка сразу появится у склада.</span></span>
+            <span><strong className="block text-amber-100">Нужна заявка на латунные балясины</strong><span className="text-slate-400">После создания заказа заявка сразу появится у склада. Заказ из Китая оформлять необязательно.</span></span>
           </label>
           {form.brassRequired ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Field label="Количество пар" required><input required type="number" min="1" step="1" inputMode="numeric" value={form.brassQuantityPairs} onChange={(event) => set("brassQuantityPairs", event.target.value)} className={control} /></Field>
-            <Field label="Фото модели / образца" required><input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setBrassPhoto(event.target.files?.[0] ?? null)} className={`${control} py-2`} /><span className="mt-1 block text-xs text-slate-500">Фото хранится приватно и доступно только сотрудникам по заказу.</span></Field>
+            {BRASS_MODEL_OPTIONS.map((model) => <Field key={model.key} label={`${model.label}, пар`}><input type="number" min="0" max="10000" step="1" inputMode="numeric" value={form[brassModelFields[model.key]]} onChange={(event) => set(brassModelFields[model.key], event.target.value)} className={control} /></Field>)}
+            <div className="rounded-xl border border-amber-500/20 bg-slate-950/60 p-3"><p className="text-xs uppercase tracking-wide text-slate-500">Всего</p><p className="mt-1 text-xl font-bold text-amber-100">{brassTotal.toLocaleString("ru-RU")} пар</p></div>
+            <Field label="Кто несёт расходы" required><select required value={form.brassCostBearer} onChange={(event) => set("brassCostBearer", event.target.value as "COMPANY" | "CONTRACTOR")} className={control}>{Object.entries(BRASS_COST_BEARER_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className="mt-1 block text-xs text-slate-500">Если выбран подрядчик, себестоимость латуни не уменьшает прибыль компании.</span></Field>
+            <Field label="Фото модели / образца"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setBrassPhoto(event.target.files?.[0] ?? null)} className={`${control} py-2`} /><span className="mt-1 block text-xs text-slate-500">Необязательно. Фото хранится приватно и доступно сотрудникам.</span></Field>
             <Field label="Комментарий для склада"><textarea rows={2} value={form.brassNotes} onChange={(event) => set("brassNotes", event.target.value)} placeholder="Модель, цвет, особенности комплекта" className={`${control} py-3`} /></Field>
           </div> : null}
         </div> : null}
