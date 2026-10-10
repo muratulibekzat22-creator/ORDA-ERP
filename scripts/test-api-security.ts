@@ -610,9 +610,9 @@ async function main() {
     assertProductionPayload(secondProductionProductions, [secondProduction.id], [firstInstallerProduction.id, secondInstallerProduction.id, otherStageProduction.id, firstProduction.id], [secondProductionOrder.id], secondProductionUser.id, [productionStage]);
 
     const installerWarehouse = await (await expectStatus("/api/warehouse", 200, firstInstallerCookie)).json() as { orders: Array<{ id: number }> };
-    assert(installerWarehouse.orders.length === 1 && installerWarehouse.orders[0].id === firstInstallerOrder.id, "installer warehouse scope is invalid");
+    assert(installerWarehouse.orders.some((order) => order.id === firstInstallerOrder.id) && installerWarehouse.orders.some((order) => order.id === firstProductionOrder.id), "installer warehouse must expose the shared internal workspace");
     const productionWarehouse = await (await expectStatus("/api/warehouse", 200, firstProductionCookie)).json() as { orders: Array<{ id: number }> };
-    assert(productionWarehouse.orders.length === 1 && productionWarehouse.orders[0].id === firstProductionOrder.id, "production warehouse scope is invalid");
+    assert(productionWarehouse.orders.some((order) => order.id === firstProductionOrder.id) && productionWarehouse.orders.some((order) => order.id === firstInstallerOrder.id), "production warehouse must expose the shared internal workspace");
 
     const firstInstallerCalendar = await (await expectStatus("/api/calendar", 200, firstInstallerCookie)).json() as CalendarPayload;
     assertCalendarPayload(firstInstallerCalendar, [firstInstallerTask.id, otherStageTask.id], [secondInstallerTask.id, firstProductionTask.id, secondProductionTask.id], [firstInstallerOrder.id, otherStageOrder.id], firstInstaller.id);
@@ -757,7 +757,9 @@ async function main() {
     assert(managerPricing.items.length > 0 && managerPricing.items.every((item) => !("internalPrice" in item) && !("managerMinimumPrice" in item)), "manager calculator pricing leaks protected prices");
     const accountantCookie = await session(accountant.email);
     await expectStatus("/api/clients", 403, accountantCookie);
-    await expectStatus("/api/finance/statements", 200, accountantCookie);
+    await expectStatus("/api/finance", 403, accountantCookie);
+    await expectStatus("/api/company-finance", 403, accountantCookie);
+    await expectStatus("/api/finance/statements", 403, accountantCookie);
     const accountantConfig = await (await expectStatus("/api/calculator-config", 200, accountantCookie)).json() as { items: Array<Record<string, unknown>> };
     assert(accountantConfig.items.length > 0 && accountantConfig.items.every((item) => "internalPrice" in item), "accountant with permission cannot view internal calculator prices");
     await expectStatus("/api/calculator-config", 403, accountantCookie, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(accountantConfig) });
@@ -993,6 +995,7 @@ async function main() {
         await prisma.orderInstallation.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.orderEvent.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.production.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
+        await prisma.paymentPart.deleteMany({ where: { payment: { orderId: { in: generatedOrderIds } } } });
         await prisma.payment.deleteMany({ where: { orderId: { in: generatedOrderIds } } });
         await prisma.order.deleteMany({ where: { id: { in: generatedOrderIds } } });
       }
@@ -1001,6 +1004,7 @@ async function main() {
       await prisma.orderBlocker.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.orderInstallation.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.orderEvent.deleteMany({ where: { order: { number: { startsWith: tag } } } });
+      await prisma.paymentPart.deleteMany({ where: { payment: { order: { number: { startsWith: tag } } } } });
       await prisma.payment.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.inventoryCogsEntry.deleteMany({ where: { order: { number: { startsWith: tag } } } });
       await prisma.materialMovement.deleteMany({ where: { order: { number: { startsWith: tag } } } });

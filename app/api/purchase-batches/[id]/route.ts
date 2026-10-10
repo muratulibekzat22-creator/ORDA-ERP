@@ -1,7 +1,6 @@
 import {
   PurchaseAllocationMethod,
   PurchaseCostType,
-  Role,
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
@@ -13,14 +12,8 @@ import {
   PurchaseError,
   receivePurchaseBatch,
 } from "@/lib/services/purchase.service";
+import { warehouseActorFromSession } from "@/lib/warehouse-access";
 type Context = { params: Promise<{ id: string }> };
-const actor = (session: {
-  user: { id: string; role: string; name?: string | null };
-}) => ({
-  userId: Number(session.user.id),
-  role: session.user.role as Role,
-  name: session.user.name ?? null,
-});
 const failure = (error: unknown) =>
   error instanceof PurchaseError
     ? NextResponse.json(
@@ -44,7 +37,7 @@ export async function GET(_: Request, { params }: Context) {
   try {
     const row = await getPurchaseBatch(
       Number((await params).id),
-      actor(auth.session!),
+      warehouseActorFromSession(auth.session!),
     );
     return row
       ? NextResponse.json(row)
@@ -87,7 +80,7 @@ export async function POST(request: Request, { params }: Context) {
         receivedAt: receivedAt?.toISOString(),
         note: typeof body.note === "string" ? body.note.trim().slice(0, 1000) : undefined,
       };
-      return NextResponse.json(await receivePurchaseBatch(id, lines, actor(auth.session!), {
+      return NextResponse.json(await receivePurchaseBatch(id, lines, warehouseActorFromSession(auth.session!), {
         locationId,
         supplierDocumentNumber: payload.supplierDocumentNumber,
         supplierDocumentDate,
@@ -105,7 +98,7 @@ export async function POST(request: Request, { params }: Context) {
             ? (body.manual as Record<number, number>)
             : undefined,
           String(body.reason ?? "Final landed cost"),
-          actor(auth.session!),
+          warehouseActorFromSession(auth.session!),
         ),
       );
     if (body.action === "cost") {
@@ -143,7 +136,7 @@ export async function POST(request: Request, { params }: Context) {
               key: key.key,
               requestHash: createRequestHash(payload),
             },
-            actor(auth.session!),
+            warehouseActorFromSession(auth.session!),
           )
         ).cost,
         { status: 201 },

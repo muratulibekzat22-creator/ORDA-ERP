@@ -54,7 +54,7 @@ export async function proxy(request: NextRequest) {
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
     OPERATIONS_DIRECTOR: ["*"],
-    MARKETER: ["marketing", "calendar", "brass"],
+    MARKETER: ["marketing", "calendar", "warehouse", "brass"],
     MANAGER: [
       "clients",
       "orders",
@@ -67,18 +67,16 @@ export async function proxy(request: NextRequest) {
       "brass",
     ],
     ACCOUNTANT: [
-      "finance",
       "partners",
       "reports",
       "warehouse",
-      "company-finance",
       "brass",
     ],
-    MEASURER: ["measurements", "calendar", "brass"],
-    DESIGNER: ["orders", "brass"],
+    MEASURER: ["measurements", "calendar", "warehouse", "brass"],
+    DESIGNER: ["orders", "warehouse", "brass"],
     PRODUCTION: ["production", "calendar", "warehouse", "brass"],
     INSTALLER: ["production", "calendar", "warehouse", "brass"],
-    PARTNER: ["orders", "finance", "partners", "documents", "partner"],
+    PARTNER: ["orders", "partners", "documents", "partner"],
   };
   const firstSegment =
     request.nextUrl.pathname.split("/").filter(Boolean)[0] ?? "";

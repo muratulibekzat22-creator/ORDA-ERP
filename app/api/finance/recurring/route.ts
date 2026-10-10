@@ -30,7 +30,7 @@ export async function GET(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
   const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
-  if (!leadership(role) && role !== Role.ACCOUNTANT)
+  if (!leadership(role))
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     return NextResponse.json(await getRecurringExpensePlans(new URL(request.url).searchParams.get("period") ?? ""));
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json() as Record<string, unknown>;
     if (body.action === "post") {
-      if (!leadership(role) && role !== Role.ACCOUNTANT)
+      if (!leadership(role))
         return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
       return NextResponse.json(await postRecurringExpensePlan({
         planId: Number(body.planId),

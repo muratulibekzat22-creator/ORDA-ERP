@@ -1,4 +1,3 @@
-import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/server-auth";
 import {
@@ -6,14 +5,8 @@ import {
   listSuppliers,
   PurchaseError,
 } from "@/lib/services/purchase.service";
+import { warehouseActorFromSession } from "@/lib/warehouse-access";
 
-const actor = (session: {
-  user: { id: string; role: string; name?: string | null };
-}) => ({
-  userId: Number(session.user.id),
-  role: session.user.role as Role,
-  name: session.user.name ?? null,
-});
 const failure = (error: unknown) =>
   error instanceof PurchaseError
     ? NextResponse.json(
@@ -28,7 +21,7 @@ export async function GET() {
   const auth = await requirePermission("warehouse");
   if (auth.response) return auth.response;
   try {
-    return NextResponse.json(await listSuppliers(actor(auth.session!)));
+    return NextResponse.json(await listSuppliers(warehouseActorFromSession(auth.session!)));
   } catch (error) {
     return failure(error);
   }
@@ -52,7 +45,7 @@ export async function POST(request: Request) {
           contact: String(body.contact ?? ""),
           comment: String(body.comment ?? ""),
         },
-        actor(auth.session!),
+        warehouseActorFromSession(auth.session!),
       ),
       { status: 201 },
     );

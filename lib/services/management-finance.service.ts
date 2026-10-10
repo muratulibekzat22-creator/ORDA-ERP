@@ -2,7 +2,6 @@ import { prisma } from "@/lib/prisma";
 import { compareRequestHash } from "@/lib/idempotency";
 import { MIN_PRODUCTION_PRICE } from "@/lib/orders/production-price";
 
-export const COMPANY_EXPENSE_CATEGORIES = ["SALARY", "MANAGER_BONUS", "ADVERTISING", "RENT", "FUEL", "DELIVERY", "TAX", "ACCOUNTING", "COMMUNICATION", "OFFICE", "SERVICES", "EQUIPMENT", "COMPANY_LOAN", "OTHER"] as const;
 export const PERSONAL_CATEGORIES = ["FOOD", "PERSONAL_FUEL", "LOAN", "HOUSING", "CAR", "TRAVEL", "FAMILY", "PERSONAL_PURCHASE", "OTHER"] as const;
 export type LedgerInput = { type: string; category: string; direction: "INCOME" | "EXPENSE"; amount: number; operationDate: Date; comment?: string; orderId?: number; authorId: number; idempotencyKey?: string; requestHash?: string };
 

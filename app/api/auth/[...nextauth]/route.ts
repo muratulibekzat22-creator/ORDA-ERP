@@ -35,10 +35,15 @@ export const authOptions: NextAuthOptions = {
         throw new SafeAuthError("RATE_LIMITED");
       }
       const passwordMatches = await bcrypt.compare(credentials.password, user?.password ?? DUMMY_PASSWORD_HASH);
+      const now = new Date();
+      if (user?.lockedUntil && user.lockedUntil > now) {
+        await audit(user.id, false, "TEMPORARILY_LOCKED");
+        throw new SafeAuthError("TEMPORARILY_LOCKED");
+      }
       if (!user || !user.active || !passwordMatches) {
         if (user?.active) {
-          const nextFailures = user.failedLoginAttempts + 1;
-          await runWithSystemAccess(() => prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: nextFailures, ...(nextFailures === ACCOUNT_FAILURE_LIMIT ? { lockedUntil: new Date(Date.now() + AUTH_WINDOW_MS) } : {}) } }));
+          const nextFailures = (user.lockedUntil && user.lockedUntil <= now ? 0 : user.failedLoginAttempts) + 1;
+          await runWithSystemAccess(() => prisma.user.update({ where: { id: user.id }, data: { failedLoginAttempts: nextFailures, lockedUntil: nextFailures === ACCOUNT_FAILURE_LIMIT ? new Date(Date.now() + AUTH_WINDOW_MS) : null } }));
         }
         await audit(user?.id, false, invalidReason);
         throw new SafeAuthError("INVALID_CREDENTIALS");
@@ -48,13 +53,13 @@ export const authOptions: NextAuthOptions = {
         throw new SafeAuthError("INVALID_CREDENTIALS");
       }
       await runWithSystemAccess(() => prisma.$transaction([
-        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null, mustChangePassword: false } }),
+        prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date(), failedLoginAttempts: 0, lockedUntil: null } }),
         prisma.authAuditEvent.create({ data: { userId: user.id, email: null, accountIdentifierHash: identifierHash, success: true, reason: "LOGIN_SUCCESS", requestId: correlationId, ipHash, userAgentClass: agentClass } }),
       ]));
       return {
         id: String(user.id), name: user.name, email: user.email, role: user.role,
         accountRole: user.role,
-        sessionVersion: user.sessionVersion, mustChangePassword: false,
+        sessionVersion: user.sessionVersion, mustChangePassword: user.mustChangePassword,
         companyId: user.companyId, companySlug: user.company.slug,
         companyName: user.company.name, isDemo: user.company.isDemo,
       };

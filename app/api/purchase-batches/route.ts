@@ -1,7 +1,6 @@
 import {
   PurchaseAllocationMethod,
   PurchaseBatchStatus,
-  Role,
 } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
@@ -11,14 +10,8 @@ import {
   listPurchaseBatches,
   PurchaseError,
 } from "@/lib/services/purchase.service";
+import { warehouseActorFromSession } from "@/lib/warehouse-access";
 
-const actor = (session: {
-  user: { id: string; role: string; name?: string | null };
-}) => ({
-  userId: Number(session.user.id),
-  role: session.user.role as Role,
-  name: session.user.name ?? null,
-});
 const failure = (error: unknown) =>
   error instanceof PurchaseError
     ? NextResponse.json(
@@ -61,7 +54,7 @@ export async function GET(request: Request) {
             ? Number(p.get("supplierId"))
             : undefined,
         },
-        actor(auth.session!),
+        warehouseActorFromSession(auth.session!),
       ),
     );
   } catch (error) {
@@ -118,7 +111,7 @@ export async function POST(request: Request) {
       );
     const result = await createPurchaseBatch(
       { ...payload, key: key.key, requestHash: createRequestHash(payload) },
-      actor(auth.session!),
+      warehouseActorFromSession(auth.session!),
     );
     return NextResponse.json(result.batch, {
       status: result.created ? 201 : 200,

@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 function allowed(role: Role) {
-  return role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR || role === Role.ACCOUNTANT;
+  return role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 }
 
 function positiveId(value: unknown) {
@@ -35,7 +35,7 @@ function errorResponse(error: unknown) {
 export async function GET(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (!allowed(auth.session!.user.role as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!allowed((auth.session!.user.accountRole || auth.session!.user.role) as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const rawImportId = new URL(request.url).searchParams.get("importId");
   const importId = rawImportId ? positiveId(rawImportId) ?? undefined : undefined;
   if (rawImportId && !importId) return NextResponse.json({ error: "Некорректный importId" }, { status: 400 });
@@ -50,7 +50,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (!allowed(auth.session!.user.role as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!allowed((auth.session!.user.accountRole || auth.session!.user.role) as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const form = await request.formData();
     const file = form.get("file");

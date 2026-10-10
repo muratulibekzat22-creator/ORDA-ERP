@@ -156,7 +156,7 @@ const labels: Record<string, string> = {
 
 export default function WarehousePage() {
   const { data: session } = useSession();
-  const role = session?.user.role as Role | undefined;
+  const role = (session?.user.accountRole || session?.user.role) as Role | undefined;
   const [data, setData] = useState(empty),
     [loading, setLoading] = useState(true),
     [saving, setSaving] = useState(false),
@@ -175,14 +175,12 @@ export default function WarehousePage() {
     [movementType, setMovementType] = useState(""),
     [orderFilter, setOrderFilter] = useState(""),
     [page, setPage] = useState(1);
-  const founderReadOnly = role === Role.DIRECTOR;
-  const warehouseOperator = role === Role.OPERATIONS_DIRECTOR;
-  const leadership = role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
+  const warehouseOperator = Boolean(role && role !== Role.PARTNER);
   const canCreateMaterial = warehouseOperator,
     canEdit = warehouseOperator,
     canDelete = warehouseOperator,
-    canSeeCost = leadership || role === Role.ACCOUNTANT;
-  const canUseBrass = Boolean(role && role !== Role.PARTNER);
+    canSeeCost = warehouseOperator;
+  const canUseBrass = warehouseOperator;
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -332,25 +330,18 @@ export default function WarehousePage() {
       ),
     [data.materials, search, category, color, location, supplier, lowOnly],
   );
-  const operationOptions =
-    role === Role.ACCOUNTANT
-      ? ["incoming", "adjustment", "return"]
-      : role === Role.MANAGER
-        ? ["reserve", "release"]
-        : role === Role.PRODUCTION || role === Role.INSTALLER
-          ? ["consume"]
-          : [
-              "incoming",
-              "sale",
-              "writeoff",
-              "supplier_return",
-              "workshop_issue",
-              "adjustment",
-              "return",
-              "reserve",
-              "release",
-              "consume",
-            ];
+  const operationOptions = [
+    "incoming",
+    "sale",
+    "writeoff",
+    "supplier_return",
+    "workshop_issue",
+    "adjustment",
+    "return",
+    "reserve",
+    "release",
+    "consume",
+  ];
   return (
     <section className="min-h-screen flex-1 overflow-auto bg-[#0b1120] p-4 md:p-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -409,7 +400,7 @@ export default function WarehousePage() {
           ["materials", "Материалы"],
           ...(canUseBrass ? [["brass", "Латунь под заказы"]] : []),
           ...(canSeeCost ? [["purchases", "Закупки"]] : []),
-          ...(!founderReadOnly ? [["operations", "Операции"]] : []),
+          ...(warehouseOperator ? [["operations", "Операции"]] : []),
           ["reservations", "Резервы"],
           ["history", "История"],
         ].map(([id, title]) => (

@@ -275,8 +275,22 @@ export default function FinanceJournalPage() {
   const set = (field: keyof Form, value: string) =>
     setForm((current) => (current ? { ...current, [field]: value } : current));
   const openCreate = (direction: Direction) => {
+    const preferredCodes =
+      direction === "INCOME"
+        ? ["ADDITIONAL_INCOME", "OTHER_INCOME", "OTHER"]
+        : ["ADDITIONAL_EXPENSE", "OTHER_EXPENSE", "OTHER"];
+    const available = journal.categories.filter(
+      (item) => item.direction === direction && item.active,
+    );
+    const defaultCategory =
+      preferredCodes
+        .map((code) => available.find((item) => item.code === code))
+        .find(Boolean) ?? available[0];
     setEditing(null);
-    setForm(blank(direction));
+    setForm({
+      ...blank(direction),
+      categoryId: defaultCategory ? String(defaultCategory.id) : "",
+    });
     setMessage("");
   };
   const selectMonth = (month: string) => {
@@ -420,14 +434,14 @@ export default function FinanceJournalPage() {
             onClick={() => openCreate("INCOME")}
             className="min-h-11 rounded-xl bg-emerald-600 px-4 font-semibold text-white"
           >
-            + Доход
+            + Доп. доход
           </button>
           <button
             type="button"
             onClick={() => openCreate("EXPENSE")}
             className="min-h-11 rounded-xl bg-rose-600 px-4 font-semibold text-white"
           >
-            + Расход
+            + Расход компании
           </button>
         </div>
       </header>
@@ -541,9 +555,14 @@ export default function FinanceJournalPage() {
             {editing
               ? "Изменить операцию"
               : form.direction === "INCOME"
-                ? "Новый доход"
-                : "Новый расход"}
+                ? "Дополнительный доход компании"
+                : "Расход компании"}
           </h2>
+          {!editing && (
+            <p className="text-sm text-slate-400 sm:col-span-2 lg:col-span-3">
+              Выберите понятную категорию, укажите сумму и сохраните. Операция сразу попадёт в общий итог и историю аудита.
+            </p>
+          )}
           <Field label="Сумма">
             <input
               required

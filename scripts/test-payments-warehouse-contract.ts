@@ -78,8 +78,8 @@ async function main() {
   assert.match(invoicePdf, /Страница \$\{index \+ 1\} из \$\{range\.count\}/u);
   assert.match(invoicePdf, /amountWords\(snapshot\.totals\.amount\)/u);
 
-  assert.match(warehouseService, /const canSeeCost = actor\.role === Role\.DIRECTOR \|\| actor\.role === Role\.OPERATIONS_DIRECTOR \|\| actor\.role === Role\.ACCOUNTANT/u);
-  assert.match(warehouseService, /\.\.\.\(canSeeCost \? \{ purchasePrice: true, averageCost: true, inventoryValue: true/u, "cost fields must be selected only for authorized roles");
+  assert.match(warehouseService, /const canSeeCost = isInternalWarehouseRole\(actor\.role\)/u);
+  assert.match(warehouseService, /\.\.\.\(canSeeCost \? \{ purchasePrice: true, averageCost: true, inventoryValue: true/u, "cost fields must be selected only for internal employees");
 
   await Promise.all([
     "app/api/payments/route.ts",

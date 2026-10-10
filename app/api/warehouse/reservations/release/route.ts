@@ -1,10 +1,10 @@
-import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { requirePermission } from "@/lib/server-auth";
 import { releaseWarehouseReservation } from "@/lib/services/warehouse-retail.service";
-import { WarehouseError, type WarehouseActor } from "@/lib/services/warehouse.service";
+import { WarehouseError } from "@/lib/services/warehouse.service";
+import { warehouseActorFromSession } from "@/lib/warehouse-access";
 
 export async function POST(request: Request) {
   const auth = await requirePermission("warehouse");
@@ -27,16 +27,11 @@ export async function POST(request: Request) {
     )
       return NextResponse.json({ error: "Некорректное снятие резерва" }, { status: 400 });
     const payload = { orderItemId, locationId, quantity, reason };
-    const actor: WarehouseActor = {
-      userId: Number(auth.session!.user.id),
-      role: auth.session!.user.role as Role,
-      name: auth.session!.user.name ?? null,
-    };
     const result = await releaseWarehouseReservation({
       ...payload,
       key: idempotency.key,
       requestHash: createRequestHash(payload),
-      actor,
+      actor: warehouseActorFromSession(auth.session!),
     });
     return NextResponse.json(result.result, { status: result.replayed ? 200 : 201 });
   } catch (error) {

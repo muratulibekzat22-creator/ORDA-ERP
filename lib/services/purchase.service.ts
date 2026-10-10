@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { compareRequestHash } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
 import { nextBusinessDocumentNumber } from "@/lib/services/business-document-number.service";
+import { isInternalWarehouseRole } from "@/lib/warehouse-access";
 
 export type PurchaseActor = { userId: number; role: Role; name: string | null };
 export type PurchaseAuthorizationContext = {
@@ -79,12 +80,7 @@ export function allocateLandedCost(
 }
 
 function assertView(actor: PurchaseActor) {
-  if (
-    actor.role !== Role.DIRECTOR &&
-    actor.role !== Role.OPERATIONS_DIRECTOR &&
-    actor.role !== Role.MANAGER &&
-    actor.role !== Role.ACCOUNTANT
-  )
+  if (!isInternalWarehouseRole(actor.role))
     throw new PurchaseError("FORBIDDEN");
 }
 
@@ -93,16 +89,10 @@ function assertOperate(
   manual = false,
   context?: PurchaseAuthorizationContext,
 ) {
-  if (
-    context?.workflow === "BRASS_PROCUREMENT" &&
-    actor.role !== Role.PARTNER &&
-    !manual
-  )
-    return;
-  if (actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER)
+  if (!isInternalWarehouseRole(actor.role))
     throw new PurchaseError("FORBIDDEN");
-  if (manual && actor.role !== Role.OPERATIONS_DIRECTOR)
-    throw new PurchaseError("FORBIDDEN");
+  void manual;
+  void context;
 }
 
 async function assertBatchOperator(
@@ -111,13 +101,7 @@ async function assertBatchOperator(
   context?: PurchaseAuthorizationContext,
 ) {
   assertOperate(actor, false, context);
-  if (context?.workflow === "BRASS_PROCUREMENT") return;
-  if (actor.role !== Role.MANAGER) return;
-  const own = await prisma.purchaseBatch.findFirst({
-    where: { id: batchId, responsibleUserId: actor.userId },
-    select: { id: true },
-  });
-  if (!own) throw new PurchaseError("FORBIDDEN");
+  void batchId;
 }
 
 export async function listSuppliers(actor: PurchaseActor) {
@@ -178,7 +162,6 @@ export async function listPurchaseBatches(
 ) {
   assertView(actor);
   const where: Prisma.PurchaseBatchWhereInput = {
-    ...(actor.role === Role.MANAGER ? { responsibleUserId: actor.userId } : {}),
     ...(filters.search
       ? { number: { contains: filters.search, mode: "insensitive" } }
       : {}),
@@ -222,10 +205,7 @@ export async function listPurchaseBatches(
 export async function getPurchaseBatch(id: number, actor: PurchaseActor) {
   assertView(actor);
   return prisma.purchaseBatch.findFirst({
-    where: {
-      id,
-      ...(actor.role === Role.MANAGER ? { responsibleUserId: actor.userId } : {}),
-    },
+    where: { id },
     include: {
       supplier: true,
       responsibleUser: { select: { id: true, name: true } },

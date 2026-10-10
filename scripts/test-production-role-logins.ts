@@ -39,8 +39,8 @@ async function main() {
     const expected: Partial<Record<Role, string[]>> = {
       DIRECTOR: ["/api/employees", "/api/settings", "/api/finance", "/api/company-finance", "/api/personal-finance", "/api/warehouse"],
       MANAGER: ["/api/clients", "/api/orders", "/api/partners", "/api/documents", "/api/calendar", "/api/production", "/api/warehouse"],
-      ACCOUNTANT: ["/api/finance", "/api/company-finance", "/api/reports", "/api/warehouse"],
-      MEASURER: ["/api/measurements", "/api/calendar"], PRODUCTION: ["/api/production", "/api/calendar", "/api/warehouse"], INSTALLER: ["/api/production", "/api/calendar", "/api/warehouse"], PARTNER: ["/api/partner/dashboard", "/api/orders", "/api/partners", "/api/documents"],
+      ACCOUNTANT: ["/api/reports", "/api/warehouse"],
+      MEASURER: ["/api/measurements", "/api/calendar", "/api/warehouse"], PRODUCTION: ["/api/production", "/api/calendar", "/api/warehouse"], INSTALLER: ["/api/production", "/api/calendar", "/api/warehouse"], PARTNER: ["/api/partner/dashboard", "/api/orders", "/api/partners", "/api/documents"],
     };
     for (const path of expected[role] ?? []) {
       const responseStatus = await status(path, result.cookie);
@@ -52,7 +52,11 @@ async function main() {
       const orders = orderPayload.data;
       check(orders.every((order) => !["companyProfit", "partnerPrice", "partnerPaid", "partnerBalance"].some((field) => field in order)), "MANAGER order payload leaks finance");
     }
-    if (role === Role.ACCOUNTANT) check((await status("/api/personal-finance", result.cookie)) === 403, "ACCOUNTANT accessed personal finance");
+    if (role === Role.ACCOUNTANT) {
+      check((await status("/api/finance", result.cookie)) === 403, "ACCOUNTANT accessed company finance");
+      check((await status("/api/company-finance", result.cookie)) === 403, "ACCOUNTANT accessed the legacy company ledger");
+      check((await status("/api/personal-finance", result.cookie)) === 403, "ACCOUNTANT accessed personal finance");
+    }
     if (role === Role.PARTNER) {
       check((await status("/api/finance", result.cookie)) === 403, "WORKSHOP accessed the internal finance journal");
       check((await status("/api/warehouse", result.cookie)) === 403, "WORKSHOP accessed warehouse");

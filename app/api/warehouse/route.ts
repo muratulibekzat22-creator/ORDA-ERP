@@ -4,10 +4,10 @@ import { NextResponse } from "next/server";
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { logRequestFailure, productionLog } from "@/lib/observability";
 import { requirePermission } from "@/lib/server-auth";
-import { createMaterialCommand, createWarehouseOperation, deleteMaterialCommand, getWarehouse, updateMaterialCommand, WAREHOUSE_OPERATION_TYPES, WarehouseError, type WarehouseActor, type WarehouseOperationType } from "@/lib/services/warehouse.service";
+import { createMaterialCommand, createWarehouseOperation, deleteMaterialCommand, getWarehouse, updateMaterialCommand, WAREHOUSE_OPERATION_TYPES, WarehouseError, type WarehouseOperationType } from "@/lib/services/warehouse.service";
+import { warehouseAccountRole, warehouseActorFromSession } from "@/lib/warehouse-access";
 
 const MAX_QUANTITY = 1_000_000_000, MAX_PRICE = 9_999_999_999.99;
-const actor = (session: { user: { id: string; role: string; name?: string | null } }): WarehouseActor => ({ userId: Number(session.user.id), role: session.user.role as Role, name: session.user.name ?? null });
 const positiveId = (value: unknown) => { const parsed = Number(value); return Number.isInteger(parsed) && parsed > 0 ? parsed : null; };
 const number = (value: unknown, max: number, allowZero = false) => { if (value === "" || value === null || value === undefined) return null; const parsed = Number(value); return Number.isFinite(parsed) && (allowZero ? parsed >= 0 : parsed > 0) && parsed <= max ? parsed : null; };
 const text = (value: unknown, max: number, required = false) => { if (value == null) return required ? null : undefined; if (typeof value !== "string") return null; const parsed = value.trim(); return (!required || parsed) && parsed.length <= max ? parsed : null; };
@@ -29,7 +29,7 @@ function errorResponse(error: unknown) {
 async function authWarehouse() {
   const auth = await requirePermission("warehouse");
   if (auth.response) return auth;
-  if (auth.session!.user.role === Role.PARTNER) return { response: NextResponse.json({ error: "Недостаточно прав" }, { status: 403 }) };
+  if (warehouseAccountRole(auth.session!) === Role.PARTNER) return { response: NextResponse.json({ error: "Недостаточно прав" }, { status: 403 }) };
   return auth;
 }
 
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   const orderId = params.has("orderId") ? positiveId(params.get("orderId")) : undefined, materialId = params.has("materialId") ? positiveId(params.get("materialId")) : undefined;
   const movementType = params.get("type") || undefined;
   if (!page || !pageSize || !materialPage || !materialPageSize || pageSize > 100 || materialPageSize > 100 || (stockStatusValue && !stockStatus) || orderId === null || materialId === null || locationId === null || (movementType && !WAREHOUSE_OPERATION_TYPES.includes(movementType as WarehouseOperationType))) return NextResponse.json({ error: "Некорректные параметры" }, { status: 400 });
-  try { return NextResponse.json(await getWarehouse(actor(auth.session!), { page, pageSize, orderId, materialId, movementType, search, category, color, locationId, stockStatus, materialPage, materialPageSize })); }
+  try { return NextResponse.json(await getWarehouse(warehouseActorFromSession(auth.session!), { page, pageSize, orderId, materialId, movementType, search, category, color, locationId, stockStatus, materialPage, materialPageSize })); }
   catch (error) { const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.read_failed", request, error); return NextResponse.json({ error: "Ошибка получения склада" }, { status: 500 }); }
 }
 
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       const minimumStock = number(body.minimumStock, MAX_QUANTITY, true), purchasePrice = purchasePriceEmpty ? null : number(body.purchasePrice, MAX_PRICE, true), sellingPrice = sellingPriceEmpty ? null : number(body.sellingPrice, MAX_PRICE, true), initialStock = number(body.initialStock ?? 0, MAX_QUANTITY, true);
       if (!name || !category || !unit || model === null || description === null || supplier === null || minimumStock === null || (!purchasePriceEmpty && purchasePrice === null) || (!sellingPriceEmpty && sellingPrice === null) || initialStock === null) return NextResponse.json({ error: "Некорректные данные товара" }, { status: 400 });
       const payload = { name, model, description, category, unit, supplier, minimumStock, purchasePrice, sellingPrice, initialStock };
-      const result = await createMaterialCommand({ data: payload, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });
+      const result = await createMaterialCommand({ data: payload, key: idempotency.key, requestHash: createRequestHash(payload), actor: warehouseActorFromSession(auth.session!) });
       return NextResponse.json(result.result, { status: result.replayed ? 200 : 201 });
     }
     if (!only(body, ["action", "type", "materialId", "locationId", "quantity", "price", "orderId", "supplier", "comment", "operationAt", "expiresAt", "reversalOfId"])) return NextResponse.json({ error: "Недопустимые поля" }, { status: 400 });
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
     const operationAt = body.operationAt ? new Date(String(body.operationAt)) : undefined, expiresAt = body.expiresAt ? new Date(String(body.expiresAt)) : undefined;
     if (!type || !materialId || locationId === null || orderId === null || reversalOfId === null || quantity === null || price === null || supplier === null || comment === null || (type === "return" && !reversalOfId) || (operationAt && (Number.isNaN(operationAt.getTime()) || operationAt.getTime() > Date.now() + 300_000)) || (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()))) return NextResponse.json({ error: "Некорректные данные операции" }, { status: 400 });
     const payload = { type, materialId, locationId, orderId, quantity, price, supplier, comment, reversalOfId, operationAt: operationAt?.toISOString(), expiresAt: expiresAt?.toISOString() };
-    const result = await createWarehouseOperation({ data: { type, materialId, locationId, orderId, quantity, price, supplier, comment, operationAt, expiresAt, reversalOfId }, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });
+    const result = await createWarehouseOperation({ data: { type, materialId, locationId, orderId, quantity, price, supplier, comment, operationAt, expiresAt, reversalOfId }, key: idempotency.key, requestHash: createRequestHash(payload), actor: warehouseActorFromSession(auth.session!) });
     return NextResponse.json(result.result, { status: result.replayed ? 200 : 201 });
   } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); const response = errorResponse(error); if (response) { if (error instanceof WarehouseError && error.code.includes("INSUFFICIENT")) productionLog("warn", "warehouse.conflict", { requestId: request.headers.get("x-request-id") ?? undefined, route: "/api/warehouse", method: "POST", reason: error.code }); return response; } logRequestFailure("warehouse.mutation_failed", request, error); return NextResponse.json({ error: "Ошибка складской операции" }, { status: 500 }); }
 }
@@ -94,7 +94,7 @@ export async function PATCH(request: Request) {
     if (body.sellingPrice !== undefined) { const value = body.sellingPrice === null || body.sellingPrice === "" ? null : number(body.sellingPrice, MAX_PRICE, true); if (value === null && body.sellingPrice !== null && body.sellingPrice !== "") return NextResponse.json({ error: "Некорректная продажная цена" }, { status: 400 }); data.sellingPrice = value; }
     if (body.active !== undefined) { if (typeof body.active !== "boolean") return NextResponse.json({ error: "Некорректная активность" }, { status: 400 }); data.active = body.active; }
     if (!id || !Object.keys(data).length) return NextResponse.json({ error: "Некорректные данные" }, { status: 400 });
-    const payload = { id, ...data }; const result = await updateMaterialCommand({ id, data, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) });
+    const payload = { id, ...data }; const result = await updateMaterialCommand({ id, data, key: idempotency.key, requestHash: createRequestHash(payload), actor: warehouseActorFromSession(auth.session!) });
     return NextResponse.json(result.result);
   } catch (error) { if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 }); const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.material_update_failed", request, error); return NextResponse.json({ error: "Ошибка обновления материала" }, { status: 500 }); }
 }
@@ -103,6 +103,6 @@ export async function DELETE(request: Request) {
   const auth = await authWarehouse(); if (auth.response) return auth.response;
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   const id = positiveId(new URL(request.url).searchParams.get("id")); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
-  try { const payload = { id }; const result = await deleteMaterialCommand({ id, key: idempotency.key, requestHash: createRequestHash(payload), actor: actor(auth.session!) }); return NextResponse.json(result.result); }
+  try { const payload = { id }; const result = await deleteMaterialCommand({ id, key: idempotency.key, requestHash: createRequestHash(payload), actor: warehouseActorFromSession(auth.session!) }); return NextResponse.json(result.result); }
   catch (error) { const response = errorResponse(error); if (response) return response; logRequestFailure("warehouse.material_delete_failed", request, error); return NextResponse.json({ error: "Ошибка удаления материала" }, { status: 500 }); }
 }

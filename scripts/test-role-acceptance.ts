@@ -43,7 +43,7 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "payroll",
     "marketing",
   ],
-  [Role.MARKETER]: ["marketing", "calendar", "payroll"],
+  [Role.MARKETER]: ["marketing", "calendar", "warehouse", "payroll"],
   [Role.MANAGER]: [
     "clients",
     "orders",
@@ -57,13 +57,13 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
   ],
   [Role.ACCOUNTANT]: [
     "documents",
-    "finance",
     "partners",
     "reports",
     "warehouse",
     "payroll",
   ],
-  [Role.MEASURER]: ["measurements", "calendar", "documents"],
+  [Role.MEASURER]: ["measurements", "calendar", "documents", "warehouse"],
+  [Role.DESIGNER]: ["design", "orders", "warehouse"],
   [Role.PRODUCTION]: ["production", "calendar", "documents", "warehouse"],
   [Role.INSTALLER]: [
     "production",
@@ -72,7 +72,7 @@ const expectedPermissions: Partial<Record<Role, string[]>> = {
     "documents",
     "warehouse",
   ],
-  [Role.PARTNER]: ["orders", "finance", "partners", "documents"],
+  [Role.PARTNER]: ["orders", "partners", "documents"],
 };
 
 for (const [role, permissions] of Object.entries(expectedPermissions))
@@ -118,7 +118,7 @@ assert.match(routeShell, /accountRole === "OPERATIONS_DIRECTOR"/);
 assert.match(routeShell, /\/api\/session\/permissions/);
 assert.match(routeShell, /if \(!session\?\.user \|\| founder\) return/);
 assert.match(routeShell, /canManageSettings=\{canManageSettings\}/);
-assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar", "\/payroll"\]/);
+assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/calendar", "\/warehouse", "\/payroll"\]/);
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
@@ -126,9 +126,9 @@ const brassPanel = read("components/warehouse/BrassProcurementsPanel.tsx");
 const brassRoute = read("app/api/brass-procurements/route.ts");
 const brassActionRoute = read("app/api/brass-procurements/[id]/route.ts");
 assert.match(routeShell, /\["\/brass", "Латунь"/);
-assert.match(proxy, /MARKETER: \["marketing", "calendar", "brass"\]/);
-assert.match(proxy, /MEASURER: \["measurements", "calendar", "brass"\]/);
-assert.match(proxy, /DESIGNER: \["orders", "brass"\]/);
+assert.match(proxy, /MARKETER: \["marketing", "calendar", "warehouse", "brass"\]/);
+assert.match(proxy, /MEASURER: \["measurements", "calendar", "warehouse", "brass"\]/);
+assert.match(proxy, /DESIGNER: \["orders", "warehouse", "brass"\]/);
 assert.doesNotMatch(proxy, /PARTNER: \[[^\]]*"brass"/);
 assert.match(brassRoute, /requireInternalEmployee/);
 assert.match(brassActionRoute, /requireInternalEmployee/);
@@ -220,7 +220,7 @@ assert.match(
 
 const finance = read("app/api/finance/route.ts");
 const partnerFinanceGuard = finance.indexOf(
-  "role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR && role !== Role.ACCOUNTANT",
+  "role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR",
 );
 assert.ok(partnerFinanceGuard > 0, "finance role guard is missing");
 assert.ok(
@@ -268,7 +268,7 @@ includesAll(
     "assertProductionPayload",
     "assertCalendarPayload",
     "production payload contains a foreign record",
-    "production warehouse scope is invalid",
+    "production warehouse must expose the shared internal workspace",
   ],
   "DB security acceptance suite",
 );

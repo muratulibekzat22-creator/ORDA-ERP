@@ -17,9 +17,9 @@ import {
 import { createFinanceOperation } from "../lib/services/payment.service";
 
 const tag = `finance-journal-${Date.now()}`;
-const operationDate = new Date("2094-08-10T10:00:00.000Z");
-const from = new Date("2094-08-10T00:00:00.000Z");
-const to = new Date("2094-08-10T23:59:59.999Z");
+const operationDate = new Date(Date.UTC(2094, 7, 10) + (Date.now() % 86_400_000));
+const from = new Date(operationDate.getTime() - 1);
+const to = new Date(operationDate.getTime() + 1);
 
 async function main() {
   const director = await prisma.user.create({
@@ -50,7 +50,7 @@ async function main() {
     const client = await prisma.client.create({
       data: {
         name: tag,
-        phone: "+77000000000",
+        phone: tag,
         city: "Test",
         manager: tag,
         amount: "1000000",
@@ -233,7 +233,10 @@ async function main() {
     await prisma.companyLedgerEntry.deleteMany({
       where: { authorId: director.id },
     });
+    if (orderId)
+      await prisma.paymentPart.deleteMany({ where: { payment: { orderId } } });
     if (orderId) await prisma.payment.deleteMany({ where: { orderId } });
+    if (orderId) await prisma.orderEvent.deleteMany({ where: { orderId } });
     if (orderId) await prisma.order.deleteMany({ where: { id: orderId } });
     if (clientId) await prisma.client.deleteMany({ where: { id: clientId } });
     if (partnerId) await prisma.partner.deleteMany({ where: { id: partnerId } });

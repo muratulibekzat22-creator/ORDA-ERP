@@ -1,16 +1,10 @@
-import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { requirePermission } from "@/lib/server-auth";
 import { transferWarehouseStock } from "@/lib/services/warehouse-retail.service";
-import { WarehouseError, type WarehouseActor } from "@/lib/services/warehouse.service";
-
-const actor = (session: { user: { id: string; role: string; name?: string | null } }): WarehouseActor => ({
-  userId: Number(session.user.id),
-  role: session.user.role as Role,
-  name: session.user.name ?? null,
-});
+import { WarehouseError } from "@/lib/services/warehouse.service";
+import { warehouseActorFromSession } from "@/lib/warehouse-access";
 
 export async function POST(request: Request) {
   const auth = await requirePermission("warehouse");
@@ -37,7 +31,7 @@ export async function POST(request: Request) {
       ...payload,
       key: idempotency.key,
       requestHash: createRequestHash(payload),
-      actor: actor(auth.session!),
+      actor: warehouseActorFromSession(auth.session!),
     }));
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });

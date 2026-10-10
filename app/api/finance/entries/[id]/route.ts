@@ -66,11 +66,8 @@ export async function PATCH(
 ) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (
-    auth.session!.user.role !== Role.DIRECTOR &&
-    auth.session!.user.role !== Role.OPERATIONS_DIRECTOR &&
-    auth.session!.user.role !== Role.ACCOUNTANT
-  )
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (role !== Role.DIRECTOR && role !== Role.OPERATIONS_DIRECTOR)
     return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   try {
     const id = Number((await context.params).id);

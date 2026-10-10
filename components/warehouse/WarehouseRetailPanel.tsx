@@ -42,8 +42,8 @@ export default function WarehouseRetailPanel({ materials, role, onRefresh }: { m
   const [factsOpen, setFactsOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [message, setMessage] = useState("");
-  const readOnly = role === Role.DIRECTOR;
-  const canFill = role === Role.OPERATIONS_DIRECTOR;
+  const canFill = Boolean(role && role !== Role.PARTNER);
+  const readOnly = !canFill;
   useEffect(() => {
     let active = true;
     void fetch("/api/warehouse/locations", { cache: "no-store" }).then(async (response) => {

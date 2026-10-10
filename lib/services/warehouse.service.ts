@@ -2,6 +2,7 @@ import { Prisma, Role } from "@prisma/client";
 
 import { compareRequestHash, isPrismaUniqueConflict } from "@/lib/idempotency";
 import { prisma } from "@/lib/prisma";
+import { isInternalWarehouseRole } from "@/lib/warehouse-access";
 
 export const WAREHOUSE_OPERATION_TYPES = [
   "incoming",
@@ -154,33 +155,7 @@ function jsonValue(value: unknown) {
 }
 
 async function scopedOrderIds(actor: WarehouseActor) {
-  if (
-    actor.role === Role.DIRECTOR ||
-    actor.role === Role.OPERATIONS_DIRECTOR ||
-    actor.role === Role.ACCOUNTANT
-  )
-    return undefined;
-  if (actor.role === Role.MANAGER)
-    return (
-      await prisma.order.findMany({
-        where: { managerUserId: actor.userId, deletedAt: null },
-        select: { id: true },
-      })
-    ).map((item) => item.id);
-  if (actor.role === Role.PRODUCTION)
-    return (
-      await prisma.production.findMany({
-        where: { masterUserId: actor.userId },
-        select: { orderId: true },
-      })
-    ).map((item) => item.orderId);
-  if (actor.role === Role.INSTALLER)
-    return (
-      await prisma.production.findMany({
-        where: { masterUserId: actor.userId, stage: "Монтаж" },
-        select: { orderId: true },
-      })
-    ).map((item) => item.orderId);
+  if (isInternalWarehouseRole(actor.role)) return undefined;
   return [];
 }
 
@@ -218,7 +193,6 @@ export async function getWarehouse(
   const reservationWhere: Prisma.MaterialReservationWhereInput =
     orderIds === undefined ? {} : { orderId: { in: orderIds } };
   const materialWhere: Prisma.MaterialWhereInput = {
-    ...(actor.role === Role.PRODUCTION || actor.role === Role.INSTALLER ? { active: true } : {}),
     ...(filters.category ? { category: filters.category } : {}),
     ...(filters.color ? { color: filters.color } : {}),
     ...(filters.locationId ? { balances: { some: { locationId: filters.locationId } } } : {}),
@@ -280,8 +254,7 @@ export async function getWarehouse(
       material.sellingPrice === null ? "NO_SALE_PRICE" : null,
     ].filter(Boolean),
   }));
-  const canSeeCost =
-    actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const canSeeCost = isInternalWarehouseRole(actor.role);
   const visibleMaterials = canSeeCost
     ? enriched.map((source) => {
         const { mainImagePath, ...item } = source;
@@ -376,7 +349,7 @@ export async function getWarehouse(
 
 export async function getWarehouseItem(id: number, actor: WarehouseActor) {
   if (actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
-  const canSeeCost = actor.role === Role.DIRECTOR || actor.role === Role.OPERATIONS_DIRECTOR || actor.role === Role.ACCOUNTANT;
+  const canSeeCost = isInternalWarehouseRole(actor.role);
   const item = await prisma.material.findUnique({
     where: { id },
     select: {
@@ -495,7 +468,7 @@ export async function createMaterialCommand(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (input.actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (!isInternalWarehouseRole(input.actor.role))
     throw new WarehouseError("FORBIDDEN");
   try {
     return await idempotentMutation(
@@ -602,9 +575,7 @@ export async function updateMaterialCommand(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (
-    input.actor.role !== Role.OPERATIONS_DIRECTOR
-  )
+  if (!isInternalWarehouseRole(input.actor.role))
     throw new WarehouseError("FORBIDDEN");
   return idempotentMutation(
     {
@@ -657,7 +628,7 @@ export async function deleteMaterialCommand(input: {
   requestHash: string;
   actor: WarehouseActor;
 }) {
-  if (input.actor.role !== Role.OPERATIONS_DIRECTOR)
+  if (!isInternalWarehouseRole(input.actor.role))
     throw new WarehouseError("FORBIDDEN");
   return idempotentMutation(
     {
@@ -704,65 +675,14 @@ async function canOperateOrder(
   type: WarehouseOperationType,
   brassWorkflow = false,
 ) {
-  if (brassWorkflow && actor.role !== Role.PARTNER && type === "reserve")
-    return Boolean(
-      await tx.order.findFirst({
-        where: { id: orderId, deletedAt: null },
-        select: { id: true },
-      }),
-    );
-  if (actor.role === Role.OPERATIONS_DIRECTOR)
-    return Boolean(
-      await tx.order.findFirst({
-        where: { id: orderId, deletedAt: null },
-        select: { id: true },
-      }),
-    );
-  if (actor.role === Role.MANAGER)
-    return (
-      ["reserve", "release"].includes(type) &&
-      Boolean(
-        await tx.order.findFirst({
-          where: { id: orderId, deletedAt: null, managerUserId: actor.userId },
-          select: { id: true },
-        }),
-      )
-    );
-  if (actor.role === Role.ACCOUNTANT)
-    return (
-      ["incoming", "adjustment", "return"].includes(type) &&
-      Boolean(
-        await tx.order.findFirst({
-          where: { id: orderId, deletedAt: null },
-          select: { id: true },
-        }),
-      )
-    );
-  if (actor.role === Role.PRODUCTION && type === "consume")
-    return Boolean(
-      await tx.order.findFirst({
-        where: {
-          id: orderId,
-          deletedAt: null,
-          productions: { some: { masterUserId: actor.userId } },
-        },
-        select: { id: true },
-      }),
-    );
-  if (actor.role === Role.INSTALLER && type === "consume")
-    return Boolean(
-      await tx.order.findFirst({
-        where: {
-          id: orderId,
-          deletedAt: null,
-          productions: {
-            some: { masterUserId: actor.userId, stage: "Монтаж" },
-          },
-        },
-        select: { id: true },
-      }),
-    );
-  return false;
+  if (!isInternalWarehouseRole(actor.role)) return false;
+  if (brassWorkflow && type !== "reserve") return false;
+  return Boolean(
+    await tx.order.findFirst({
+      where: { id: orderId, deletedAt: null },
+      select: { id: true },
+    }),
+  );
 }
 
 async function defaultLocationBalance(
@@ -804,15 +724,8 @@ async function operationLocationBalance(
   if (!locationId) return defaultLocationBalance(tx, companyId, materialId);
   const location = await tx.warehouseLocation.findFirst({ where: { id: locationId, companyId, active: true } });
   if (!location) throw new WarehouseError("NOT_FOUND");
-  if (
-    !brassWorkflow &&
-    !(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.ACCOUNTANT])).has(actor.role)
-  ) {
-    const accessCount = await tx.warehouseLocationAccess.count({ where: { userId: actor.userId } });
-    const access = await tx.warehouseLocationAccess.findFirst({ where: { userId: actor.userId, locationId } });
-    if ((accessCount > 0 && !access?.canSell) || (accessCount === 0 && !location.isDefault))
-      throw new WarehouseError("FORBIDDEN");
-  }
+  if (!brassWorkflow && !isInternalWarehouseRole(actor.role))
+    throw new WarehouseError("FORBIDDEN");
   await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${materialId}, ${0})`;
   await tx.$queryRaw`SELECT TRUE AS locked FROM pg_advisory_xact_lock(${materialId}, ${location.id})`;
   const balance = await tx.warehouseBalance.upsert({
@@ -867,14 +780,8 @@ export async function createWarehouseOperation(input: {
       !input.data.orderId
     )
       throw new WarehouseError("FORBIDDEN");
-  } else {
-    if (input.actor.role === Role.DIRECTOR) throw new WarehouseError("FORBIDDEN");
-    if (input.actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
-    if (
-      input.actor.role === Role.MANAGER &&
-      !["reserve", "release"].includes(input.data.type)
-    )
-      throw new WarehouseError("FORBIDDEN");
+  } else if (!isInternalWarehouseRole(input.actor.role)) {
+    throw new WarehouseError("FORBIDDEN");
   }
   return idempotentMutation(
     {
@@ -925,20 +832,6 @@ export async function createWarehouseOperation(input: {
           input.data.type,
           brassWorkflow,
         ))
-      )
-        throw new WarehouseError("FORBIDDEN");
-      if (
-        !brassWorkflow &&
-        !input.data.orderId &&
-        !([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT] as Role[]).includes(
-          input.actor.role,
-        )
-      )
-        throw new WarehouseError("FORBIDDEN");
-      if (
-        !brassWorkflow &&
-        input.actor.role === Role.ACCOUNTANT &&
-        !["incoming", "adjustment", "return"].includes(input.data.type)
       )
         throw new WarehouseError("FORBIDDEN");
       let stock = Number(balance.stock),

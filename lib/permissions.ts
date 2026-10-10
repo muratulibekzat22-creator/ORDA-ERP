@@ -7,6 +7,14 @@ const fixedDeniedPermissions: Partial<Record<Role, readonly Permission[]>> = {
   // The operations director runs daily operations, but company margin and
   // workshop settlements remain founder-only management information.
   OPERATIONS_DIRECTOR: ["partners", "reports"],
+  MARKETER: ["finance"],
+  MANAGER: ["finance"],
+  ACCOUNTANT: ["finance"],
+  MEASURER: ["finance"],
+  DESIGNER: ["finance"],
+  PRODUCTION: ["finance"],
+  INSTALLER: ["finance"],
+  PARTNER: ["finance"],
 };
 
 export const isRolePermissionAllowed = (role: Role, permission: Permission) =>
@@ -21,14 +29,14 @@ const all: Permission[] = [...permissionKeys];
 export const defaultPermissions: Record<Role, Permission[]> = {
   DIRECTOR: all,
   OPERATIONS_DIRECTOR: ["employees", "clients", "orders", "measurements", "calendar", "documents", "finance", "production", "warehouse", "payroll", "marketing"],
-  MARKETER: ["marketing", "calendar", "payroll"],
+  MARKETER: ["marketing", "calendar", "warehouse", "payroll"],
   MANAGER: ["clients", "orders", "measurements", "calendar", "documents", "production", "warehouse", "partners", "payroll"],
-  ACCOUNTANT: ["documents", "finance", "partners", "reports", "warehouse", "payroll"],
-  MEASURER: ["measurements", "calendar", "documents"],
-  DESIGNER: ["design", "orders"],
+  ACCOUNTANT: ["documents", "partners", "reports", "warehouse", "payroll"],
+  MEASURER: ["measurements", "calendar", "documents", "warehouse"],
+  DESIGNER: ["design", "orders", "warehouse"],
   PRODUCTION: ["production", "calendar", "documents", "warehouse"],
   INSTALLER: ["production", "installation", "calendar", "documents", "warehouse"],
-  PARTNER: ["orders", "finance", "partners", "documents"],
+  PARTNER: ["orders", "partners", "documents"],
 };
 
 export const hasDefaultPermission = (role: Role, permission: Permission) => defaultPermissions[role].includes(permission);

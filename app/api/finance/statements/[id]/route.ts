@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 function allowed(role: Role) {
-  return role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR || role === Role.ACCOUNTANT;
+  return role === Role.DIRECTOR || role === Role.OPERATIONS_DIRECTOR;
 }
 
 function positiveId(value: unknown) {
@@ -48,7 +48,7 @@ const errors: Record<string, string> = {
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("finance");
   if (auth.response) return auth.response;
-  if (!allowed(auth.session!.user.role as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!allowed((auth.session!.user.accountRole || auth.session!.user.role) as Role)) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const { id } = await context.params;
   const importId = positiveId(id);
   if (!importId) return NextResponse.json({ error: "Некорректный импорт" }, { status: 400 });

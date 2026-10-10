@@ -52,17 +52,21 @@ async function main() {
 
     step = "roles, physical stock and actual price snapshot";
     await rejects(() => getWarehouse(actor(partner)), "FORBIDDEN");
-    await rejects(() => createMaterialCommand({ ...create, key: `${tag}:manager-create`, actor: actor(manager) }), "FORBIDDEN");
-    await rejects(() => createWarehouseOperation({ data: { materialId, type: "incoming", quantity: 1 }, key: `${tag}:manager-incoming`, requestHash: "x", actor: actor(manager) }), "FORBIDDEN");
-    await rejects(() => createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 1 }, key: `${tag}:accountant-out`, requestHash: "x", actor: actor(accountant) }), "FORBIDDEN");
-    await createWarehouseOperation({ data: { materialId, type: "incoming", quantity: 5, price: 12 }, key: `${tag}:incoming`, requestHash: "incoming", actor: actor(accountant) });
-    await createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 2, price: 12, orderId: orders[0].id }, key: `${tag}:outgoing`, requestHash: "outgoing", actor: actor(director) });
+    const managerMaterial = await createMaterialCommand({
+      data: { ...materialInput, name: `${tag} manager material`, initialStock: 0 },
+      key: `${tag}:manager-create`,
+      requestHash: "manager-create",
+      actor: actor(manager),
+    });
+    ids.materials.push((managerMaterial.result as { id: number }).id);
+    await createWarehouseOperation({ data: { materialId, type: "incoming", quantity: 5, price: 12 }, key: `${tag}:incoming`, requestHash: "incoming", actor: actor(manager) });
+    await createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 2, price: 12, orderId: orders[0].id }, key: `${tag}:outgoing`, requestHash: "outgoing", actor: actor(accountant) });
     await rejects(() => createWarehouseOperation({ data: { materialId, type: "outgoing", quantity: 10_000 }, key: `${tag}:negative`, requestHash: "negative", actor: actor(director) }), "INSUFFICIENT_AVAILABLE");
     const managerProjection = await getWarehouse(actor(manager));
     const managerItem = managerProjection.materials.find((item) => item.id === materialId) as unknown as Record<string, unknown>;
-    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "deliveryCost", "landedCost"]) check(!(field in managerItem), `manager projection hides ${field}`);
+    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent"]) check(field in managerItem, `manager projection exposes ${field}`);
     const managerDetail = await getWarehouseItem(materialId, actor(manager)) as Record<string, unknown>;
-    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "purchaseLines", "priceHistory"]) check(!(field in managerDetail), `manager detail hides ${field}`);
+    for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "purchaseLines", "priceHistory"]) check(field in managerDetail, `manager detail exposes ${field}`);
     const directorDetail = await getWarehouseItem(materialId, actor(director)) as Record<string, unknown>;
     for (const field of ["purchasePrice", "averageCost", "inventoryValue", "grossProfit", "marginPercent", "purchaseLines", "priceHistory"]) check(field in directorDetail, `director detail exposes ${field}`);
 
@@ -72,22 +76,21 @@ async function main() {
     check(await prisma.materialMovement.count({ where: { idempotencyKey: reserve.key } }) === 1, "duplicate reserve creates one movement");
     await rejects(() => createWarehouseOperation({ data: { materialId, type: "reserve", quantity: 10_000, orderId: orders[1].id }, key: `${tag}:overreserve`, requestHash: "overreserve", actor: actor(manager) }), "INSUFFICIENT_AVAILABLE");
     await createWarehouseOperation({ data: { materialId, type: "reserve", quantity: 3, orderId: orders[1].id }, key: `${tag}:reserve-foreign`, requestHash: "reserve-foreign", actor: actor(manager) });
-    await rejects(() => createWarehouseOperation({ data: { materialId, type: "consume", quantity: 1, orderId: orders[1].id }, key: `${tag}:foreign-consume`, requestHash: "foreign", actor: actor(production) }), "FORBIDDEN");
-    await rejects(() => createWarehouseOperation({ data: { materialId, type: "consume", quantity: 1, orderId: orders[0].id }, key: `${tag}:installer-consume`, requestHash: "installer", actor: actor(installer) }), "FORBIDDEN");
+    await createWarehouseOperation({ data: { materialId, type: "consume", quantity: 1, orderId: orders[1].id }, key: `${tag}:foreign-consume`, requestHash: "foreign", actor: actor(production) });
+    await createWarehouseOperation({ data: { materialId, type: "consume", quantity: 1, orderId: orders[0].id }, key: `${tag}:installer-consume`, requestHash: "installer", actor: actor(installer) });
     await createWarehouseOperation({ data: { materialId, type: "release", quantity: 2, orderId: orders[0].id }, key: `${tag}:release`, requestHash: "release", actor: actor(manager) });
     await createWarehouseOperation({ data: { materialId, type: "consume", quantity: 3, orderId: orders[0].id, comment: "QA consume" }, key: `${tag}:consume`, requestHash: "consume", actor: actor(production) });
 
     step = "scope, totals, history and delete conflict";
     const own = await getWarehouse(actor(production));
     const foreign = await getWarehouse(actor(foreignProduction));
-    check(own.orders.length === 1 && own.orders[0].id === orders[0].id, "production sees own order");
-    check(foreign.orders.length === 1 && foreign.orders[0].id === orders[1].id, "foreign production isolated");
-    check(own.movements.every((movement) => movement.orderId === orders[0].id || movement.employeeId === production.id), "movement scope");
+    check(own.orders.some((order) => order.id === orders[0].id) && own.orders.some((order) => order.id === orders[1].id), "production sees the shared order workspace");
+    check(foreign.orders.some((order) => order.id === orders[0].id) && foreign.orders.some((order) => order.id === orders[1].id), "all internal production users share warehouse orders");
+    check(own.movements.some((movement) => movement.orderId === orders[0].id) && own.movements.some((movement) => movement.orderId === orders[1].id), "movement history is shared internally");
     const costs = await getOrderMaterials(orders[0].id);
-    check(costs.totalCost === 52 && costs.items.length === 2, "order actual cost uses moving-average snapshot");
-    await rejects(() => updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price-accountant`, requestHash: "price-accountant", actor: actor(accountant) }), "FORBIDDEN");
-    await updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price`, requestHash: "price", actor: actor(director) });
-    check((await getOrderMaterials(orders[0].id)).totalCost === 52, "historical cost remains stable");
+    check(Math.abs(Number(costs.totalCost ?? Number.NaN) - 62.4) < 0.001 && costs.items.length === 3, `order actual cost uses moving-average snapshot (${costs.totalCost}/${costs.items.length})`);
+    await updateMaterialCommand({ id: materialId, data: { purchasePrice: 99 }, key: `${tag}:price-accountant`, requestHash: "price-accountant", actor: actor(accountant) });
+    check(Math.abs(Number((await getOrderMaterials(orders[0].id)).totalCost ?? Number.NaN) - 62.4) < 0.001, "historical cost remains stable");
     const latest = await getWarehouse(actor(director), { page: 1, pageSize: 2 });
     check(latest.movements.length === 2 && latest.pagination.total >= 7 && latest.movements[0].operationAt >= latest.movements[1].operationAt, "paginated sorted history");
     const stored = await prisma.material.findUniqueOrThrow({ where: { id: materialId } });

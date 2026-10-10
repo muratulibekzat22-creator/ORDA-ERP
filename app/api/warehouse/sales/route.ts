@@ -1,10 +1,10 @@
-import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
 import { requirePermission } from "@/lib/server-auth";
 import { createRetailSale } from "@/lib/services/warehouse-retail.service";
-import { WarehouseError, type WarehouseActor } from "@/lib/services/warehouse.service";
+import { WarehouseError } from "@/lib/services/warehouse.service";
+import { warehouseActorFromSession } from "@/lib/warehouse-access";
 
 export async function POST(request: Request) {
   const auth = await requirePermission("warehouse");
@@ -32,8 +32,7 @@ export async function POST(request: Request) {
     } : undefined;
     const client = body.client && typeof body.client === "object" ? body.client as { name: string; phone: string; city: string; address?: string } : undefined;
     const payload = { locationId, clientId, client, walkIn: body.walkIn === true, items, payment, issueNow: body.issueNow === true, recipientName: typeof body.recipientName === "string" ? body.recipientName.slice(0, 160) : undefined };
-    const actor: WarehouseActor = { userId: Number(auth.session!.user.id), role: auth.session!.user.role as Role, name: auth.session!.user.name ?? null };
-    const result = await createRetailSale({ ...payload, key: idempotency.key, requestHash: createRequestHash(payload), actor });
+    const result = await createRetailSale({ ...payload, key: idempotency.key, requestHash: createRequestHash(payload), actor: warehouseActorFromSession(auth.session!) });
     return NextResponse.json({ ...result.result, receiptPdfStatus: result.receiptPdfStatus, invoicePdfStatus: result.invoicePdfStatus }, { status: result.replayed ? 200 : 201 });
   } catch (error) {
     if (error instanceof SyntaxError) return NextResponse.json({ error: "Некорректный JSON" }, { status: 400 });

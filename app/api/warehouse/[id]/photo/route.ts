@@ -1,9 +1,9 @@
-import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { readIdempotencyKey } from "@/lib/idempotency";
 import { requirePermission } from "@/lib/server-auth";
 import { getWarehousePhoto, MAX_WAREHOUSE_PHOTO_SIZE, uploadWarehousePhoto, WAREHOUSE_PHOTO_TYPES } from "@/lib/services/warehouse-photo.service";
+import { isInternalWarehouseRole, warehouseAccountRole } from "@/lib/warehouse-access";
 
 function parseId(value: string) { const id = Number(value); return Number.isInteger(id) && id > 0 ? id : null; }
 
@@ -16,7 +16,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const auth = await requirePermission("warehouse"); if (auth.response) return auth.response;
-  if (auth.session!.user.role !== Role.OPERATIONS_DIRECTOR) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
+  if (!isInternalWarehouseRole(warehouseAccountRole(auth.session!))) return NextResponse.json({ error: "Недостаточно прав" }, { status: 403 });
   const idempotency = readIdempotencyKey(request); if ("response" in idempotency) return idempotency.response;
   const id = parseId((await context.params).id); if (!id) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   const file = (await request.formData()).get("file");

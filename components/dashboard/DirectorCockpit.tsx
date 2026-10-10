@@ -24,6 +24,10 @@ import {
 import CalendarAgenda from "@/components/dashboard/CalendarAgenda";
 import SalesPlanCard from "@/components/sales-plan/SalesPlanCard";
 import FounderControlPanel from "@/components/dashboard/FounderControlPanel";
+import {
+  COMPANY_EXPENSE_OPTIONS,
+  COMPANY_INCOME_OPTIONS,
+} from "@/lib/finance/company-entry-options";
 
 type ManagementPayload = {
   role: "DIRECTOR" | "ACCOUNTANT";
@@ -233,26 +237,8 @@ type Payload =
   | ProductionPayload
   | InstallerPayload;
 
-const expenseCategories = [
-  ["ADVERTISING", "Реклама"],
-  ["RENT", "Аренда"],
-  ["FUEL", "Топливо"],
-  ["DELIVERY", "Доставка"],
-  ["TAX", "Налоги"],
-  ["ACCOUNTING", "Бухгалтерия"],
-  ["COMMUNICATION", "Связь"],
-  ["OFFICE", "Офис"],
-  ["SERVICES", "Услуги"],
-  ["EQUIPMENT", "Оборудование"],
-  ["COMPANY_LOAN", "Заём компании"],
-  ["OTHER", "Другое"],
-] as const;
-const incomeCategories = [
-  ["OTHER_INCOME", "Прочий доход"],
-  ["INVESTMENT", "Инвестиция"],
-  ["REFUND_INCOME", "Возврат средств"],
-  ["COMPANY_LOAN_INCOME", "Заём компании"],
-] as const;
+const expenseCategories = COMPANY_EXPENSE_OPTIONS;
+const incomeCategories = COMPANY_INCOME_OPTIONS;
 const expenseLabel = Object.fromEntries(expenseCategories);
 const money = (value: number) =>
   `${Math.round(value).toLocaleString("ru-RU")} ₸`;
