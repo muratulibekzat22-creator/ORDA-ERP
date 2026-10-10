@@ -51,17 +51,7 @@ export class BrassProcurementError extends Error {
   }
 }
 
-const viewRoles = new Set<Role>([
-  Role.DIRECTOR,
-  Role.OPERATIONS_DIRECTOR,
-  Role.MANAGER,
-  Role.ACCOUNTANT,
-]);
-const requestRoles = new Set<Role>([Role.OPERATIONS_DIRECTOR, Role.MANAGER]);
-const purchasingRoles = new Set<Role>([
-  Role.OPERATIONS_DIRECTOR,
-  Role.MANAGER,
-]);
+const brassPurchaseContext = { workflow: "BRASS_PROCUREMENT" } as const;
 const roundMoney = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
 
@@ -143,40 +133,16 @@ function publicRow(row: ProcurementRow) {
   };
 }
 
-function assertRequestRole(actor: BrassProcurementActor) {
-  if (!requestRoles.has(actor.role)) throw new BrassProcurementError("FORBIDDEN");
-}
-
-function assertViewRole(actor: BrassProcurementActor) {
-  if (!viewRoles.has(actor.role)) throw new BrassProcurementError("FORBIDDEN");
-}
-
-function assertPurchasingRole(actor: BrassProcurementActor) {
-  if (!purchasingRoles.has(actor.role))
+function assertInternalEmployee(actor: BrassProcurementActor) {
+  if (actor.role === Role.PARTNER)
     throw new BrassProcurementError("FORBIDDEN");
 }
 
-function assertFinanceRole(actor: BrassProcurementActor) {
-  if (
-    actor.role !== Role.OPERATIONS_DIRECTOR &&
-    actor.role !== Role.MANAGER &&
-    actor.role !== Role.ACCOUNTANT
-  )
-    throw new BrassProcurementError("FORBIDDEN");
-}
-
-function managerOrderScope(actor: BrassProcurementActor) {
-  return actor.role === Role.MANAGER
-    ? { order: { managerUserId: actor.userId, deletedAt: null } }
-    : {};
-}
-
-async function findAccessibleOrder(orderId: number, actor: BrassProcurementActor) {
+async function findAccessibleOrder(orderId: number) {
   return prisma.order.findFirst({
     where: {
       id: orderId,
       deletedAt: null,
-      ...(actor.role === Role.MANAGER ? { managerUserId: actor.userId } : {}),
     },
     select: { id: true, companyId: true, number: true, managerUserId: true },
   });
@@ -186,8 +152,8 @@ export async function getOrderBrassProcurement(
   orderId: number,
   actor: BrassProcurementActor,
 ) {
-  assertViewRole(actor);
-  if (!(await findAccessibleOrder(orderId, actor)))
+  assertInternalEmployee(actor);
+  if (!(await findAccessibleOrder(orderId)))
     throw new BrassProcurementError("NOT_FOUND");
   const row = await prisma.orderBrassProcurement.findFirst({
     where: { orderId },
@@ -196,12 +162,10 @@ export async function getOrderBrassProcurement(
   return row ? publicRow(row) : null;
 }
 
-export async function listBrassProcurements(actor: BrassProcurementActor) {
-  assertViewRole(actor);
-  const rows = await prisma.orderBrassProcurement.findMany({
+const activeProcurementsQuery = () =>
+  prisma.orderBrassProcurement.findMany({
     where: {
       status: { not: "CANCELLED" },
-      ...managerOrderScope(actor),
     },
     include: procurementInclude,
     orderBy: [
@@ -210,7 +174,65 @@ export async function listBrassProcurements(actor: BrassProcurementActor) {
     ],
     take: 200,
   });
+
+export async function listBrassProcurements(actor: BrassProcurementActor) {
+  assertInternalEmployee(actor);
+  const rows = await activeProcurementsQuery();
   return rows.map(publicRow);
+}
+
+export async function getBrassProcurementWorkspace(
+  actor: BrassProcurementActor,
+) {
+  assertInternalEmployee(actor);
+  const [rows, suppliers, locations, availableOrders] = await prisma.$transaction([
+    activeProcurementsQuery(),
+    prisma.supplier.findMany({
+      where: { active: true },
+      select: {
+        id: true,
+        name: true,
+        country: true,
+        defaultCurrency: true,
+        contact: true,
+      },
+      orderBy: { name: "asc" },
+    }),
+    prisma.warehouseLocation.findMany({
+      where: { active: true },
+      select: { id: true, name: true, isDefault: true },
+      orderBy: [{ isDefault: "desc" }, { name: "asc" }],
+    }),
+    prisma.order.findMany({
+      where: { deletedAt: null, brassProcurement: null },
+      select: {
+        id: true,
+        number: true,
+        client: { select: { name: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    }),
+  ]);
+  return {
+    procurements: rows.map(publicRow),
+    suppliers,
+    locations,
+    availableOrders,
+  };
+}
+
+export async function getBrassProcurement(
+  procurementId: number,
+  actor: BrassProcurementActor,
+) {
+  assertInternalEmployee(actor);
+  const row = await prisma.orderBrassProcurement.findFirst({
+    where: { id: procurementId, status: { not: "CANCELLED" } },
+    include: procurementInclude,
+  });
+  if (!row) throw new BrassProcurementError("NOT_FOUND");
+  return publicRow(row);
 }
 
 export async function createBrassProcurement(input: {
@@ -222,7 +244,7 @@ export async function createBrassProcurement(input: {
   requestHash: string;
   actor: BrassProcurementActor;
 }) {
-  assertRequestRole(input.actor);
+  assertInternalEmployee(input.actor);
   if (
     !Number.isFinite(input.quantityPairs) ||
     input.quantityPairs <= 0 ||
@@ -230,7 +252,7 @@ export async function createBrassProcurement(input: {
     !input.photo.type.startsWith("image/")
   )
     throw new BrassProcurementError("INVALID");
-  const order = await findAccessibleOrder(input.orderId, input.actor);
+  const order = await findAccessibleOrder(input.orderId);
   if (!order) throw new BrassProcurementError("NOT_FOUND");
   const repeated = await prisma.orderBrassProcurement.findUnique({
     where: { idempotencyKey: input.key },
@@ -346,7 +368,7 @@ export async function placeBrassOrder(input: {
   requestHash: string;
   actor: BrassProcurementActor;
 }) {
-  assertPurchasingRole(input.actor);
+  assertInternalEmployee(input.actor);
   if (
     !Number.isInteger(input.supplierId) ||
     !Number.isInteger(input.responsibleUserId) ||
@@ -359,7 +381,7 @@ export async function placeBrassOrder(input: {
   )
     throw new BrassProcurementError("INVALID");
   const request = await prisma.orderBrassProcurement.findFirst({
-    where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+    where: { id: input.procurementId },
     include: { order: true },
   });
   if (!request) throw new BrassProcurementError("NOT_FOUND");
@@ -393,9 +415,8 @@ export async function placeBrassOrder(input: {
       id: input.responsibleUserId,
       active: true,
       role: {
-        in: [Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT],
+        not: Role.PARTNER,
       },
-      ...(input.actor.role === Role.MANAGER ? { id: input.actor.userId } : {}),
     },
   });
   if (!supplier || !responsible) throw new BrassProcurementError("INVALID");
@@ -420,6 +441,7 @@ export async function placeBrassOrder(input: {
       requestHash: input.requestHash,
     },
     input.actor,
+    brassPurchaseContext,
   );
   const line = await prisma.purchaseBatchLine.findFirst({
     where: { batchId: batchResult.batch.id, materialId: request.materialId },
@@ -496,9 +518,9 @@ export async function markBrassInTransit(
   procurementId: number,
   actor: BrassProcurementActor,
 ) {
-  assertPurchasingRole(actor);
+  assertInternalEmployee(actor);
   const request = await prisma.orderBrassProcurement.findFirst({
-    where: { id: procurementId, ...managerOrderScope(actor) },
+    where: { id: procurementId },
   });
   if (!request) throw new BrassProcurementError("NOT_FOUND");
   if (request.status === "IN_TRANSIT") {
@@ -540,7 +562,7 @@ export async function recordBrassPayment(input: {
   requestHash: string;
   actor: BrassProcurementActor;
 }) {
-  assertFinanceRole(input.actor);
+  assertInternalEmployee(input.actor);
   if (
     !Number.isFinite(input.amount) ||
     input.amount <= 0 ||
@@ -548,7 +570,7 @@ export async function recordBrassPayment(input: {
   )
     throw new BrassProcurementError("INVALID");
   const accessible = await prisma.orderBrassProcurement.findFirst({
-    where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+    where: { id: input.procurementId },
     select: { id: true },
   });
   if (!accessible) throw new BrassProcurementError("NOT_FOUND");
@@ -564,7 +586,7 @@ export async function recordBrassPayment(input: {
     return await prisma.$transaction(
       async (tx) => {
       const request = await tx.orderBrassProcurement.findFirst({
-        where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+        where: { id: input.procurementId },
         include: {
           supplier: { select: { name: true } },
           order: { select: { managerUserId: true } },
@@ -650,7 +672,7 @@ export async function receiveBrassProcurement(input: {
   requestHash: string;
   actor: BrassProcurementActor;
 }) {
-  assertPurchasingRole(input.actor);
+  assertInternalEmployee(input.actor);
   if (
     !Number.isInteger(input.locationId) ||
     input.locationId <= 0 ||
@@ -660,7 +682,7 @@ export async function receiveBrassProcurement(input: {
   )
     throw new BrassProcurementError("INVALID");
   const request = await prisma.orderBrassProcurement.findFirst({
-    where: { id: input.procurementId, ...managerOrderScope(input.actor) },
+    where: { id: input.procurementId },
     include: {
       order: { select: { managerUserId: true } },
       purchaseBatch: true,
@@ -706,6 +728,7 @@ export async function receiveBrassProcurement(input: {
       key: `${input.key}:receipt`,
       requestHash: input.requestHash,
     },
+    brassPurchaseContext,
   );
   if (input.cargoCostKzt > 0)
     await addPurchaseCost(
@@ -723,12 +746,14 @@ export async function receiveBrassProcurement(input: {
         requestHash: input.requestHash,
       },
       input.actor,
+      brassPurchaseContext,
     );
   const batch = await finalizePurchaseBatch(
     request.purchaseBatch.id,
     undefined,
     `Латунь по заказу #${request.orderId}: товар + карго`,
     input.actor,
+    brassPurchaseContext,
   );
 
   await createWarehouseOperation({
@@ -743,6 +768,7 @@ export async function receiveBrassProcurement(input: {
     key: `${input.key}:reserve`,
     requestHash: input.requestHash,
     actor: input.actor,
+    authorizationContext: brassPurchaseContext,
   });
 
   const updated = await prisma.$transaction(async (tx) => {

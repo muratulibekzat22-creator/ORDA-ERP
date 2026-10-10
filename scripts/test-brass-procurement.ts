@@ -178,29 +178,22 @@ async function main() {
     assert.equal(replay.created, false, "double submit created a second request");
     assert.equal(await prisma.orderBrassProcurement.count({ where: { orderId: order.id } }), 1);
 
+    const internalRoles = Object.values(Role).filter((role) => role !== Role.PARTNER);
+    for (const role of internalRoles)
+      assert.equal(
+        (await listBrassProcurements({ userId: founder.id, role, name: founder.name })).length >= 1,
+        true,
+        `${role} cannot view the shared brass workflow`,
+      );
     await assert.rejects(
-      () =>
-        placeBrassOrder({
-          procurementId: ids.procurement,
-          supplierId: supplier.id,
-          expectedArrivalDate: new Date(Date.now() + 10 * 86_400_000),
-          purchaseCurrency: "KZT",
-          exchangeRate: 1,
-          unitPurchasePrice: 20000,
-          responsibleUserId: founder.id,
-          notes: "Основатель не должен оформлять закупку",
-          key: key("founder-order"),
-          requestHash: createRequestHash({ founder: true }),
-          actor: founderActor,
-        }),
+      () => listBrassProcurements({ userId: founder.id, role: Role.PARTNER, name: founder.name }),
       /FORBIDDEN/,
-      "founder was able to mutate brass procurement",
+      "external partner can view the internal brass workflow",
     );
-    assert.equal((await listBrassProcurements(founderActor)).length >= 1, true);
     assert.equal(
       (await listBrassProcurements({ userId: otherManager.id, role: Role.MANAGER, name: otherManager.name })).length,
-      0,
-      "manager could see another manager's brass procurement",
+      1,
+      "employee cannot see another manager's brass procurement",
     );
 
     const expectedArrivalDate = new Date(Date.now() + 10 * 86_400_000);
@@ -219,7 +212,7 @@ async function main() {
       expectedArrivalDate,
       key: key("order"),
       requestHash: createRequestHash(orderPayload),
-      actor,
+      actor: founderActor,
     });
     ids.batch = ordered.purchaseBatch!.id;
     ids.task = ordered.reminderTask!.id;
@@ -232,7 +225,7 @@ async function main() {
       expectedArrivalDate,
       key: key("order"),
       requestHash: createRequestHash(orderPayload),
-      actor,
+      actor: founderActor,
     });
     assert.equal(orderedReplay.purchaseBatch?.id, ids.batch, "order retry created another batch");
     assert.equal(await prisma.purchaseBatch.count({ where: { idempotencyKey: key("order") + ":batch" } }), 1);
@@ -250,33 +243,25 @@ async function main() {
       ...paymentPayload,
       key: key("supplier-payment"),
       requestHash: createRequestHash(paymentHashPayload),
-      actor,
+      actor: founderActor,
     });
     ids.payment = firstPayment.id;
     const paymentReplay = await recordBrassPayment({
       ...paymentPayload,
       key: key("supplier-payment"),
       requestHash: createRequestHash(paymentHashPayload),
-      actor,
+      actor: founderActor,
     });
     assert.equal(paymentReplay.id, firstPayment.id, "double payment was not idempotent");
     assert.equal(
       await prisma.companyLedgerEntry.count({ where: { idempotencyKey: key("supplier-payment") } }),
       1,
     );
-    await assert.rejects(
-      () =>
-        recordBrassPayment({
-          ...paymentPayload,
-          key: key("founder-payment"),
-          requestHash: createRequestHash(paymentHashPayload),
-          actor: founderActor,
-        }),
-      /FORBIDDEN/,
-      "founder was able to record a supplier payment",
-    );
-
-    await markBrassInTransit(ids.procurement, actor);
+    await markBrassInTransit(ids.procurement, {
+      userId: otherManager.id,
+      role: Role.MANAGER,
+      name: otherManager.name,
+    });
     const receivePayload = {
       procurementId: ids.procurement,
       locationId: location.id,
@@ -291,7 +276,7 @@ async function main() {
       ...receivePayload,
       key: key("receive"),
       requestHash: createRequestHash(receiveHashPayload),
-      actor,
+      actor: { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name },
     });
     assert.equal(received.status, "COST_FINALIZED");
     assert.equal(received.landedCostKzt, 135000);
@@ -303,7 +288,7 @@ async function main() {
       ...receivePayload,
       key: key("receive"),
       requestHash: createRequestHash(receiveHashPayload),
-      actor,
+      actor: { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name },
     });
     assert.equal(receivedReplay.landedCostKzt, 135000);
     assert.equal(
@@ -312,13 +297,18 @@ async function main() {
       "receipt retry created a duplicate",
     );
 
-    const founderView = await getOrderBrassProcurement(order.id, founderActor);
-    assert.equal(founderView?.landedCostKzt, 135000);
-    const managerView = await getOrderBrassProcurement(order.id, {
-      ...actor,
-      role: Role.MANAGER,
-    });
-    assert.equal(managerView?.landedCostKzt, 135000, "responsible manager cannot see entered landed cost");
+    for (const role of internalRoles) {
+      const employeeView = await getOrderBrassProcurement(order.id, {
+        userId: founder.id,
+        role,
+        name: founder.name,
+      });
+      assert.equal(
+        employeeView?.landedCostKzt,
+        135000,
+        `${role} cannot see the full brass landed cost`,
+      );
+    }
 
     const economy = calculateOrderEconomy({
       totalSale: 500000,
@@ -340,7 +330,7 @@ async function main() {
     assert.equal(Number(economy.profit.netProfit), 165000);
     assert.equal(Number(economy.cash.otherExpensesPaid), 50000);
 
-    console.log("brass procurement lifecycle, idempotency, reminder, landed cost and margin checks passed");
+    console.log("shared brass access, lifecycle, idempotency, reminder, landed cost and margin checks passed");
   } finally {
     if (ids.order) {
       await prisma.financeAuditEvent.deleteMany({ where: { orderId: ids.order } });

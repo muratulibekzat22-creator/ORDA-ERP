@@ -6,7 +6,7 @@ import { hasPermission } from "./services/permission.service";
 import { Role } from "./roles";
 import { enterTenantFromSession } from "./tenant-context";
 
-export async function requirePermission(permission: Permission) {
+export async function requireAuthenticatedSession() {
   const session = await getServerSession(authOptions);
   if (!session?.user || !session.user.role || !enterTenantFromSession(session)) {
     return {
@@ -18,14 +18,11 @@ export async function requirePermission(permission: Permission) {
   }
 
   const role = (session.user.accountRole || session.user.role) as Role;
-  if (
-    !Object.values(Role).includes(role) ||
-    !(await hasPermission(role, permission))
-  ) {
+  if (!Object.values(Role).includes(role)) {
     return {
       response: NextResponse.json(
-        { error: "Недостаточно прав" },
-        { status: 403 },
+        { error: "Сессия завершена", code: "SESSION_INVALID" },
+        { status: 401 },
       ),
     };
   }
@@ -46,4 +43,34 @@ export async function requirePermission(permission: Permission) {
       return session;
     },
   };
+}
+
+export async function requireInternalEmployee() {
+  const auth = await requireAuthenticatedSession();
+  if (auth.response) return auth;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (role === Role.PARTNER) {
+    return {
+      response: NextResponse.json(
+        { error: "Недостаточно прав" },
+        { status: 403 },
+      ),
+    };
+  }
+  return auth;
+}
+
+export async function requirePermission(permission: Permission) {
+  const auth = await requireAuthenticatedSession();
+  if (auth.response) return auth;
+  const role = (auth.session!.user.accountRole || auth.session!.user.role) as Role;
+  if (!(await hasPermission(role, permission))) {
+    return {
+      response: NextResponse.json(
+        { error: "Недостаточно прав" },
+        { status: 403 },
+      ),
+    };
+  }
+  return auth;
 }

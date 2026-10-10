@@ -182,7 +182,7 @@ export default function WarehousePage() {
     canEdit = warehouseOperator,
     canDelete = warehouseOperator,
     canSeeCost = leadership || role === Role.ACCOUNTANT;
-  const canUseBrass = leadership || role === Role.MANAGER || role === Role.ACCOUNTANT;
+  const canUseBrass = Boolean(role && role !== Role.PARTNER);
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -422,7 +422,14 @@ export default function WarehousePage() {
           </button>
         ))}
       </div>
-      {loading ? (
+      {tab === "brass" ? (
+        <BrassProcurementsPanel
+          canOperate={canUseBrass}
+          canPay={canUseBrass}
+          canAddSupplier={canUseBrass}
+          readOnly={false}
+        />
+      ) : loading ? (
         <p className="rounded-2xl bg-[#101827] p-8 text-slate-400">
           Загрузка склада…
         </p>
@@ -750,14 +757,6 @@ export default function WarehousePage() {
                 name: item.name,
                 unit: item.unit,
               }))}
-            />
-          )}
-          {tab === "brass" && (
-            <BrassProcurementsPanel
-              canOperate={role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER}
-              canPay={role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER || role === Role.ACCOUNTANT}
-              canAddSupplier={role === Role.OPERATIONS_DIRECTOR || role === Role.MANAGER}
-              readOnly={founderReadOnly}
             />
           )}
           {tab === "operations" && (

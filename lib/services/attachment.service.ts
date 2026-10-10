@@ -157,7 +157,12 @@ export async function uploadAttachment(input: {
   idempotencyKey: string;
   actor: AttachmentActor;
 }) {
-  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(input.actor.role))
+  const internalBrassUpload =
+    input.purpose === "BRASS_REFERENCE" && input.actor.role !== Role.PARTNER;
+  if (
+    !internalBrassUpload &&
+    !(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER])).has(input.actor.role)
+  )
     throw new Error("FORBIDDEN");
   const fileName = safeAttachmentFileName(input.file.name);
   const bytes = Buffer.from(await input.file.arrayBuffer());
@@ -187,7 +192,15 @@ export async function uploadAttachment(input: {
     void _;
     return { attachment, created: false };
   }
-  if (!(await canUseEntities(input.actor, undefined, input.orderId)))
+  if (internalBrassUpload) {
+    if (
+      !(await prisma.order.findFirst({
+        where: { id: input.orderId, deletedAt: null },
+        select: { id: true },
+      }))
+    )
+      return null;
+  } else if (!(await canUseEntities(input.actor, undefined, input.orderId)))
     return null;
   if (
     input.documentId &&
@@ -336,12 +349,18 @@ export async function getAttachmentContent(id: number, actor: AttachmentActor) {
       pathname: true,
       fileName: true,
       contentType: true,
+      purpose: true,
       size: true,
+      order: { select: { deletedAt: true } },
     },
   });
+  const internalBrassRead =
+    attachment?.purpose === "BRASS_REFERENCE" &&
+    actor.role !== Role.PARTNER &&
+    !attachment.order.deletedAt;
   if (
     !attachment ||
-    !(await canReadOrderAttachments(attachment.orderId, actor))
+    (!internalBrassRead && !(await canReadOrderAttachments(attachment.orderId, actor)))
   )
     return null;
   const blob = await get(attachment.pathname, { access: "private" });
@@ -356,12 +375,19 @@ export async function deleteAttachment(id: number, actor: AttachmentActor) {
       orderId: true,
       uploadedById: true,
       pathname: true,
+      purpose: true,
       order: { select: { deletedAt: true } },
     },
   });
   if (!attachment) return null;
   if (attachment.order.deletedAt) return null;
-  if (!(await canReadOrderAttachments(attachment.orderId, actor))) return null;
+  const internalBrassRead =
+    attachment.purpose === "BRASS_REFERENCE" && actor.role !== Role.PARTNER;
+  if (
+    !internalBrassRead &&
+    !(await canReadOrderAttachments(attachment.orderId, actor))
+  )
+    return null;
   const allowed =
     actor.role === Role.DIRECTOR ||
     actor.role === Role.MANAGER ||

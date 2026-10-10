@@ -56,7 +56,7 @@ export default function NewOrderForm() {
   const [brassPhoto, setBrassPhoto] = useState<File | null>(null);
   const submitting = useRef(false);
   const draftCleared = useRef(false);
-  const canManageBrass = options?.role === "OPERATIONS_DIRECTOR" || options?.role === "MANAGER";
+  const canManageBrass = Boolean(options);
 
   useEffect(() => {
     void fetch("/api/orders/options", { cache: "no-store" })
@@ -74,11 +74,6 @@ export default function NewOrderForm() {
         };
         const restored = saved ? { ...defaults, ...saved.form } : defaults;
         if (body.role === "MANAGER") restored.managerUserId = String(body.currentUserId);
-        if (body.role === "DIRECTOR") {
-          restored.brassRequired = false;
-          restored.brassQuantityPairs = "";
-          restored.brassNotes = "";
-        }
         setOptions(body);
         setForm(restored);
         setExistingClient(saved?.existingClient ?? null);

@@ -15,6 +15,9 @@ import { prisma } from "@/lib/prisma";
 import { nextBusinessDocumentNumber } from "@/lib/services/business-document-number.service";
 
 export type PurchaseActor = { userId: number; role: Role; name: string | null };
+export type PurchaseAuthorizationContext = {
+  workflow: "BRASS_PROCUREMENT";
+};
 export class PurchaseError extends Error {
   constructor(
     public code:
@@ -85,15 +88,30 @@ function assertView(actor: PurchaseActor) {
     throw new PurchaseError("FORBIDDEN");
 }
 
-function assertOperate(actor: PurchaseActor, manual = false) {
+function assertOperate(
+  actor: PurchaseActor,
+  manual = false,
+  context?: PurchaseAuthorizationContext,
+) {
+  if (
+    context?.workflow === "BRASS_PROCUREMENT" &&
+    actor.role !== Role.PARTNER &&
+    !manual
+  )
+    return;
   if (actor.role !== Role.OPERATIONS_DIRECTOR && actor.role !== Role.MANAGER)
     throw new PurchaseError("FORBIDDEN");
   if (manual && actor.role !== Role.OPERATIONS_DIRECTOR)
     throw new PurchaseError("FORBIDDEN");
 }
 
-async function assertBatchOperator(batchId: number, actor: PurchaseActor) {
-  assertOperate(actor);
+async function assertBatchOperator(
+  batchId: number,
+  actor: PurchaseActor,
+  context?: PurchaseAuthorizationContext,
+) {
+  assertOperate(actor, false, context);
+  if (context?.workflow === "BRASS_PROCUREMENT") return;
   if (actor.role !== Role.MANAGER) return;
   const own = await prisma.purchaseBatch.findFirst({
     where: { id: batchId, responsibleUserId: actor.userId },
@@ -126,8 +144,9 @@ export async function createSupplier(
     comment?: string;
   },
   actor: PurchaseActor,
+  context?: PurchaseAuthorizationContext,
 ) {
-  assertOperate(actor);
+  assertOperate(actor, false, context);
   return prisma.supplier.create({
     data: {
       ...data,
@@ -238,10 +257,12 @@ export async function createPurchaseBatch(
     requestHash: string;
   },
   actor: PurchaseActor,
+  context?: PurchaseAuthorizationContext,
 ) {
   assertOperate(
     actor,
     input.allocationMethod === PurchaseAllocationMethod.MANUAL,
+    context,
   );
   const existing = await prisma.purchaseBatch.findUnique({
     where: { idempotencyKey: input.key },
@@ -333,12 +354,14 @@ export async function addPurchaseCost(
     requestHash: string;
   },
   actor: PurchaseActor,
+  context?: PurchaseAuthorizationContext,
 ) {
   assertOperate(
     actor,
     input.allocationMethod === PurchaseAllocationMethod.MANUAL,
+    context,
   );
-  await assertBatchOperator(input.batchId, actor);
+  await assertBatchOperator(input.batchId, actor, context);
   const existing = await prisma.purchaseAdditionalCost.findUnique({
     where: { idempotencyKey: input.key },
   });
@@ -388,8 +411,9 @@ export async function receivePurchaseBatch(
     key: string;
     requestHash: string;
   },
+  context?: PurchaseAuthorizationContext,
 ) {
-  await assertBatchOperator(batchId, actor);
+  await assertBatchOperator(batchId, actor, context);
   const replay = await prisma.purchaseReceipt.findUnique({ where: { idempotencyKey: options.key } });
   if (replay) {
     if (!compareRequestHash(replay.requestHash, options.requestHash)) throw new PurchaseError("IDEMPOTENCY_CONFLICT");
@@ -591,9 +615,10 @@ export async function finalizePurchaseBatch(
   manual: Record<number, number> | undefined,
   reason: string,
   actor: PurchaseActor,
+  context?: PurchaseAuthorizationContext,
 ) {
-  assertOperate(actor, Boolean(manual));
-  await assertBatchOperator(batchId, actor);
+  assertOperate(actor, Boolean(manual), context);
+  await assertBatchOperator(batchId, actor, context);
   return prisma.$transaction(
     async (tx) => {
       const batch = await tx.purchaseBatch.findUnique({

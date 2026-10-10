@@ -155,6 +155,7 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
     !archived && ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canSeeFinance = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER", "ACCOUNTANT"].includes(role);
   const canManageWarehouse = ["DIRECTOR", "OPERATIONS_DIRECTOR", "MANAGER"].includes(role);
+  const internalEmployee = Boolean(role && role !== "PARTNER");
   const deadline = orderDeadline({
     promisedAt: order.promisedAt,
     productionDeadline: order.productionDeadline,
@@ -293,11 +294,11 @@ export default function OrderWorkspace({ order }: { order: WorkspaceOrder }) {
 
       {paymentOpen && !archived ? <ProjectPayments orderId={order.id} /> : null}
 
-      {canManageWarehouse ? (
+      {internalEmployee ? (
         <OrderBrassProcurementPanel
           orderId={order.id}
           readOnly={archived}
-          canSeeCost={operationalManagement}
+          canSeeCost
         />
       ) : null}
 

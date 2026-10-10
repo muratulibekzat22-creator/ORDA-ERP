@@ -2,9 +2,10 @@ import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
-import { requirePermission } from "@/lib/server-auth";
+import { requireInternalEmployee } from "@/lib/server-auth";
 import {
   BrassProcurementError,
+  getBrassProcurement,
   markBrassInTransit,
   placeBrassOrder,
   receiveBrassProcurement,
@@ -61,7 +62,7 @@ function failure(error: unknown) {
 }
 
 export async function POST(request: Request, { params }: Context) {
-  const auth = await requirePermission("warehouse");
+  const auth = await requireInternalEmployee();
   if (auth.response) return auth.response;
   const procurementId = Number((await params).id);
   if (!Number.isInteger(procurementId) || procurementId <= 0)
@@ -108,14 +109,15 @@ export async function POST(request: Request, { params }: Context) {
         paidAt: paidAt.toISOString(),
         comment: String(body.comment ?? ""),
       } as const;
-      return NextResponse.json(
-        await recordBrassPayment({
+      await recordBrassPayment({
           ...payload,
           paidAt,
           key: idempotency.key,
           requestHash: createRequestHash(payload),
           actor: requestActor,
-        }),
+        });
+      return NextResponse.json(
+        await getBrassProcurement(procurementId, requestActor),
         { status: 201 },
       );
     }

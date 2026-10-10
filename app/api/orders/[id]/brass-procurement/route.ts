@@ -2,7 +2,7 @@ import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
 import { createRequestHash, readIdempotencyKey } from "@/lib/idempotency";
-import { requirePermission } from "@/lib/server-auth";
+import { requireInternalEmployee } from "@/lib/server-auth";
 import {
   BrassProcurementError,
   createBrassProcurement,
@@ -52,7 +52,7 @@ function failure(error: unknown) {
 }
 
 export async function GET(_: Request, { params }: Context) {
-  const auth = await requirePermission("orders");
+  const auth = await requireInternalEmployee();
   if (auth.response) return auth.response;
   const orderId = Number((await params).id);
   if (!Number.isInteger(orderId) || orderId <= 0)
@@ -67,7 +67,7 @@ export async function GET(_: Request, { params }: Context) {
 }
 
 export async function POST(request: Request, { params }: Context) {
-  const auth = await requirePermission("orders");
+  const auth = await requireInternalEmployee();
   if (auth.response) return auth.response;
   const orderId = Number((await params).id);
   if (!Number.isInteger(orderId) || orderId <= 0)

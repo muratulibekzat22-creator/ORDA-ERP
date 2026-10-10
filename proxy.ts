@@ -54,7 +54,7 @@ export async function proxy(request: NextRequest) {
   const permissions: Record<string, string[]> = {
     DIRECTOR: ["*"],
     OPERATIONS_DIRECTOR: ["*"],
-    MARKETER: ["marketing", "calendar"],
+    MARKETER: ["marketing", "calendar", "brass"],
     MANAGER: [
       "clients",
       "orders",
@@ -64,6 +64,7 @@ export async function proxy(request: NextRequest) {
       "production",
       "warehouse",
       "partners",
+      "brass",
     ],
     ACCOUNTANT: [
       "finance",
@@ -71,11 +72,12 @@ export async function proxy(request: NextRequest) {
       "reports",
       "warehouse",
       "company-finance",
+      "brass",
     ],
-    MEASURER: ["measurements", "calendar"],
-    DESIGNER: ["orders"],
-    PRODUCTION: ["production", "calendar", "warehouse"],
-    INSTALLER: ["production", "calendar", "warehouse"],
+    MEASURER: ["measurements", "calendar", "brass"],
+    DESIGNER: ["orders", "brass"],
+    PRODUCTION: ["production", "calendar", "warehouse", "brass"],
+    INSTALLER: ["production", "calendar", "warehouse", "brass"],
     PARTNER: ["orders", "finance", "partners", "documents", "partner"],
   };
   const firstSegment =
@@ -96,6 +98,7 @@ export async function proxy(request: NextRequest) {
     "documents",
     "production",
     "warehouse",
+    "brass",
     "finance",
     "partners",
     "reports",

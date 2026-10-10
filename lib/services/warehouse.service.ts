@@ -702,7 +702,15 @@ async function canOperateOrder(
   actor: WarehouseActor,
   orderId: number,
   type: WarehouseOperationType,
+  brassWorkflow = false,
 ) {
+  if (brassWorkflow && actor.role !== Role.PARTNER && type === "reserve")
+    return Boolean(
+      await tx.order.findFirst({
+        where: { id: orderId, deletedAt: null },
+        select: { id: true },
+      }),
+    );
   if (actor.role === Role.OPERATIONS_DIRECTOR)
     return Boolean(
       await tx.order.findFirst({
@@ -791,11 +799,15 @@ async function operationLocationBalance(
   materialId: number,
   locationId: number | undefined,
   actor: WarehouseActor,
+  brassWorkflow = false,
 ) {
   if (!locationId) return defaultLocationBalance(tx, companyId, materialId);
   const location = await tx.warehouseLocation.findFirst({ where: { id: locationId, companyId, active: true } });
   if (!location) throw new WarehouseError("NOT_FOUND");
-  if (!(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.ACCOUNTANT])).has(actor.role)) {
+  if (
+    !brassWorkflow &&
+    !(new Set<Role>([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.ACCOUNTANT])).has(actor.role)
+  ) {
     const accessCount = await tx.warehouseLocationAccess.count({ where: { userId: actor.userId } });
     const access = await tx.warehouseLocationAccess.findFirst({ where: { userId: actor.userId, locationId } });
     if ((accessCount > 0 && !access?.canSell) || (accessCount === 0 && !location.isDefault))
@@ -845,14 +857,25 @@ export async function createWarehouseOperation(input: {
   key: string;
   requestHash: string;
   actor: WarehouseActor;
+  authorizationContext?: { workflow: "BRASS_PROCUREMENT" };
 }) {
-  if (input.actor.role === Role.DIRECTOR) throw new WarehouseError("FORBIDDEN");
-  if (input.actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
-  if (
-    input.actor.role === Role.MANAGER &&
-    !["reserve", "release"].includes(input.data.type)
-  )
-    throw new WarehouseError("FORBIDDEN");
+  const brassWorkflow = input.authorizationContext?.workflow === "BRASS_PROCUREMENT";
+  if (brassWorkflow) {
+    if (
+      input.actor.role === Role.PARTNER ||
+      input.data.type !== "reserve" ||
+      !input.data.orderId
+    )
+      throw new WarehouseError("FORBIDDEN");
+  } else {
+    if (input.actor.role === Role.DIRECTOR) throw new WarehouseError("FORBIDDEN");
+    if (input.actor.role === Role.PARTNER) throw new WarehouseError("FORBIDDEN");
+    if (
+      input.actor.role === Role.MANAGER &&
+      !["reserve", "release"].includes(input.data.type)
+    )
+      throw new WarehouseError("FORBIDDEN");
+  }
   return idempotentMutation(
     {
       key: input.key,
@@ -884,6 +907,7 @@ export async function createWarehouseOperation(input: {
         material.id,
         input.data.locationId,
         input.actor,
+        brassWorkflow,
       );
       material = await tx.material.findUnique({ where: { id: input.data.materialId } });
       if (!material || !material.active) throw new WarehouseError("NOT_FOUND");
@@ -899,10 +923,12 @@ export async function createWarehouseOperation(input: {
           input.actor,
           input.data.orderId,
           input.data.type,
+          brassWorkflow,
         ))
       )
         throw new WarehouseError("FORBIDDEN");
       if (
+        !brassWorkflow &&
         !input.data.orderId &&
         !([Role.DIRECTOR, Role.OPERATIONS_DIRECTOR, Role.MANAGER, Role.ACCOUNTANT] as Role[]).includes(
           input.actor.role,
@@ -910,6 +936,7 @@ export async function createWarehouseOperation(input: {
       )
         throw new WarehouseError("FORBIDDEN");
       if (
+        !brassWorkflow &&
         input.actor.role === Role.ACCOUNTANT &&
         !["incoming", "adjustment", "return"].includes(input.data.type)
       )

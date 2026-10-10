@@ -122,6 +122,21 @@ assert.match(routeShell, /role === "MARKETER"[\s\S]*\["\/", "\/marketing", "\/ca
 assert.match(routeShell, /role === "MANAGER"[\s\S]*"\/production"/);
 assert.doesNotMatch(routeShell, /title: "Dashboard"|>\s*ONLINE\s*</);
 
+const brassPanel = read("components/warehouse/BrassProcurementsPanel.tsx");
+const brassRoute = read("app/api/brass-procurements/route.ts");
+const brassActionRoute = read("app/api/brass-procurements/[id]/route.ts");
+assert.match(routeShell, /\["\/brass", "Латунь"/);
+assert.match(proxy, /MARKETER: \["marketing", "calendar", "brass"\]/);
+assert.match(proxy, /MEASURER: \["measurements", "calendar", "brass"\]/);
+assert.match(proxy, /DESIGNER: \["orders", "brass"\]/);
+assert.doesNotMatch(proxy, /PARTNER: \[[^\]]*"brass"/);
+assert.match(brassRoute, /requireInternalEmployee/);
+assert.match(brassActionRoute, /requireInternalEmployee/);
+assert.match(brassPanel, /\/api\/brass-procurements\?workspace=1/);
+assert.doesNotMatch(brassPanel, /fetch\("\/api\/suppliers"/);
+assert.match(brassPanel, /Создать заявку на латунь/);
+assert.match(brassPanel, /Полная себестоимость/);
+
 const partnerManagementPage = read("app/partner-management/page.tsx");
 const partnerManagementRoute = read("app/api/partner-management/route.ts");
 assert.match(partnerManagementPage, /session\.user\.accountRole \|\| session\.user\.role/);

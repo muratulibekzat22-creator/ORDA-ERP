@@ -6,6 +6,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 type Supplier = { id: number; name: string; country: string; defaultCurrency: string; contact: string };
 type Location = { id: number; name: string };
+type AvailableOrder = { id: number; number: string; client: { name: string } };
 type RequestRow = {
   id: number;
   quantityPairs: number;
@@ -25,6 +26,13 @@ type RequestRow = {
   responsibleUser: { id: number; name: string };
   purchaseBatch: { id: number; number: string; status: string } | null;
   reminderTask: { id: number; dueAt: string; status: string } | null;
+};
+type WorkspacePayload = {
+  procurements: RequestRow[];
+  suppliers: Supplier[];
+  locations: Location[];
+  availableOrders: AvailableOrder[];
+  error?: string;
 };
 
 const control = "min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white outline-none focus:border-blue-500";
@@ -55,10 +63,14 @@ export default function BrassProcurementsPanel({
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [availableOrders, setAvailableOrders] = useState<AvailableOrder[]>([]);
   const [selected, setSelected] = useState<RequestRow | null>(null);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [supplierForm, setSupplierForm] = useState({ name: "", country: "Казахстан", defaultCurrency: "KZT", contact: "" });
+  const [requestForm, setRequestForm] = useState({ orderId: "", quantityPairs: "", notes: "" });
+  const [requestPhoto, setRequestPhoto] = useState<File | null>(null);
   const [orderForm, setOrderForm] = useState({ supplierId: "", expectedArrivalDate: future(), purchaseCurrency: "KZT", exchangeRate: "1", unitPurchasePrice: "", notes: "" });
   const [payment, setPayment] = useState({ kind: "SUPPLIER", amount: "", method: "BANK_TRANSFER", paidAt: today(), comment: "" });
   const [receipt, setReceipt] = useState({ locationId: "", receivedAt: today(), cargoCostKzt: "", cargoProvider: "Карго", supplierDocumentNumber: "", note: "" });
@@ -73,25 +85,29 @@ export default function BrassProcurementsPanel({
 
   const load = useCallback(async () => {
     setMessage("");
+    setLoading(true);
     try {
-      const [requestResponse, supplierResponse, locationResponse] = await Promise.all([
-        fetch("/api/brass-procurements", { cache: "no-store" }),
-        fetch("/api/suppliers", { cache: "no-store" }),
-        fetch("/api/warehouse/locations", { cache: "no-store" }),
-      ]);
-      if (!requestResponse.ok || !supplierResponse.ok || !locationResponse.ok)
-        throw new Error("Не удалось загрузить закупки латуни");
-      const requestRows = await requestResponse.json() as RequestRow[];
-      const supplierRows = await supplierResponse.json() as Supplier[];
-      const locationRows = await locationResponse.json() as { locations: Location[] };
+      const response = await fetch("/api/brass-procurements?workspace=1", {
+        cache: "no-store",
+      });
+      const payload = await response.json() as WorkspacePayload;
+      if (!response.ok)
+        throw new Error(payload.error ?? "Не удалось загрузить закупки латуни");
+      const requestRows = payload.procurements;
+      const supplierRows = payload.suppliers;
+      const locationRows = payload.locations;
       setRows(requestRows);
       setSuppliers(supplierRows);
-      setLocations(locationRows.locations);
+      setLocations(locationRows);
+      setAvailableOrders(payload.availableOrders);
       setSelected((current) => current ? requestRows.find((row) => row.id === current.id) ?? null : null);
       setOrderForm((current) => ({ ...current, supplierId: current.supplierId || String(supplierRows[0]?.id ?? ""), purchaseCurrency: current.purchaseCurrency || supplierRows[0]?.defaultCurrency || "KZT" }));
-      setReceipt((current) => ({ ...current, locationId: current.locationId || String(locationRows.locations[0]?.id ?? "") }));
+      setReceipt((current) => ({ ...current, locationId: current.locationId || String(locationRows[0]?.id ?? "") }));
+      setRequestForm((current) => ({ ...current, orderId: current.orderId || String(payload.availableOrders[0]?.id ?? "") }));
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : "Ошибка загрузки");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -114,10 +130,11 @@ export default function BrassProcurementsPanel({
         headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
         body: JSON.stringify(body),
       });
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as RequestRow & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Операция не выполнена");
       pendingKeys.current.delete(signature);
-      await load();
+      setRows((current) => current.map((row) => row.id === payload.id ? payload : row));
+      setSelected(payload);
       setMessage("Данные закупки обновлены");
       return true;
     } catch (cause) {
@@ -133,13 +150,55 @@ export default function BrassProcurementsPanel({
     event.preventDefault();
     await action({ action: "order", ...orderForm, supplierId: Number(orderForm.supplierId), exchangeRate: Number(orderForm.exchangeRate), unitPurchasePrice: Number(orderForm.unitPurchasePrice) });
   }
+  async function createRequest(event: FormEvent) {
+    event.preventDefault();
+    if (saving || !requestPhoto) return;
+    const orderId = Number(requestForm.orderId);
+    const signature = JSON.stringify({
+      orderId,
+      quantityPairs: requestForm.quantityPairs,
+      notes: requestForm.notes,
+      fileName: requestPhoto.name,
+      size: requestPhoto.size,
+      lastModified: requestPhoto.lastModified,
+    });
+    const idempotencyKey = pendingKeys.current.get(signature) ?? crypto.randomUUID();
+    pendingKeys.current.set(signature, idempotencyKey);
+    setSaving(true);
+    setMessage("");
+    try {
+      const body = new FormData();
+      body.set("quantityPairs", requestForm.quantityPairs);
+      body.set("notes", requestForm.notes);
+      body.set("photo", requestPhoto);
+      const response = await fetch(`/api/orders/${orderId}/brass-procurement`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body,
+      });
+      const payload = await response.json() as RequestRow & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Не удалось создать заявку на латунь");
+      pendingKeys.current.delete(signature);
+      setRows((current) => [payload, ...current]);
+      setSelected(payload);
+      const nextOrders = availableOrders.filter((order) => order.id !== orderId);
+      setAvailableOrders(nextOrders);
+      setRequestForm({ orderId: String(nextOrders[0]?.id ?? ""), quantityPairs: "", notes: "" });
+      setRequestPhoto(null);
+      setMessage("Заявка на латунь создана");
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "Не удалось создать заявку на латунь");
+    } finally {
+      setSaving(false);
+    }
+  }
   async function createSupplier(event: FormEvent) {
     event.preventDefault();
     if (saving) return;
     setSaving(true);
     setMessage("");
     try {
-      const response = await fetch("/api/suppliers", {
+      const response = await fetch("/api/brass-procurements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(supplierForm),
@@ -172,15 +231,30 @@ export default function BrassProcurementsPanel({
     <section className="rounded-2xl border border-amber-500/25 bg-[#101827] p-5">
       <h2 className="text-xl font-bold text-white">Латунь под заказы</h2>
       <p className="mt-1 text-sm text-slate-400">Заявка менеджера → поставщик → оплата → контроль доставки → приёмка → карго → себестоимость заказа.</p>
+      <details className="mt-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+        <summary className="cursor-pointer font-semibold text-amber-100">+ Создать заявку на латунь</summary>
+        <form onSubmit={createRequest} className="mt-4 grid gap-3 md:grid-cols-2">
+          <select required value={requestForm.orderId} onChange={(event) => setRequestForm({ ...requestForm, orderId: event.target.value })} className={control}>
+            <option value="">Выберите заказ</option>
+            {availableOrders.map((order) => <option key={order.id} value={order.id}>{order.number} · {order.client.name}</option>)}
+          </select>
+          <input required type="number" min="1" max="10000" step="1" value={requestForm.quantityPairs} onChange={(event) => setRequestForm({ ...requestForm, quantityPairs: event.target.value })} placeholder="Количество пар" className={control} />
+          <input required type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setRequestPhoto(event.target.files?.[0] ?? null)} className={`${control} py-2`} />
+          <input value={requestForm.notes} onChange={(event) => setRequestForm({ ...requestForm, notes: event.target.value })} placeholder="Комментарий" className={control} />
+          <button disabled={saving || !requestPhoto || !availableOrders.length} className="min-h-11 rounded-xl bg-amber-600 px-4 font-semibold text-white disabled:opacity-50 md:col-span-2">{saving ? "Создаём…" : "Создать заявку"}</button>
+        </form>
+        {!availableOrders.length && !loading ? <p className="mt-3 text-sm text-slate-400">Все активные заказы уже имеют заявку на латунь.</p> : null}
+      </details>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><Stat label="Заявок" value={String(rows.length)} /><Stat label="Товар" value={money(summary.goods)} /><Stat label="Карго" value={money(summary.cargo)} /><Stat label="Оплачено" value={money(summary.paid)} /><Stat label="Осталось" value={money(summary.remaining)} strong /></div>
       <div className="mt-4 space-y-3">
+        {loading ? <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Загрузка заявок…</p> : null}
         {rows.map((row) => <button type="button" key={row.id} onClick={() => { setSelected(row); setOrderForm((current) => ({ ...current, notes: row.notes })); setMessage(""); }} className={`grid w-full gap-3 rounded-xl border p-4 text-left md:grid-cols-[1.2fr_0.7fr_1fr_1fr] ${selected?.id === row.id ? "border-amber-500/60 bg-amber-500/5" : "border-slate-800 bg-slate-950/55"}`}>
           <span><strong className="text-white">{row.order.number}</strong><small className="block text-slate-400">{row.order.client.name}</small></span>
           <span className="text-slate-200"><strong>{row.quantityPairs} пар</strong><small className="block text-slate-500">{labels[row.status] ?? row.status}</small></span>
           <span className="text-slate-300">{row.supplier?.name ?? "Поставщик не выбран"}<small className="block text-slate-500">{row.expectedArrivalDate ? `ожидается ${new Date(row.expectedArrivalDate).toLocaleDateString("ru-RU")}` : "срок не назначен"}</small></span>
           <span className="text-slate-300">{row.landedCostKzt > 0 ? money(row.landedCostKzt) : "Цена уточняется"}<small className="block text-slate-500">оплачено {money(row.supplierPaidKzt + row.cargoPaidKzt)}</small></span>
         </button>)}
-        {!rows.length ? <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Заявок на латунь пока нет.</p> : null}
+        {!loading && !rows.length ? <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">Заявок на латунь пока нет.</p> : null}
       </div>
     </section>
     {selected ? <section className="rounded-2xl border border-slate-700 bg-[#101827] p-5">

@@ -1,16 +1,16 @@
 import { Role } from "@prisma/client";
 import { NextResponse } from "next/server";
 
-import { requirePermission } from "@/lib/server-auth";
+import { requireAuthenticatedSession } from "@/lib/server-auth";
 import { getAttachmentContent, type AttachmentActor } from "@/lib/services/attachment.service";
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requirePermission("documents");
+  const auth = await requireAuthenticatedSession();
   if (auth.response) return auth.response;
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "Некорректный id" }, { status: 400 });
   try {
-    const actor: AttachmentActor = { userId: Number(auth.session!.user.id), role: auth.session!.user.role as Role, name: auth.session!.user.name ?? "" };
+    const actor: AttachmentActor = { userId: Number(auth.session!.user.id), role: (auth.session!.user.accountRole || auth.session!.user.role) as Role, name: auth.session!.user.name ?? "" };
     const result = await getAttachmentContent(id, actor);
     if (!result) return NextResponse.json({ error: "Файл не найден" }, { status: 404 });
     const inlineRequested = new URL(request.url).searchParams.get("disposition") === "inline";
