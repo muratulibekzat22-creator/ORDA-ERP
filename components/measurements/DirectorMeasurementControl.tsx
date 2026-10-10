@@ -6,6 +6,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  FileText,
   MapPin,
   Phone,
   RefreshCw,
@@ -35,6 +36,8 @@ type Measurement = {
   address: string;
   mapLink?: string | null;
   managerComment?: string | null;
+  floorHeight?: number | null;
+  staircaseWidth?: number | null;
   stepsCount?: number | null;
   sameSize: boolean;
   stepLength?: number | null;
@@ -357,8 +360,8 @@ function MeasurementDetail({ row }: { row: Measurement }) {
 }
 
 function TechnicalResult({ row }: { row: Measurement }) {
-  return <section className="space-y-4 rounded-xl border border-emerald-700/50 bg-emerald-950/10 p-4"><div><h3 className="flex items-center gap-2 font-semibold text-white"><CheckCircle2 size={18}/>Технический результат заполнен</h3><p className="mt-1 text-xs text-slate-500">{row.completedAt ? `Завершён ${when(row.completedAt)}` : "Дата завершения не указана"} · {row.measurerUser?.name ?? "Замерщик не указан"}</p></div>
-    <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3"><Detail label="Ступени" value={String(row.stepsCount ?? 0)}/><Detail label="Размер ступени" value={row.sameSize ? `${row.stepLength ?? "—"} × ${row.stepWidth ?? "—"} × ${row.stepHeight ?? "—"} мм` : "Разные размеры"}/><Detail label="Подступенок" value={`${row.riserHeight ?? "—"} мм`}/><Detail label="Забежные" value={String(row.winderCount ?? 0)}/><Detail label="Площадки" value={String(row.platformsCount ?? 0)}/><Detail label="Ограждение" value={`${row.railingLength ?? 0} м`}/></div>
+  return <section className="space-y-4 rounded-xl border border-emerald-700/50 bg-emerald-950/10 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="flex items-center gap-2 font-semibold text-white"><CheckCircle2 size={18}/>Технический результат заполнен</h3><p className="mt-1 text-xs text-slate-500">{row.completedAt ? `Завершён ${when(row.completedAt)}` : "Дата завершения не указана"} · {row.measurerUser?.name ?? "Замерщик не указан"}</p></div><a href={`/api/measurements/${row.id}/sheet`} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-700 px-3 text-sm font-semibold text-white"><FileText size={16}/>Контрольный лист PDF</a></div>
+    <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3"><Detail label="Высота помещения" value={`${row.floorHeight ?? "—"} м`}/><Detail label="Ширина лестницы" value={`${row.staircaseWidth ?? "—"} м`}/><Detail label="Ступени" value={String(row.stepsCount ?? 0)}/><Detail label="Размер ступени" value={row.sameSize ? `${row.stepLength ?? "—"} × ${row.stepWidth ?? "—"} × ${row.stepHeight ?? "—"} мм` : "Разные размеры"}/><Detail label="Подступенок" value={`${row.riserHeight ?? "—"} мм`}/><Detail label="Забежные" value={String(row.winderCount ?? 0)}/><Detail label="Площадки" value={String(row.platformsCount ?? 0)}/><Detail label="Ограждение" value={`${row.railingLength ?? 0} м`}/></div>
     {row.individualSteps?.length ? <List title="Размеры ступеней" items={row.individualSteps.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} × ${item.height ?? "—"} мм`)}/> : null}
     {row.winders?.length ? <List title="Забежные ступени" items={row.winders.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} мм${item.comment ? ` · ${item.comment}` : ""}`)}/> : null}
     {row.platforms?.length ? <List title="Площадки" items={row.platforms.map((item, index) => `№${index + 1}: ${item.length ?? "—"} × ${item.width ?? "—"} мм`)}/> : null}

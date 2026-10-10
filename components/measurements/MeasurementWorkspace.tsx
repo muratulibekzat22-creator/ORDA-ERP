@@ -10,6 +10,8 @@ import {
   Banknote,
   CheckCircle2,
   ClipboardCheck,
+  Download,
+  FileText,
   MapPin,
   MessageCircle,
   MoreVertical,
@@ -39,6 +41,8 @@ type Measurement = {
   address: string;
   mapLink?: string | null;
   managerComment?: string | null;
+  floorHeight?: number | null;
+  staircaseWidth?: number | null;
   stepsCount?: number | null;
   sameSize: boolean;
   stepLength?: number | null;
@@ -118,6 +122,8 @@ type Payload = {
 type ScheduleClient = { id: number; name: string; phone: string; whatsapp: string; city: string; address: string };
 type ActiveMeasurer = { id: number; name: string; phone?: string | null; homeCity: string; maxTravelMinutes: number; serviceAreas: MeasurerServiceArea[] };
 type Form = {
+  floorHeight: string;
+  staircaseWidth: string;
   stepsCount: string;
   sameSize: boolean;
   stepLength: string;
@@ -181,6 +187,8 @@ const time = (value: string) =>
     minute: "2-digit",
   }).format(new Date(value));
 const empty = (): Form => ({
+  floorHeight: "",
+  staircaseWidth: "",
   stepsCount: "",
   sameSize: true,
   stepLength: "",
@@ -198,6 +206,8 @@ const empty = (): Form => ({
   comment: "",
 });
 const formOf = (row: Measurement): Form => ({
+  floorHeight: String(row.floorHeight ?? ""),
+  staircaseWidth: String(row.staircaseWidth ?? ""),
   stepsCount: String(row.stepsCount ?? ""),
   sameSize: row.sameSize,
   stepLength: String(row.stepLength ?? ""),
@@ -413,6 +423,8 @@ function OperationalMeasurementWorkspace() {
     setForm((current) => ({ ...current, [key]: value }));
   const payload = (action: string) => ({
     action,
+    floorHeight: form.floorHeight ? Number(form.floorHeight) : undefined,
+    staircaseWidth: form.staircaseWidth ? Number(form.staircaseWidth) : undefined,
     stepsCount: Number(form.stepsCount || 0),
     sameSize: form.sameSize,
     stepLength: form.stepLength ? Number(form.stepLength) : undefined,
@@ -472,6 +484,42 @@ function OperationalMeasurementWorkspace() {
       { ...payload("complete"), clientOutcome, refusalReason: clientOutcome === "REFUSED" ? refusalReason : undefined, outcomeComment },
       "Замер завершён, результат передан менеджеру",
     );
+  }
+  async function openControlSheet() {
+    if (!selected) return;
+    const preview = window.open("about:blank", "_blank");
+    if (!preview) {
+      setError("Браузер заблокировал окно контрольного листа. Разрешите всплывающие окна и повторите.");
+      return;
+    }
+    preview.opener = null;
+    preview.document.title = "Формируем контрольный лист…";
+    preview.document.body.textContent = "Формируем контрольный замерный лист…";
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/measurements/${selected.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload("save-draft")),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        preview.close();
+        setError(result.error ?? "Не удалось сохранить данные для контрольного листа");
+        setTrainingRequired(result.code === "TRAINING_REQUIRED");
+        return;
+      }
+      setNotice("Данные сохранены, контрольный лист сформирован");
+      preview.location.replace(`/api/measurements/${selected.id}/sheet`);
+      await load();
+    } catch {
+      preview.close();
+      setError("Нет связи с сервером. Данные остались в форме — повторите формирование листа.");
+    } finally {
+      setBusy(false);
+    }
   }
   async function upload(file?: File) {
     if (!selected || !file) return;
@@ -936,12 +984,40 @@ function OperationalMeasurementWorkspace() {
             )}
             {measurer && selected.status === "IN_PROGRESS" && (
               <>
-                <MeasurementDesignWorkflow
-                  key={selected.id}
-                  measurement={selected}
-                  onChanged={async () => { await load(); }}
-                />
+                <div className="rounded-xl border border-blue-800/70 bg-blue-950/20 p-4">
+                  <h3 className="font-semibold text-white">Быстрый порядок замера</h3>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-blue-100 sm:grid-cols-4">
+                    <span className="rounded-lg bg-blue-950/70 p-2">1. Размеры</span>
+                    <span className="rounded-lg bg-blue-950/70 p-2">2. Фото и 3D</span>
+                    <span className="rounded-lg bg-blue-950/70 p-2">3. Контрольный лист</span>
+                    <span className="rounded-lg bg-blue-950/70 p-2">4. Результат клиента</span>
+                  </div>
+                </div>
                 <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Высота помещения, м">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      className={input}
+                      value={form.floorHeight}
+                      onChange={(event) => patchForm("floorHeight", event.target.value)}
+                      placeholder="Например: 3.2"
+                    />
+                  </Field>
+                  <Field label="Ширина лестницы, м">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      className={input}
+                      value={form.staircaseWidth}
+                      onChange={(event) => patchForm("staircaseWidth", event.target.value)}
+                      placeholder="Например: 1.1"
+                    />
+                  </Field>
                   <Field label="Количество ступеней">
                     <input
                       type="number"
@@ -1092,6 +1168,11 @@ function OperationalMeasurementWorkspace() {
                     />
                   </Field>
                 </div>
+                <MeasurementDesignWorkflow
+                  key={selected.id}
+                  measurement={selected}
+                  onChanged={async () => { await load(); }}
+                />
                 <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4">
                   <h3 className="font-semibold text-white">Фотографии</h3>
                   <p className="mt-1 text-sm text-slate-400">
@@ -1134,7 +1215,7 @@ function OperationalMeasurementWorkspace() {
                   />
                   <PhotoList photos={selected.attachments} />
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="sticky bottom-3 z-10 grid grid-cols-2 gap-2 rounded-2xl border border-slate-700 bg-slate-950/95 p-2 shadow-2xl backdrop-blur">
                   <button
                     disabled={busy}
                     onClick={() =>
@@ -1144,6 +1225,15 @@ function OperationalMeasurementWorkspace() {
                   >
                     <Save size={18} />
                     Сохранить черновик
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void openControlSheet()}
+                    className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-700 px-2 text-sm font-semibold disabled:opacity-50"
+                  >
+                    <FileText size={18} />
+                    Контрольный лист
                   </button>
                 </div>
                 <section className="space-y-4 rounded-xl border border-emerald-800/60 bg-emerald-950/10 p-4">
@@ -1468,8 +1558,38 @@ function PhotoList({ photos }: { photos: Photo[] }) {
 function MeasurementResult({ row }: { row: Measurement }) {
   return (
     <section className="rounded-xl border border-emerald-800/50 bg-emerald-950/10 p-4">
-      <h3 className="font-semibold text-white">Зафиксированный результат</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="font-semibold text-white">Зафиксированный результат</h3>
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={`/api/measurements/${row.id}/sheet`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-700 px-3 text-sm font-semibold text-white"
+          >
+            <FileText size={16} />
+            Открыть лист
+          </a>
+          <a
+            href={`/api/measurements/${row.id}/sheet?download=1`}
+            className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-slate-700 px-3 text-sm font-semibold text-white"
+          >
+            <Download size={16} />
+            Скачать PDF
+          </a>
+        </div>
+      </div>
       <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-300 sm:grid-cols-3">
+        <span>
+          Высота помещения
+          <br />
+          <b className="text-white">{row.floorHeight ?? "—"} м</b>
+        </span>
+        <span>
+          Ширина лестницы
+          <br />
+          <b className="text-white">{row.staircaseWidth ?? "—"} м</b>
+        </span>
         <span>
           Ступени
           <br />

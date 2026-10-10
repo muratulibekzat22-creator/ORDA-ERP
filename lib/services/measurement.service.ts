@@ -38,6 +38,8 @@ const COMPLETED_STATUSES: MeasurementStatus[] = [
 ];
 
 export type MeasurementDraft = {
+  floorHeight?: number | null;
+  staircaseWidth?: number | null;
   stepsCount: number;
   sameSize: boolean;
   stepLength?: number | null;
@@ -400,6 +402,8 @@ export function parseMeasurementDraft(
   if (strict && winders && winders.length !== winderCount)
     throw new MeasurementError("INVALID_DIMENSIONS");
   return {
+    floorHeight: positive(body.floorHeight, true),
+    staircaseWidth: positive(body.staircaseWidth, true),
     stepsCount,
     sameSize,
     stepLength: sameSize ? positive(body.stepLength, !strict) : null,
@@ -425,6 +429,8 @@ export function parseMeasurementDraft(
 
 function draftData(input: MeasurementDraft): Prisma.MeasurementUpdateInput {
   return {
+    floorHeight: input.floorHeight,
+    staircaseWidth: input.staircaseWidth,
     stepsCount: input.stepsCount,
     sameSize: input.sameSize,
     stepLength: input.stepLength,

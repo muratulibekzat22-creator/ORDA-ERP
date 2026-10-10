@@ -6,6 +6,7 @@ import {
   CalendarPlus,
   Clipboard,
   FileImage,
+  FileText,
   MapPin,
   MessageCircle,
   MoreVertical,
@@ -508,6 +509,15 @@ export default function LeadMeasurementPanel({
                     </span>
                   )}
                   <span className="sm:col-span-3">
+                    <a
+                      href={`/api/measurements/${row.id}/sheet`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mr-3 inline-flex min-h-10 items-center gap-1 rounded-lg bg-blue-800 px-3 font-semibold text-white"
+                    >
+                      <FileText size={15} />
+                      Контрольный лист PDF
+                    </a>
                     {row.attachments.map((photo) => (
                       <a
                         key={photo.id}

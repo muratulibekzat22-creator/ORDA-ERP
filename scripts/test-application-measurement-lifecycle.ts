@@ -34,6 +34,7 @@ if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.T
   throw new Error("Application lifecycle integration requires DATABASE_URL=TEST_DATABASE_URL");
 
 const tag = `application-lifecycle-${Date.now()}`;
+const phoneSeed = Number(String(Date.now()).slice(-8));
 const userIds: number[] = [];
 const clientIds: number[] = [];
 
@@ -55,11 +56,12 @@ const draft: MeasurementDraft = {
 };
 
 async function client(manager: { id: number; name: string }, suffix: string) {
+  const phone = `+770${String((phoneSeed + clientIds.length + 1) % 100_000_000).padStart(8, "0")}`;
   const created = await prisma.client.create({
     data: {
       name: `${tag}-${suffix}`,
-      phone: `+7701${String(clientIds.length + 1).padStart(7, "0")}`,
-      whatsapp: `+7701${String(clientIds.length + 1).padStart(7, "0")}`,
+      phone,
+      whatsapp: phone,
       city: "Алматы",
       address: "ул. Тестовая, 1",
       manager: manager.name,

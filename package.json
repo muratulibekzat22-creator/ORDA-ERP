@@ -76,6 +76,8 @@
     "test:proposal-go-live": "tsx scripts/test-proposal-go-live.ts",
     "test:calendar": "tsx scripts/test-calendar.ts",
     "test:measurements": "tsx scripts/test-measurements.ts",
+    "test:measurement-sheet": "tsx scripts/test-measurement-sheet.ts",
+    "preview:measurement-sheet": "tsx scripts/generate-measurement-sheet-preview.ts",
     "test:measurement-design:contract": "tsx scripts/test-measurement-design-contract.ts",
     "test:measurer-routing:contract": "tsx scripts/test-measurer-routing-contract.ts",
     "test:application-lifecycle": "tsx scripts/test-application-measurement-lifecycle.ts",

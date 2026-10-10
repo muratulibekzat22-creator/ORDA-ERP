@@ -26,6 +26,8 @@ import {
 if (!process.env.TEST_DATABASE_URL || process.env.DATABASE_URL !== process.env.TEST_DATABASE_URL) throw new Error("Measurement integration requires DATABASE_URL=TEST_DATABASE_URL");
 
 const tag = `measurements-${Date.now()}`;
+const phoneSeed = Number(String(Date.now()).slice(-8));
+const testPhone = (offset: number) => `+770${String((phoneSeed + offset) % 100_000_000).padStart(8, "0")}`;
 const ids = { users: [] as number[], clients: [] as number[], measurements: [] as number[], orders: [] as number[], tasks: [] as number[], profiles: [] as number[], accruals: [] as number[] };
 const draft: MeasurementDraft = {
   stepsCount: 15,
@@ -161,10 +163,9 @@ async function main() {
     const otherManagerActor: MeasurementActor = { userId: otherManager.id, role: Role.MANAGER, name: otherManager.name };
     const actorA: MeasurementActor = { userId: measurerA.id, role: Role.MEASURER, name: measurerA.name };
     const actorB: MeasurementActor = { userId: measurerB.id, role: Role.MEASURER, name: measurerB.name };
-    const accountantActor = { userId: accountant.id, role: Role.ACCOUNTANT, name: accountant.name };
-    const client = await prisma.client.create({ data: { name: `${tag}-client`, phone: "+77010000001", whatsapp: "+77010000001", city: "Алматы", address: "ул. Абая, 10", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
-    const noOrderClient = await prisma.client.create({ data: { name: `${tag}-no-order`, phone: "+77010000002", city: "Алматы", address: "ул. Толе би, 20", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
-    const unassignedClient = await prisma.client.create({ data: { name: `${tag}-unassigned`, phone: "+77010000003", city: "Алматы", address: "ул. Сатпаева, 30", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
+    const client = await prisma.client.create({ data: { name: `${tag}-client`, phone: testPhone(1), whatsapp: testPhone(1), city: "Алматы", address: "ул. Абая, 10", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
+    const noOrderClient = await prisma.client.create({ data: { name: `${tag}-no-order`, phone: testPhone(2), city: "Алматы", address: "ул. Толе би, 20", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
+    const unassignedClient = await prisma.client.create({ data: { name: `${tag}-unassigned`, phone: testPhone(3), city: "Алматы", address: "ул. Сатпаева, 30", manager: manager.name, managerUserId: manager.id, amount: "0", status: "QUALIFIED", stage: "QUALIFIED" } });
     ids.clients.push(client.id, noOrderClient.id, unassignedClient.id);
     const visitDate = parseBusinessDateTime("2026-08-10T14:00");
     assert.ok(visitDate);
@@ -174,7 +175,7 @@ async function main() {
     assert.match(scheduled.whatsappText, /10 августа 2026[\s\S]*14:00/);
     assert.match(scheduled.whatsappText, new RegExp(measurerA.name));
     assert.match(scheduled.whatsappText, new RegExp(manager.name));
-    assert.match(scheduled.whatsappText, /Телефон: \+77010000001/);
+    assert.match(scheduled.whatsappText, new RegExp(`Телефон: \\${testPhone(1)}`));
     const firstTaskId = scheduled.measurement.calendarTaskId;
     assert.ok(firstTaskId);
     const rescheduledAt = parseBusinessDateTime("2026-08-10T15:00")!;
@@ -292,10 +293,10 @@ async function main() {
     const profileB = await prisma.employeePayrollProfile.create({ data: { userId: measurerB.id, hiredAt: new Date(), baseSalary: 0, defaultGuaranteedBonus: 0 } });
     ids.profiles.push(profileA.id, profileB.id);
     const period = await prisma.payrollPeriod.findFirstOrThrow({ where: { accruals: { some: { id: bonuses[0].id } } } });
-    await createPayment({ employeeId: profileA.id, periodId: period.id, amount: 10_000, type: PayrollPaymentType.ORDER_BONUS_PAYMENT, paymentDate: new Date(), relatedAccrualId: bonuses[0].id, key: `${tag}-measurer-bonus-partial`, requestHash: "measurer-bonus-partial" }, accountantActor);
+    await createPayment({ employeeId: profileA.id, periodId: period.id, amount: 10_000, type: PayrollPaymentType.ORDER_BONUS_PAYMENT, paymentDate: new Date(), relatedAccrualId: bonuses[0].id, key: `${tag}-measurer-bonus-partial`, requestHash: "measurer-bonus-partial" }, directorActor);
     const partialBonus = await payrollSummary(period.id, actorA);
     assert.equal(partialBonus.rows[0].bonusAccruals.find((row) => row.id === bonuses[0].id)?.status, "PARTIALLY_PAID", "Measurer bonus partial payment status");
-    await createPayment({ employeeId: profileA.id, periodId: period.id, amount: 10_000, type: PayrollPaymentType.ORDER_BONUS_PAYMENT, paymentDate: new Date(), relatedAccrualId: bonuses[0].id, key: `${tag}-measurer-bonus-paid`, requestHash: "measurer-bonus-paid" }, accountantActor);
+    await createPayment({ employeeId: profileA.id, periodId: period.id, amount: 10_000, type: PayrollPaymentType.ORDER_BONUS_PAYMENT, paymentDate: new Date(), relatedAccrualId: bonuses[0].id, key: `${tag}-measurer-bonus-paid`, requestHash: "measurer-bonus-paid" }, directorActor);
     const self = await payrollSummary(period.id, actorA, profileB.id);
     console.log("measurement test: self payroll scope verified");
     assert.deepEqual(self.rows.map((row) => row.userId), [measurerA.id], "Self payroll ignores spoofed employeeId");
